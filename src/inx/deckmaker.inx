@@ -10,7 +10,7 @@
   <!-- UI -->
   <param name="tab" type="notebook">
     <page name="data" gui-text="Data">
-      <label>Build a deck from CSV + SVG template (current document).</label>
+      <label>Build a deck from SVG template (current document) + CSV/google sheets.</label>
 
       <!-- NUEVOS CAMPOS (manteniendo el resto tal cual) -->
       <param name="sheet_id" type="string" gui-text="Google Sheet Id (optional)" appearance="full"/>
@@ -30,7 +30,7 @@
     <effects-menu>
       <submenu _name="PnPInk"/>
     </effects-menu>
-    <menu-tip>Build a printable deck from CSV and an SVG template.</menu-tip>
+    <menu-tip>Build a deck from current document + CSV/google sheets.</menu-tip>
   </effect>
 
   <!-- Launch -->

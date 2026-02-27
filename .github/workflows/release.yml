@@ -1,0 +1,135 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve and validate version
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          if [[ -z "${VERSION}" || "${VERSION}" == "${TAG}" ]]; then
+            echo "Tag must match v* (example: v0.41). Got: ${TAG}" >&2
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          export VERSION
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import os
+
+          version = os.environ["VERSION"]
+          manifest_path = Path("manifest.json")
+          if not manifest_path.exists():
+              raise SystemExit("manifest.json not found")
+
+          data = json.loads(manifest_path.read_text(encoding="utf-8"))
+          missing = [k for k in ("name", "version", "channel") if k not in data]
+          if missing:
+              raise SystemExit(f"manifest.json missing keys: {', '.join(missing)}")
+
+          mver = str(data["version"]).strip()
+          ch = str(data["channel"]).strip().lower()
+          if mver != version:
+              raise SystemExit(
+                  f"Tag/manifest version mismatch: tag={version}, manifest={mver}"
+              )
+          if ch not in {"main", "dev"}:
+              raise SystemExit("manifest.json 'channel' must be 'main' or 'dev'")
+          PY
+
+      - name: Build payload and bundle ZIPs
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          python - <<'PY'
+          import os
+          import zipfile
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          root = Path(".")
+          dist = root / "dist"
+          src = root / "src"
+
+          inx_files = list((src / "inx").glob("*.inx"))
+          if not inx_files:
+              raise SystemExit("No src/inx/*.inx files found; aborting release.")
+
+          payload_name = f"pnpink_payload_{version}.zip"
+          payload_path = dist / payload_name
+          with zipfile.ZipFile(payload_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+              for p in sorted(src.rglob("*")):
+                  if p.is_file():
+                      zf.write(p, p.relative_to(root).as_posix())
+
+          bundle_name = f"pnpink_{version}.zip"
+          bundle_path = dist / bundle_name
+          bundle_files = [
+              "install.py",
+              "install.sh",
+              "install_windows.bat",
+              "README.md",
+              "LICENSE",
+              "manifest.json",
+          ]
+
+          missing = [f for f in bundle_files if not (root / f).exists()]
+          if missing:
+              raise SystemExit(f"Missing bundle file(s): {', '.join(missing)}")
+
+          with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+              for f in bundle_files:
+                  zf.write(root / f, f)
+              zf.write(payload_path, payload_name)
+
+          print(f"payload_name={payload_name}")
+          print(f"bundle_name={bundle_name}")
+          PY
+
+          PAYLOAD_NAME="pnpink_payload_${{ steps.meta.outputs.version }}.zip"
+          BUNDLE_NAME="pnpink_${{ steps.meta.outputs.version }}.zip"
+          test -f "dist/${PAYLOAD_NAME}"
+          test -f "dist/${BUNDLE_NAME}"
+          echo "payload_path=dist/${PAYLOAD_NAME}" >> "$GITHUB_OUTPUT"
+          echo "bundle_path=dist/${BUNDLE_NAME}" >> "$GITHUB_OUTPUT"
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: PnPInk ${{ steps.meta.outputs.tag }}
+          prerelease: true
+          files: |
+            ${{ steps.package.outputs.payload_path }}
+            ${{ steps.package.outputs.bundle_path }}
+          fail_on_unmatched_files: true
+          overwrite_files: true
+          generate_release_notes: true

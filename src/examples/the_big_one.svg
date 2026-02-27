@@ -26,15 +26,15 @@
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
      inkscape:document-units="mm"
-     inkscape:zoom="0.22627416"
-     inkscape:cx="2463.8253"
-     inkscape:cy="1204.2913"
+     inkscape:zoom="0.08"
+     inkscape:cx="-2918.75"
+     inkscape:cy="-681.25"
      inkscape:window-width="1920"
      inkscape:window-height="974"
      inkscape:window-x="-11"
      inkscape:window-y="-11"
      inkscape:window-maximized="1"
-     inkscape:current-layer="g1">
+     inkscape:current-layer="svg1">
     <inkscape:page
        id="page1"
        x="0"
@@ -514,7 +514,7 @@
        viewBox="0 0 7.9354187 7.4163368">
       <use
          xlink:href="#clone_corazon"
-         transform="translate(64.407716,-137.64183)"
+         transform="translate(-162.4373,-29.481193)"
          id="use364" />
     </symbol>
     <symbol
@@ -522,7 +522,7 @@
        viewBox="0 0 7.9354151 7.4163334">
       <use
          xlink:href="#corazon"
-         transform="translate(63.9718,-125.05067)"
+         transform="translate(-162.87321,-16.890033)"
          id="use365" />
     </symbol>
     <symbol
@@ -532,7 +532,7 @@
       <use
          xlink:href="#diamante"
          href="#diamante"
-         transform="translate(94.236583,-114.22933)"
+         transform="translate(-132.60843,-6.0686928)"
          id="use366" />
     </symbol>
     <symbol
@@ -542,7 +542,7 @@
       <use
          xlink:href="#picas"
          href="#picas"
-         transform="translate(54.210667,-113.2985)"
+         transform="translate(-172.63435,-5.1378628)"
          id="use367" />
     </symbol>
     <rect
@@ -639,29 +639,6 @@
            id="title3298">noto:pizza</title>
       </g>
     </symbol>
-    <radialGradient
-       inkscape:collect="always"
-       xlink:href="#linearGradient23"
-       id="radialGradient25-4-4-6"
-       cx="94.579597"
-       cy="78.099701"
-       fx="94.579597"
-       fy="78.099701"
-       r="4.1554441"
-       gradientTransform="matrix(-2.3247316,0.9342713,-0.99494479,-2.4757055,395.84931,177.74486)"
-       gradientUnits="userSpaceOnUse" />
-    <linearGradient
-       id="linearGradient23"
-       inkscape:collect="always">
-      <stop
-         style="stop-color:#03fb5c;stop-opacity:1;"
-         offset="0.78403705"
-         id="stop25" />
-      <stop
-         style="stop-color:#ff1010;stop-opacity:1;"
-         offset="0.7932418"
-         id="stop24" />
-    </linearGradient>
     <filter
        inkscape:collect="always"
        style="color-interpolation-filters:sRGB"
@@ -1414,72 +1391,72 @@
        width="16"
        height="16"
        id="corazon"
-       transform="matrix(0.0661458,0,0,0.0661458,-60.5443,128.187)" />
+       transform="matrix(0.0661458,0,0,0.0661458,166.30071,20.026363)" />
     <rect
        style="display:inline;opacity:1;fill:none;fill-opacity:1;stroke:#010101;stroke-width:0.1;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1;paint-order:stroke fill markers"
        id="icon"
        width="7"
        height="7"
-       x="-99.976562"
-       y="115.16058"
+       x="126.86845"
+       y="6.9999461"
        ry="0" />
     <use
        xlink:href="#noto-activities.svg:noto--mahjong-red-dragon"
        width="16"
        height="16"
        id="ficha"
-       transform="matrix(0.0661458,0,0,0.0661458,-105.532,124.537)" />
+       transform="matrix(0.0661458,0,0,0.0661458,121.31301,16.376363)" />
     <use
        xlink:href="#noto-activities.svg:noto--trophy"
        width="16"
        height="16"
        id="copa"
-       transform="matrix(0.10822,0,0,0.10822,-38.5894,180.446)" />
+       transform="matrix(0.10822,0,0,0.10822,188.25561,72.285363)" />
     <use
        xlink:href="#noto-activities.svg:noto--spade-suit"
        width="16"
        height="16"
        id="picas"
-       transform="matrix(0.264583,0,0,0.264583,-42.0983,127.284)" />
+       transform="matrix(0.264583,0,0,0.264583,184.74671,19.123363)" />
     <use
        xlink:href="#noto-activities.svg:noto--diamond-suit"
        width="16"
        height="16"
        id="diamante"
-       transform="matrix(0.264583,0,0,0.264583,-84.5755,128.281)" />
+       transform="matrix(0.264583,0,0,0.264583,142.26951,20.120363)" />
     <use
        x="0"
        y="0"
        xlink:href="#ficha"
        id="clone_ficha"
-       transform="translate(-0.79485,12.3582)" />
+       transform="translate(-0.79484795,12.358203)" />
     <use
        x="0"
        y="0"
        xlink:href="#corazon"
        id="clone_corazon"
-       transform="translate(-0.435816,12.5917)" />
+       transform="translate(-0.43581795,12.591703)" />
     <use
        xlink:href="#noto-activities.svg:noto--spade-suit"
        width="16"
        height="16"
        id="use48"
-       transform="matrix(0.264583,0,0,0.264583,-42.098267,127.2845)" />
+       transform="matrix(0.264583,0,0,0.264583,184.74675,19.123863)" />
     <use
        xlink:href="#noto-activities.svg:noto--spade-suit"
        width="16"
        height="16"
        id="use49"
-       transform="matrix(0.264583,0,0,0.264583,-42.098267,127.2845)" />
+       transform="matrix(0.264583,0,0,0.264583,184.74675,19.123863)" />
     <use
        xlink:href="#noto--pizza"
        width="16"
        height="16"
        id="pizzakkk"
-       transform="matrix(0.123347,0,0,0.123347,-59.0494,167.971)" />
+       transform="matrix(0.123347,0,0,0.123347,167.79561,59.810363)" />
     <g
        id="pizza_g"
-       transform="matrix(0.123347,0,0,0.123347,-59.0494,167.971)"
+       transform="matrix(0.123347,0,0,0.123347,167.79561,59.810363)"
        inkscape:label="pizza_g">
       <rect
          x="0"
@@ -1565,153 +1542,6 @@
            id="title4795">noto:pizza</title>
       </g>
     </g>
-    <text
-       xml:space="preserve"
-       id="text1786"
-       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:18.6667px;font-family:'Noto Serif Armenian';-inkscape-font-specification:'Noto Serif Armenian';text-align:center;letter-spacing:0px;writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect1786);display:inline;opacity:1;fill:none;fill-opacity:1;stroke:#010101;stroke-width:0.377953;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1;paint-order:stroke fill markers"
-       transform="scale(0.26458333)"><tspan
-         x="-678.00102"
-         y="275.09375"
-         id="tspan5">Pru<tspan
-   style="font-size:65%;font-family:'Wingdings 3';-inkscape-font-specification:'Wingdings 3, ';baseline-shift:sub;display:inline;fill:#ae0707;stroke:#ffffff;stroke-opacity:0"
-   id="tspan2">e</tspan><tspan
-   style="display:inline;fill:#31843a"
-   id="tspan3">BA</tspan> de </tspan><tspan
-         x="-680.83469"
-         y="298.54608"
-         id="tspan7">text<tspan
-   style="font-size:16px"
-   id="tspan6">🪙</tspan>⚡🛸</tspan><tspan
-         x="-642.29397"
-         y="321.99841"
-         id="tspan8">💶</tspan></text>
-  </g>
-  <g
-     id="g1464">
-    <path
-       sodipodi:type="star"
-       style="mix-blend-mode:normal;fill:#9b7164;fill-opacity:1;stroke:url(#radialGradient25-4-4-6);stroke-width:0;stroke-dasharray:none;stroke-opacity:1;paint-order:markers fill stroke"
-       id="path3-5-9-9"
-       inkscape:flatsided="true"
-       sodipodi:sides="6"
-       sodipodi:cx="94.875"
-       sodipodi:cy="79.92794"
-       sodipodi:r1="3.5213096"
-       sodipodi:r2="3.0495436"
-       sodipodi:arg1="0.51914611"
-       sodipodi:arg2="1.0427449"
-       inkscape:rounded="0.03"
-       inkscape:randomized="0"
-       d="m 97.932353,81.674999 c -0.05241,0.09172 -2.936036,1.773746 -3.041674,1.774216 -0.105638,4.7e-4 -3.004126,-1.655809 -3.057353,-1.747059 -0.05323,-0.09125 -0.06809,-3.429554 -0.01568,-3.521274 0.05241,-0.09172 2.936036,-1.773746 3.041674,-1.774216 0.105638,-4.71e-4 3.004126,1.655808 3.057353,1.747058 0.05323,0.09125 0.06809,3.429555 0.01568,3.521275 z"
-       transform="matrix(1.0966409,-0.63055826,0.63055826,1.0966409,-249.16915,52.726807)" />
-    <path
-       sodipodi:type="star"
-       style="fill:#41c8bb;fill-opacity:1;stroke:#10f663;stroke-width:0;stroke-dasharray:none;stroke-opacity:1;paint-order:markers fill stroke"
-       id="path109-7"
-       inkscape:flatsided="true"
-       sodipodi:sides="3"
-       sodipodi:cx="110.50147"
-       sodipodi:cy="54.983826"
-       sodipodi:r1="4.88589"
-       sodipodi:r2="2.442945"
-       sodipodi:arg1="0.98692593"
-       sodipodi:arg2="2.0341235"
-       inkscape:rounded="0.01"
-       inkscape:randomized="0"
-       d="m 113.19485,59.060296 c -0.0706,0.04665 -7.5653,-3.697696 -7.5704,-3.782168 -0.005,-0.08447 6.98495,-4.702897 7.06066,-4.665075 0.0757,0.03782 0.58035,8.400593 0.50974,8.447243 z"
-       inkscape:transform-center-x="-0.401586"
-       inkscape:transform-center-y="5.877193e-05"
-       transform="matrix(0.02488091,-0.43225559,0.43225559,0.02488091,-121.22258,124.43975)" />
-    <path
-       sodipodi:type="star"
-       style="fill:#41c8bb;fill-opacity:1;stroke:#10f663;stroke-width:0;stroke-dasharray:none;stroke-opacity:1;paint-order:markers fill stroke"
-       id="path109-3-3"
-       inkscape:flatsided="true"
-       sodipodi:sides="3"
-       sodipodi:cx="110.50147"
-       sodipodi:cy="54.983826"
-       sodipodi:r1="4.88589"
-       sodipodi:r2="2.442945"
-       sodipodi:arg1="0.98692593"
-       sodipodi:arg2="2.0341235"
-       inkscape:rounded="0.01"
-       inkscape:randomized="0"
-       d="m 113.19485,59.060296 c -0.0706,0.04665 -7.5653,-3.697696 -7.5704,-3.782168 -0.005,-0.08447 6.98495,-4.702897 7.06066,-4.665075 0.0757,0.03782 0.58035,8.400593 0.50974,8.447243 z"
-       inkscape:transform-center-x="0.37760659"
-       inkscape:transform-center-y="-0.0061051409"
-       transform="matrix(0.38424898,-0.19954113,0.19954113,0.38424898,-150.2481,80.224845)" />
-    <path
-       sodipodi:type="star"
-       style="fill:#ffd0d0;fill-opacity:1;stroke:#10f663;stroke-width:0;stroke-dasharray:none;stroke-opacity:1;paint-order:markers fill stroke"
-       id="path109-3-4-7"
-       inkscape:flatsided="true"
-       sodipodi:sides="3"
-       sodipodi:cx="110.50147"
-       sodipodi:cy="54.983826"
-       sodipodi:r1="4.88589"
-       sodipodi:r2="2.442945"
-       sodipodi:arg1="0.98692593"
-       sodipodi:arg2="2.0341235"
-       inkscape:rounded="0.01"
-       inkscape:randomized="0"
-       d="m 113.19485,59.060296 c -0.0706,0.04665 -7.5653,-3.697696 -7.5704,-3.782168 -0.005,-0.08447 6.98495,-4.702897 7.06066,-4.665075 0.0757,0.03782 0.58035,8.400593 0.50974,8.447243 z"
-       inkscape:transform-center-x="-0.41295039"
-       inkscape:transform-center-y="0.027825495"
-       transform="matrix(0.36150078,0.23828793,-0.23828793,0.36150078,-123.63017,35.606398)" />
-    <path
-       sodipodi:type="star"
-       style="fill:#ffd0d0;fill-opacity:1;stroke:#10f663;stroke-width:0;stroke-dasharray:none;stroke-opacity:1;paint-order:markers fill stroke"
-       id="path109-1-2"
-       inkscape:flatsided="true"
-       sodipodi:sides="3"
-       sodipodi:cx="110.50147"
-       sodipodi:cy="54.983826"
-       sodipodi:r1="4.88589"
-       sodipodi:r2="2.442945"
-       sodipodi:arg1="0.98692593"
-       sodipodi:arg2="2.0341235"
-       inkscape:rounded="0.01"
-       inkscape:randomized="0"
-       d="m 113.19485,59.060296 c -0.0706,0.04665 -7.5653,-3.697696 -7.5704,-3.782168 -0.005,-0.08447 6.98495,-4.702897 7.06066,-4.665075 0.0757,0.03782 0.58035,8.400593 0.50974,8.447243 z"
-       inkscape:transform-center-x="-0.40158157"
-       inkscape:transform-center-y="6.1847436e-05"
-       transform="matrix(-0.02888301,0.43200662,-0.43200662,-0.02888301,-67.715805,36.856567)" />
-    <path
-       sodipodi:type="star"
-       style="fill:#ffd0d0;fill-opacity:1;stroke:#10f663;stroke-width:0;stroke-dasharray:none;stroke-opacity:1;paint-order:markers fill stroke"
-       id="path109-3-8-6"
-       inkscape:flatsided="true"
-       sodipodi:sides="3"
-       sodipodi:cx="110.50147"
-       sodipodi:cy="54.983826"
-       sodipodi:r1="4.88589"
-       sodipodi:r2="2.442945"
-       sodipodi:arg1="0.98692593"
-       sodipodi:arg2="2.0341235"
-       inkscape:rounded="0.01"
-       inkscape:randomized="0"
-       d="m 113.19485,59.060296 c -0.0706,0.04665 -7.5653,-3.697696 -7.5704,-3.782168 -0.005,-0.08447 6.98495,-4.702897 7.06066,-4.665075 0.0757,0.03782 0.58035,8.400593 0.50974,8.447243 z"
-       inkscape:transform-center-x="0.37760443"
-       inkscape:transform-center-y="-0.0061063028"
-       transform="matrix(-0.38608048,0.19597401,-0.19597401,-0.38608048,-39.117502,81.327157)" />
-    <path
-       sodipodi:type="star"
-       style="fill:#ffd0d0;fill-opacity:1;stroke:#10f663;stroke-width:0;stroke-dasharray:none;stroke-opacity:1;paint-order:markers fill stroke"
-       id="path109-3-4-4-0"
-       inkscape:flatsided="true"
-       sodipodi:sides="3"
-       sodipodi:cx="110.50147"
-       sodipodi:cy="54.983826"
-       sodipodi:r1="4.88589"
-       sodipodi:r2="2.442945"
-       sodipodi:arg1="0.98692593"
-       sodipodi:arg2="2.0341235"
-       inkscape:rounded="0.01"
-       inkscape:randomized="0"
-       d="m 113.19485,59.060296 c -0.0706,0.04665 -7.5653,-3.697696 -7.5704,-3.782168 -0.005,-0.08447 6.98495,-4.702897 7.06066,-4.665075 0.0757,0.03782 0.58035,8.400593 0.50974,8.447243 z"
-       inkscape:transform-center-x="-0.41294958"
-       inkscape:transform-center-y="0.027826684"
-       transform="matrix(-0.35927847,-0.24162561,0.24162561,-0.35927847,-66.181189,125.73936)" />
   </g>
   <g
      id="g22265">
@@ -1755,7 +1585,8 @@
        id="path1251" />
   </g>
   <g
-     id="g1">
+     id="g1"
+     transform="translate(191.76589,-19.878171)">
     <rect
        style="fill:#4e447b;fill-opacity:1;stroke:none;stroke-width:0.0441162;paint-order:markers fill stroke"
        id="back_card"
@@ -1763,7 +1594,8 @@
        height="83"
        x="-74.21801"
        y="201.92609"
-       ry="3.7727273" />
+       ry="3.7727273"
+       rx="3.7727273" />
     <text
        xml:space="preserve"
        style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:17.6389px;line-height:0.9;font-family:'Britannic Bold';-inkscape-font-specification:'Britannic Bold, ';text-align:center;text-decoration-color:#000000;letter-spacing:8.19944px;word-spacing:0px;writing-mode:lr-tb;direction:ltr;text-anchor:middle;white-space:pre;fill:#b9d83b;fill-opacity:1;stroke:#ff0505;stroke-width:0;stroke-linecap:round"
@@ -1795,9 +1627,9 @@
        transform="translate(15.621904,10.289876)"><tspan
          x="47.294273"
          y="235.80989"
-         id="tspan10"><tspan
+         id="tspan3"><tspan
            style="fill:#251f6f"
-           id="tspan9">This is a label</tspan></tspan></text>
+           id="tspan2">This is a label</tspan></tspan></text>
   </g>
   <g
      id="g450"
@@ -1845,17 +1677,17 @@
        inkscape:label="main_text"><tspan
          x="-241.08886"
          y="229.73633"
-         id="tspan11">This is the template of a card. 
+         id="tspan5">This is the template of a card. 
 </tspan><tspan
          x="-286.78496"
          y="253.0697"
-         id="tspan12">With PnPInk&gt;deckmaker you can create </tspan><tspan
+         id="tspan6">With PnPInk&gt;deckmaker you can create </tspan><tspan
          x="-287.14894"
          y="276.40308"
-         id="tspan13">lots of variations from this from a csv or </tspan><tspan
+         id="tspan7">lots of variations from this from a csv or </tspan><tspan
          x="-162.74471"
          y="299.73645"
-         id="tspan14">google sheet</tspan></text>
+         id="tspan8">google sheet</tspan></text>
     <text
        xml:space="preserve"
        transform="matrix(0,-0.199295,0.263167,0,98.5138,36.7166)"
@@ -1866,13 +1698,13 @@
        inkscape:label="example of vertical text frame"><tspan
          x="-268.16883"
          y="225.3227"
-         id="tspan15">vertical text example</tspan></text>
+         id="tspan9">vertical text example</tspan></text>
     <use
        x="0"
        y="0"
        xlink:href="#icon"
        id="clone_icon-1"
-       transform="translate(216.663,-41.1593)"
+       transform="translate(-10.182012,67.001337)"
        inkscape:label="test"
        style="display:inline" />
     <use
@@ -1880,7 +1712,7 @@
        y="0"
        xlink:href="#icon"
        id="clone_icon"
-       transform="translate(216.656,-41.1595)"
+       transform="translate(-10.189012,67.001137)"
        inkscape:label="rect for placement of other elements. id is &quot;clone_icon&quot; (can be even a clone of other element)"
        style="display:inline" />
     <rect
@@ -1911,7 +1743,7 @@
        y="0"><tspan
          x="-214.06019"
          y="266.91398"
-         id="tspan16">fit and anchor</tspan></text>
+         id="tspan10">fit and anchor</tspan></text>
   </g>
   <g
      id="g1462"
@@ -1946,29 +1778,30 @@
   </g>
   <g
      id="g20"
-     transform="matrix(1.0022375,0,0,0.80832886,-47.895925,35.351942)">
+     transform="matrix(1.0022375,0,0,0.80832886,65.927823,-137.33235)">
     <rect
-       style="fill:#ccb58b;stroke:#000000;stroke-width:13.798;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:6.2;stroke-dasharray:none;fill-opacity:1"
+       style="fill:#ccb58b;fill-opacity:1;stroke:#000000;stroke-width:13.798;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:6.2;stroke-dasharray:none"
        id="great_board"
        width="614.81635"
        height="474.75214"
        x="-704.34943"
        y="123.33088"
-       ry="11.005701" />
+       ry="11.005701"
+       rx="11.005701" />
     <text
        xml:space="preserve"
-       style="font-size:136.77px;line-height:0.8;font-family:Sylfaen;-inkscape-font-specification:Sylfaen;text-align:start;text-decoration-color:#000000;letter-spacing:0px;word-spacing:0px;writing-mode:lr-tb;direction:rtl;text-anchor:start;white-space:pre;fill:#6e571c;fill-opacity:1;stroke:#000000;stroke-width:2.20314635;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:6.2;stroke-dasharray:none"
+       style="font-size:136.77px;line-height:0.8;font-family:Sylfaen;-inkscape-font-specification:Sylfaen;text-align:start;text-decoration-color:#000000;letter-spacing:0px;word-spacing:0px;writing-mode:lr-tb;direction:rtl;text-anchor:start;white-space:pre;fill:#6e571c;fill-opacity:1;stroke:#000000;stroke-width:2.20315;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:6.2;stroke-dasharray:none"
        x="-197.21085"
        y="190.47758"
        id="text4"
        transform="scale(0.60590575,1.6504217)"><tspan
          sodipodi:role="line"
          id="tspan4"
-         style="fill:#6e571c;fill-opacity:1;stroke-width:2.20314635;stroke-dasharray:none"
+         style="fill:#6e571c;fill-opacity:1;stroke-width:2.20315;stroke-dasharray:none"
          x="-197.21086"
          y="190.47758">The great board </tspan><tspan
          sodipodi:role="line"
-         style="fill:#6e571c;fill-opacity:1;stroke-width:2.20314635;stroke-dasharray:none"
+         style="fill:#6e571c;fill-opacity:1;stroke-width:2.20315;stroke-dasharray:none"
          x="-197.21086"
          y="299.89359"
          id="tspan17">to split</tspan></text>

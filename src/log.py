@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import time
 import inspect
+import atexit
 
 import inkex
 import prefs
@@ -161,12 +162,25 @@ class Logger:
 
 # --------------------------- singleton API -----------------------------------
 _LOGGER = None
+_ATEXIT_HOOKED = False
+
+
+def _ensure_atexit_hook():
+    global _ATEXIT_HOOKED
+    if _ATEXIT_HOOKED:
+        return
+    try:
+        atexit.register(close)
+        _ATEXIT_HOOKED = True
+    except Exception:
+        pass
 
 def get_logger(effect=None, console_level="global",
                file_level="global", tag_override=None):
     global _LOGGER
     if _LOGGER is not None:
         return _LOGGER
+    _ensure_atexit_hook()
 
     if console_level == "global":
         console_level = prefs.get_console_level("warn")
@@ -184,6 +198,7 @@ def get_logger(effect=None, console_level="global",
 
 def init(tag="PnP", console_level="warn", file_level="trace"):
     global _LOGGER
+    _ensure_atexit_hook()
     ext_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = os.path.join(ext_dir, "pnpink.log")
     _LOGGER = Logger(tag, console_level, file_level, file_path)

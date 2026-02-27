@@ -2,13 +2,11 @@
 # -*- coding: utf-8 -*-
 # [2026-02-19] Chore: translate comments to English.
 """
-spritesheet.py ? PnPInk (v0.4.2)
+spritesheet.py - PnPInk
 
-- Draw in doc-space: overlay group uses transform = (layer CTM)^-1.
-- mm?px with inkex.units.convert_unit(..., svgdoc).
-- preset/custom: fit with floor; if it does not fit, do not draw.
-- Fix linked images before bbox.
-- show_text: OFF = draw; ON = print .Layout.
+Workflow:
+- Live Preview: draw/update cut guides over the selected bbox.
+- Apply: keep guides and emit .Layout strings in the messages panel for dataset copy.
 """
 
 import inkex
@@ -19,6 +17,7 @@ import layouts
 import log as LOG
 _l = LOG
 from math import floor
+import re
 
 NS = inkex.NSS
 
@@ -27,8 +26,9 @@ PREVIEW_GROUP_ID = "pnpink_spritesheet_preview"
 PREVIEW_LABEL    = "Spritesheet Preview"
 
 PREVIEW_STYLE = (
-    "fill:#ff0000;fill-opacity:0.30;"
-    "stroke:#ff0000;stroke-width:0.3mm;"
+    "fill:none;"
+    "stroke:#1a73e8;stroke-width:0.2mm;"
+    "stroke-opacity:1.0;"
     "stroke-linejoin:miter;stroke-linecap:butt;"
     "shape-rendering:crispEdges;"
 )
@@ -117,18 +117,70 @@ def _layout_strings_mm(rows, cols, tile_w_mm, tile_h_mm, mt, ml, mb, mr, gv, gh)
                _fmt_pair_mm(gv, gh)))
     return long_s, short_s, mini_s
 
+
+def _parse_mm_token(tok, default=None):
+    s = "" if tok is None else str(tok).strip()
+    if not s:
+        return default
+    try:
+        return float(SVG.measure_to_mm(s, base_mm=None))
+    except Exception:
+        try:
+            return float(s)
+        except Exception:
+            return default
+
+
+def _split_tokens(spec: str):
+    s = (spec or "").strip()
+    if not s:
+        return []
+    return [p for p in re.split(r"[\s,]+", s) if p]
+
+
+def _expand_margin_spec(spec: str):
+    # 1 value: all | 2 values: vertical horizontal | 4 values: top left bottom right
+    vals = [_parse_mm_token(t, default=0.0) for t in _split_tokens(spec)]
+    vals = [0.0 if v is None else float(v) for v in vals]
+    if not vals:
+        return (0.0, 0.0, 0.0, 0.0)
+    if len(vals) == 1:
+        a = vals[0]
+        return (a, a, a, a)
+    if len(vals) == 2:
+        v, h = vals[0], vals[1]
+        return (v, h, v, h)
+    if len(vals) >= 4:
+        return (vals[0], vals[1], vals[2], vals[3])
+    # len==3 fallback: top left bottom + left reused on right
+    return (vals[0], vals[1], vals[2], vals[1])
+
+
+def _expand_gap_spec(spec: str):
+    # 1 value: both | 2 values: vertical horizontal
+    vals = [_parse_mm_token(t, default=0.0) for t in _split_tokens(spec)]
+    vals = [0.0 if v is None else float(v) for v in vals]
+    if not vals:
+        return (0.0, 0.0)
+    if len(vals) == 1:
+        g = vals[0]
+        return (g, g)
+    return (vals[0], vals[1])
+
 # ---------- main effect ----------
 class SpriteSheet(inkex.EffectExtension):
     def add_arguments(self, pars):
         pars.add_argument("--tab", type=str, default="run")
         # margins (mm)
-        pars.add_argument("--margin_top",    type=float, default=5.0)
-        pars.add_argument("--margin_left",   type=float, default=5.0)
-        pars.add_argument("--margin_bottom", type=float, default=5.0)
-        pars.add_argument("--margin_right",  type=float, default=5.0)
+        pars.add_argument("--margin", type=str, default="5")
+        pars.add_argument("--margin_top", type=str, default="")
+        pars.add_argument("--margin_left", type=str, default="")
+        pars.add_argument("--margin_bottom", type=str, default="")
+        pars.add_argument("--margin_right", type=str, default="")
         # gaps (mm)
-        pars.add_argument("--gap_vertical",   type=float, default=2.0)   # between rows
-        pars.add_argument("--gap_horizontal", type=float, default=2.0)   # between cols
+        pars.add_argument("--gap", type=str, default="2")
+        pars.add_argument("--gap_vertical", type=str, default="")     # between rows
+        pars.add_argument("--gap_horizontal", type=str, default="")   # between cols
         # card mode
         pars.add_argument("--card_mode", type=str, default="auto")  # auto|preset|custom
         pars.add_argument("--cols", type=int, default=6)            # only auto
@@ -136,23 +188,12 @@ class SpriteSheet(inkex.EffectExtension):
         pars.add_argument("--card_preset", type=str, default="Standard")
         pars.add_argument("--card_w_mm", type=float, default=63.0)  # only custom
         pars.add_argument("--card_h_mm", type=float, default=88.0)  # only custom
-        # output
-        pars.add_argument("--show_text", type=inkex.Boolean, default=False)
 
     def effect(self):
         svgdoc = self.svg
         root = self.document.getroot()
 
-        # 1) Fix linked images (so visual_bbox works on <image>)
-        try:
-            svg_path = self.options.input_file or getattr(self.svg, "path", None)
-            fixed = svg.absolutize_all_linked_images(self.svg, svg_path)
-            if fixed:
-                _l.d(f"{LOG_PREFIX} absolutized {fixed} linked image(s)")
-        except Exception as e:
-            _l.w(f"{LOG_PREFIX} absolutize_all_linked_images failed: {e}")
-
-        # 2) Selection
+        # 1) Selection
         selection = list(svgdoc.selection or [])
         if not selection:
             raise inkex.AbortExtension("Select at least one element (image, group or node).")
@@ -167,13 +208,23 @@ class SpriteSheet(inkex.EffectExtension):
                 L = min(L, x); T = min(T, y); R = max(R, x+w); B = max(B, y+h)
         bx, by, bw, bh = L, T, (R-L), (B-T)
 
-        # 4) Params (mm)
-        mt_mm = max(0.0, float(self.options.margin_top))
-        ml_mm = max(0.0, float(self.options.margin_left))
-        mb_mm = max(0.0, float(self.options.margin_bottom))
-        mr_mm = max(0.0, float(self.options.margin_right))
-        gv_mm = max(0.0, float(self.options.gap_vertical))    # between rows
-        gh_mm = max(0.0, float(self.options.gap_horizontal))  # between cols
+        # 4) Params (mm): shorthand + optional per-side overrides
+        mt_mm, ml_mm, mb_mm, mr_mm = _expand_margin_spec(self.options.margin)
+        gv_mm, gh_mm = _expand_gap_spec(self.options.gap)  # vertical, horizontal
+
+        mt_mm = _parse_mm_token(self.options.margin_top, mt_mm)
+        ml_mm = _parse_mm_token(self.options.margin_left, ml_mm)
+        mb_mm = _parse_mm_token(self.options.margin_bottom, mb_mm)
+        mr_mm = _parse_mm_token(self.options.margin_right, mr_mm)
+        gv_mm = _parse_mm_token(self.options.gap_vertical, gv_mm)
+        gh_mm = _parse_mm_token(self.options.gap_horizontal, gh_mm)
+
+        mt_mm = max(0.0, float(mt_mm or 0.0))
+        ml_mm = max(0.0, float(ml_mm or 0.0))
+        mb_mm = max(0.0, float(mb_mm or 0.0))
+        mr_mm = max(0.0, float(mr_mm or 0.0))
+        gv_mm = max(0.0, float(gv_mm or 0.0))
+        gh_mm = max(0.0, float(gh_mm or 0.0))
 
         # 5) mm -> px (document-aware)
         mt = mm_to_px(mt_mm, svgdoc); ml = mm_to_px(ml_mm, svgdoc)
@@ -223,19 +274,8 @@ class SpriteSheet(inkex.EffectExtension):
             tile_w_mm = px_to_mm(tw, svgdoc)
             tile_h_mm = px_to_mm(th, svgdoc)
 
-        # 8) .Layout strings (mm)
-        L_long, L_short, L_mini = _layout_strings_mm(
-            rows, cols, tile_w_mm, tile_h_mm,
-            mt_mm, ml_mm, mb_mm, mr_mm, gv_mm, gh_mm
-        )
-
-        # 9) Action
+        # 9) Preview: always redraw guides (live preview + apply)
         _remove_old_preview(root)
-        if bool(self.options.show_text):
-            inkex.errormsg("Spritesheet .Layout (long):  " + L_long)
-            inkex.errormsg("Spritesheet .Layout (short): " + L_short)
-            inkex.errormsg("Spritesheet .Layout (mini):  " + L_mini)
-            return
 
         # If nothing fits (preset/custom), skip drawing
         if rows <= 0 or cols <= 0:

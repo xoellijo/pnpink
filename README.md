@@ -67,43 +67,14 @@ One template and one dataset can produce hundreds of print-ready components in s
 - Introduction: [`docs/intro.md`](docs/intro.md)
 - General manual: [`docs/pnpink-general.md`](docs/pnpink-general.md)
 
-### Build Documentation Site
-
-```bash
-pip install -r docs/requirements.txt
-mkdocs serve
-```
-
-### Build PDF on Demand (Recommended Pipeline)
-
-Local `mkdocs serve` is intentionally kept free of PDF plugins to avoid native-library issues on Windows.
-
-- PDF config is isolated in `mkdocs.pdf.yml`.
-- CI workflow `.github/workflows/docs-pdf.yml` builds `src/docs/pnpink.pdf` and uploads it as an artifact.
-
-Run when needed:
-
-1. GitHub -> `Actions` -> `docs-pdf` -> `Run workflow`.
-2. Download artifact `pnpink-docs-pdf`.
-
-Optional local PDF build (requires system GTK/Pango libs for WeasyPrint):
-
-```bash
-pip install -r docs/requirements-pdf.txt
-mkdocs build -f mkdocs.pdf.yml
-```
-
 ## Project Status
 
-This repository is under active development.
+This repository is currently in `alpha` release stage.
+Until stabilization is explicitly announced, DSL changes may break backward compatibility and older datasets/templates may require updates.
 Join the community on the BGG Guild to follow progress, share use cases, and influence the roadmap:
 
 - [`PnPInk BGG Guild`](https://boardgamegeek.com/guild/4569)
 
 ## Long-Term Roadmap
 
-- Professional PDF output with CMYK workflow support (already very advanced).
-- New `ZVG/PNP` package format to bundle SVG, assets, and dataset in one portable file.
-- Ultra-light sharing goal: distribute a tiny package (often under 100 KB) that can generate hundreds of final, fully editable components.
-- Export targets for virtual tabletop ecosystems (`TTS`, `Screentop`, `Vassal`), and potentially a dedicated testing environment in the future.
-- Local AI helpers for bulk production tasks (auto-cropping, text removal, translation passes, and other repetitive operations).
+Potential long-term directions (no guarantees): deeper professional PDF workflows, a compact `ZVG/PNP` packaging format, exports for virtual tabletop platforms, and local AI-assisted bulk production tools.

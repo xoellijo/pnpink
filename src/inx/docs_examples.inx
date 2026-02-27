@@ -1,18 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
 
-  <_name>Spritesheet</_name>
-  <id>pnpink.spritesheet</id>
+  <_name>Docs and Examples</_name>
+  <id>pnpink.docs_examples</id>
 
   <effect needs-live-preview="false">
     <object-type>all</object-type>
     <effects-menu>
       <submenu _name="PnPInk"/>
     </effects-menu>
-    <menu-tip>Open interactive Spritesheet GUI.</menu-tip>
+    <menu-tip>Open installed PnPInk folder in browser.</menu-tip>
   </effect>
 
   <script>
-    <command reldir="extensions" interpreter="python">pnpink/spritesheet_gui.py</command>
+    <command reldir="extensions" interpreter="python">pnpink/docs_examples.py</command>
   </script>
+
 </inkscape-extension>
