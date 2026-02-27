@@ -1,6 +1,7 @@
 <img src="docs/assets/images/pnpink_logo.png" alt="PnPInk logo" align="left" width="120" hspace="10" />
 
 # PnPInk
+[![Latest release](https://img.shields.io/github/v/release/xoellijo/pnpink?label=latest%20release)](https://github.com/xoellijo/pnpink/releases)
 
 PnPInk is a free, open-source, cross-platform toolkit for creating high-quality print-and-play materials for board games (cards, boards, tokens, tiles, and more) directly inside Inkscape.
 
@@ -46,7 +47,7 @@ One template and one dataset can produce hundreds of print-ready components in s
 ## Installation (Quick)
 
 1. Install Inkscape.
-2. Download the latest PnPInk ZIP from `Releases`.
+2. Download the latest PnPInk ZIP from [Releases](https://github.com/xoellijo/pnpink/releases).
 3. Extract the ZIP.
 4. Run:
    - Windows: `install_windows.bat`
