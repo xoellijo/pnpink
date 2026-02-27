@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="280" viewBox="0 0 820 280">
+  <defs>
+    <style>
+      .title { font: 700 18px sans-serif; fill: #113049; }
+      .label { font: 600 13px sans-serif; fill: #113049; }
+      .text { font: 500 12px sans-serif; fill: #1d1d1d; }
+      .box { fill: #f7fbff; stroke: #1f4f78; stroke-width: 2; }
+      .inner { fill: #ffffff; stroke: #2f6ea0; stroke-width: 1.6; }
+      .hint { fill: #f2f8fd; stroke: #5f8db4; stroke-width: 1.2; stroke-dasharray: 6 4; }
+    </style>
+  </defs>
+
+  <text x="20" y="32" class="title">Conceptual card template structure in PnPInk</text>
+
+  <rect x="20" y="52" width="440" height="200" rx="10" class="box"/>
+  <text x="36" y="78" class="label">(g) card_template</text>
+
+  <rect x="52" y="92" width="376" height="144" rx="8" class="hint"/>
+  <text x="64" y="114" class="label">(rect) card_bbox</text>
+  <text x="190" y="114" class="text">template bounding box</text>
+
+  <rect x="76" y="128" width="190" height="28" rx="4" class="inner"/>
+  <text x="86" y="146" class="text">(text) title</text>
+
+  <rect x="284" y="128" width="120" height="28" rx="4" class="inner"/>
+  <text x="294" y="146" class="text">(text) cost</text>
+
+  <rect x="76" y="164" width="328" height="56" rx="4" class="inner"/>
+  <text x="86" y="196" class="text">(rect) art - image anchor</text>
+
+  <rect x="500" y="64" width="300" height="176" rx="10" class="box"/>
+  <text x="520" y="92" class="label">ID to dataset mapping</text>
+  <text x="520" y="122" class="text">title -&gt; text replacement</text>
+  <text x="520" y="148" class="text">cost -&gt; text replacement</text>
+  <text x="520" y="174" class="text">art -&gt; image placement</text>
+  <text x="520" y="200" class="text">card_bbox -&gt; template selector</text>
+</svg>

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+
+  <!-- Visible name -->
+  <_name>DeckMaker v0.41</_name>
+
+  <!-- Unique id (NO cambiar) -->
+  <id>pnpink.deckmaker</id>
+
+  <!-- UI -->
+  <param name="tab" type="notebook">
+    <page name="data" gui-text="Data">
+      <label>Build a deck from CSV + SVG template (current document).</label>
+
+      <!-- NUEVOS CAMPOS (manteniendo el resto tal cual) -->
+      <param name="sheet_id" type="string" gui-text="Google Sheet Id (optional)" appearance="full"/>
+      <param name="sheet_range" type="string" gui-text="Range (A1, optional)" appearance="full">A1:Z999</param>
+
+      <label>If Sheet Id is empty, a same_svg_name.csv in same dir will be used.</label>
+    </page>
+
+    <!-- Mantén el resto de páginas que ya tenías; aquí dejo About mínima para no romper -->
+    <page name="about" gui-text="About">
+      <label>DeckMaker v0.41 — CSV/Google Sheets input.</label>
+    </page>
+  </param>
+
+  <effect needs-live-preview="true">
+    <object-type>all</object-type>
+    <effects-menu>
+      <submenu _name="PnPInk"/>
+    </effects-menu>
+    <menu-tip>Build a printable deck from CSV and an SVG template.</menu-tip>
+  </effect>
+
+  <!-- Launch -->
+  <script>
+    <command reldir="extensions" interpreter="python">pnpink/deckmaker.py</command>
+  </script>
+
+</inkscape-extension>

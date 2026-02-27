@@ -1,0 +1,81 @@
+/* Tighter typography and spacing. */
+.md-typeset {
+  line-height: 1.55;
+}
+
+.md-typeset p {
+  margin: 0.6em 0;
+}
+
+.md-typeset h1 {
+  font-size: 1.35rem;
+  margin: 1.1em 0 0.45em;
+}
+
+.md-typeset h2 {
+  font-size: 1.15rem;
+  margin: 0.95em 0 0.4em;
+}
+
+.md-typeset h3 {
+  font-size: 1.02rem;
+  margin: 0.8em 0 0.35em;
+}
+
+.md-typeset h4 {
+  font-size: 0.95rem;
+  margin: 0.72em 0 0.3em;
+}
+
+/* Compact "Notes" block: use markdown as:
+   ::: notes
+   Notes:
+   1. ...
+   2. ...
+   ::: */
+.md-typeset .notes {
+  font-size: 0.88rem;
+  line-height: 1.35;
+  margin: 0.45em 0;
+  padding: 0.45em 0.6em;
+  border-left: 3px solid #9fb7d9;
+  background: #f6f9ff;
+}
+
+.md-typeset .notes p {
+  margin: 0.2em 0 0.35em;
+}
+
+.md-typeset .notes ol,
+.md-typeset .notes ul {
+  margin: 0.2em 0 0.2em 1.05em;
+}
+
+/* DSL code styling for contrast. */
+.md-typeset code {
+  background: #eef4ff;
+  color: #1e3a8a;
+  border: 1px solid #d7e3ff;
+}
+
+.md-typeset pre code {
+  background: #eef4ff;
+  color: #1e3a8a;
+  border: 1px solid #d7e3ff;
+}
+
+/* Table style for CSV-like datasets. */
+.md-typeset table.csv-dataset th {
+  background: #154c79;
+  color: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.md-typeset table.csv-dataset tbody td:first-child {
+  background: #edf4fa;
+  font-weight: 600;
+  white-space: nowrap;
+}

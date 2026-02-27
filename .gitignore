@@ -1,0 +1,28 @@
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+*.log
+logs/
+pnpink.log
+
+# Temp / backups
+*.tmp
+*.bak
+*.swp
+
+# Windows junk
+Thumbs.db
+Desktop.ini
+
+# Editor settings
+.vscode/
+
+# Generated documentation artifacts
+src/docs/*.pdf
+site/
+
+# old branches
+.git_old/

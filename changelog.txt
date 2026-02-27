@@ -1,0 +1,52 @@
+[0.13]
+- limpieza svg.py (NS/NSS/NSMAP)
+- optimizaciones pipeline
+[0.14] Spritesheets
+[0.15] headers duplicados, celdas multivalor, modificadores: "+"
+[0.16] 
+- merge 0.14 y 0.15
+- mejoras en DSL (pattern, gaps, traslate)
+- mejoras en Fit-Anchor (inside as default, border with natual %, )
+- 
+[0.17] Iterators
+[0.18-0.19] 
+- Optmizations (render, logs, )
+- snippets apply to comments
+- fit_anchor 
+- border fix
+[0.20]
+- Iterators with spritesheets
+- optimizations for clips with huge images
+- 
+[0.21-0.22]
+- optimizations for inline icons pass-B 
+- bugfix on fit_anchor clip
+[0.22]
+- border with wxh 
+- '%' means '100%' (by default)
+[0.23-0.24]
+- inline icons rewrite (compatible with snippets, sprites, sources and fit&anchor)
+- array targets: stable group bbox via explicit data-bbox for fit_anchor
+- array items: per-item fit_anchor ops inside array slots
+[0.25]
+- split boards (when template > page)
+- comments revision
+- fix default fit_anchor
+- gaps and offset (2 separated parameters)
+[0.26]
+- pnpink_ini.csv (default directives)
+[0.27]
+- path expansions per platform (i.e %USERPROFILE% in windows, $HOME or ~ in linux)
+- list expansions: [1..5], [a..F], [K..ZZ]
+[0.28-0.33]
+- iterators improvements.
+- virtual sources and assets cache
+- wikimedia commons
+- pixabay and user-api-key
+- fix light-query-all for inline-icons (improve speed)
+[0.34-0.38]
+- documentation (markdown)
+- fix spritesheets from web sources
+[0.39-0.41]
+- preparing for first alpha publish in github
+ 

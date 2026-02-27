@@ -1,0 +1,25 @@
+# This file define global variables, snippets and spritesheets
+
+# =====================
+# RICH TEXT SNIPPETS
+# =====================
+# :Tb(text) = <tspan font-weight='bold'>${text}</tspan>	## snippet to create bold text
+# :Ti(text) = <tspan font-style='italic'>${text}</tspan> ## snippet to create italic text
+# :Td(text) = <tspan baseline-shift='sub' font-size='65%'>${text}</tspan>
+# :Tu(text) = <tspan baseline-shift='super' font-size='65%'>${text}</tspan>
+# :Ts(text) = <tspan text-decoration='underline'>${text}</tspan>
+# :Tx(text) = <tspan text-decoration='line-through'>${text}</tspan>
+# :Tf(text font size) = <tspan font-family='${font}' ${size? font-size='${size}'}>${text}</tspan>
+# :Tc(text fill stroke width=1) = <tspan fill='${fill}' ${stroke? stroke='${stroke}' width='${width}' paint-order='stroke'}>${text}</tspan>
+# =====================
+
+# =====================
+# Other SNIPPETS
+# =====================
+
+# snippet for iconify noto icons
+# :Ic(icon) = @{icon://noto/${icon}}
+
+# snippet for Tabletop Simulator cache image path (only windows supported)
+# :TTS(img) = %USERPROFILE%\Documents\My Games\Tabletop Simulator\Mods\Images\${img}
+

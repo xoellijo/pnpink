@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+
+  <!-- Visible name -->
+  <_name>PnPInk Preferences</_name>
+
+  <!-- Unique id (NO cambiar) -->
+  <id>pnpink.prefs</id>
+
+  <!-- UI -->
+  <param name="tab" type="notebook">
+    <page name="general" _gui-text="General">
+      <param name="console_log_level" type="optiongroup" appearance="combo" _gui-text="Console (Inkex) level">
+        <option value="none">none</option>
+        <option value="error">error</option>
+        <option value="warn">warn</option>
+        <option value="info">info</option>
+        <option value="debug">debug (no trace)</option>
+        <option value="trace">trace (no debug)</option>
+        <option value="all">all (debug + trace)</option>
+        <option value="debug_only">debug only</option>
+        <option value="trace_only">trace only</option>
+      </param>
+      <param name="file_log_level" type="optiongroup" appearance="combo" _gui-text="File level (pnpink.log)">
+        <option value="none">none</option>
+        <option value="error">error</option>
+        <option value="warn">warn</option>
+        <option value="info">info</option>
+        <option value="debug">debug (no trace)</option>
+        <option value="trace">trace (no debug)</option>
+        <option value="all">all (debug + trace)</option>
+        <option value="debug_only">debug only</option>
+        <option value="trace_only">trace only</option>
+      </param>
+      <param name="log_json" type="bool" _gui-text="JSON output (both sinks unless env overrides)">false</param>
+    </page>
+  </param>
+  
+  <effect needs-live-preview="false">
+    <object-type>all</object-type>
+    <effects-menu>
+      <submenu _name="PnPInk"/>
+    </effects-menu>
+    <menu-tip>Set global preferences for PnPInk (saved in preferences.ini).</menu-tip>
+  </effect>
+
+  <!-- Launch -->
+  <script>
+    <command reldir="extensions" interpreter="python">pnpink/prefs.py</command>
+  </script>
+
+</inkscape-extension>

@@ -1,0 +1,50 @@
+site_name: PnPInk Documentation
+site_description: PnPInk user documentation
+
+theme:
+  name: material
+  logo: assets/images/pnpink_logo.png
+  favicon: assets/images/pnpink_logo.png
+  features:
+    - navigation.sections
+    - navigation.top
+    - toc.follow
+
+nav:
+  - Home: index.md
+  - Introduction: intro.md
+  - Dataset:
+      - Format and Sources: dataset-overview.md
+      - Dataset Reference: dataset.md
+  - DSL:
+      - Nomenclature: dsl/nomenclature.md
+      - Architecture: dsl/architecture.md
+      - Core Syntax: dsl/index.md
+      - Iterators and Copies: dsl/iterators.md
+      - Fit and Anchor: dsl/fit-anchor.md
+      - Layout: dsl/layout.md
+      - Page: dsl/page.md
+      - Source: dsl/source.md
+      - Marks: dsl/marks.md
+      - Advanced: dsl/advanced.md
+  - PnPInk Overview: pnpink-general.md
+  - Basic Workflow: quickstart.md
+  - Snippets: snippets.md
+  - Presets: presets.md
+
+plugins:
+  - search
+
+hooks:
+  - hooks/numbered_headings.py
+
+markdown_extensions:
+  - admonition
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+extra_css:
+  - assets/stylesheets/extra.css

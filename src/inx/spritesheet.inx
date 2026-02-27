@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+
+  <_name>[Test] Spritesheet</_name>
+  <id>pnpink.spritesheet</id>
+
+  <dependency type="executable" location="extensions">pnpink_v07/spritesheet.py</dependency>
+
+  <param name="tab" type="notebook">
+    <page name="run" gui-text="Run">
+      <label>Draw a sprite grid over the selection bbox or show the .Layout text.</label>
+
+      <!-- 1) margins -->
+      <label>margins (mm):</label>
+      <param name="margin_top"    type="float" min="0" max="100" precision="1" appearance="full" gui-text="        top">5.0</param>
+      <param name="margin_left"   type="float" min="0" max="100" precision="1" appearance="full" gui-text="        left">5.0</param>
+      <param name="margin_bottom" type="float" min="0" max="100" precision="1" appearance="full" gui-text="        bottom">5.0</param>
+      <param name="margin_right"  type="float" min="0" max="100" precision="1" appearance="full" gui-text="        right">5.0</param>
+
+      <!-- 2) gaps -->
+      <label>gaps (mm):</label>
+      <param name="gap_vertical"   type="float" min="0" max="100" precision="1" appearance="full" gui-text="        vertical">2.0</param>
+      <param name="gap_horizontal" type="float" min="0" max="100" precision="1" appearance="full" gui-text="        horizontal">2.0</param>
+
+      <!-- 3) card -->
+      <label>card:</label>
+      <param name="card_mode" type="enum" gui-text="mode">
+        <_item value="auto">auto (rows×cols)</_item>
+        <_item value="preset">preset</_item>
+        <_item value="custom">custom (mm)</_item>
+      </param>
+
+      <!-- auto -->
+      <param name="cols" type="int" min="1" max="999" gui-text="cols:">6</param>
+      <param name="rows" type="int" min="1" max="999" gui-text="rows:">4</param>
+
+      <!-- preset -->
+      <param name="card_preset" type="enum" gui-text="preset:">
+        <_item value="Standard">Standard</_item>
+        <_item value="2.5x3.5inch">2.5x3.5inch</_item>
+        <_item value="Euro">Euro</_item>
+        <_item value="USA">USA</_item>
+        <_item value="Asia">Asia</_item>
+        <_item value="miniEuro">miniEuro</_item>
+        <_item value="miniAsia">miniAsia</_item>
+        <_item value="miniUSA">miniUSA</_item>
+        <_item value="Tarot">Tarot</_item>
+        <_item value="FrenchTarot">FrenchTarot</_item>
+        <_item value="Volcano">Volcano</_item>
+        <_item value="Wonder">Wonder</_item>
+        <_item value="Spanish">Spanish</_item>
+        <_item value="Desert">Desert</_item>
+        <_item value="squareS">squareS</_item>
+        <_item value="square">square</_item>
+        <_item value="squareL">squareL</_item>
+        <_item value="Dixit">Dixit</_item>
+      </param>
+
+      <!-- custom (mm) -->
+      <param name="card_w_mm" type="float" min="1" max="200" precision="1" appearance="full" gui-text="width (mm)">63.0</param>
+      <param name="card_h_mm" type="float" min="1" max="200" precision="1" appearance="full" gui-text="height (mm)">88.0</param>
+
+      <!-- output -->
+      <param name="show_text" type="boolean" gui-text="Show spritesheet definition text">false</param>
+    </page>
+  </param>
+
+  <effect needs-live-preview="true">
+    <object-type>all</object-type>
+    <effects-menu>
+      <submenu _name="PnPInk"/>
+    </effects-menu>
+  </effect>
+
+  <script>
+    <command reldir="extensions" interpreter="python">pnpink/spritesheet.py</command>
+  </script>
+</inkscape-extension>

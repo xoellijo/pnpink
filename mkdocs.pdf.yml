@@ -1,0 +1,7 @@
+INHERIT: mkdocs.yml
+
+plugins:
+  - search
+  - with-pdf:
+      output_path: ../src/docs/pnpink.pdf
+      toc_level: 3
