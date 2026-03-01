@@ -108,16 +108,17 @@ jobs:
                   zf.write(root / f, f)
               zf.write(payload_path, payload_name)
 
-          print(f"payload_name={payload_name}")
+          latest_name = "pnpink_latest.zip"
+          latest_path = dist / latest_name
+          latest_path.write_bytes(bundle_path.read_bytes())
+
           print(f"bundle_name={bundle_name}")
+          print(f"latest_name={latest_name}")
           PY
 
-          PAYLOAD_NAME="pnpink_payload_${{ steps.meta.outputs.version }}.zip"
-          BUNDLE_NAME="pnpink_${{ steps.meta.outputs.version }}.zip"
-          test -f "dist/${PAYLOAD_NAME}"
-          test -f "dist/${BUNDLE_NAME}"
-          echo "payload_path=dist/${PAYLOAD_NAME}" >> "$GITHUB_OUTPUT"
-          echo "bundle_path=dist/${BUNDLE_NAME}" >> "$GITHUB_OUTPUT"
+          LATEST_NAME="pnpink_latest.zip"
+          test -f "dist/${LATEST_NAME}"
+          echo "installer_path=dist/${LATEST_NAME}" >> "$GITHUB_OUTPUT"
         env:
           VERSION: ${{ steps.meta.outputs.version }}
 
@@ -128,8 +129,7 @@ jobs:
           name: PnPInk ${{ steps.meta.outputs.tag }}
           prerelease: true
           files: |
-            ${{ steps.package.outputs.payload_path }}
-            ${{ steps.package.outputs.bundle_path }}
+            ${{ steps.package.outputs.installer_path }}
           fail_on_unmatched_files: true
           overwrite_files: true
           generate_release_notes: true
