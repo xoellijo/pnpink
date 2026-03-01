@@ -169,7 +169,7 @@ patch_inx() {
     CMD_FOLDER="$DST_FOLDER_NAME"
   else
     ID_PREFIX="pnpink"
-    SUBMENU="PnPInk v$VERSION"
+    SUBMENU="PnPInk"
     CMD_FOLDER="pnpink"
   fi
 

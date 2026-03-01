@@ -399,10 +399,10 @@ def main() -> int:
         if not inx_files:
             die(f"No .inx files found in installed folder: {inx_dir}")
 
-        submenu = f"PnPInk v{manifest.version}" if manifest.channel == "main" else f"PnPInk DEV v{manifest.version}"
-        # IMPORTANT: id carries version even in main, so Inkscape treats upgrades as new entries
+        # Main channel must be stable (same menu/id) so upgrades overwrite in place.
+        submenu = "PnPInk" if manifest.channel == "main" else f"PnPInk DEV v{manifest.version}"
         if manifest.channel == "main":
-            id_prefix = f"pnpink_v{v_safe}"
+            id_prefix = "pnpink"
         else:
             id_prefix = f"pnpink_dev_v{v_safe}"
             
