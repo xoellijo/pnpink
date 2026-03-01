@@ -127,7 +127,7 @@ jobs:
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: PnPInk ${{ steps.meta.outputs.tag }}
-          prerelease: true
+          prerelease: false
           files: |
             ${{ steps.package.outputs.installer_path }}
           fail_on_unmatched_files: true

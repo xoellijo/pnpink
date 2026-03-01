@@ -48,6 +48,7 @@ One template and one dataset can produce hundreds of print-ready components in s
 
 1. Install Inkscape.
 2. Download the latest installer ZIP directly: [pnpink_latest.zip](https://github.com/xoellijo/pnpink/releases/latest/download/pnpink_latest.zip).
+   If that direct link does not work, open [All Releases](https://github.com/xoellijo/pnpink/releases) and download `pnpink_latest.zip` from the `Assets` section.
 3. Extract the ZIP.
 4. Run:
    - Windows: `install_windows.bat`
