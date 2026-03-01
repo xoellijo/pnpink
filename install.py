@@ -103,18 +103,7 @@ class Manifest:
     channel: str  # "main" or "dev"
 
 
-def read_manifest_from_zip(zip_path: Path) -> Manifest:
-    with zipfile.ZipFile(zip_path, "r") as z:
-        candidates = [n for n in z.namelist() if n.endswith("manifest.json")]
-        if not candidates:
-            die("manifest.json not found inside zip payload")
-        candidates.sort(key=lambda s: (s.count("/"), len(s)))
-        raw = z.read(candidates[0]).decode("utf-8", errors="replace")
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as e:
-            die(f"manifest.json invalid JSON: {e}")
-
+def parse_manifest_data(data: dict) -> Manifest:
     name = str(data.get("name", "")).strip() or APP_NAME
     version = str(data.get("version", "")).strip()
     channel = str(data.get("channel", "")).strip().lower()
@@ -125,6 +114,38 @@ def read_manifest_from_zip(zip_path: Path) -> Manifest:
         die("manifest.json 'channel' must be 'main' or 'dev'")
 
     return Manifest(name=name, version=version, channel=channel)
+
+
+def read_manifest_from_file(path: Path) -> Manifest:
+    if not path.exists():
+        die(f"manifest.json not found: {path}")
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        die(f"manifest.json invalid JSON at {path}: {e}")
+    return parse_manifest_data(data)
+
+
+def read_manifest_from_zip(zip_path: Path, fallback_manifest_paths: Optional[List[Path]] = None) -> Manifest:
+    with zipfile.ZipFile(zip_path, "r") as z:
+        candidates = [n for n in z.namelist() if n.endswith("manifest.json")]
+        if candidates:
+            candidates.sort(key=lambda s: (s.count("/"), len(s)))
+            raw = z.read(candidates[0]).decode("utf-8", errors="replace")
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError as e:
+                die(f"manifest.json invalid JSON inside zip: {e}")
+            return parse_manifest_data(data)
+
+    # Fallback: manifest.json outside zip
+    for p in (fallback_manifest_paths or []):
+        if p and p.exists():
+            log(f"[2] manifest.json not found inside zip, using fallback file: {p}")
+            return read_manifest_from_file(p)
+
+    die("manifest.json not found inside zip payload and no fallback manifest found")
 
 
 def extract_zip_to_temp(zip_path: Path) -> Path:
@@ -333,7 +354,11 @@ def main() -> int:
 
     log(f"[1] Using payload zip: {zip_path}")
 
-    manifest = read_manifest_from_zip(zip_path)
+    fallback_manifest_paths = [
+        here / "manifest.json",
+        zip_path.parent / "manifest.json",
+    ]
+    manifest = read_manifest_from_zip(zip_path, fallback_manifest_paths=fallback_manifest_paths)
     log(f"[2] Manifest: name={manifest.name} version={manifest.version} channel={manifest.channel}")
 
     inkscape_exe = resolve_inkscape()

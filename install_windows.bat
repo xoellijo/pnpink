@@ -16,16 +16,30 @@ if "%PNPINK_NO_SYSTEM_PY%"=="1" (
 REM -----------------------------
 REM 1) System Python first
 REM -----------------------------
+where py >nul 2>nul && (
+  py -3 -V >nul 2>nul && (
+    echo Using Python launcher: py -3
+    py -3 install.py
+    exit /b %errorlevel%
+  )
+)
+
 where python >nul 2>nul && (
-  echo Using system python
-  python install.py
-  exit /b %errorlevel%
+  python -V >nul 2>nul && (
+    echo Using system python
+    python install.py
+    exit /b %errorlevel%
+  ) || (
+    echo Found "python" on PATH but it is not executable \(possibly Microsoft Store alias\). Skipping...
+  )
 )
 
 where python3 >nul 2>nul && (
-  echo Using system python3
-  python3 install.py
-  exit /b %errorlevel%
+  python3 -V >nul 2>nul && (
+    echo Using system python3
+    python3 install.py
+    exit /b %errorlevel%
+  )
 )
 
 :find_inkscape_python
