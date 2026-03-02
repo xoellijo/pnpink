@@ -2,6 +2,17 @@ name: docs-pdf
 
 on:
   workflow_dispatch:
+    inputs:
+      commit_pdf:
+        description: "Commit generated PDF to src/docs/pnpink.pdf"
+        required: false
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+      release_tag:
+        description: "Optional tag to push (format vX.Y.Z) after committing PDF"
+        required: false
+        default: ""
   push:
     branches:
       - main
@@ -11,6 +22,9 @@ on:
       - "mkdocs.pdf.yml"
       - "hooks/**"
       - ".github/workflows/docs-pdf.yml"
+
+permissions:
+  contents: write
 
 jobs:
   build-pdf:
@@ -66,3 +80,34 @@ jobs:
           name: pnpink-docs-pdf
           path: .artifacts/pnpink.pdf
           if-no-files-found: error
+
+      - name: Commit PDF into repository
+        if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event.inputs.commit_pdf == 'true') }}
+        run: |
+          mkdir -p src/docs
+          cp .artifacts/pnpink.pdf src/docs/pnpink.pdf
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- src/docs/pnpink.pdf; then
+            echo "No changes in src/docs/pnpink.pdf"
+          else
+            git add src/docs/pnpink.pdf
+            git commit -m "docs(pdf): update generated documentation PDF"
+            git push
+          fi
+
+      - name: Push release tag
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '' }}
+        run: |
+          TAG="${{ github.event.inputs.release_tag }}"
+          case "$TAG" in
+            v*) ;;
+            *) echo "release_tag must start with 'v' (example: v0.42.0)"; exit 1 ;;
+          esac
+          git fetch --tags
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag already exists: $TAG"
+            exit 1
+          fi
+          git tag "$TAG"
+          git push origin "$TAG"
