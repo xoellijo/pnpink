@@ -3,5 +3,5 @@ INHERIT: mkdocs.yml
 plugins:
   - search
   - with-pdf:
-      output_path: .artifacts/pnpink.pdf
+      output_path: pnpink.pdf
       toc_level: 3

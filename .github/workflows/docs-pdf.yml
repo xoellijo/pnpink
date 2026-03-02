@@ -44,9 +44,20 @@ jobs:
       - name: Build docs with PDF
         run: mkdocs build -f mkdocs.pdf.yml --strict
 
-      - name: Verify PDF output
+      - name: Collect PDF artifact
         run: |
-          ls -la .artifacts || true
+          mkdir -p .artifacts
+          if [ -f pnpink.pdf ]; then
+            cp pnpink.pdf .artifacts/pnpink.pdf
+          elif [ -f site/pnpink.pdf ]; then
+            cp site/pnpink.pdf .artifacts/pnpink.pdf
+          else
+            PDF_PATH="$(find . -type f -name '*.pdf' | head -n 1 || true)"
+            if [ -n "$PDF_PATH" ]; then
+              cp "$PDF_PATH" .artifacts/pnpink.pdf
+            fi
+          fi
+          ls -la .artifacts
           test -f .artifacts/pnpink.pdf
 
       - name: Upload PDF artifact
