@@ -44,9 +44,14 @@ jobs:
       - name: Build docs with PDF
         run: mkdocs build -f mkdocs.pdf.yml --strict
 
+      - name: Verify PDF output
+        run: |
+          ls -la .artifacts || true
+          test -f .artifacts/pnpink.pdf
+
       - name: Upload PDF artifact
         uses: actions/upload-artifact@v4
         with:
           name: pnpink-docs-pdf
-          path: src/docs/pnpink.pdf
+          path: .artifacts/pnpink.pdf
           if-no-files-found: error

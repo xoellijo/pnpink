@@ -22,6 +22,7 @@ Desktop.ini
 
 # Generated documentation artifacts
 src/docs/*.pdf
+.artifacts/
 site/
 
 # old branches
