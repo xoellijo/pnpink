@@ -25,7 +25,9 @@ from typing import Optional, Dict, Tuple, List, Set
 import os, re, hashlib, threading, urllib.request, urllib.error, shutil, mimetypes, ssl
 from concurrent.futures import ThreadPoolExecutor, Future
 from pathlib import Path
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, unquote, urlunparse
+from copy import deepcopy
+import gzip
 
 import inkex
 import log as LOG
@@ -245,6 +247,90 @@ def _try_resolve_as_is(candidate: Path) -> Optional[Path]:
     except Exception:
         pass
     return None
+
+def _split_source_fragment(raw: str, fragment_hint: Optional[str] = None) -> Tuple[str, str]:
+    """Split '#fragment' from source strings.
+
+    - For URL-like inputs (http/https/file), uses URL parsing.
+    - For plain paths/logical names, uses right-most '#'.
+    - Keeps data: URIs untouched.
+    - Explicit fragment_hint has priority.
+    """
+    s = (raw or "").strip()
+    if not s:
+        return "", (fragment_hint or "").strip()
+    if (fragment_hint or "").strip():
+        return s, (fragment_hint or "").strip()
+    if s.lower().startswith("data:"):
+        return s, ""
+    try:
+        p = urlparse(s)
+    except Exception:
+        p = None
+    if p and (p.scheme or p.netloc):
+        frag = (p.fragment or "").strip()
+        if frag:
+            s_no_frag = urlunparse((p.scheme, p.netloc, p.path, p.params, p.query, ""))
+            return s_no_frag, frag
+        return s, ""
+    if "#" in s:
+        head, frag = s.rsplit("#", 1)
+        frag = (frag or "").strip()
+        if frag:
+            return head.strip(), frag
+    return s, ""
+
+def _is_svg_path(p: Path) -> bool:
+    sx = (str(getattr(p, "suffix", "") or "")).lower()
+    return sx in (".svg", ".svgz")
+
+def _parse_svg_length_px(val: str) -> Optional[float]:
+    s = str(val or "").strip()
+    if not s:
+        return None
+    m = re.match(r"^\s*([-+]?\d+(?:\.\d+)?)\s*([a-z%]*)\s*$", s, re.I)
+    if not m:
+        return None
+    v = float(m.group(1))
+    u = (m.group(2) or "px").lower()
+    if u in ("", "px"):
+        return v
+    if u == "in":
+        return v * 96.0
+    if u == "cm":
+        return v * (96.0 / 2.54)
+    if u == "mm":
+        return v * (96.0 / 25.4)
+    if u == "pt":
+        return v * (96.0 / 72.0)
+    if u == "pc":
+        return v * 16.0
+    return None
+
+def _guess_svg_size_px(abspath: Path) -> Tuple[float, float]:
+    try:
+        if str(abspath).lower().endswith(".svgz"):
+            with gzip.open(str(abspath), "rb") as f:
+                root = SVG.etree.fromstring(f.read())
+        else:
+            root = SVG.etree.parse(str(abspath)).getroot()
+    except Exception as ex:
+        _l.w(f"[sources] svg read failed '{abspath.name}': {ex}")
+        return (DEFAULT_W, DEFAULT_H)
+
+    try:
+        vb = str(root.get("viewBox") or "").strip()
+        if vb:
+            nums = [float(x) for x in vb.replace(",", " ").split() if x.strip()]
+            if len(nums) == 4 and nums[2] > 0 and nums[3] > 0:
+                return (float(nums[2]), float(nums[3]))
+    except Exception:
+        pass
+    w = _parse_svg_length_px(root.get("width") or "")
+    h = _parse_svg_length_px(root.get("height") or "")
+    if (w or 0) > 0 and (h or 0) > 0:
+        return (float(w), float(h))
+    return (DEFAULT_W, DEFAULT_H)
 
 
 # ======================================================================================
@@ -617,6 +703,8 @@ class SourceManager:
         if not raw:
             sid, wh = _make_placeholder_symbol(self.defs, "(empty)", "empty source")
             return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
+        raw, fragment = _split_source_fragment(raw, fragment)
+        fragment = (fragment or "").strip()
 
         # Allow dataset tokens like "@icon://..." to be passed through directly.
         if raw.lower().startswith("@icon://"):
@@ -700,7 +788,7 @@ class SourceManager:
 
         # Wikimedia Commons virtual source (single-value fallback: first result).
         if raw.lower().startswith("wkmc://"):
-            key_w = _build_key_for_wkmc(raw)
+            key_w = _build_key_for_wkmc(raw if not fragment else f"{raw}#{fragment}")
             if key_w in self._cache:
                 self._cache_hits += 1
                 return self._cache[key_w]
@@ -717,7 +805,7 @@ class SourceManager:
 
         # Pixabay virtual source (single-value fallback: first result).
         if raw.lower().startswith("pxby://"):
-            key_p = _build_key_for_pxby(raw)
+            key_p = _build_key_for_pxby(raw if not fragment else f"{raw}#{fragment}")
             if key_p in self._cache:
                 self._cache_hits += 1
                 return self._cache[key_p]
@@ -734,7 +822,7 @@ class SourceManager:
 
         # Openclipart virtual source (single-value fallback: first result).
         if raw.lower().startswith("oclp://"):
-            key_o = _build_key_for_oclp(raw)
+            key_o = _build_key_for_oclp(raw if not fragment else f"{raw}#{fragment}")
             if key_o in self._cache:
                 self._cache_hits += 1
                 return self._cache[key_o]
@@ -775,7 +863,7 @@ class SourceManager:
             except Exception:
                 resolved_file = None
         elif parsed.scheme.lower() in ("http", "https"):
-            key_url = _build_key_for_url(raw)
+            key_url = _build_key_for_url(raw if not fragment else f"{raw}#{fragment}")
             if key_url in self._cache:
                 self._cache_hits += 1
                 return self._cache[key_url]
@@ -788,7 +876,13 @@ class SourceManager:
             if key in self._cache:
                 ref = self._cache[key]
             else:
-                ref = self._create_symbol_from_bitmap_path(cached_file, dpi=dpi or self.default_dpi)
+                if _is_svg_path(cached_file):
+                    ref = self._create_symbol_from_svg_path(cached_file, fragment=fragment)
+                else:
+                    if fragment:
+                        sid, wh = _make_placeholder_symbol(self.defs, raw, "fragment requires svg source")
+                        return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
+                    ref = self._create_symbol_from_bitmap_path(cached_file, dpi=dpi or self.default_dpi)
                 ref.canonical_key = key
                 self._cache[key] = ref
             self._cache[key_url] = ref
@@ -816,7 +910,13 @@ class SourceManager:
                 self._cache_hits += 1
                 return self._cache[key]
             self._cache_misses += 1
-            ref = self._create_symbol_from_bitmap_path(resolved_file, dpi=dpi or self.default_dpi)
+            if _is_svg_path(resolved_file):
+                ref = self._create_symbol_from_svg_path(resolved_file, fragment=fragment)
+            else:
+                if fragment:
+                    sid, wh = _make_placeholder_symbol(self.defs, raw, "fragment requires svg source")
+                    return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
+                ref = self._create_symbol_from_bitmap_path(resolved_file, dpi=dpi or self.default_dpi)
             ref.canonical_key = key
             self._cache[key] = ref
             _l.i(f"[sources] file: registered → {ref.symbol_id} ← {resolved_file.name} ({ref.intrinsic_box[0]}x{ref.intrinsic_box[1]}px)")
@@ -827,6 +927,227 @@ class SourceManager:
         return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
 
     # ---------------- symbol creation ----------------
+
+    def _rewrite_id_refs_in_subtree(self, node, id_map: Dict[str, str]) -> None:
+        if not id_map:
+            return
+        rx_url = re.compile(r"url\(#([^)]+)\)")
+        for el in node.iter():
+            try:
+                attrs = list((el.attrib or {}).items())
+            except Exception:
+                attrs = []
+            for k, v in attrs:
+                sv = str(v or "")
+                if not sv:
+                    continue
+                newv = sv
+                if sv.startswith("#"):
+                    rid = sv[1:]
+                    newv = "#" + id_map.get(rid, rid)
+                if "url(#" in newv:
+                    newv = rx_url.sub(lambda m: f"url(#{id_map.get(m.group(1), m.group(1))})", newv)
+                if newv != sv:
+                    try:
+                        el.set(k, newv)
+                    except Exception:
+                        pass
+
+    @staticmethod
+    def _is_descendant_or_self(node, ancestor) -> bool:
+        cur = node
+        while cur is not None:
+            if cur is ancestor:
+                return True
+            try:
+                cur = cur.getparent()
+            except Exception:
+                cur = None
+        return False
+
+    @staticmethod
+    def _collect_ref_ids_from_subtree(node) -> Set[str]:
+        out: Set[str] = set()
+        rx_url = re.compile(r"url\(#([^)]+)\)")
+        for el in node.iter():
+            try:
+                attrs = dict(el.attrib or {})
+            except Exception:
+                attrs = {}
+            for _, v in attrs.items():
+                sv = str(v or "")
+                if not sv:
+                    continue
+                for rid in rx_url.findall(sv):
+                    if rid:
+                        out.add(str(rid).strip())
+                if sv.startswith("#") and len(sv) > 1:
+                    out.add(sv[1:].strip())
+        return out
+
+    @staticmethod
+    def _local_name(tag: str) -> str:
+        if not isinstance(tag, str):
+            return ""
+        return tag.rsplit("}", 1)[-1] if "}" in tag else tag
+
+    def _wrap_with_ancestor_style_context(self, src_node, src_root):
+        """Wrap a copied node with lightweight ancestor containers to preserve inherited styles.
+
+        We copy attributes from ancestor groups/links (except id), so properties like
+        display/stroke/opacity/transform/class/style keep applying after import.
+        """
+        out = deepcopy(src_node)
+        chain = []
+        cur = src_node.getparent() if src_node is not None else None
+        while cur is not None and cur is not src_root:
+            ln = self._local_name(cur.tag).lower()
+            if ln in ("g", "a"):
+                chain.append(cur)
+            cur = cur.getparent()
+        for anc in reversed(chain):
+            try:
+                wrap = SVG.etree.Element(anc.tag)
+            except Exception:
+                continue
+            try:
+                for k, v in dict(anc.attrib or {}).items():
+                    if str(k).lower() == "id":
+                        continue
+                    wrap.set(k, v)
+            except Exception:
+                pass
+            wrap.append(out)
+            out = wrap
+        return out
+
+    def _create_symbol_from_svg_path(self, abspath: Path, *, fragment: str = "") -> SourceRef:
+        fragment = str(fragment or "").strip()
+        try:
+            if str(abspath).lower().endswith(".svgz"):
+                with gzip.open(str(abspath), "rb") as f:
+                    src_root = SVG.etree.fromstring(f.read())
+            else:
+                src_root = SVG.etree.parse(str(abspath)).getroot()
+        except Exception as ex:
+            sid, wh = _make_placeholder_symbol(self.defs, str(abspath), f"svg parse failed: {ex}")
+            return SourceRef(symbol_id=sid, content_type="svg", intrinsic_box=wh, canonical_key=None)
+
+        # Mode A: no fragment => keep it as linked image (non-editable), as requested.
+        if not fragment:
+            return self._create_symbol_from_svg_image_path(abspath)
+
+        src_node = None
+        try:
+            hits = src_root.xpath(f".//*[@id='{fragment}']")
+            src_node = hits[0] if hits else None
+        except Exception:
+            src_node = None
+        if src_node is None:
+            sid, wh = _make_placeholder_symbol(self.defs, f"{abspath}#{fragment}", "svg node not found")
+            return SourceRef(symbol_id=sid, content_type="svg", intrinsic_box=wh, canonical_key=None)
+
+        # Collect dependency roots referenced from selected subtree.
+        dep_roots: List[object] = []
+        dep_ids_seen: Set[str] = set()
+        pending = list(self._collect_ref_ids_from_subtree(src_node))
+        while pending:
+            rid = str(pending.pop()).strip()
+            if (not rid) or (rid in dep_ids_seen):
+                continue
+            dep_ids_seen.add(rid)
+            try:
+                hits = src_root.xpath(f".//*[@id='{rid}']")
+                dep = hits[0] if hits else None
+            except Exception:
+                dep = None
+            if dep is None:
+                continue
+            if self._is_descendant_or_self(dep, src_node):
+                continue
+            if dep not in dep_roots:
+                dep_roots.append(dep)
+                pending.extend(list(self._collect_ref_ids_from_subtree(dep)))
+
+        # Build copied nodes and remap ids globally to avoid collisions.
+        # Keep ancestor style context (group/a attributes) to preserve inherited styling.
+        main_copy = self._wrap_with_ancestor_style_context(src_node, src_root)
+        dep_copies = [deepcopy(d) for d in dep_roots]
+
+        id_map: Dict[str, str] = {}
+        for n in ([main_copy] + dep_copies):
+            for el in n.iter():
+                oid = str(el.get("id") or "").strip()
+                if not oid:
+                    continue
+                if oid not in id_map:
+                    try:
+                        nid = self.root.get_unique_id(f"srcimp_{oid}")
+                    except Exception:
+                        nid = _unique_symbol_id(self.defs, "srcimp_")
+                    id_map[oid] = nid
+        for n in ([main_copy] + dep_copies):
+            for el in n.iter():
+                oid = str(el.get("id") or "").strip()
+                if oid and oid in id_map:
+                    el.set("id", id_map[oid])
+            self._rewrite_id_refs_in_subtree(n, id_map)
+
+        sid = _unique_symbol_id(self.defs, "src_")
+        sym = SVG.etree.SubElement(self.defs, inkex.addNS('symbol', 'svg'))
+        sym.set('id', sid)
+        if dep_copies:
+            d = SVG.etree.SubElement(sym, inkex.addNS('defs', 'svg'))
+            for dep in dep_copies:
+                d.append(dep)
+        sym.append(main_copy)
+
+        # Fit symbols need a meaningful viewport.
+        w = h = 0.0
+        try:
+            bx, by, bw, bh = SVG.visual_bbox(main_copy)
+            if bw > 0 and bh > 0:
+                sym.set("viewBox", f"{bx} {by} {bw} {bh}")
+                w, h = float(bw), float(bh)
+        except Exception:
+            pass
+        if w <= 0 or h <= 0:
+            try:
+                vb = str(src_root.get("viewBox") or "").strip()
+                nums = [float(x) for x in vb.replace(",", " ").split() if x.strip()]
+                if len(nums) == 4 and nums[2] > 0 and nums[3] > 0:
+                    sym.set("viewBox", f"{nums[0]} {nums[1]} {nums[2]} {nums[3]}")
+                    w, h = float(nums[2]), float(nums[3])
+            except Exception:
+                pass
+        if w <= 0 or h <= 0:
+            w, h = _guess_svg_size_px(abspath)
+            sym.set("viewBox", f"0 0 {w} {h}")
+
+        _l.i(f"[sources] svg node import: {abspath.name}#{fragment} -> {sid} ({w:.2f}x{h:.2f})")
+        return SourceRef(symbol_id=sid, content_type="svg", intrinsic_box=(float(w), float(h)),
+                        preserve_aspect="xMidYMid meet", canonical_key=None)
+
+    def _create_symbol_from_svg_image_path(self, abspath: Path) -> SourceRef:
+        w, h = _guess_svg_size_px(abspath)
+        sid = _unique_symbol_id(self.defs, "src_")
+        sym = SVG.etree.SubElement(self.defs, inkex.addNS('symbol', 'svg'))
+        sym.set('id', sid)
+        im = SVG.etree.SubElement(sym, inkex.addNS('image', 'svg'))
+        im.set('x', "0")
+        im.set('y', "0")
+        im.set('width', str(float(w)))
+        im.set('height', str(float(h)))
+        href_val = abspath.as_uri() if os.name != "nt" else str(abspath)
+        im.set(inkex.addNS('href', 'xlink'), href_val)
+        im.set('href', href_val)
+        im.set(SVG.SODI_ABSREF, str(abspath))
+        return SourceRef(
+            symbol_id=sid,
+            content_type="svg",
+            intrinsic_box=(float(w), float(h)),
+            preserve_aspect="xMidYMid meet",
+        )
 
     def _create_symbol_from_bitmap_path(self, abspath: Path, *, dpi: float) -> SourceRef:
         W, H = _guess_bitmap_size_px(abspath, default_dpi=dpi)

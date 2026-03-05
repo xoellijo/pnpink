@@ -48,8 +48,11 @@ class WebSources:
             "original": "largest",
             "full": "largest",
             "o": "largest",
+            "vector": "svg",
         }
         s = aliases.get(s, s)
+        if s == "svg":
+            return {"kind": "vector", "label": "svg"}
 
         m_box = re.match(r"^\s*(\d+)\s*[xX]\s*(\d+)\s*$", s)
         if m_box:
@@ -110,6 +113,8 @@ class WebSources:
     @staticmethod
     def _wkmc_thumb_constraints(size: str) -> Tuple[Optional[int], Optional[int]]:
         spec = WebSources._parse_size_spec(size)
+        if spec.get("kind") == "vector":
+            return None, None
         if spec.get("kind") == "min_box":
             return int(spec.get("min_w") or 1024), int(spec.get("min_h") or 1024)
         if spec.get("kind") == "min_side":
@@ -145,6 +150,8 @@ class WebSources:
 
     def _wkmc_fetch_urls(self, query: str, size: str) -> List[str]:
         out: List[str] = []
+        spec = WebSources._parse_size_spec(size)
+        want_vector = (spec.get("kind") == "vector")
         req_w, req_h = self._wkmc_thumb_constraints(size)
         mode, qv = self._wkmc_query_mode(query)
         cont = None
@@ -215,7 +222,8 @@ class WebSources:
                 if not ii:
                     continue
                 ii0 = ii[0] or {}
-                url0 = ii0.get("thumburl") or ii0.get("url")
+                # For vector mode, prefer original file URL (typically .svg) over generated thumbs.
+                url0 = (ii0.get("url") or ii0.get("thumburl")) if want_vector else (ii0.get("thumburl") or ii0.get("url"))
                 if not url0:
                     continue
                 if url0 in seen:
@@ -295,6 +303,9 @@ class WebSources:
     @staticmethod
     def _pxby_pick_url(hit: dict, size: str) -> Optional[str]:
         spec = WebSources._parse_size_spec(size)
+        if spec.get("kind") == "vector":
+            # Pixabay does not provide SVG in this API; fall back to best raster.
+            spec = {"kind": "preset", "preset": "largest", "label": "largest"}
         cands = []
 
         def _add(url_key: str, w_key: str, h_key: str, rank: int):
@@ -553,6 +564,8 @@ class WebSources:
         # Fallback from nested "svg" dict/string encoded patterns.
         if (not u_svg) and isinstance(it.get("svg"), dict):
             u_svg = str((it.get("svg") or {}).get("url") or "").strip()
+        if spec.get("kind") == "vector":
+            return u_svg if re.match(r"^https?://", str(u_svg or ""), re.I) else None
 
         # Candidate ladder from small to large.
         ladder = [u_thumb, u_small, u_large, u_full, u_svg]

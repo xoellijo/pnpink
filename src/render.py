@@ -864,6 +864,13 @@ def _resolve_virtual_source_urls(sm, src_val: str, selector: Optional[str], *, w
     if sm is None:
         return None
     s = (src_val or "").strip()
+    frag = ""
+    if "#" in s:
+        # Keep node fragment for later '@{resolved_url#node}' registration.
+        s0, f0 = s.rsplit("#", 1)
+        if s0.strip() and f0.strip():
+            s = s0.strip()
+            frag = f0.strip()
     sl = s.lower()
     if sl.startswith("wkmc://"):
         urls = list(sm.resolve_wkmc_urls(s) or [])
@@ -879,6 +886,8 @@ def _resolve_virtual_source_urls(sm, src_val: str, selector: Optional[str], *, w
             sm.prefetch_urls(urls)
     except Exception:
         pass
+    if frag:
+        return [f"@{{{u}#{frag}}}" for u in urls]
     return [f"@{{{u}}}" for u in urls]
 
 
@@ -1252,6 +1261,18 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
     is_fa_token = force_fa_default or header_plus or ("~" in raw_token) or raw_token.endswith("=") or raw_token.endswith("+") or ("=~" in raw_token) or ("+~" in raw_token) or raw_token.lstrip().startswith('[')
     if header_plus and ("~" not in raw_token):
         raw_token = raw_token + "~i"
+
+    def _ensure_ops_full(ops_body: str) -> str:
+        s = (ops_body or "").strip()
+        if not s:
+            return "~"
+        if s.startswith(".Fit"):
+            s = _fit_suffix_to_ops(s)
+        elif not s.startswith("~"):
+            s = "~" + s
+        s = _normalize_ops_chain(s)
+        return s or "~"
+
     if is_fa_token:
         # Multivalue support: allow several FA tokens separated by whitespace in the same cell.
         tokens = _split_multivalue(raw_token) if any(ch.isspace() for ch in raw_token) else [raw_token]
@@ -1296,7 +1317,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                 if not arr or not arr.get('items'):
                     continue
                 ops_body = (arr.get('ops') or "") or default_ops
-                ops_full = f"~{ops_body}" if ops_body else "~"
+                ops_full = _ensure_ops_full(ops_body)
                 g_node, g_id = _build_array_group(inst, root_doc, arr.get('items'), arr.get('layout'), sm=sm)
                 if g_id:
                     # Use deep-copy for arrays so the temp group can be removed safely.
@@ -1310,7 +1331,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                 _l.w(f"[deckmaker.fa] placeholder '{key}': token invalido '{tok}'")
                 continue
             ops_body = (ops_tok or "") or default_ops
-            ops_full = f"~{ops_body}" if ops_body else "~"
+            ops_full = _ensure_ops_full(ops_body)
             fa_jobs.append((base_id, rect_id_val, ops_full, place, None, rect_elem_for_fa))
             queued += 1
             _l.d(f"[deckmaker.fa] queued '{key}' -> base='{base_id}' rect='{rect_id_val}' place={place} ops='{ops_full or '~'}'")
@@ -1609,6 +1630,35 @@ def render_phase(ctx):
             except Exception:
                 return []
 
+        def _iter_suffix_to_ops(tail: str) -> str:
+            t = (tail or '').strip()
+            if not t:
+                return ''
+            if t.startswith(".Fit"):
+                t = _fit_suffix_to_ops(t)
+            elif not t.startswith("~"):
+                return ''
+            t = _normalize_ops_chain(t)
+            return t or ''
+
+        def _split_bracket_core_and_tail(expr: str):
+            s = (expr or '').strip()
+            if not s.startswith('['):
+                return None, None
+            depth = 0
+            end = -1
+            for i, ch in enumerate(s):
+                if ch == '[':
+                    depth += 1
+                elif ch == ']':
+                    depth -= 1
+                    if depth == 0:
+                        end = i
+                        break
+            if end < 0:
+                return None, None
+            return s[:end + 1], s[end + 1:].strip()
+
         def _parse_iter_seq(expr: str):
             """Parse an iterator expression (without star prefix) into list[str]."""
             s = (expr or '').strip()
@@ -1622,12 +1672,43 @@ def render_phase(ctx):
                     if ops_norm:
                         return [f"{u}{ops_norm}" for u in v_urls]
                     return v_urls
-            if s.startswith('[') and s.endswith(']'):
-                return _parse_range_or_list(s)
-            if s.startswith('@{') and s.endswith('}'):
-                return _expand_glob_from_at_brace(s)
-            ss = _expand_spritesheet_wildcard(s)
+
+            br_core, br_tail = _split_bracket_core_and_tail(s)
+            if br_core is not None:
+                seq = _parse_range_or_list(br_core)
+                ops_norm = _iter_suffix_to_ops(br_tail or "")
+                if br_tail and not ops_norm:
+                    _l.w(f"[iter] invalid iterator suffix after list: '{br_tail}'")
+                if ops_norm:
+                    return [f"{v}{ops_norm}" for v in seq]
+                return seq
+
+            # '@{...}' filesystem glob, optionally with fit/anchor suffix.
+            if s.startswith('@{'):
+                m_glob = re.match(r"^\s*(?P<core>@\{[^}]*\})\s*(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*)?)\s*$", s, re.IGNORECASE)
+                if m_glob:
+                    core = (m_glob.group("core") or "").strip()
+                    tail = (m_glob.group("tail") or "").strip()
+                    seq = _expand_glob_from_at_brace(core)
+                    if seq is not None:
+                        ops_norm = _iter_suffix_to_ops(tail)
+                        if tail and not ops_norm:
+                            _l.w(f"[iter] invalid iterator suffix after glob: '{tail}'")
+                        if ops_norm:
+                            return [f"{v}{ops_norm}" for v in seq]
+                        return seq
+
+            # '@alias[*]' spritesheet wildcard, optionally with fit/anchor suffix.
+            m_ss = re.match(r"^\s*(?P<core>@[A-Za-z0-9_\-]+\[\*\])\s*(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*)?)\s*$", s, re.IGNORECASE)
+            ss_core = (m_ss.group("core") if m_ss else s)
+            ss_tail = (m_ss.group("tail") if m_ss else "")
+            ss = _expand_spritesheet_wildcard(ss_core)
             if ss is not None:
+                ops_norm = _iter_suffix_to_ops(ss_tail)
+                if ss_tail and not ops_norm:
+                    _l.w(f"[iter] invalid iterator suffix after spritesheet wildcard: '{ss_tail}'")
+                if ops_norm:
+                    return [f"{v}{ops_norm}" for v in ss]
                 return ss
             # fallback: treat as a scalar token
             return [s]
@@ -1637,42 +1718,51 @@ def render_phase(ctx):
             cells0 = row0.get('cells')
             if not isinstance(cells0, list):
                 return [row0], False
-            # detect max level
+            # Parse each cell into parts so a single multivalue cell may contain
+            # several iterator tokens (e.g. "*[a b]~i4 *[c d]~i6").
+            # Same-level iterators are synchronized by index (zip-like), not cartesian.
             max_lv = 0
-            for c in cells0:
-                st = (str(c or '').strip())
-                if st.startswith('*'):
-                    max_lv = max(max_lv, _count_leading_stars(st))
-            if max_lv <= 0:
-                return [row0], False
-
-            level_cols = {}   # k -> list[idx]
-            level_seqs = {}   # (k, idx) -> seq
-            level_len = {}    # k -> maxlen
+            has_iter = False
+            level_cols = {}   # k -> set[idx]
+            level_len = {}    # k -> maxlen across all iterator parts at level k
+            cell_parts = {}   # idx -> list[("lit", str) | ("iter", k, seq)]
 
             for idx, c in enumerate(cells0):
                 st = (str(c or '').strip())
-                if not st.startswith('*'):
+                if not st:
                     continue
-                k = _count_leading_stars(st)
-                expr = st[k:].strip()
-                seq = _parse_iter_seq(expr)
-                level_cols.setdefault(k, []).append(idx)
-                level_seqs[(k, idx)] = seq
+                toks = _split_multivalue(st) if any(ch.isspace() for ch in st) else [st]
+                parts = []
+                cell_has_iter = False
+                for tok in (toks or []):
+                    tt = (tok or '').strip()
+                    if not tt:
+                        continue
+                    if tt.startswith('*'):
+                        k = _count_leading_stars(tt)
+                        expr = tt[k:].strip()
+                        seq = _parse_iter_seq(expr)
+                        parts.append(("iter", k, seq))
+                        has_iter = True
+                        cell_has_iter = True
+                        max_lv = max(max_lv, k)
+                        level_cols.setdefault(k, set()).add(idx)
+                        try:
+                            mlen = int(len(seq))
+                        except Exception:
+                            mlen = 1
+                        level_len[k] = max(int(level_len.get(k, 1) or 1), max(mlen, 1))
+                    else:
+                        parts.append(("lit", tt))
+                if cell_has_iter:
+                    cell_parts[idx] = parts
+
+            if (not has_iter) or max_lv <= 0:
+                return [row0], False
 
             for k in range(1, max_lv + 1):
-                cols = level_cols.get(k, [])
-                if not cols:
+                if k not in level_len:
                     level_len[k] = 1
-                    continue
-                mlen = 1
-                for idx in cols:
-                    seq = level_seqs.get((k, idx), [''])
-                    try:
-                        mlen = max(mlen, len(seq))
-                    except Exception:
-                        pass
-                level_len[k] = mlen
 
             # build nested loops via recursion
             out_rows = []
@@ -1683,20 +1773,29 @@ def render_phase(ctx):
                     # materialize one instance
                     rr = dict(row0)
                     rr_cells = list(cells0)
-                    for k in range(1, max_lv + 1):
-                        cols = level_cols.get(k, [])
-                        if not cols:
-                            continue
-                        i_k = idx_stack[k]
-                        for col_idx in cols:
-                            seq = level_seqs.get((k, col_idx), [''])
+                    for col_idx, parts in cell_parts.items():
+                        out_toks = []
+                        for p in (parts or []):
+                            if not p:
+                                continue
+                            if p[0] == "lit":
+                                v = str(p[1] or '').strip()
+                                if v:
+                                    out_toks.append(v)
+                                continue
+                            # ("iter", k, seq)
+                            _k = int(p[1] or 1)
+                            _seq = p[2] if len(p) > 2 else ['']
+                            i_k = idx_stack[_k] if _k < len(idx_stack) else 0
                             val = ''
                             try:
-                                if i_k < len(seq):
-                                    val = str(seq[i_k])
+                                if i_k < len(_seq):
+                                    val = str(_seq[i_k] or '').strip()
                             except Exception:
                                 val = ''
-                            rr_cells[col_idx] = val
+                            if val:
+                                out_toks.append(val)
+                        rr_cells[col_idx] = " ".join(out_toks).strip()
                     rr['cells'] = rr_cells
                     out_rows.append(rr)
                     return
@@ -1710,7 +1809,7 @@ def render_phase(ctx):
             try:
                 parts = []
                 for k in range(1, max_lv + 1):
-                    cols = level_cols.get(k, [])
+                    cols = sorted(level_cols.get(k, set()) or [])
                     if cols:
                         parts.append(f"L{k}={level_len.get(k, 1)} cols={cols}")
                 _l.i(f"[iter] expanded row: levels={max_lv} " + " ".join(parts) + f" -> {len(out_rows)} inst")

@@ -32,6 +32,19 @@ Local sources support environment/home expansion:
 - Windows: `%USERPROFILE%`
 - Linux/macOS: `$HOME`, `${HOME}`, `~`
 
+## SVG Node Import (Optional)
+For SVG sources only, you can target a specific node with `#id`:
+
+```txt
+@{ assets/icons.svg#heart_group }
+@{ https://example.com/icons.svg#token_1 }
+```
+
+Behavior:
+
+- without `#id`: the whole SVG is linked as a final image source,
+- with `#id`: that node is imported and embedded (including required defs/references).
+
 ## Iconify Sources
 Use icon sources for semantic symbols (costs, resources, status icons) without managing local files manually.
 
@@ -96,6 +109,7 @@ PnPInk supports virtual sources that resolve to real URLs:
 Size accepts:
 
 - presets: `tiny`, `small`, `medium`, `large`, `xlarge`, `largest`
+- vector mode: `svg` (when available from the provider)
 - minimum side: `N` (example: `1000`)
 - minimum width+height: `WxH` (example: `1000x1000`)
 
