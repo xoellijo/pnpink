@@ -157,6 +157,18 @@ def test_fit_shorthand_mirror_y_clip_pre_post():
     fs5 = parse("ID~||").fit
     assert fs5.mirror == "v"
 
+def test_fit_shorthand_shift_after_mode_does_not_become_border():
+    fs = parse("ID~i4[0 5%]").fit
+    assert fs.mode == "i" and fs.anchor == 4
+    assert fs.border is None
+    assert fs.shift == [0.0, "5%"]
+
+def test_fit_block_shift_after_mode_does_not_become_border():
+    fs = fit_spec_from_ops("~{ i6 [0 5%] }")
+    assert fs.mode == "i" and fs.anchor == 6
+    assert fs.border is None
+    assert fs.shift == [0.0, "5%"]
+
 # -------------------------
 # LAYOUT v2
 # -------------------------

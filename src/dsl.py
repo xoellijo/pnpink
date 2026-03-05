@@ -612,6 +612,7 @@ def _parse_fit_shorthand(trail: str) -> FitSpec:
     fs = FitSpec()
     i = 0
     saw_shift = False
+    saw_mode_or_anchor = False
     while i < len(toks):
         t = toks[i]
 
@@ -651,7 +652,16 @@ def _parse_fit_shorthand(trail: str) -> FitSpec:
 
         if t.startswith('[') and t.endswith(']'):
             lst = _parse_list(t)
-            if fs.border is None:
+            # Positional shorthand rule:
+            # - If [..] appears after mode/anchor and has 2 values, treat it as shift.
+            # - Otherwise, first [..] is border; second [..] is shift.
+            if fs.border is None and saw_mode_or_anchor and len(lst) == 2:
+                dx, dy = lst[0], lst[1]
+                dxv = float(dx) if _num_pure_re.match(dx) else dx
+                dyv = float(dy) if _num_pure_re.match(dy) else dy
+                fs.shift = [dxv, dyv]
+                saw_shift = True
+            elif fs.border is None:
                 fs.border = [_num_to_str_trim(x) for x in lst]
             else:
                 if len(lst) != 2: raise DSLError("shift requiere [dx dy]")
@@ -686,16 +696,19 @@ def _parse_fit_shorthand(trail: str) -> FitSpec:
         if m:
             fs.mode = _FIT_MODES[m.group(1)]
             fs.anchor = int(m.group(2))
+            saw_mode_or_anchor = True
             i += 1; continue
 
         if low in _FIT_MODES:
             fs.mode = _FIT_MODES[low]
+            saw_mode_or_anchor = True
             i += 1; continue
 
         m_anchor_only = re.match(r"^[1-9]$", t)
         if m_anchor_only:
             if fs.mode is None: fs.mode = 'i'
             fs.anchor = int(t)
+            saw_mode_or_anchor = True
             i += 1; continue
 
         raise DSLError(f"Token desconocido en fit: {t}")
@@ -747,6 +760,7 @@ def fit_spec_from_ops(ops: str) -> FitSpec:
 
         fs = FitSpec()
         saw_shift = False
+        saw_mode_or_anchor = False
         for t in btoks:
             if t == '!':
                 fs.clip = True
@@ -754,7 +768,14 @@ def fit_spec_from_ops(ops: str) -> FitSpec:
                 continue
             if t.startswith('[') and t.endswith(']'):
                 lst = _parse_list(t)
-                if fs.border is None:
+                # Keep shorthand positional behavior inside '~{ ... }' too.
+                if fs.border is None and saw_mode_or_anchor and len(lst) == 2:
+                    dx, dy = lst[0], lst[1]
+                    dxv = float(dx) if _num_pure_re.match(dx) else dx
+                    dyv = float(dy) if _num_pure_re.match(dy) else dy
+                    fs.shift = [dxv, dyv]
+                    saw_shift = True
+                elif fs.border is None:
                     fs.border = [_num_to_str_trim(x) for x in lst]
                 else:
                     if len(lst) != 2:
@@ -770,9 +791,11 @@ def fit_spec_from_ops(ops: str) -> FitSpec:
             if m:
                 fs.mode = _FIT_MODES[m.group(1)]
                 fs.anchor = int(m.group(2))
+                saw_mode_or_anchor = True
                 continue
             if low in _FIT_MODES:
                 fs.mode = _FIT_MODES[low]
+                saw_mode_or_anchor = True
                 continue
 
         if fs.mode in (None,):

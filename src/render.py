@@ -523,19 +523,61 @@ def _merge_fit_ops(prefix_ops: str, suffix_ops: str) -> str:
             return x[1:]
         return x
 
+    def _merge_specs(a: Optional["DSL.FitSpec"], b: Optional["DSL.FitSpec"]) -> Optional["DSL.FitSpec"]:
+        if a is None:
+            return b
+        if b is None:
+            return a
+        out = DSL.FitSpec()
+        out.mode = a.mode
+        out.anchor = a.anchor
+        out.border = a.border[:] if a.border else None
+        out.shift = a.shift[:] if a.shift else None
+        out.rotate = a.rotate
+        out.mirror = a.mirror
+        out.clip = a.clip
+        out.clip_stage = a.clip_stage
+        if b.mode is not None:
+            out.mode = b.mode
+        if b.anchor is not None:
+            out.anchor = b.anchor
+        if b.border is not None:
+            out.border = b.border[:] if b.border else None
+        if b.shift is not None:
+            out.shift = b.shift[:] if b.shift else None
+        if b.rotate is not None:
+            out.rotate = (out.rotate or 0.0) + b.rotate
+        if b.mirror is not None:
+            out.mirror = b.mirror
+        if b.clip is not None:
+            out.clip = b.clip
+            out.clip_stage = b.clip_stage
+        return out
+
     b1 = _body(prefix_ops)
     b2 = _body(suffix_ops)
     if not b1 and not b2:
         return ""
 
-    merged_raw = "~" + (b1 + b2)
+    fs1 = fs2 = None
     try:
-        fs = DSL.fit_spec_from_ops(merged_raw)
+        if b1:
+            fs1 = DSL.fit_spec_from_ops("~" + b1)
+    except Exception:
+        fs1 = None
+    try:
+        if b2:
+            fs2 = DSL.fit_spec_from_ops("~" + b2)
+    except Exception:
+        fs2 = None
+
+    fs = _merge_specs(fs1, fs2)
+    if fs is not None:
         body = DSL.ops_from_fit_spec(fs) or ""
         return "~" + body if body else "~"
-    except Exception:
-        # Fallback: keep raw concatenation if DSL rejects for any reason.
-        return merged_raw
+
+    merged_raw = "~" + (b1 + b2)
+    return merged_raw
 
 def _normalize_ops_chain(ops: str) -> str:
     """Normalize chained ops like '~[30%]~m!' into a single canonical ops string."""
@@ -647,20 +689,24 @@ def parse_header_key_full(key: str) -> Dict[str, object]:
     Returns dict:
       {target_id, prop, header_plus, default_id, default_ops, global_ops}
     """
-    m = _HEADER_RE.match((key or "").strip())
-    if not m:
-        return {'target_id': (key or '').strip(), 'prop': 'text', 'header_plus': False,
+    raw = (key or "").strip()
+    if not raw:
+        return {'target_id': '', 'prop': 'text', 'header_plus': False,
                 'default_id': None, 'default_ops': '', 'global_ops': ''}
 
-    raw_id = (m.group("id") or "").strip()
-    prop = ((m.group("prop") or "text").strip().lower()) or "text"
-    if prop not in ("text", "xml"):
-        prop = "text"
-
-    # Split default declaration if present.
-    left, has_eq, right = raw_id.partition("=")
+    # Split default declaration first so '=~[12x12]' is never confused with header '[prop]'.
+    left, has_eq, right = raw.partition("=")
     left = (left or "").strip()
     right = (right or "").strip()
+
+    # Optional property suffix only on LEFT side, and only for supported props.
+    prop = "text"
+    m_prop = re.match(r"^(?P<id>.+?)\[(?P<prop>[A-Za-z_][A-Za-z0-9_]*)\]\s*$", left)
+    if m_prop:
+        p = (m_prop.group("prop") or "").strip().lower()
+        if p in ("text", "xml"):
+            prop = p
+            left = (m_prop.group("id") or "").strip()
 
     header_plus = False
     if left.endswith("+"):
