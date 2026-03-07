@@ -1976,6 +1976,17 @@ def render_phase(ctx):
 
     def _exec_use_and_fa(inst_node, use_jobs, fa_jobs, *, warn_tag: str):
         """Center <use> elements over placeholders, then execute deferred Fit/Anchor jobs."""
+        def _apply_fa(scope_node, base_id, r_id, ops_full, place_mode, rect_elem):
+            try:
+                return FA.apply_to_by_ids(scope_node, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem)
+            except Exception as ex:
+                msg = str(ex or "")
+                # Back/template passes can run on detached clones where defs are not reachable
+                # through the local scope. Retry against document root.
+                if "base id=" in msg and "not found" in msg:
+                    return FA.apply_to_by_ids(root, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem)
+                raise
+
         for placeholder, u in (use_jobs or []):
             try:
                 _center_use_over_placeholder(u, placeholder)
@@ -1984,7 +1995,7 @@ def render_phase(ctx):
         _fa_remove_later = []
         for (base_id, r_id, ops_full, place_mode, placeholder_to_remove, rect_elem) in (fa_jobs or []):
             try:
-                FA.apply_to_by_ids(inst_node, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem)
+                _apply_fa(inst_node, base_id, r_id, ops_full, place_mode, rect_elem)
                 if placeholder_to_remove is not None:
                     _fa_remove_later.append(placeholder_to_remove)
             except Exception as ex:
@@ -2921,7 +2932,14 @@ def render_phase(ctx):
                 except Exception:
                     pass
                 try:
-                    FA.apply_to_by_ids(inst0, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem)
+                    try:
+                        FA.apply_to_by_ids(inst0, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem)
+                    except Exception as ex0:
+                        m0 = str(ex0 or "")
+                        if "base id=" in m0 and "not found" in m0:
+                            FA.apply_to_by_ids(root, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem)
+                        else:
+                            raise
                     if placeholder_to_remove is not None:
                         _fa_remove_later.append(placeholder_to_remove)
                 except Exception as ex:
