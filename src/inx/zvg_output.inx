@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+  <_name>PnPInk ZVG Export</_name>
+  <id>pnpink.zvg_output</id>
+  <output>
+    <extension>.zvg</extension>
+    <mimetype>application/zip</mimetype>
+    <filetypename>PnPInk ZVG package (*.zvg)</filetypename>
+    <filetypetooltip>Save SVG+dataset+assets package (includes local cached web assets if referenced).</filetypetooltip>
+  </output>
+  <script>
+    <command reldir="extensions" interpreter="python">pnpink/zvg_output.py</command>
+  </script>
+</inkscape-extension>
+

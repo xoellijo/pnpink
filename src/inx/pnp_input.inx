@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+  <_name>PnPInk PNP Import</_name>
+  <id>pnpink.pnp_input</id>
+  <input>
+    <extension>.pnp</extension>
+    <mimetype>application/zip</mimetype>
+    <filetypename>PnPInk PNP package (*.pnp)</filetypename>
+    <filetypetooltip>Open a packed package and try running DeckMaker after extraction.</filetypetooltip>
+  </input>
+  <script>
+    <command reldir="extensions" interpreter="python">pnpink/pnp_input.py</command>
+  </script>
+</inkscape-extension>
+

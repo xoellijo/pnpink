@@ -62,13 +62,109 @@ def run(self, __version__):
 
     SVG.fix_all_paths(root)
 
-    SM = SRC.SourceManager(root, _doc_path, project_root=None)
+    # SourceManager is created after reading dataset directives (_DM_*), so it can
+    # place run-scoped symbols under a per-run defs bucket.
+    SM = None
 
     _l.s("DATASET: load")
     datasets = DS.load_datasets(self, _doc_path)
     if not datasets:
         raise inkex.AbortExtension("Dataset sin cabecera válida.")
     _l.s("DATASET: loaded")
+
+    def _iter_comment_first_cells(dss):
+        for ds in (dss or []):
+            for rr in (ds.get("comments", []) or []):
+                try:
+                    if isinstance(rr, (list, tuple)):
+                        if not rr:
+                            continue
+                        s = str(rr[0] or "")
+                    else:
+                        s = str(rr or "")
+                except Exception:
+                    continue
+                if s:
+                    yield s
+
+    def _parse_dm_directives(dss):
+        out = {}
+        rx = re.compile(r"(_DM_[A-Za-z0-9_]+)\s*=\s*([^\s#]+)")
+        for s0 in _iter_comment_first_cells(dss):
+            s = str(s0).strip()
+            if not s:
+                continue
+            if s.startswith("#"):
+                s = s[1:].strip()
+            for m in rx.finditer(s):
+                out[m.group(1)] = m.group(2)
+        return out
+
+    def _dm_scan_existing(root0):
+        out = set()
+        rx = re.compile(r"^_DM(\d{2})_(?:output|defs)$")
+        for n in root0.iter():
+            i = (n.get('id') or '').strip()
+            m = rx.match(i)
+            if not m:
+                continue
+            try:
+                out.add(int(m.group(1)))
+            except Exception:
+                pass
+        return out
+
+    def _dm_remove_generation(root0, n: int):
+        ids = [f"_DM{n:02d}_output", f"_DM{n:02d}_defs"]
+        for rid in ids:
+            try:
+                hits = root0.xpath(f".//*[@id='{rid}']")
+            except Exception:
+                hits = []
+            for e in (hits or []):
+                p = e.getparent()
+                if p is not None:
+                    try:
+                        p.remove(e)
+                    except Exception:
+                        pass
+
+    dm_directives = _parse_dm_directives(datasets)
+    if dm_directives:
+        try:
+            _l.i(f"[dm] directives: {dm_directives}")
+        except Exception:
+            pass
+    dm_reset_to_raw = str(dm_directives.get("_DM_reset_to", "") or "").strip()
+    dm_reset_to = None
+    if dm_reset_to_raw != "":
+        try:
+            dm_reset_to = max(0, min(99, int(dm_reset_to_raw)))
+        except Exception:
+            dm_reset_to = None
+            _l.w(f"[dm] invalid _DM_reset_to='{dm_reset_to_raw}' (ignored)")
+
+    existing_dm = _dm_scan_existing(root)
+    if dm_reset_to is not None:
+        for n in sorted(existing_dm):
+            if n > dm_reset_to:
+                _dm_remove_generation(root, n)
+        existing_dm = _dm_scan_existing(root)
+        _l.i(f"[dm] reset_to={dm_reset_to} applied; existing={sorted(existing_dm)}")
+
+    run_n = None
+    for cand in range(1, 100):
+        if cand not in existing_dm:
+            run_n = cand
+            break
+    if run_n is None:
+        run_n = 99
+    dm_tag = f"_DM{run_n:02d}"
+    dm_defs_id = f"{dm_tag}_defs"
+    dm_output_id = f"{dm_tag}_output"
+    _l.i(f"[dm] run tag={dm_tag}")
+
+    SM = SRC.SourceManager(root, _doc_path, project_root=None, defs_group_id=dm_defs_id)
 
     # ---------------- Global comment directives (snippets + spritesheets) ----------------
     # Multi-section datasets: the loader can split a single sheet into multiple sections.
@@ -298,16 +394,26 @@ def run(self, __version__):
             return g
 
         pnpink_root = self._find_or_create_layer(root, "PnPInk")
-        out_layer   = _find_or_create_root_group('pnpink-output', 'PnPInk Output')
+        out_root    = _find_or_create_root_group('pnpink-output', 'PnPInk Output')
 
-        # Ensure out_layer is a direct child of the PnPInk layer. This only re-parents PnPInk groups.
-        if out_layer.getparent() is not pnpink_root:
+        # Ensure out_root is a direct child of the PnPInk layer.
+        if out_root.getparent() is not pnpink_root:
+            try:
+                if out_root.getparent() is not None:
+                    out_root.getparent().remove(out_root)
+            except Exception:
+                pass
+            pnpink_root.append(out_root)
+
+        # Per-run generation group (isolates DeckMaker visible output by execution).
+        out_layer = _find_or_create_root_group(dm_output_id, f"DeckMaker {run_n:02d}")
+        if out_layer.getparent() is not out_root:
             try:
                 if out_layer.getparent() is not None:
                     out_layer.getparent().remove(out_layer)
             except Exception:
                 pass
-            pnpink_root.append(out_layer)
+            out_root.append(out_layer)
         px_per_mm    = float(root.unittouu("1mm"))
         page_gap_px  = float(root.unittouu("1cm"))
 

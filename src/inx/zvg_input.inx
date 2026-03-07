@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+  <_name>PnPInk ZVG Import</_name>
+  <id>pnpink.zvg_input</id>
+  <input>
+    <extension>.zvg</extension>
+    <mimetype>application/zip</mimetype>
+    <filetypename>PnPInk ZVG package (*.zvg)</filetypename>
+    <filetypetooltip>Open a packed SVG+assets package without auto-running DeckMaker.</filetypetooltip>
+  </input>
+  <script>
+    <command reldir="extensions" interpreter="python">pnpink/zvg_input.py</command>
+  </script>
+</inkscape-extension>
+

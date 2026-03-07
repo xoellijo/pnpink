@@ -442,14 +442,27 @@ class SourceManager:
                  project_root: Optional[str] = None,
                  default_dpi: float = SVG.DPI,
                  relaxed_case: bool = (os.name == "nt"),
-                 resolve_strict: bool = False):
+                 resolve_strict: bool = False,
+                 defs_group_id: Optional[str] = None):
         self.root = svg_root
         self.svg_real_path = svg_real_path
         self.project_root = project_root
         self.default_dpi = float(default_dpi or SVG.DPI)
         self.resolver = PathResolver(svg_real_path, project_root, relaxed_case)
         self.resolve_strict = bool(resolve_strict)
-        self.defs = SVG.ensure_defs(svg_root)
+        self.defs_root = SVG.ensure_defs(svg_root)
+        self.defs = self.defs_root
+        if defs_group_id:
+            dg = None
+            try:
+                dg = self.defs_root.xpath(f".//*[@id='{defs_group_id}']")
+                dg = dg[0] if dg else None
+            except Exception:
+                dg = None
+            if dg is None:
+                dg = SVG.etree.SubElement(self.defs_root, inkex.addNS('g', 'svg'))
+                dg.set('id', str(defs_group_id))
+            self.defs = dg
         self._cache: Dict[SourceKey, SourceRef] = {}
         self._cache_hits = 0
         self._cache_misses = 0

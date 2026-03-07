@@ -1664,6 +1664,58 @@ def render_phase(ctx):
             s = (expr or '').strip()
             if not s:
                 return ['']
+
+            def _merge_iter_item_with_global_ops(item: str, global_ops: str) -> str:
+                """Apply iterator-global ops to one item token.
+
+                Precedence policy:
+                  - global ops act as defaults
+                  - item-local ops override global ones
+                """
+                tok = (item or '').strip()
+                gops = _normalize_ops_chain(global_ops or "")
+                if not tok or not gops:
+                    return tok
+
+                # 1) Source-like token (supports optional selector + fit suffix).
+                m_src = re.match(
+                    r"^\s*(?P<core>(?:@\{[^}]*\}|(?:Source|S)\s*\{[^}]*\}|https?://\S+?))\s*(?P<sel>\[[^\]]*\])?\s*(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*)?)\s*$",
+                    tok,
+                    re.IGNORECASE,
+                )
+                if m_src:
+                    core = (m_src.group("core") or "").strip()
+                    sel = (m_src.group("sel") or "").strip()
+                    tail = (m_src.group("tail") or "").strip()
+                    item_ops = ""
+                    if tail:
+                        if tail.startswith(".Fit"):
+                            item_ops = _fit_suffix_to_ops(tail)
+                        elif tail.startswith("~"):
+                            item_ops = _normalize_ops_chain(tail)
+                    merged = _merge_fit_ops(gops, item_ops)
+                    return f"{core}{sel}{merged}" if merged else f"{core}{sel}"
+
+                # 2) Object-like token (id[=|+][~ops]).
+                try:
+                    base_id, place, ops_tok = _parse_object_token(tok)
+                    mod = "" if place == "clone" else ("=" if place == "copy" else "+")
+                    item_ops = _normalize_ops_chain(("~" + ops_tok) if (ops_tok or "").strip() else "")
+                    merged = _merge_fit_ops(gops, item_ops)
+                    return f"{base_id}{mod}{merged}" if merged else f"{base_id}{mod}"
+                except Exception:
+                    pass
+
+                # 3) Fallback: if token already has ~suffix, merge there.
+                if "~" in tok:
+                    base, _sep, tail = tok.partition("~")
+                    item_ops = _normalize_ops_chain("~" + (tail or ""))
+                    merged = _merge_fit_ops(gops, item_ops)
+                    return f"{base}{merged}" if merged else base
+
+                # 4) Plain scalar token: append global ops.
+                return f"{tok}{gops}"
+
             src_v, sel_v, _ops_v, _tag_v = _parse_source_token_with_selector(s)
             if src_v:
                 v_urls = _resolve_virtual_source_urls(SM, src_v, sel_v, warn_tag=_virtual_warn_tag(src_v, "wkmc.iter"))
@@ -1680,7 +1732,7 @@ def render_phase(ctx):
                 if br_tail and not ops_norm:
                     _l.w(f"[iter] invalid iterator suffix after list: '{br_tail}'")
                 if ops_norm:
-                    return [f"{v}{ops_norm}" for v in seq]
+                    return [_merge_iter_item_with_global_ops(v, ops_norm) for v in seq]
                 return seq
 
             # '@{...}' filesystem glob, optionally with fit/anchor suffix.

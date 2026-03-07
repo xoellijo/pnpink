@@ -321,13 +321,13 @@ def patch_visible_versions(text: str, version: str) -> str:
 def patch_inx_text(text: str, new_id: str, submenu_name: str, new_command: str, version: str) -> str:
     if not ID_RE.search(text):
         raise ValueError("Missing <id>...</id>")
-    if not SUBMENU_RE.search(text):
-        raise ValueError('Missing <submenu ... _name="..."/>')
     if not COMMAND_RE.search(text):
         raise ValueError("Missing <command>...</command>")
 
     text = ID_RE.sub(f"<id>{new_id}</id>", text, count=1)
-    text = SUBMENU_RE.sub(lambda m: f'<submenu{m.group(1)}_name="{submenu_name}"{m.group(2)}/>', text, count=1)
+    # Effect INX files have submenu; input/output format INX files do not.
+    if SUBMENU_RE.search(text):
+        text = SUBMENU_RE.sub(lambda m: f'<submenu{m.group(1)}_name="{submenu_name}"{m.group(2)}/>', text, count=1)
     text = COMMAND_RE.sub(lambda m: f"{m.group(1)}{new_command}{m.group(2)}", text, count=1)
     text = patch_visible_versions(text, version)
     return text

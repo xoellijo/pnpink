@@ -69,6 +69,20 @@ One template and one dataset can produce hundreds of print-ready components in s
 - Introduction: [`docs/intro.md`](docs/intro.md)
 - General manual: [`docs/pnpink-general.md`](docs/pnpink-general.md)
 
+## Package Formats (`.zvg` / `.pnp`)
+
+- `File > Save As` / `Save a Copy` now supports:
+  - `PnPInk ZVG package (*.zvg)`
+  - `PnPInk PNP package (*.pnp)`
+- `File > Open` supports opening both package types directly.
+- Both formats are ZIP-based and can include:
+  - one main SVG in zip root,
+  - optional CSV dataset (default: same SVG name),
+  - optional `manifest.json`,
+  - required local assets.
+- `.zvg`: includes referenced local/cache assets for reproducible portability.
+- `.pnp`: tries to stay minimal; web cache files are skipped and import tries to run DeckMaker when requested by manifest.
+
 ## Project Status
 
 This repository is currently in `alpha` release stage.

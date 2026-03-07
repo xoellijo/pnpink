@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+  <_name>PnPInk PNP Export</_name>
+  <id>pnpink.pnp_output</id>
+  <output>
+    <extension>.pnp</extension>
+    <mimetype>application/zip</mimetype>
+    <filetypename>PnPInk PNP package (*.pnp)</filetypename>
+    <filetypetooltip>Save lightweight package to regenerate from dataset on import.</filetypetooltip>
+  </output>
+  <script>
+    <command reldir="extensions" interpreter="python">pnpink/pnp_output.py</command>
+  </script>
+</inkscape-extension>
+
