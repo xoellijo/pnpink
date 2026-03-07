@@ -33,6 +33,32 @@ ID~[2]i7
 ID~i7[3 -2]^45|
 ```
 
+## Priority and Overrides
+When multiple Fit/Anchor layers apply to the same target, use this order:
+
+1. Header default/global ops (for example `main_art-8=~[10x10]`).
+2. Iterator/global ops (for example `*[...]~[0%]5`).
+3. Item-local ops (for example `:fig(g918)~^^`).
+
+Later layers override earlier ones for conflicting properties.
+This means local item ops are the final override.
+
+Quick example:
+
+```txt
+Header:
+main_art-8=~[10x10]
+
+Cell value:
+*[:fig(g918)~^^ :fig(g1720) :fig(g1264) :fig(g13590)]~[0%]5
+```
+
+Effective behavior:
+
+- Start with `border=[10x10]` from header.
+- Iterator global `~[0%]5` overrides border and sets `anchor=5`.
+- First item adds `~^^` (rotation), without changing the previous border/anchor unless explicitly redefined.
+
 ## Anchor
 `anchor = n`
 

@@ -574,7 +574,9 @@ def _merge_fit_ops(prefix_ops: str, suffix_ops: str) -> str:
     fs = _merge_specs(fs1, fs2)
     if fs is not None:
         body = DSL.ops_from_fit_spec(fs) or ""
-        return "~" + body if body else "~"
+        if not body:
+            return "~"
+        return body if body.startswith("~") else ("~" + body)
 
     merged_raw = "~" + (b1 + b2)
     return merged_raw
@@ -632,7 +634,12 @@ def _normalize_ops_chain(ops: str) -> str:
             break
         fs = _merge_specs(fs, fs_p)
     if fs is not None:
-        return DSL.ops_from_fit_spec(fs) or ("~" if had_leading else "")
+        body = DSL.ops_from_fit_spec(fs) or ""
+        if not body:
+            return "~" if had_leading else ""
+        if body.startswith("~"):
+            return body
+        return ("~" + body) if had_leading else body
 
     # Fallback: raw merge
     merged = ""
@@ -902,6 +909,12 @@ def _page_attrs_from_resolved(resolved) -> Dict[str,str]:
     mg = SVG.coerce_margins_mm(resolved.page.margins_mm())
     if any(abs(v)>1e-9 for v in (mg.top, mg.right, mg.bottom, mg.left)):
         attrs["margin"] = f"{mg.top} {mg.right} {mg.bottom} {mg.left}"
+    try:
+        dm_tag = str(getattr(resolved, "_dm_tag", "") or "").strip()
+        if dm_tag:
+            attrs["pnpink_dm_gen"] = dm_tag
+    except Exception:
+        pass
     return attrs
 
 
@@ -1134,15 +1147,8 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
             # default_ops already includes leading '~' when present
             raw_token = f"{raw_token}{_default_ops}"
 
-    if raw_token and _global_ops:
-        # Merge ops: header/global first, then token-local ops (if any) so the token-local ops wins.
-        if "~" in raw_token:
-            head, _, tail = raw_token.partition("~")
-            suffix = ("~" + tail) if tail is not None else "~"
-            merged = _merge_fit_ops(_global_ops, suffix)
-            raw_token = f"{head}{merged}" if merged else head
-        else:
-            raw_token = f"{raw_token}{_global_ops}"
+    # Header-global ops ('id=~...') are merged later per token in FA queue stage.
+    # Doing it there gives deterministic precedence with iterator/item ops.
     if not raw_token:
         # Phase-1: NEVER delete rect anchors (duplicate headers / multivalue need a stable, unique anchor element).
         if _is_rect_elem(tgt):
@@ -1273,6 +1279,14 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
         s = _normalize_ops_chain(s)
         return s or "~"
 
+    def _merge_header_global_ops(ops_body: str) -> str:
+        base_full = _ensure_ops_full(ops_body)
+        gops = _normalize_ops_chain(_global_ops or "")
+        if not gops:
+            return base_full
+        merged = _merge_fit_ops(gops, base_full)
+        return merged or "~"
+
     if is_fa_token:
         # Multivalue support: allow several FA tokens separated by whitespace in the same cell.
         tokens = _split_multivalue(raw_token) if any(ch.isspace() for ch in raw_token) else [raw_token]
@@ -1317,7 +1331,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                 if not arr or not arr.get('items'):
                     continue
                 ops_body = (arr.get('ops') or "") or default_ops
-                ops_full = _ensure_ops_full(ops_body)
+                ops_full = _merge_header_global_ops(ops_body)
                 g_node, g_id = _build_array_group(inst, root_doc, arr.get('items'), arr.get('layout'), sm=sm)
                 if g_id:
                     # Use deep-copy for arrays so the temp group can be removed safely.
@@ -1331,7 +1345,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                 _l.w(f"[deckmaker.fa] placeholder '{key}': token invalido '{tok}'")
                 continue
             ops_body = (ops_tok or "") or default_ops
-            ops_full = _ensure_ops_full(ops_body)
+            ops_full = _merge_header_global_ops(ops_body)
             fa_jobs.append((base_id, rect_id_val, ops_full, place, None, rect_elem_for_fa))
             queued += 1
             _l.d(f"[deckmaker.fa] queued '{key}' -> base='{base_id}' rect='{rect_id_val}' place={place} ops='{ops_full or '~'}'")
@@ -1676,6 +1690,19 @@ def render_phase(ctx):
                 gops = _normalize_ops_chain(global_ops or "")
                 if not tok or not gops:
                     return tok
+
+                # If one iterator item expands to multiple top-level tokens
+                # (e.g. a snippet expanding to "id1 id2"), apply global ops to
+                # each token independently, then rebuild the multivalue cell.
+                if any(ch.isspace() for ch in tok):
+                    toks = _split_multivalue(tok)
+                    if len(toks) > 1:
+                        merged_parts = []
+                        for tt in toks:
+                            mt = _merge_iter_item_with_global_ops(tt, gops)
+                            if mt:
+                                merged_parts.append(mt)
+                        return " ".join(merged_parts).strip()
 
                 # 1) Source-like token (supports optional selector + fit suffix).
                 m_src = re.match(

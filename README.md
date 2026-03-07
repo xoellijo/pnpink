@@ -5,6 +5,9 @@
 
 PnPInk is a free, open-source, cross-platform toolkit for creating high-quality print-and-play materials for board games (cards, boards, tokens, tiles, and more) directly inside Inkscape.
 
+PnPInk is inspired by the CounterSheets extension ecosystem, and we are grateful for that groundwork:
+[`CounterSheets (GitHub)`](https://github.com/lifelike/countersheetsextension)
+
 It is a native extension suite that turns Inkscape into a complete publishing environment, accompanying creators from their first prototypes to final professional print compositions.
 
 PnPInk automates the creation of card decks, boards, and punchboards, including hex or square grids, player sheets, counters, and tiles.
