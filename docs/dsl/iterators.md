@@ -25,6 +25,14 @@ All listed items are processed in the same row instance.
 
 This is useful when you want several IDs resolved together in one card, and optionally apply local array layout/fit behavior.
 
+Wildcard IDs are supported inside arrays:
+
+```txt
+[main_icon-*]
+```
+
+This expands to all matching IDs and keeps array/list semantics (single card instance).
+
 ## Iterator (`*...`)
 When a cell starts with `*`, it becomes an iterator expression.
 
@@ -39,6 +47,14 @@ Result:
 - by default (without explicit copies), generated cards count equals iterator length.
 
 Conceptually: one different card per value.
+
+Wildcard IDs are also supported in scalar/multivalue cells:
+
+```txt
+main_icon-*
+```
+
+Outside `[ ... ]`, wildcard expansion behaves as multivalue (same card instance, token sequence order).
 
 ## Multi-Level Iteration (`*`, `**`, `***`)
 PnPInk supports multiple iterator levels using leading stars.

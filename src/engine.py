@@ -333,6 +333,16 @@ def run(self, __version__):
             _l.i(f"[snippets] using merged: global={len(global_snip_reg)} local={len(local_snip_reg)} total={len(snip_reg)}")
         else:
             _l.i(f"[snippets] using local only: total={len(snip_reg)}")
+
+        # Expand snippets in headers too (for default expressions like:
+        #   back_art-5=:backpattern(7)~a! ).
+        if snip_reg and isinstance(headers, list):
+            for hi, hv in enumerate(list(headers)):
+                try:
+                    headers[hi] = SNP.expand_snippets_in_text(str(hv or ""), snip_reg)
+                except Exception as ex:
+                    _l.w(f"[snippets] header expand failed idx={hi}: {ex}")
+
         if snip_reg:
             for ridx, row in enumerate(rows_data, start=1):
                 # Expand snippets in positional cells (and only in known string meta fields).
@@ -575,13 +585,36 @@ def run(self, __version__):
 
         # detectar prototipo a partir de headers
         target_nodes: List[inkex.BaseElement] = []
+        _seen_tn_ids = set()
         for h in headers:
             tid = (re.match(r"^([^\[]+)", h).group(1) if re.match(r"^([^\[]+)", h) else "").strip()
             if not tid or tid.startswith("clone_"): continue
-            n = root.find(".//*[@id='%s']" % tid)
-            if n is None:
-                n = root.find(".//*[@data-field='%s']" % tid)
-            if n is not None: target_nodes.append(n)
+            toks = [x for x in re.split(r"\s+", tid) if x]
+            for tok in toks:
+                # Header wildcard support in prototype detection: main_icon-* -> all ids with that prefix.
+                if tok.endswith("*") and re.match(r"^[A-Za-z_][-A-Za-z0-9_:.]*\*$", tok):
+                    pref = tok[:-1]
+                    try:
+                        for _el in root.iter():
+                            _id = (_el.get('id') or '').strip()
+                            if _id and _id.startswith(pref) and _id not in _seen_tn_ids:
+                                target_nodes.append(_el)
+                                _seen_tn_ids.add(_id)
+                    except Exception:
+                        pass
+                    continue
+
+                n = root.find(".//*[@id='%s']" % tok)
+                if n is None:
+                    n = root.find(".//*[@data-field='%s']" % tok)
+                if n is not None:
+                    try:
+                        _nid = (n.get('id') or f"@obj:{id(n)}")
+                    except Exception:
+                        _nid = f"@obj:{id(n)}"
+                    if _nid not in _seen_tn_ids:
+                        target_nodes.append(n)
+                        _seen_tn_ids.add(_nid)
         proto_root = None
         if not target_nodes:
             if declared_template_root is not None:
@@ -604,9 +637,11 @@ def run(self, __version__):
                 except Exception: cur = None
             return False
 
-        ancestors = _ancestors_inclusive(target_nodes[0])
-        cand_groups = [a for a in ancestors
-                       if hasattr(a, "tag") and isinstance(a.tag, str) and a.tag.endswith("g")]
+        cand_groups = []
+        if target_nodes:
+            ancestors = _ancestors_inclusive(target_nodes[0])
+            cand_groups = [a for a in ancestors
+                           if hasattr(a, "tag") and isinstance(a.tag, str) and a.tag.endswith("g")]
 
         if proto_root is None:
             for g in cand_groups:

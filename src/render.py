@@ -136,7 +136,7 @@ def _gaps_has_offsets(layout_obj) -> bool:
 
 def _parse_object_token(token: str) -> Tuple[str, str, str]:
     m = re.match(r"""
-        ^(?P<id>[A-Za-z_][-A-Za-z0-9_:.]*)
+        ^(?P<id>[A-Za-z_][-A-Za-z0-9_:.]*\*?)
         (?P<mode>[=+])?
         (?:~(?P<ops>.+))?
         \s*$
@@ -647,33 +647,36 @@ def _normalize_ops_chain(ops: str) -> str:
         merged = _merge_fit_ops(merged, "~" + p)
     return merged or ("~" if had_leading else "")
 
-def _parse_header_default_spec(spec: str, target_id: str) -> Tuple[Optional[str], str, str]:
+def _parse_header_default_spec(spec: str, target_id: str) -> Tuple[Optional[str], str, str, str]:
     """Parse the RHS of a header default declaration.
 
     Examples (spec):
-      'id1'                -> (default_id='id1', default_ops='',    global_ops='')
-      'id1~m7^'             -> (default_id='id1', default_ops='~m7^', global_ops='')
-      'id1.Fit{m7^}'        -> (default_id='id1', default_ops='~m7^', global_ops='')
-      '~[-50%]'             -> (default_id=None,  default_ops='',    global_ops='~[-50%]')
-      '.Fit{m7^15}'         -> (default_id=None,  default_ops='',    global_ops='~m7^15')
-      'ph_id'               -> (default_id='ph_id', default_ops='',  global_ops='')
+      'id1'                -> (default_id='id1', default_ops='',    global_ops='', default_expr='')
+      'id1~m7^'             -> (default_id='id1', default_ops='~m7^', global_ops='', default_expr='')
+      'id1.Fit{m7^}'        -> (default_id='id1', default_ops='~m7^', global_ops='', default_expr='')
+      '~[-50%]'             -> (default_id=None,  default_ops='',    global_ops='~[-50%]', default_expr='')
+      '.Fit{m7^15}'         -> (default_id=None,  default_ops='',    global_ops='~m7^15', default_expr='')
+      '@{...}~i5'           -> (default_id=None,  default_ops='',    global_ops='', default_expr='@{...}~i5')
+      'ph_id'               -> (default_id='ph_id', default_ops='',  global_ops='', default_expr='')
     """
     s = (spec or "").strip()
     if not s:
-        return None, "", ""
+        return None, "", "", ""
     # Global-fit-only forms.
     if s.startswith("~"):
-        return None, "", s
+        return None, "", s, ""
     if s.startswith(".Fit"):
-        return None, "", (_fit_suffix_to_ops(s) or "")
+        return None, "", (_fit_suffix_to_ops(s) or ""), ""
     # Default-id forms, optionally with ops.
     default_id = None
     default_ops = ""
     global_ops = ""
+    default_expr = ""
     # Split on first '~' or '.Fit{...}'
-    m = re.match(r"^(?P<id>[A-Za-z_][-A-Za-z0-9_:.]*)(?P<rest>.*)$", s)
+    m = re.match(r"^(?P<id>[A-Za-z_][-A-Za-z0-9_:.]*\*?)(?P<rest>.*)$", s)
     if not m:
-        return None, "", ""
+        # Not an id-form default => keep as full default expression.
+        return None, "", "", s
     default_id = m.group("id")
     rest = (m.group("rest") or "").strip()
     if rest:
@@ -684,7 +687,140 @@ def _parse_header_default_spec(spec: str, target_id: str) -> Tuple[Optional[str]
         else:
             # Unknown tail; ignore to stay forward-compatible.
             default_ops = ""
-    return default_id, (default_ops or ""), (global_ops or "")
+    return default_id, (default_ops or ""), (global_ops or ""), (default_expr or "")
+
+def _is_id_wildcard_token(token: str) -> bool:
+    t = (token or "").strip()
+    return bool(re.match(r"^[A-Za-z_][-A-Za-z0-9_:.]*\*$", t))
+
+
+def _expand_id_wildcard_in_scope(scope, token: str) -> list:
+    """Expand a wildcard token like 'main_icon-*' against ids in `scope`.
+
+    Matches by prefix over `strip_pnp_suffix(@id)`, preserving document order.
+    """
+    t = (token or "").strip()
+    if not t:
+        return []
+    if not _is_id_wildcard_token(t):
+        return [t]
+    pref = t[:-1]
+    out = []
+    seen = set()
+    if scope is None:
+        return out
+    try:
+        for el in scope.iter():
+            cid = (el.get("id") or "").strip()
+            if not cid:
+                continue
+            bid = (SVG.strip_pnp_suffix(cid) or cid).strip()
+            if (not bid) or (not bid.startswith(pref)) or (bid in seen):
+                continue
+            seen.add(bid)
+            out.append(bid)
+    except Exception:
+        return []
+    return out
+
+
+def _resolve_header_target_ids(scope, header_targets) -> list:
+    out = []
+    seen = set()
+    toks = list(header_targets or [])
+    for tok in toks:
+        t = (tok or "").strip()
+        if not t:
+            continue
+        expanded = _expand_id_wildcard_in_scope(scope, t) if _is_id_wildcard_token(t) else [t]
+        for x in expanded:
+            xx = (x or "").strip()
+            if not xx or xx in seen:
+                continue
+            seen.add(xx)
+            out.append(xx)
+    return out
+
+
+def _split_leading_bracket_group(s: str):
+    txt = (s or "").strip()
+    if not txt.startswith('['):
+        return None, None
+    depth = 0
+    end = -1
+    for i, ch in enumerate(txt):
+        if ch == '[':
+            depth += 1
+        elif ch == ']':
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    if end < 0:
+        return None, None
+    return txt[:end + 1], txt[end + 1:].strip()
+
+
+def _expand_wildcard_object_token(tok: str, id_scope) -> list:
+    t = (tok or "").strip()
+    if not t:
+        return []
+    try:
+        base_id, place, ops_tok = _parse_object_token(t)
+    except Exception:
+        return [t]
+    if not _is_id_wildcard_token(base_id):
+        return [t]
+    ids = _expand_id_wildcard_in_scope(id_scope, base_id)
+    mod = "" if place == "clone" else ("=" if place == "copy" else "+")
+    ops = f"~{ops_tok}" if (ops_tok or "").strip() else ""
+    return [f"{i}{mod}{ops}" for i in ids]
+
+
+def _expand_wildcard_ids_in_value(raw_value: str, id_scope) -> str:
+    """Expand id wildcards in non-text value tokens.
+
+    - `id-*` expands to whitespace-separated multivalue tokens.
+    - `[id-*]` expands inside list bodies preserving optional trailing tail.
+    """
+    s = (raw_value or "").strip()
+    if not s or ("*" not in s):
+        return s
+    toks = _split_multivalue(s) if any(ch.isspace() for ch in s) else [s]
+    out = []
+    for tok in toks:
+        t = (tok or "").strip()
+        if not t:
+            continue
+        bcore, btail = _split_leading_bracket_group(t)
+        if bcore is not None:
+            body = bcore[1:-1].strip()
+            body_toks = _split_multivalue(body) if body else []
+            body_out = []
+            for bt in body_toks:
+                body_out.extend(_expand_wildcard_object_token(bt, id_scope))
+            if body_out:
+                arr = "[" + " ".join(body_out) + "]"
+                if btail:
+                    arr += btail
+                out.append(arr)
+            continue
+        out.extend(_expand_wildcard_object_token(t, id_scope))
+    return " ".join([x for x in out if x]).strip()
+
+
+def _build_single_target_header_key(hk: Dict[str, object], target_id: str) -> str:
+    left = (target_id or "").strip()
+    prop = (hk.get("prop") or "text").strip().lower()
+    if prop and prop != "text":
+        left = f"{left}[{prop}]"
+    if bool(hk.get("header_plus") or False):
+        left = left + "+"
+    default_raw = (hk.get("default_raw") or "").strip()
+    if default_raw:
+        return f"{left}={default_raw}"
+    return left
+
 
 def parse_header_key_full(key: str) -> Dict[str, object]:
     """Parse a dataset header key including modifiers.
@@ -694,12 +830,12 @@ def parse_header_key_full(key: str) -> Dict[str, object]:
       - '=' default declaration: 'ph_id=...' (defaults and/or global fit).
 
     Returns dict:
-      {target_id, prop, header_plus, default_id, default_ops, global_ops}
+      {target_id, target_ids, prop, header_plus, default_id, default_ops, global_ops, default_expr, default_raw}
     """
     raw = (key or "").strip()
     if not raw:
-        return {'target_id': '', 'prop': 'text', 'header_plus': False,
-                'default_id': None, 'default_ops': '', 'global_ops': ''}
+        return {'target_id': '', 'target_ids': [], 'prop': 'text', 'header_plus': False,
+                'default_id': None, 'default_ops': '', 'global_ops': '', 'default_expr': '', 'default_raw': ''}
 
     # Split default declaration first so '=~[12x12]' is never confused with header '[prop]'.
     left, has_eq, right = raw.partition("=")
@@ -720,25 +856,31 @@ def parse_header_key_full(key: str) -> Dict[str, object]:
         header_plus = True
         left = left[:-1].strip()
 
-    target_id = left
+    target_ids = _split_multivalue(left) if any(ch.isspace() for ch in left) else [left]
+    target_ids = [(x or "").strip() for x in (target_ids or []) if (x or "").strip()]
+    target_id = target_ids[0] if target_ids else ""
 
     # Phase-1 keep-visible set from '+'
     global _P1_KEEP_SET
-    if header_plus and target_id:
+    if header_plus and target_ids:
         try:
             if isinstance(_P1_KEEP_SET, set):
-                _P1_KEEP_SET.add(target_id)
+                for _tid in target_ids:
+                    if not _is_id_wildcard_token(_tid):
+                        _P1_KEEP_SET.add(_tid)
         except Exception:
             pass
 
     default_id = None
     default_ops = ""
     global_ops = ""
+    default_expr = ""
     if has_eq:
-        default_id, default_ops, global_ops = _parse_header_default_spec(right, target_id)
+        default_id, default_ops, global_ops, default_expr = _parse_header_default_spec(right, target_id)
 
-    return {'target_id': target_id, 'prop': prop, 'header_plus': header_plus,
-            'default_id': default_id, 'default_ops': (default_ops or ''), 'global_ops': (global_ops or '')}
+    return {'target_id': target_id, 'target_ids': target_ids, 'prop': prop, 'header_plus': header_plus,
+            'default_id': default_id, 'default_ops': (default_ops or ''), 'global_ops': (global_ops or ''),
+            'default_expr': (default_expr or ''), 'default_raw': (right or '')}
 
 def parse_header_key(key: str) -> Tuple[str, str, bool]:
     info = parse_header_key_full(key)
@@ -1103,7 +1245,29 @@ def _center_use_over_placeholder(u, placeholder):
 
 def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs, use_seq, sm=None, ss_registry=None):
     hk = parse_header_key_full(key)
-    target_id = hk.get('target_id') or ''
+    target_tokens = hk.get('target_ids') if isinstance(hk, dict) else None
+    if not target_tokens:
+        target_tokens = [hk.get('target_id') or '']
+    target_ids = _resolve_header_target_ids(inst, target_tokens)
+    if not target_ids:
+        target_ids = [hk.get('target_id') or '']
+    # Multiheader / wildcard headers: apply the same value to each resolved target.
+    if len(target_ids) > 1:
+        total = 0
+        status = "miss"
+        for _tid in target_ids:
+            sub_key = _build_single_target_header_key(hk, _tid)
+            c, st = apply_field_in_clone(
+                inst, sub_key, raw_val, row,
+                root_doc=root_doc, use_jobs=use_jobs, fa_jobs=fa_jobs, use_seq=use_seq,
+                sm=sm, ss_registry=ss_registry
+            )
+            total += int(c or 0)
+            if st != "miss":
+                status = "multiheader"
+        return total, status
+
+    target_id = target_ids[0] if target_ids else (hk.get('target_id') or '')
     prop = hk.get('prop') or 'text'
     header_plus = bool(hk.get('header_plus') or False)
     value = expand_value(raw_val, row)
@@ -1136,16 +1300,23 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
         _default_id = hk.get('default_id') if isinstance(hk, dict) else None
         _default_ops = (hk.get('default_ops') or '') if isinstance(hk, dict) else ''
         _global_ops = (hk.get('global_ops') or '') if isinstance(hk, dict) else ''
+        _default_expr = (hk.get('default_expr') or '') if isinstance(hk, dict) else ''
     except Exception:
         _default_id = None
         _default_ops = ''
         _global_ops = ''
+        _default_expr = ''
 
-    if not raw_token and _default_id:
-        raw_token = str(_default_id).strip()
-        if raw_token and _default_ops:
-            # default_ops already includes leading '~' when present
-            raw_token = f"{raw_token}{_default_ops}"
+    if not raw_token:
+        if _default_expr:
+            raw_token = expand_value(str(_default_expr), row).strip()
+        elif _default_id:
+            raw_token = str(_default_id).strip()
+            if raw_token and _default_ops:
+                # default_ops already includes leading '~' when present
+                raw_token = f"{raw_token}{_default_ops}"
+
+    raw_token = _expand_wildcard_ids_in_value(raw_token, root_doc)
 
     # Header-global ops ('id=~...') are merged later per token in FA queue stage.
     # Doing it there gives deterministic precedence with iterator/item ops.
@@ -2224,10 +2395,11 @@ def render_phase(ctx):
             for _k, _raw in _iter_row_fields(headers, row_inst):
                 if not _k or _k.startswith('__dm_') or _k.startswith('_'):
                     continue
-                # parse_header_key also strips '+' and populates _P1_KEEP_SET
-                _tid = (parse_header_key_full(_k).get('target_id') or '').strip()
-                if _tid:
-                    _rect_ids.add(_tid)
+                _hk = parse_header_key_full(_k)
+                _h_targets = (_hk.get('target_ids') or [(_hk.get('target_id') or '')])
+                for _tid in _resolve_header_target_ids(inst, _h_targets):
+                    if _tid:
+                        _rect_ids.add(_tid)
         except Exception:
             pass
         try:
@@ -2962,19 +3134,23 @@ def render_phase(ctx):
         except Exception:
             _keep = set()
 
-        # Collect candidate anchor ids from headers (base ids only, parse_header_key strips '+').
-        _rect_ids = set()
+        # Collect header specs; wildcard targets are resolved per-scope.
+        _rect_hks = []
         try:
             for _k, _raw in _iter_row_fields(headers, row):
                 if not _k or _k.startswith('__dm_') or _k.startswith('_'):
                     continue
-                _tid = (parse_header_key_full(_k).get('target_id') or '').strip()
-                if _tid:
-                    _rect_ids.add(_tid)
+                _rect_hks.append(parse_header_key_full(_k))
         except Exception:
             pass
 
         def _apply_anchor_visibility(_scope):
+            _rect_ids = set()
+            for _hk in (_rect_hks or []):
+                _h_targets = (_hk.get('target_ids') or [(_hk.get('target_id') or '')])
+                for _tid in _resolve_header_target_ids(_scope, _h_targets):
+                    if _tid:
+                        _rect_ids.add(_tid)
             for _rid in _rect_ids:
                 try:
                     _e = SVG.find_target_exact_in(_scope, _rid)

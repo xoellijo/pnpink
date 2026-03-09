@@ -100,6 +100,8 @@ Rules:
 - `id+` keeps the original anchor rect visible (otherwise anchors are hidden).
 - `id[prop]` sets the property (`text` or `xml`). Default is `text`.
 - `id=...` declares a **default value** or default Fit ops for that column.
+- `id-*` in headers expands to all matching IDs by prefix.
+- `id1 id2 id3` in a single header applies the same cell value to all listed IDs.
 
 Examples:
 
@@ -108,6 +110,28 @@ id=default_id
 id=~i5
 id=default_id~i5
 ```
+
+### Header Fan-Out and Wildcards
+Use this when one dataset column must feed several placeholders.
+
+Examples:
+
+```txt
+ph-1 ph-2 ph-3
+id1
+```
+
+`id1` is applied to all three placeholders.
+
+Wildcard headers are also supported:
+
+```txt
+main_icon-*
+Ic(heart-suit)
+```
+
+This applies the value to every placeholder whose ID starts with `main_icon-`.
+All normal header modifiers (`+`, `[xml]`, `=...`) remain valid.
 
 ### Template Column Syntax
 Use template columns when you need extra template instances, back passes, or page-level elements.

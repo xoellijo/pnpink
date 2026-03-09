@@ -403,33 +403,75 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
         cp = etree.SubElement(defs, inkex.addNS('clipPath', 'svg'))
         cp.set('id', clip_id)
         cp.set('clipPathUnits', 'userSpaceOnUse')
-        r = etree.SubElement(cp, inkex.addNS('rect', 'svg'))
-    else:
-        r = None
-        for ch in list(cp):
-            if hasattr(ch, 'tag') and str(ch.tag).endswith('rect'):
-                r = ch
-                break
-        if r is None:
-            for ch in list(cp):
+    # Rebuild clipPath content per run (single shape)
+    for ch in list(cp):
+        try:
+            cp.remove(ch)
+        except Exception:
+            pass
+
+    def _ctm_to_root(node):
+        T = inkex.Transform()
+        chain = []
+        cur = node
+        while cur is not None:
+            tr = cur.get('transform')
+            if tr:
                 try:
-                    cp.remove(ch)
+                    chain.append(inkex.Transform(tr))
                 except Exception:
                     pass
-            r = etree.SubElement(cp, inkex.addNS('rect', 'svg'))
+            cur = cur.getparent()
+        for t in reversed(chain):
+            T = T @ t
+        return T
+
+    clip_use_inner = not (getattr(fs, "border", None) and getattr(fs, "clip", False))
+    clip_shape = None
+    try:
+        # Build shape clip only for rect/path placeholders.
+        # Transform from placeholder local coords -> parent local coords:
+        #   T_parent<-rect = inv(parent_ctm) @ rect_ctm
+        rect_ctm = _ctm_to_root(rect)
+        T_parent_from_rect = inv_parent @ rect_ctm
+        # wrapper local = parent local translated by (-rx_l, -ry_l)
+        T_wrap_from_parent = inkex.Transform(f"translate({-rx_l},{-ry_l})")
+        T_wrap_from_rect = T_wrap_from_parent @ T_parent_from_rect
+
+        tag = str(getattr(rect, "tag", "") or "")
+        if tag.endswith('rect'):
+            s = etree.SubElement(cp, inkex.addNS('rect', 'svg'))
+            for k in ("x", "y", "width", "height", "rx", "ry"):
+                v = rect.get(k)
+                if v is not None and str(v) != "":
+                    s.set(k, str(v))
+            if s is not None:
+                s.set("transform", str(T_wrap_from_rect))
+                clip_shape = s
+        elif tag.endswith('path'):
+            d = rect.get('d') or ""
+            if d.strip():
+                s = etree.SubElement(cp, inkex.addNS('path', 'svg'))
+                s.set('d', d)
+                s.set("transform", str(T_wrap_from_rect))
+                clip_shape = s
+    except Exception:
+        clip_shape = None
 
     # Clip rect in wrapper coords (0,0 at placeholder origin)
-    clip_use_inner = not (getattr(fs, "border", None) and getattr(fs, "clip", False))
-    if clip_use_inner:
-        r.set('x', f"{ix_l - rx_l}")
-        r.set('y', f"{iy_l - ry_l}")
-        r.set('width', f"{iw_l}")
-        r.set('height', f"{ih_l}")
-    else:
-        r.set('x', "0")
-        r.set('y', "0")
-        r.set('width', f"{rw_l}")
-        r.set('height', f"{rh_l}")
+    if clip_shape is None:
+        r = etree.SubElement(cp, inkex.addNS('rect', 'svg'))
+        clip_use_inner = not (getattr(fs, "border", None) and getattr(fs, "clip", False))
+        if clip_use_inner:
+            r.set('x', f"{ix_l - rx_l}")
+            r.set('y', f"{iy_l - ry_l}")
+            r.set('width', f"{iw_l}")
+            r.set('height', f"{ih_l}")
+        else:
+            r.set('x', "0")
+            r.set('y', "0")
+            r.set('width', f"{rw_l}")
+            r.set('height', f"{rh_l}")
     clip_g.set('clip-path', f"url(#{clip_id})")
 
     # Place base inside the clipped group, applying the local transform
