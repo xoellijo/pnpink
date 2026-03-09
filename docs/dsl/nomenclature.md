@@ -2,12 +2,14 @@
 This section defines rules that apply to the whole DSL.
 
 ## Global Tokens
-- `^` always means rotation (degrees).
-- `|` and `||` always mean mirror (horizontal, vertical).
-- `!` always means clip (see Fit for stage rules).
 - `[]` always means list or list-like values.
 - `{}` always means a module block or a page/layout/marks block.
-
+- `^` always means rotation (degrees)/landscape for pages
+- `|` and `||` always mean mirror (horizontal, vertical).
+- `!` always means clip (see Fit for stage rules).
+- `:` allways means substitution (inline :icons: in text or :snippets() )
+- `*` wildcard means "ALL" (sufix o IDs (ID*), file wilcards (file*.png), iterators: *[list of ids], repetition: 3*ID, all items in list: [*])
+ 
 ## IDs and Targets
 An SVG `id` is the primary selector.
 To inspect or edit IDs in Inkscape:
@@ -15,7 +17,7 @@ To inspect or edit IDs in Inkscape:
 - `Object > Objects...` (Shift+Ctrl+O): first step for hierarchy, groups/layers, and Z-order.
 - `Object > XML Editor` (Shift+Ctrl+X): low-level XML/SVG attribute editing.
 
-IDs must be unique and follow XML rules (letters first, no spaces).
+IDs must be unique and follow XML rules (letters first, no spaces, no special chars,... ).
 
 ## Lists, Ranges, and Multipliers
 Lists are space-separated:
@@ -27,7 +29,7 @@ Lists are space-separated:
 Gaps and multipliers are supported:
 
 ```txt
-[ID1 - - - ID4]  -> same as [ID1 3- ID4]
+[ID1 - - - ID4]  -> same as [ID1 3- ID4], "-" means empty slots
 3*ID             -> [ID ID ID]
 ```
 
@@ -36,6 +38,7 @@ Ranges and selectors:
 ```txt
 target[2]      -> item 2
 target[2..4]   -> items 2, 3, 4
+target[A..ZZ]  -> A B C ... Z AA AB .. ZZ
 target[*]      -> all items
 ```
 
@@ -52,7 +55,7 @@ but not available, the engine logs an error and falls back.
 Modules are written as:
 
 ```txt
-ID`.Module{ key=value key2=value2 }`
+ID.Module{ key=value key2=value2 }`
 ```
 
 Most modules have:

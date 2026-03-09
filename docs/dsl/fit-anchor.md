@@ -4,14 +4,14 @@ The **Fit** module (`Fit{}` or shorthand `F{}` or `~`) positions one element rel
 Example:
 
 ```txt
-ID`.Fit{ inside anchor=7 }`
+ID.Fit{ inside anchor=7 }
 ```
 
 This places the element defined by ID inside its anchor rect, anchored at position 7 (top-left).
 
 ## Syntax
 ```txt
-ID`.Fit{ border fitmode anchor translate clip rotate mirror }`
+ID.Fit{ border fitmode anchor translate clip rotate mirror }
 ```
 
 List elements are space-separated.
@@ -73,8 +73,8 @@ Effective behavior:
 Examples:
 
 ```txt
-ID`.Fit{anchor=7}` -> top-left
-ID`.F{a=7}` -> shorthand
+ID.Fit{anchor=7} -> top-left
+ID.F{a=7} -> shorthand
 ID~7 -> minimal form
 ```
 
@@ -89,8 +89,8 @@ It is the default parameter, so `fitmode=` can be omitted.
 Examples:
 
 ```txt
-ID`.Fit{fitmode=inside}`
-ID`.F{i}`
+ID.Fit{fitmode=inside}
+ID.F{i}
 ID~i
 ```
 
@@ -155,7 +155,7 @@ border=[-100%x100%] -> horizontal flip
 Offsets the final position `[x y]` relative to the anchor rect.
 
 ```txt
-ID`.Fit{anchor=7 translate=[-100% -100%]}`
+ID.Fit{anchor=7 translate=[-100% -100%]}
 ```
 
 This places the element outside the rect, touching its top-left corner.
@@ -184,7 +184,7 @@ Rotates the target element (default 90 deg for bare `^`).
 Examples:
 
 ```txt
-ID`.Fit{rotate=-42.4}`
+ID.Fit{rotate=-42.4}
 ID~^^^ -> rotates -90 deg before fitting
 ID~^-45i7 -> rotates -45 deg, fits inside, anchored top-left
 ```
@@ -202,6 +202,6 @@ Shortcuts:
 Examples:
 
 ```txt
-ID`.Fit{mirror=v}`
+ID.Fit{mirror=v}
 ID~||
 ```

@@ -1,97 +1,279 @@
 # Introduction
-PnPInk is an Inkscape extension suite for data-driven print-and-play production.
-You design visually in SVG, then generate many card/tile/board instances from a table.
 
-## What PnPInk is for
-PnPInk helps you produce:
+## What is PnPInk?
+PnPInk is an open-source extension suite for Inkscape that turns it into a practical production environment for print-and-play components: cards, tiles, counters, boards, and player aids.
 
-- cards and decks,
-- tiles and tokens,
-- board sections and player aids.
+If you are new to Inkscape: Inkscape is a free, open-source vector editor based on the SVG standard.
+If you do not have it installed yet, you can download it for Windows, macOS, and Linux from the official website:
+<https://inkscape.org>
 
-It stays inside Inkscape, so the output remains editable SVG and can be exported to PDF/PNG/JPG/SVG.
+PnPInk works fully inside Inkscape. You design with normal SVG objects, and PnPInk handles replication, data filling, placement, and pagination automatically.
 
-## Core idea
-PnPInk follows one simple pipeline:
+The output remains editable SVG, and you can export using Inkscape formats such as PDF, PNG, JPG, and SVG.
 
-1. Draw one template component.
+## The core idea
+PnPInk is built around a simple workflow:
+
+1. Draw one component.
 2. Describe variations in a dataset.
-3. Let PnPInk generate and place all instances.
+3. Let PnPInk generate the rest.
 
-You can start with defaults and add DSL controls only when needed.
+You start with a single visual design (a card, a tile, a token face), connect it to a dataset, and PnPInk produces as many instances as you need, placing them on pages and preparing them for printing.
+
+You can begin with defaults. Advanced controls are optional and can be added gradually when you need more precision.
+
+## What you can do immediately
+Without advanced syntax, you can already:
+
+- duplicate one template many times,
+- change texts and images per instance,
+- auto-fill pages,
+- generate multi-page output ready to export.
+
+Everything beyond that is incremental.
 
 ## First contact: template, IDs, dataset
-### What is a template
-A template is a normal Inkscape drawing for one unit (one card, one tile, one board piece).
-PnPInk identifies that template through a bounding object ID, usually called the template bbox.
 
-That bbox defines:
+### What is a template in PnPInk?
+A template is a normal Inkscape drawing that represents one unit to replicate: one card, one tile, one board section, and so on.
 
-- component size,
-- slot placement reference,
+In practice, it is a group of regular SVG objects (text, rects, paths, images, groups), identified by IDs.
+
+PnPInk uses one internal object as template bounding box (`bbox`) to understand:
+
+- template size,
+- placement reference,
 - replication behavior.
 
+The `bbox` can be a rect or another simple shape. What matters is that its outline correctly wraps the component you want to replicate.
+
 ### How IDs connect data to graphics
-Dataset headers are matched to SVG IDs.
-If a column is `title` and your template has `id="title"`, that element is updated per row.
+In PnPInk, IDs are the connection between dataset and drawing.
 
-In Inkscape:
+If a dataset column is named `title` and your SVG contains `id="title"`, that object can be updated for each generated row.
 
-- `Object > Objects...` (Shift+Ctrl+O): hierarchy, layers, groups, Z-order, IDs.
-- `Object > XML Editor` (Shift+Ctrl+X): low-level SVG/XML attributes.
+Typical usage:
+
+- text IDs: dynamic text replacement,
+- rect IDs: image/icon anchors,
+- group IDs: visibility or variant control (advanced workflows).
+
+Useful Inkscape panels:
+
+- `Object > Objects...` (`Shift+Ctrl+O`): hierarchy, groups, layers, Z-order, IDs.
+- `Object > XML Editor` (`Shift+Ctrl+X`): direct SVG/XML attributes.
 
 ## Minimal working example
-Template IDs:
 
-- `card_bbox` (main bbox),
-- `title`,
-- `cost`,
-- `art`.
+### Dataset notation used in this documentation
+To avoid confusion, this guide uses a consistent visual notation:
 
-Dataset example (same content as table and CSV):
+- <span class="ds-header">header cells</span>: dataset column names (first row),
+- <span class="ds-cell">regular cells</span>: normal data values,
+- <span class="ds-col1">first-column cells</span>: cells in column 1 (template/page/layout control).
 
-| Column A | title | cost | art |
-|---|---|---|---|
-| `card_bbox` |  |  |  |
-|  | Fireball | 3 | images/fireball.png |
-|  | Shield | 2 | images/shield.png |
-|  | Healing Potion | 1 | images/potion.png |
+In dataset tables, headers and first-column cells are also color-highlighted.
 
-```csv
-card_bbox,title,cost,art
-,Fireball,3,images/fireball.png
-,Shield,2,images/shield.png
-,Healing Potion,1,images/potion.png
+### Conceptual template structure
+Use a basic Inkscape file named `hello_word.svg`.
+
+In Inkscape, the structure can look like this:
+
+```txt
+(g) hello_word_template
+ |- (rect) card_bbox        <- template bounding box
+ |- (text) title
+ |- (text) cost
+ |- (rect) art              <- image/icon anchor
+ `- (text) text
 ```
+
+Key points:
+
+- `card_bbox` visually wraps the full component.
+- `title`, `cost`, `art`, and `text` are the objects you vary per row.
+
+### Dataset example
+Spreadsheet-like table view:
+
+<table class="csv-dataset">
+  <thead>
+    <tr>
+      <th>card_bbox</th>
+      <th>title</th>
+      <th>cost</th>
+      <th>art</th>
+      <th>text</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong><code>{A4 b=[-5]}.L{p=4x3 g=2}</code></strong></td>
+      <td>Tomatoes</td>
+      <td>3</td>
+      <td>tomato</td>
+      <td>You win 1 tomato</td>
+    </tr>
+    <tr>
+      <td></td>
+      <td>Mushrooms</td>
+      <td>5</td>
+      <td>brown-mushroom</td>
+      <td>You win 2 mushrooms</td>
+    </tr>
+    <tr>
+      <td></td>
+      <td>Lemons</td>
+      <td>2</td>
+      <td>lemon</td>
+      <td>Win 1 lemon for every tomato you own</td>
+    </tr>
+  </tbody>
+</table>
+
+CSV text view (same data):
+
+<pre class="csv-view"><span class="csv-header">card_bbox,title,cost,art,text</span>
+{A4 b=[-5]}.L{p=4x3 g=2},Tomatoes,3,tomato,You win 1 tomato
+,Mushrooms,5,brown-mushroom,You win 2 mushrooms
+,Lemons,2,lemon,Win 1 lemon for every tomato you own
+</pre>
 
 Interpretation:
 
-- Column A binds rows to the main bbox/template.
-- Each row produces one instance.
-- `title` and `cost` update text.
-- `art` can load a source into the `art` anchor.
+- The <span class="ds-header">header</span> of the first column is `card_bbox`.
+- The <span class="ds-col1">first-column cell</span> `{A4 b=[-5]}.L{p=4x3 g=2}` sets page/layout context for this dataset block.
+- Empty <span class="ds-col1">first-column cells</span> continue using the same template/page context.
+- Each row generates one component instance.
+- `title` and `cost` update text fields.
+- `art` provides the image source for the `art` anchor.
+- `text` updates the text object with `id="text"`.
 
-## First DSL step (optional)
-You can add page and layout in column A:
+With defaults only, PnPInk places instances sequentially, fills the page, and creates additional pages automatically when needed.
+
+## A first taste of the DSL
+Once basics work, you can start controlling page and layout with a short expression:
 
 ```txt
-{A4 b=[-5]} .L{p=4x3 g=2}
+{A4 b=[-5]}.L{p=4x3 g=2}
 ```
 
-Meaning:
+At a glance:
 
-- A4 page with 5 mm inward margin.
-- 4x3 grid with 2 mm gap.
+- `{A4 b=[-5]}`: A4 page with 5 mm inner margin at every side.
+- `.L{p=4x3 g=2}`: layout of cards in a pattern of 4x3 grid with 2 mm gap.
 
-## What you can do next
-Once the basics work, you can add:
+This short notation is part of the PnPInk DSL. It lets you control placement, scaling, rotations, grids, gaps, bleeds, marks, and more.
 
-- `@back` for duplex back sides,
-- `@page` for page-level elements (titles/backgrounds),
-- `Fit`/`Anchor` for precise placement,
-- `Marks` for cutting marks,
-- `Source` and spritesheet aliases for asset pipelines,
-- snippets for reusable text macros.
+PnPInk is designed to be simple by default, and powerful when you need it.
+
+## What PnPInk can do (quick tour)
+Even if you do not understand every syntax detail yet, this gives you a practical map of what is possible.
+
+### From simple repetition...
+Build many components from one design and one dataset:
+
+```txt
+{A4}.L{3x4}
+```
+
+One template can be placed 12 times on an A4 page.
+See [Layout](dsl/layout.md) and [Page](dsl/page.md).
+
+### ...to data-driven variation
+Each dataset row can produce a different result.
+Texts, images, icons, and properties can vary per instance.
+See [Dataset Reference](dataset.md).
+
+### Precise layout control
+Control spacing and sizing explicitly:
+
+```txt
+L{3x4 gaps=4 shape=poker}
+```
+
+See [Layout](dsl/layout.md).
+
+### Fronts and backs, automatically
+Generate aligned duplex backs with `@back`:
+
+```txt
+{card_back @back}
+```
+
+See [DSL Advanced](dsl/advanced.md).
+
+### Page-level elements
+Place objects once per page, not once per card:
+
+```txt
+{page_title @page}
+```
+
+Useful for titles, page numbers, frames, or static page backgrounds.
+See [Page](dsl/page.md).
+
+### Fit and Anchor (single concept)
+Position objects relative to target rectangles without manual coordinates:
+
+```txt
+icon.F{i a=9}
+```
+
+The element is fitted and anchored by intent, not by absolute measurements.
+See [Fit and Anchor](dsl/fit-anchor.md).
+
+### Adaptive layouts
+Let layout adapt to available space:
+
+```txt
+L{1x? gaps=?}
+```
+
+Items stack and spacing is computed automatically.
+See [Layout](dsl/layout.md).
+
+### Explicit ID arrays and slots
+Apply layout directly to selected IDs:
+
+```txt
+[id1 id2 - id3].L{1x?}
+```
+
+`-` reserves an empty slot without rendering.
+See [Core Syntax](dsl/index.md).
+
+### Slot-level alignment
+Align content inside each layout slot:
+
+```txt
+L{1x? a=6}
+```
+
+See [Layout](dsl/layout.md) and [Fit and Anchor](dsl/fit-anchor.md).
+
+### Production features
+Generate cut marks aligned with final geometry:
+
+```txt
+.M{len=[3 2] d=2}
+```
+
+Marks follow real layout, spacing, bleeds, and rotations.
+See [Marks](dsl/marks.md).
+
+Use external sources (images, PDFs, spritesheets, icon libraries), and reuse generated assets in pipelines.
+See [Source](dsl/source.md).
+
+## A key practical advantage
+With PnPInk you do not need to work with absolute coordinates for most production tasks.
+
+You can express intent, for example: bring an image from a source, rotate it, fit it to a top-right anchor, scale it, and crop overflow.
+
+If the source image changes, the same rule still works.
+If you switch card size (for example from poker to tarot), layout and fitting scale with the template logic, without manually re-measuring everything.
+
+This is one of the main differences between PnPInk and many manual or coordinate-heavy workflows.
 
 ## Recommended reading path
 1. [Basic Workflow](quickstart.md)
@@ -99,3 +281,4 @@ Once the basics work, you can add:
 3. [Dataset Reference](dataset.md)
 4. [DSL Nomenclature](dsl/nomenclature.md)
 5. [DSL Modules](dsl/index.md)
+6. [Fit and Anchor](dsl/fit-anchor.md)

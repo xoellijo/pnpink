@@ -1,40 +1,8 @@
-/* Tighter typography and spacing. */
-.md-typeset {
-  line-height: 1.55;
-}
+/* Minimal custom styles */
 
-.md-typeset p {
-  margin: 0.6em 0;
-}
-
-.md-typeset h1 {
-  font-size: 1.35rem;
-  margin: 1.1em 0 0.45em;
-}
-
-.md-typeset h2 {
-  font-size: 1.15rem;
-  margin: 0.95em 0 0.4em;
-}
-
-.md-typeset h3 {
-  font-size: 1.02rem;
-  margin: 0.8em 0 0.35em;
-}
-
-.md-typeset h4 {
-  font-size: 0.95rem;
-  margin: 0.72em 0 0.3em;
-}
-
-/* Compact "Notes" block: use markdown as:
-   ::: notes
-   Notes:
-   1. ...
-   2. ...
-   ::: */
+/* Compact note blocks: ::: notes */
 .md-typeset .notes {
-  font-size: 0.88rem;
+  font-size: 0.92rem;
   line-height: 1.35;
   margin: 0.45em 0;
   padding: 0.45em 0.6em;
@@ -42,40 +10,45 @@
   background: #f6f9ff;
 }
 
-.md-typeset .notes p {
-  margin: 0.2em 0 0.35em;
-}
-
-.md-typeset .notes ol,
-.md-typeset .notes ul {
-  margin: 0.2em 0 0.2em 1.05em;
-}
-
-/* DSL code styling for contrast. */
-.md-typeset code {
-  background: #eef4ff;
-  color: #1e3a8a;
-  border: 1px solid #d7e3ff;
-}
-
+/* DSL/code readability */
+.md-typeset code,
 .md-typeset pre code {
   background: #eef4ff;
   color: #1e3a8a;
-  border: 1px solid #d7e3ff;
 }
 
-/* Table style for CSV-like datasets. */
+/* CSV dataset tables */
+.md-typeset {
+  --pnpink-dataset-font-size: 0.72rem;
+}
+
 .md-typeset table.csv-dataset th {
-  background: #154c79;
-  color: #ffffff;
-  font-size: 0.72rem;
+  background: #fde8e8;
+  color: #7f1d1d;
   font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
+  font-size: var(--pnpink-dataset-font-size);
+}
+
+.md-typeset table.csv-dataset tbody td {
+  background: #dbeafe;
+  color: #1e3a8a;
+  font-size: var(--pnpink-dataset-font-size);
 }
 
 .md-typeset table.csv-dataset tbody td:first-child {
-  background: #edf4fa;
   font-weight: 600;
-  white-space: nowrap;
+}
+
+.md-typeset pre.csv-view,
+.md-typeset pre.csv-view .csv-header {
+  font-size: var(--pnpink-dataset-font-size);
+}
+
+.md-typeset pre.csv-view {
+  background: #dbeafe;
+  border: 1px solid #bfdbfe;
+}
+
+.md-typeset pre.csv-view code {
+  background: transparent;
 }

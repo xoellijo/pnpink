@@ -15,11 +15,11 @@ rect.L{}
 ```
 
 ```txt
-[rect1 rect2 ...]`.L{}`
+[rect1 rect2 ...].L{}
 ```
 
 ```txt
-{A4}`.L{p=5x8 s=hexgrid}`
+{A4}.L{p=5x8 s=hexgrid}
 ```
 
 ## Pattern (p=)

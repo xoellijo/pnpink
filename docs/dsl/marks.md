@@ -6,7 +6,7 @@ Use it when output is intended for physical cutting and alignment consistency ma
 Marks are defined in the **first header cell** (same place as `Page{}` and `Layout{}`), for example:
 
 ```txt
-{A4}`.L{p=3x3 g=2}`.M{ mk_style len=[3 2] d=2 }
+{A4}.L{p=3x3 g=2}.M{ mk_style len=[3 2] d=2 }
 ```
 
 ## Slot-Based Behavior
@@ -41,13 +41,13 @@ It is resolved from existing SVG elements.
 The default parameter of `Marks{}` is the style id. This means `style=` can be omitted:
 
 ```txt
-`.M{ mk_style len=3 d=2 }`
+.M{ mk_style len=3 d=2 }
 ```
 
 is equivalent to:
 
 ```txt
-`.M{ s=mk_style len=3 d=2 }`
+.M{ s=mk_style len=3 d=2 }
 ```
 
 ### Style Sources
@@ -103,7 +103,7 @@ If the layer does not exist, it is created.
 Example:
 
 ```txt
-`.M{ layer=cutmarks }`
+.M{ layer=cutmarks }
 ```
 
 ## Scope
@@ -116,17 +116,17 @@ Marks are always generated on the front pass.
 **Basic cut marks with default style**
 
 ```txt
-{A4}`.L{p=3x3 g=2}`.M{}
+{A4}.L{p=3x3 g=2}.M{}
 ```
 
 **Using a style element**
 
 ```txt
-{A4}`.L{p=3x3}`.M{ mk_cut }
+{A4}.L{p=3x3}.M{ mk_cut }
 ```
 
 **Overlay style using a group**
 
 ```txt
-{A4}`.L{p=3x3}`.M{ mk_cut_stack len=[3 2] }
+{A4}.L{p=3x3}.M{ mk_cut_stack len=[3 2] }
 ```

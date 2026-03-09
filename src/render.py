@@ -1434,6 +1434,18 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
         has_fa_sig = ("~" in raw_token) or raw_token.endswith("=") or raw_token.endswith("+") or ("=~" in raw_token) or ("+~" in raw_token) or raw_token.lstrip().startswith('[')
         if (not header_plus) and (not has_fa_sig):
             force_fa_default = True
+    else:
+        # Local object ids should behave like other sources: implicit Fit/Anchor when
+        # no explicit FA signature is provided (default ~i5).
+        has_fa_sig = ("~" in raw_token) or raw_token.endswith("=") or raw_token.endswith("+") or ("=~" in raw_token) or ("+~" in raw_token) or raw_token.lstrip().startswith('[')
+        if (not header_plus) and (not has_fa_sig):
+            try:
+                _base_id, _place, _ops_tok = _parse_object_token(raw_token)
+                _src_local = root_doc.find(".//*[@id='%s']" % _base_id)
+                if _src_local is not None:
+                    force_fa_default = True
+            except Exception:
+                pass
 
     is_fa_token = force_fa_default or header_plus or ("~" in raw_token) or raw_token.endswith("=") or raw_token.endswith("+") or ("=~" in raw_token) or ("+~" in raw_token) or raw_token.lstrip().startswith('[')
     if header_plus and ("~" not in raw_token):
@@ -1451,12 +1463,19 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
         return s or "~"
 
     def _merge_header_global_ops(ops_body: str) -> str:
-        base_full = _ensure_ops_full(ops_body)
+        gops = _normalize_ops_chain(_global_ops or "")
+        raw = (ops_body or "").strip()
+        # Default implicit fit only when neither local nor header-global ops are present.
+        if not raw:
+            if gops:
+                return gops
+            return "~i5"
+        base_full = _ensure_ops_full(raw)
         gops = _normalize_ops_chain(_global_ops or "")
         if not gops:
             return base_full
         merged = _merge_fit_ops(gops, base_full)
-        return merged or "~"
+        return merged or "~i5"
 
     if is_fa_token:
         # Multivalue support: allow several FA tokens separated by whitespace in the same cell.
@@ -1928,7 +1947,7 @@ def render_phase(ctx):
                 seq = _parse_range_or_list(br_core)
                 ops_norm = _iter_suffix_to_ops(br_tail or "")
                 if br_tail and not ops_norm:
-                    _l.w(f"[iter] invalid iterator suffix after list: '{br_tail}'")
+                    return [f"{v}{br_tail}" for v in seq]
                 if ops_norm:
                     return [_merge_iter_item_with_global_ops(v, ops_norm) for v in seq]
                 return seq
