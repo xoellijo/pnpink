@@ -642,8 +642,11 @@ def _process_text_fragment(
         # Keep scanning the original string for later tokens.
         # Note: setattr(node, attr_name, acc) already set the previous text without the token.
 
-    # remanente
-    setattr(node, attr_name, acc)
+    # Remaining literal text after the last processed token.
+    # Important: if `acc` is empty, do not overwrite already-written node text
+    # (that would drop text like " and 1" between inline icons).
+    if acc:
+        setattr(node, attr_name, acc)
     return seq_next
 def _inject_spacers_in_place(
     text_el: SVG.etree._Element,

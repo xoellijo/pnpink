@@ -82,6 +82,8 @@ One template and one dataset can produce hundreds of print-ready components in s
   - optional CSV dataset (default: same SVG name),
   - optional `manifest.json`,
   - required local assets.
+- On `File > Open`, package contents are extracted to a sibling folder named after the package file
+  (without extension), so each package keeps its own isolated assets.
 - `.zvg`: includes referenced local/cache assets for reproducible portability.
 - `.pnp`: tries to stay minimal; web cache files are skipped and import tries to run DeckMaker when requested by manifest.
 

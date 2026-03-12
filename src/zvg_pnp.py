@@ -240,7 +240,10 @@ def _extract_package(stream, package_path: Path) -> PackageInfo:
         raw = raw.encode("utf-8", errors="replace")
     if not raw:
         raise inkex.AbortExtension("Empty package file.")
-    base_dir = package_path.parent.resolve()
+    # Extract into a dedicated sibling folder named after the package file
+    # (without extension), to avoid mixing assets from different packages.
+    base_dir = package_path.with_suffix("").resolve()
+    base_dir.mkdir(parents=True, exist_ok=True)
 
     with zipfile.ZipFile(io.BytesIO(raw), "r") as zf:
         manifest = _find_manifest(zf)
@@ -254,6 +257,7 @@ def _extract_package(stream, package_path: Path) -> PackageInfo:
                 shutil.copyfileobj(src_f, dst_f)
 
     svg_abs = _safe_join(base_dir, svg_name)
+    _l.i(f"[pkg] extracted into '{base_dir}'")
     return PackageInfo(kind=str(manifest.get("format") or ""), base_dir=base_dir, svg_abs=svg_abs, manifest=manifest)
 
 

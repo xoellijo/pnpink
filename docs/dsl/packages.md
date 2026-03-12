@@ -9,6 +9,20 @@ PnPInk supports two ZIP-based package formats for portable projects:
 - `File > Open` can open `.zvg` and `.pnp`.
 - `File > Save As` / `Save a Copy` can export `.zvg` and `.pnp`.
 
+## Import Extraction Folder
+
+When opening a `.zvg` or `.pnp`, PnPInk extracts package contents into a dedicated folder:
+
+- folder path: same directory as the package file,
+- folder name: package filename without extension.
+
+Example:
+
+- package: `MyDeck.pnp`
+- extracted to: `MyDeck/` (contains SVG, manifest, CSV, assets, etc.)
+
+This keeps assets from different packages isolated and avoids cross-package mixing.
+
 ## Package Contents
 
 Typical package structure:
