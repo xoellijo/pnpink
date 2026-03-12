@@ -24,6 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional, Tuple, List, Any
 import re
+import math
 
 import log as LOG
 _l = LOG
@@ -195,8 +196,10 @@ def _gaps6_mm(seq: List[str], card: CardSpec) -> Tuple[float, float, float, floa
     w2 = seq[4] if len(seq) >= 5 else None
     h2 = seq[5] if len(seq) >= 6 else None
 
-    gx = SVG.measure_to_mm(x, base_mm=base_w)
-    gy = SVG.measure_to_mm(y, base_mm=base_h)
+    auto_x = (str(x).strip() == "?")
+    auto_y = (str(y).strip() == "?")
+    gx = 0.0 if auto_x else SVG.measure_to_mm(x, base_mm=base_w)
+    gy = 0.0 if auto_y else SVG.measure_to_mm(y, base_mm=base_h)
     w1m = SVG.measure_to_mm(w1, base_mm=base_w)
     h1m = SVG.measure_to_mm(h1, base_mm=base_h)
     w2m = -w1m if w2 is None else SVG.measure_to_mm(w2, base_mm=base_w)
@@ -230,8 +233,10 @@ def gaps6_to_px(seq: List[str], base_w_px: float, base_h_px: float, px_per_mm: f
     w2 = seq[4] if len(seq) >= 5 else None
     h2 = seq[5] if len(seq) >= 6 else None
 
-    gx = _mm(x, base_w_mm) * px_per_mm
-    gy = _mm(y, base_h_mm) * px_per_mm
+    auto_x = (str(x).strip() == "?")
+    auto_y = (str(y).strip() == "?")
+    gx = float("nan") if auto_x else (_mm(x, base_w_mm) * px_per_mm)
+    gy = float("nan") if auto_y else (_mm(y, base_h_mm) * px_per_mm)
     w1x = _mm(w1, base_w_mm) * px_per_mm
     h1y = _mm(h1, base_h_mm) * px_per_mm
     w2x = (-w1x) if w2 is None else _mm(w2, base_w_mm) * px_per_mm
@@ -490,8 +495,15 @@ def plan_grid(page_w_px, page_h_px, card_w_px, card_h_px, *,
 
     want_cols = int(getattr(layout, "cols", 0) or 0)
     want_rows = int(getattr(layout, "rows", 0) or 0)
-    cols = want_cols if want_cols > 0 else _max_fit(cw, float(card_w_px), gh)
-    rows = want_rows if want_rows > 0 else _max_fit(ch, float(card_h_px), gv)
+    auto_gh = isinstance(gh, float) and math.isnan(gh)
+    auto_gv = isinstance(gv, float) and math.isnan(gv)
+    cols = want_cols if want_cols > 0 else _max_fit(cw, float(card_w_px), 0.0 if auto_gh else gh)
+    rows = want_rows if want_rows > 0 else _max_fit(ch, float(card_h_px), 0.0 if auto_gv else gv)
+
+    if auto_gh:
+        gh = ((cw - (float(cols) * float(card_w_px))) / float(cols - 1)) if cols > 1 else 0.0
+    if auto_gv:
+        gv = ((ch - (float(rows) * float(card_h_px))) / float(rows - 1)) if rows > 1 else 0.0
 
     if cols <= 0 or rows <= 0:
         class _Plan:

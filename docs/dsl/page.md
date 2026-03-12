@@ -54,6 +54,7 @@ For `%` borders in 1/2-token forms, percentages define absolute target scale:
 - `b=[50%]` -> final size x0.5
 - `b=[125%]` -> final size x1.25
 - `b=[50% %]` -> height x0.5, width x1.0
+- `b=[23x?]` / `b=[?x12]` are valid in `WxH` absolute-size mode (`?` = 100% on that axis).
 
 ## Page Cursor (at / a / @)
 Cursor control is for advanced pagination workflows, such as merging sections or forcing output positions.

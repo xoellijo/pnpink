@@ -137,13 +137,21 @@ def measure_to_mm(value, *, base_mm: float | None = None) -> float:
 
 _BORDER_WXH_SPLIT_RE = re.compile(r"^\s*(?P<w>[^x]+)x(?P<h>.+?)\s*$", re.IGNORECASE)
 
+def _normalize_wxh_component(tok: str) -> str:
+    t = (tok or "").strip()
+    if t in ("?", "+?"):
+        return "100%"
+    if t == "-?":
+        return "-100%"
+    return t
+
 def _border_try_split_wxh(tok):
     if not tok:
         return None
     m = _BORDER_WXH_SPLIT_RE.match(str(tok))
     if not m:
         return None
-    return (m.group('w').strip(), m.group('h').strip())
+    return (_normalize_wxh_component(m.group('w')), _normalize_wxh_component(m.group('h')))
 
 def border_tokens_to_mm4(tokens, *, base_w_mm: float, base_h_mm: float):
     """Parse border tokens into [top,right,bottom,left] in mm.

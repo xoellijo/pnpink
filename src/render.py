@@ -312,8 +312,10 @@ def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, grou
         gaps_px = (gx, gy)
         gaps_px6 = (gx, gy, w1, h1, w2, h2)
 
-    cw = (float(cols) * ref_w) + (float(max(0, cols - 1)) * gaps_px[0])
-    ch = (float(rows) * ref_h) + (float(max(0, rows - 1)) * gaps_px[1])
+    gh0 = 0.0 if (isinstance(gaps_px[0], float) and math.isnan(gaps_px[0])) else float(gaps_px[0])
+    gv0 = 0.0 if (isinstance(gaps_px[1], float) and math.isnan(gaps_px[1])) else float(gaps_px[1])
+    cw = (float(cols) * ref_w) + (float(max(0, cols - 1)) * gh0)
+    ch = (float(rows) * ref_h) + (float(max(0, rows - 1)) * gv0)
     plan = LYT.plan_grid(
         cw, ch, ref_w, ref_h,
         gaps_px=gaps_px,

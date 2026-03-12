@@ -31,9 +31,13 @@ It defines how many slots exist per page before page breaks occur.
 ```txt
 p=3x2
 p=0x0
+p=3x?
+p=?x4
+p=-?x-?
 ```
 
 `0x0` means auto-fit based on available area.
+`?` is also accepted as auto, so `0` and `?` are equivalent in pattern.
 
 ### Order and Flips
 Order and flips matter when instance numbering and print order must follow a specific physical workflow.
@@ -62,6 +66,7 @@ Use gaps to control spacing between slots without changing card/template size.
 ```txt
 g=[x y]
 g=2
+g=?
 ```
 
 Rules:
@@ -69,6 +74,7 @@ Rules:
 - 1 value means `x=y`.
 - 2 values mean `x` (horizontal) and `y` (vertical).
 - Units and percentages are allowed.
+- `?` means auto gap (distribute remaining space evenly to fit the final content area on that axis).
 
 Examples:
 
@@ -76,6 +82,8 @@ Examples:
 g=2
 g=[2 3]
 g=[1% 3%]
+g=[2 ?]
+g=[? ?]   # same as g=[?] and g=?
 ```
 
 Percentages require a known card size (shape preset or template size).

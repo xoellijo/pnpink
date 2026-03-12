@@ -109,6 +109,7 @@ If no fit mode is given, `inside` (scaling to fit inside) is assumed.
 | a | all-stretch | Scales independently in X/Y to fill rect exactly. |
 | t | tile | Tiles the element as a pattern within the rect. |
 | b | best-fit | Smart mode that mixes m, a, and clipping for balance. |
+| ? | auto-fit | Alias of `b` (best-fit). |
 
 ## Border (b=)
 Defines padding or margin around the anchor rect.
@@ -148,6 +149,8 @@ If border is a single value containing `x` (no spaces), it defines an absolute t
 ```txt
 border=[40x60] -> rect becomes 40x60 mm (centered)
 border=[50%x20] -> width = 50% of original, height = 20 mm
+border=[23x?] -> width = 23 mm, height keeps current size (100%)
+border=[?x12] -> width keeps current size (100%), height = 12 mm
 ```
 
 Negative values in `WxH` flip (mirror) the content:

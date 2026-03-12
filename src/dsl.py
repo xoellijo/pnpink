@@ -491,6 +491,8 @@ _FIT_MODES = {
     't':'t','tile':'t',
     # b best-fit
     'b':'b','best-fit':'b',
+    # ? auto-fit (alias for best-fit)
+    '?':'b','auto-fit':'b','autofit':'b','auto':'b',
 }
 
 
@@ -618,7 +620,7 @@ def _parse_fit_shorthand(trail: str) -> FitSpec:
 
         # leading rotations without mode
         if fs.mode is None and t.startswith("^"):
-            m_mix = re.match(r"^\^(-?\d+(?:\.\d+)?)([imwhyxaotnbo])$", t, re.I)
+            m_mix = re.match(r"^\^(-?\d+(?:\.\d+)?)([imwhyxaotnbo\?])$", t, re.I)
             if m_mix:
                 deg = float(m_mix.group(1)); mchar = m_mix.group(2).lower()
                 fs.mode = _FIT_MODES.get(mchar, "n")
@@ -692,7 +694,7 @@ def _parse_fit_shorthand(trail: str) -> FitSpec:
             i += 1; continue
 
         low = t.lower()
-        m = re.match(r"^([imwhyxaotnbo])([1-9])$", low)
+        m = re.match(r"^([imwhyxaotnbo\?])([1-9])$", low)
         if m:
             fs.mode = _FIT_MODES[m.group(1)]
             fs.anchor = int(m.group(2))
@@ -787,7 +789,7 @@ def fit_spec_from_ops(ops: str) -> FitSpec:
                     saw_shift = True
                 continue
             low = t.lower()
-            m = re.match(r"^([imwhyxaotnbo])([1-9])$", low)
+            m = re.match(r"^([imwhyxaotnbo\?])([1-9])$", low)
             if m:
                 fs.mode = _FIT_MODES[m.group(1)]
                 fs.anchor = int(m.group(2))
@@ -959,8 +961,6 @@ def _parse_offset_v2(val: Union[str, List[Any]]) -> List[Union[float, str]]:
 
     return out
 
-_grid_re = re.compile(r"^(?P<c>-?\d+)(?P<mir>\|)?x(?P<r>-?\d+)(?P<mir2>\|)?(?P<v>\^)?$")
-
 def _parse_grid_token_and_inline(value: str) -> Tuple[GridSpec, Optional[str]]:
     val = (value or "").strip()
     inline = None
@@ -968,13 +968,29 @@ def _parse_grid_token_and_inline(value: str) -> Tuple[GridSpec, Optional[str]]:
         i = val.find("<")
         inline = val[i:]
         val = val[:i].strip()
-    m = _grid_re.match(val)
+    m = re.match(
+        r"^\s*(?P<c>-?(?:\d+|\?))(?P<mir>\|)?x(?P<r>-?(?:\d+|\?))(?P<mir2>\|)?(?P<v>\^)?\s*$",
+        val,
+        re.I,
+    )
     if not m:
-        raise DSLError("g requiere formato colsxrows opcionalmente con '|' y/o '^'")
-    cols = int(m.group("c"))
-    rows = int(m.group("r"))
-    flip_h = bool(m.group("mir")) or (cols < 0)
-    flip_v = bool(m.group("mir2")) or (rows < 0)
+        raise DSLError("pattern requiere formato colsxrows (soporta ?, | y ^)")
+
+    c_tok = (m.group("c") or "").strip()
+    r_tok = (m.group("r") or "").strip()
+
+    def _tok_to_int(tok: str) -> int:
+        t = (tok or "").strip()
+        sign = -1 if t.startswith("-") else 1
+        core = t[1:] if t.startswith("-") else t
+        if core == "?":
+            return 0 * sign
+        return sign * int(core)
+
+    cols = _tok_to_int(c_tok)
+    rows = _tok_to_int(r_tok)
+    flip_h = bool(m.group("mir")) or (str(c_tok).startswith("-"))
+    flip_v = bool(m.group("mir2")) or (str(r_tok).startswith("-"))
     if flip_h and flip_v:
         flip = "hv"
     elif flip_h:
@@ -984,8 +1000,8 @@ def _parse_grid_token_and_inline(value: str) -> Tuple[GridSpec, Optional[str]]:
     else:
         flip = None
     order = "tb-lr" if m.group("v") else "lr-tb"
-    cols = abs(cols)
-    rows = abs(rows)
+    cols = abs(int(cols))
+    rows = abs(int(rows))
     return GridSpec(cols=cols, rows=rows, order=order, flip=flip, gaps=None), inline
 
 def _parse_inline_props(inline: str) -> Dict[str, Any]:
