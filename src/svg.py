@@ -152,10 +152,12 @@ def border_tokens_to_mm4(tokens, *, base_w_mm: float, base_h_mm: float):
       - 1..4 CSS shorthand tokens (numbers, units, %, expressions)
       - 1 token in WxH form -> target absolute size centered; returns padding that achieves it.
 
-    Percent semantics (legacy):
-      - 1 token containing '%' => % refers to TOTAL of both sides, so /2 per side
-      - 2 tokens with any '%' => first is vertical(total), second is horizontal(total), both /2 per side
-      - 3/4 tokens => % is per-side (no /2)
+    Percent semantics:
+      - 1 token containing '%' => absolute target scale for both axes
+        (e.g. 50% -> final size x0.5; 125% -> x1.25).
+      - 2 tokens with '%' => absolute target scales [vertical horizontal]
+        (e.g. [50% %] -> height x0.5, width x1.0).
+      - 3/4 tokens keep per-side offsets (percent of axis length).
     """
     toks = [str(t).strip() for t in (tokens or []) if str(t).strip() != '']
     if not toks:
@@ -176,21 +178,35 @@ def border_tokens_to_mm4(tokens, *, base_w_mm: float, base_h_mm: float):
 
     has_pct = any('%' in t for t in toks)
 
+    def _pct_scale(tok: str) -> float:
+        # Convert percent expression to factor (100% -> 1.0, 50% -> 0.5, % -> 1.0).
+        return float(measure_to_mm(tok, base_mm=100.0)) / 100.0
+
     if len(toks) == 1:
         t0 = toks[0]
         if has_pct:
-            vt = float(measure_to_mm(t0, base_mm=base_h_mm)) / 2.0
-            vh = float(measure_to_mm(t0, base_mm=base_w_mm)) / 2.0
-            return [vt, vh, vt, vh]
+            s = _pct_scale(t0)
+            dx = ((float(base_w_mm) * s) - float(base_w_mm)) / 2.0
+            dy = ((float(base_h_mm) * s) - float(base_h_mm)) / 2.0
+            return [dy, dx, dy, dx]
         v = float(measure_to_mm(t0, base_mm=None))
         return [v, v, v, v]
 
     if len(toks) == 2:
         t_v, t_h = toks[0], toks[1]
         if has_pct:
-            vt = float(measure_to_mm(t_v, base_mm=base_h_mm)) / 2.0
-            vh = float(measure_to_mm(t_h, base_mm=base_w_mm)) / 2.0
-            return [vt, vh, vt, vh]
+            sv = _pct_scale(t_v) if ('%' in t_v) else None
+            sh = _pct_scale(t_h) if ('%' in t_h) else None
+            if (sv is not None) or (sh is not None):
+                if sv is None:
+                    v0 = float(measure_to_mm(t_v, base_mm=None))
+                else:
+                    v0 = ((float(base_h_mm) * sv) - float(base_h_mm)) / 2.0
+                if sh is None:
+                    v1 = float(measure_to_mm(t_h, base_mm=None))
+                else:
+                    v1 = ((float(base_w_mm) * sh) - float(base_w_mm)) / 2.0
+                return [v0, v1, v0, v1]
         v0 = float(measure_to_mm(t_v, base_mm=None))
         v1 = float(measure_to_mm(t_h, base_mm=None))
         return [v0, v1, v0, v1]
@@ -241,7 +257,8 @@ def border_tokens_to_pad_px(svgdoc, rect_w_px: float, rect_h_px: float, tokens):
             dy_px = ((th_mm - base_h_mm) / 2.0) * px_per_mm
             return (dy_px, dx_px, dy_px, dx_px, mirror_h, mirror_v)
 
-    # Legacy padding semantics
+    # Percent semantics for 1/2-token forms:
+    # percentages define absolute target scale, not incremental padding.
     has_pct = any('%' in t for t in toks)
 
     def _tok_to_px(tok: str, *, base_mm=None) -> float:
@@ -252,17 +269,30 @@ def border_tokens_to_pad_px(svgdoc, rect_w_px: float, rect_h_px: float, tokens):
             return float(measure_to_mm(s, base_mm=base_mm)) * px_per_mm
         return float(parse_len_px(svgdoc, s))
 
+    def _pct_scale(tok: str) -> float:
+        # 100% -> 1.0, 50% -> 0.5, % -> 1.0
+        return float(measure_to_mm(tok, base_mm=100.0)) / 100.0
+
     if len(toks) == 1 and has_pct:
-        t0 = toks[0]
-        vt = _tok_to_px(t0, base_mm=base_h_mm) / 2.0
-        vh = _tok_to_px(t0, base_mm=base_w_mm) / 2.0
-        return (vt, vh, vt, vh, False, False)
+        s = _pct_scale(toks[0])
+        dx_px = ((float(rect_w_px) * s) - float(rect_w_px)) / 2.0
+        dy_px = ((float(rect_h_px) * s) - float(rect_h_px)) / 2.0
+        return (dy_px, dx_px, dy_px, dx_px, False, False)
 
     if len(toks) == 2 and has_pct:
         tv, th = toks[0], toks[1]
-        vt = _tok_to_px(tv, base_mm=base_h_mm) / 2.0
-        vh = _tok_to_px(th, base_mm=base_w_mm) / 2.0
-        return (vt, vh, vt, vh, False, False)
+        sv = _pct_scale(tv) if ('%' in tv) else None
+        sh = _pct_scale(th) if ('%' in th) else None
+        if (sv is not None) or (sh is not None):
+            if sv is None:
+                vt = _tok_to_px(tv, base_mm=None)
+            else:
+                vt = ((float(rect_h_px) * sv) - float(rect_h_px)) / 2.0
+            if sh is None:
+                vh = _tok_to_px(th, base_mm=None)
+            else:
+                vh = ((float(rect_w_px) * sh) - float(rect_w_px)) / 2.0
+            return (vt, vh, vt, vh, False, False)
 
     vals_px = [_tok_to_px(t, base_mm=None) for t in toks]
     # CSS shorthand

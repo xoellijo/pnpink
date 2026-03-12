@@ -22,7 +22,8 @@ text.py ? inline icons with in-place ?I? spacer (no rich text rebuild)
 from __future__ import annotations
 import os, sys, re, math, copy
 from dataclasses import dataclass
-from typing import Optional, Tuple, List, Dict, Set
+from typing import Optional, Tuple, List, Dict, Set, Callable
+from pathlib import Path
 
 import inkex
 import svg as SVG
@@ -61,6 +62,11 @@ INLINE_START = ":@{"
 INLINE_START_S = ":S{"
 INLINE_START_SOURCE = ":Source{"
 _INLINE_ID_RX = re.compile(r"^[A-Za-z_][\w\-.]*$")
+_INLINE_LOCAL_SOURCE_RX = re.compile(
+    r'^\s*(?P<sigil>@)?(?P<path>[^\s\[\]~]+?\.(?:png|jpe?g|gif|bmp|webp|svgz?|pdf|tiff?))\s*'
+    r'(?:(?:\.(?P<fit>Fit\s*\{[^}]*\}))|(?:~(?P<ops>.*)))?\s*$',
+    re.IGNORECASE,
+)
 def _bal_find(s: str, i_open: int, ch_open: str, ch_close: str) -> int:
     """Return index of matching closing char for a balanced pair, or -1."""
     depth = 0
@@ -153,6 +159,23 @@ def _parse_source_inner_token(inner: str):
     body = (m.group("body") or "").strip()
     dsl_src, _suffix0 = DSL.split_source_token(f"@{{{body}}}")
     src_uri = (dsl_src.src or "").strip()
+    fit_text = m.group("fit")
+    legacy_ops = m.group("ops")
+    if fit_text:
+        fit_cmd = DSL.parse(f"X.{fit_text}")
+        fs = getattr(fit_cmd, "fit", None)
+        return src_uri, DSL.SourceSuffix(kind="fit", fit=fs, raw_fit_text=fit_text[fit_text.find('{'):])
+    if legacy_ops:
+        return src_uri, DSL.SourceSuffix(kind="ops", ops=DSL.normalize_ops_suffix(legacy_ops))
+    return src_uri, DSL.SourceSuffix(kind="none")
+
+def _parse_inline_local_source_token(inner: str):
+    """Parse inline local source shorthand (file.ext / @file.ext)."""
+    s = (inner or "").strip()
+    m = _INLINE_LOCAL_SOURCE_RX.match(s)
+    if not m:
+        return None
+    src_uri = (m.group("path") or "").strip()
     fit_text = m.group("fit")
     legacy_ops = m.group("ops")
     if fit_text:
@@ -498,7 +521,15 @@ def _insert_spacer_sibling(parent: SVG.etree._Element, ref_node: SVG.etree._Elem
     parent.insert(idx + 1, tspan)
     return tspan
 
-def _process_text_fragment(text_el: SVG.etree._Element, node: SVG.etree._Element, attr_name: str, seq_next: int, spacer_glyph: str, out_items: List[TokenItem]) -> int:
+def _process_text_fragment(
+    text_el: SVG.etree._Element,
+    node: SVG.etree._Element,
+    attr_name: str,
+    seq_next: int,
+    spacer_glyph: str,
+    out_items: List[TokenItem],
+    source_exists: Optional[Callable[[str], bool]] = None,
+) -> int:
     s = getattr(node, attr_name)
     if not s or (":" not in s):
         return seq_next
@@ -534,14 +565,26 @@ def _process_text_fragment(text_el: SVG.etree._Element, node: SVG.etree._Element
                 continue
             is_doc_id = False
         else:
-            if not _INLINE_ID_RX.fullmatch(inner or ""):
-                acc += s[t0:t1]
-                _l.w(f"[inline_icons] token inválido (se deja literal): {s[t0:t1]!r}")
-                pos = t1
-                continue
-            src_uri = inner
-            suffix = None
-            is_doc_id = True
+            try:
+                parsed_local = _parse_inline_local_source_token(inner)
+            except Exception:
+                parsed_local = None
+            if parsed_local:
+                src_uri, suffix = parsed_local
+                if callable(source_exists) and (not source_exists(src_uri)):
+                    acc += s[t0:t1]
+                    pos = t1
+                    continue
+                is_doc_id = False
+            else:
+                if not _INLINE_ID_RX.fullmatch(inner or ""):
+                    acc += s[t0:t1]
+                    _l.w(f"[inline_icons] token invalido (se deja literal): {s[t0:t1]!r}")
+                    pos = t1
+                    continue
+                src_uri = inner
+                suffix = None
+                is_doc_id = True
 
         # volcar acc al atributo actual y “cerrar”
         setattr(node, attr_name, acc)
@@ -602,17 +645,21 @@ def _process_text_fragment(text_el: SVG.etree._Element, node: SVG.etree._Element
     # remanente
     setattr(node, attr_name, acc)
     return seq_next
-def _inject_spacers_in_place(text_el: SVG.etree._Element, spacer_glyph: str) -> List[TokenItem]:
+def _inject_spacers_in_place(
+    text_el: SVG.etree._Element,
+    spacer_glyph: str,
+    source_exists: Optional[Callable[[str], bool]] = None,
+) -> List[TokenItem]:
     seq = 0
     items: List[TokenItem] = []
 
     # Process the <text>.text itself
-    seq = _process_text_fragment(text_el, text_el, "text", seq, spacer_glyph, items)
+    seq = _process_text_fragment(text_el, text_el, "text", seq, spacer_glyph, items, source_exists=source_exists)
 
     # Recorrer descendientes: sus .text y .tail
     for n in list(text_el.iterdescendants()):
-        seq = _process_text_fragment(text_el, n, "text", seq, spacer_glyph, items)
-        seq = _process_text_fragment(text_el, n, "tail", seq, spacer_glyph, items)
+        seq = _process_text_fragment(text_el, n, "text", seq, spacer_glyph, items, source_exists=source_exists)
+        seq = _process_text_fragment(text_el, n, "tail", seq, spacer_glyph, items, source_exists=source_exists)
 
     _l.t("inplace id=%s spacers=%d", text_el.get("id"), seq)
     return items
@@ -727,6 +774,34 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
         _l.i("No <text> with :@{...}: tokens found.")
         return ProcessResult(0, set())
 
+    if source_manager is None:
+        source_manager = SRC.SourceManager(doc_root, doc_path, project_root=None)
+
+    def _inline_local_source_exists(src_uri: str) -> bool:
+        s = (src_uri or "").strip()
+        if not s:
+            return False
+        if re.match(r"^(?:https?://|data:|icon://|wkmc://|pxby://|oclp://)", s, re.IGNORECASE):
+            return True
+        s2 = os.path.expanduser(os.path.expandvars(s))
+        p = Path(s2)
+        try:
+            if p.is_absolute():
+                return p.is_file()
+        except Exception:
+            pass
+        try:
+            if doc_path:
+                base_hit = Path(doc_path).resolve().parent / p
+                if base_hit.is_file():
+                    return True
+        except Exception:
+            pass
+        try:
+            return source_manager.resolver.resolve_logical(s.replace("\\", "/")) is not None
+        except Exception:
+            return False
+
     # ensure unique id
     used_ids: Set[str] = set(x.get("id") for x in doc_root.xpath(".//*[@id]"))
     for t in texts_with_icons:
@@ -745,7 +820,7 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
     spacers: Set[str] = set()
 
     for t in texts_with_icons:
-        items = _inject_spacers_in_place(t, spacer_glyph)
+        items = _inject_spacers_in_place(t, spacer_glyph, source_exists=_inline_local_source_exists)
         for it in items:
             used_sources.add(it.src_uri)
             spacers.add(it.spacer_id)
@@ -760,8 +835,6 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
 
     # compute sizes and APPLY HOLES (letter-spacing in the spacer)
     # Resolve sources with the same behavior as @{...}: placeholders and logs in sources.py
-    if source_manager is None:
-        source_manager = SRC.SourceManager(doc_root, doc_path, project_root=None)
 
     opened = 0
     placeholder_count = 0

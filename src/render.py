@@ -891,6 +891,8 @@ def _parse_source_like_token(raw_token: str):
       - @{...}[~ops|.Fit{...}]
       - Source{...}[~ops|.Fit{...}]
       - S{...}[~ops|.Fit{...}]
+      - @file.ext[~ops|.Fit{...}]
+      - file.ext[~ops|.Fit{...}]  (known local image/pdf/svg extensions)
       - http(s)://... [~ops]
     Returns (src_val, ops_suffix, tag) or (None, '', '').
     """
@@ -952,6 +954,34 @@ def _parse_source_like_token(raw_token: str):
         ops = (f"~{ops}" if ops else "")
         ops = _normalize_ops_chain(ops)
         return url, ops, "url"
+
+    # Local source shorthand:
+    #   @path/file.ext~...
+    #   path/file.ext~...
+    # Keep this restricted to known extensions to avoid colliding with normal IDs.
+    m_local = re.match(
+        r"^\s*(?P<sigil>@)?(?P<path>[^\s\[\]~]+?\.(?:png|jpe?g|gif|bmp|webp|svgz?|pdf|tiff?))\s*"
+        r"(?:(?:\.(?P<fit>Fit\s*\{[^}]*\}))|(?:~(?P<ops>.*)))?\s*$",
+        s,
+        re.IGNORECASE,
+    )
+    if m_local:
+        src_val = (m_local.group("path") or "").strip()
+        fit_text = m_local.group("fit")
+        legacy_ops = m_local.group("ops")
+        if fit_text:
+            try:
+                fit_cmd = DSL.parse(f"X.{fit_text}")
+                fs = getattr(fit_cmd, "fit", None)
+                ops = DSL.ops_from_fit_spec(fs) if fs else ""
+            except Exception:
+                ops = ""
+        elif legacy_ops:
+            ops = f"~{legacy_ops.strip()}"
+        else:
+            ops = ""
+        ops = _normalize_ops_chain(ops)
+        return src_val, ops, ("@file" if (m_local.group("sigil") or "") else "file")
     return None, "", ""
 
 def _parse_index_selector_1based(sel: str) -> list:
@@ -994,6 +1024,9 @@ def _parse_source_token_with_selector(raw_token: str):
     s = (raw_token or "").strip()
     m = re.match(r"^\s*(?P<core>(?:@\{[^}]*\}|(?:Source|S)\s*\{[^}]*\}|https?://\S+?))\s*(?P<sel>\[[^\]]*\])?\s*(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*)?)\s*$", s, re.IGNORECASE)
     if not m:
+        src_val, ops, tag = _parse_source_like_token(s)
+        if src_val:
+            return src_val, None, ops, tag
         return None, None, "", ""
     core = (m.group("core") or "").strip()
     sel = (m.group("sel") or "").strip() or None

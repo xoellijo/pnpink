@@ -321,12 +321,10 @@ def parse_and_resolve_page(text: str, current_page: PageSpec, doc_page_mm: Tuple
     out.landscape = bool(getattr(ps, "landscape", False))
 
     # We need a base size to interpret % in border.
-    # Rule (user):
-    #   - If border has 1 token with '%': % refers to the total of both sides,
-    #     so it is split /2 per side (vertical uses height; horizontal uses width).
-    #   - If border has 2 tokens and has '%': same, first vertical (height), second horizontal (width).
-    #   - With 3/4 tokens: % is per-side (no /2).
-    #   - If there is NO '%', keep standard CSS shorthand.
+    # Current rule:
+    #   - 1-token % => absolute target scale for both axes (50% => x0.5, 125% => x1.25).
+    #   - 2-token % => absolute target scales [vertical horizontal] (e.g. [50% %]).
+    #   - 3/4 tokens keep per-side offset semantics.
     base_w_mm, base_h_mm = out.resolved_size_mm(doc_page_mm)
 
     b = getattr(ps, "border", None)

@@ -27,10 +27,47 @@ Use local files for stable, reproducible builds where assets are versioned with 
 @{ ~/images/token.png }     # Linux/macOS
 ```
 
+Equivalent local-source forms accepted in dataset cells:
+
+```txt
+Source{path/file.ext}
+@{path/file.ext}
+@{file.ext}
+@file.ext
+file.ext
+```
+
+Notes:
+
+- `file.ext` is accepted only for known source extensions (`png`, `jpg`, `jpeg`, `gif`, `bmp`, `webp`, `svg`, `svgz`, `pdf`, `tif`, `tiff`).
+- `file.ext}` is **not** valid syntax. The closing `}` only exists in braced forms:
+  - `@{file.ext}`
+  - `Source{file.ext}`
+
+When no path is provided (`file.ext`), lookup order is:
+
+1. Same folder as the SVG.
+2. `assets/`
+3. `images/`
+4. `img/`
+5. `imgs/` (compatibility)
+
 Local sources support environment/home expansion:
 
 - Windows: `%USERPROFILE%`
 - Linux/macOS: `$HOME`, `${HOME}`, `~`
+
+### Inline text tokens
+Inline icons can also use local shorthand directly inside text:
+
+```txt
+:bola.png:
+```
+
+Behavior:
+
+- If the file is found by the same lookup rules above, it is treated as a source token.
+- If not found, the token is kept as normal literal text (`:bola.png:`).
 
 ## SVG Node Import (Optional)
 For SVG sources only, you can target a specific node with `#id`:

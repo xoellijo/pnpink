@@ -129,12 +129,18 @@ Short form:
 ID~[-2]i -> fits inside with 2 mm margin
 ```
 
-Percentages are allowed:
+Percentages are allowed with absolute-size semantics:
 
 ```txt
-border=[50%] -> scales up the rect by half before fitting
-border=[5%+1 2 -4 3%-2]
+border=[50%]   -> final size is 50% of current (x0.5)
+border=[125%]  -> final size is 125% of current (x1.25)
+border=[50% %] -> height x0.5, width x1.0  (% means 100%)
 ```
+
+Notes:
+
+- This applies to 1-token and 2-token percentage forms.
+- 3/4-token border lists still work as per-side offsets.
 
 ### Absolute size mode (WxH)
 If border is a single value containing `x` (no spaces), it defines an absolute target size centered on the original rect:

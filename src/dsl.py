@@ -1517,8 +1517,8 @@ def parse_copies_page_tail(cell0):
         marks_block = "M" + m_m.group(1)
         rest = rest[:m_m.start()] + rest[m_m.end():]
 
-    # L{...} tail — accepts ".L{...}" or "L{...}" at the end (after removing copies)
-    m_tail = re.search(r"(?:^|[\.])L\s*(\{.*\})\s*$", rest.strip())
+    # Layout tail — accepts ".L{...}" / "L{...}" / ".Layout{...}" / "Layout{...}" at the end.
+    m_tail = re.search(r"(?:^|[\.])(?:Layout|L)\s*(\{.*\})\s*$", rest.strip(), re.I)
     if m_tail:
         layout_block = "L" + m_tail.group(1)
         rest = rest[:m_tail.start()] + rest[m_tail.end():]
@@ -1553,8 +1553,8 @@ def parse_layout_block(text: str) -> "LayoutSpec":
     s = (text or "").strip()
     if not s:
         raise DSLError("layout tail vacío")
-    if s.startswith("L"):
-        s = s[1:].lstrip()
+    if re.match(r"^(?:Layout|L)\b", s, re.I):
+        s = re.sub(r"^(?:Layout|L)\b", "", s, count=1, flags=re.I).lstrip()
     if not (s.startswith("{") and s.endswith("}")):
         raise DSLError("layout tail inválido; se esperaba bloque {...}")
     return _parse_layout_v2(f"dummy.L{s}")

@@ -110,8 +110,9 @@ EXT_PRIORITY = [
     "png", "jpeg", "jpg", "JPG", "svg", "svgz", "webp",
 ]
 
-# Subcarpetas sugeridas (en orden) relativas al SVG
-REL_DIRS = ["img", "imgs", "images", "assets"]
+# Subfolders lookup order (relative to SVG folder):
+# 1) assets, 2) images, 3) img
+REL_DIRS = ["assets", "images", "img", "imgs"]
 
 # Derived from SVG name
 #   mydoc.svg → mydoc_img / mydoc_assets
@@ -360,9 +361,9 @@ class PathResolver:
             for suf in DERIVED_SUFFIXES:
                 d = (base / f"{stem}{suf}")
                 if d.is_dir(): dirs.append(d)
-        # 4) project_root/img, project_root/assets
+        # 4) project_root/assets, project_root/images, project_root/img
         if self.project_root:
-            for sub in ("img", "assets"):
+            for sub in ("assets", "images", "img"):
                 d = (self.project_root / sub)
                 if d.is_dir(): dirs.append(d)
         # dedupe preservando orden
