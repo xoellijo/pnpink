@@ -26,6 +26,7 @@ nav:
       - Page: dsl/page.md
       - Source: dsl/source.md
       - Marks: dsl/marks.md
+      - Gradients (Experimental): dsl/gradients.md
       - ZVG and PNP Packages: dsl/packages.md
       - Advanced: dsl/advanced.md
   - PnPInk Overview: pnpink-general.md

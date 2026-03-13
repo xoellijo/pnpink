@@ -21,6 +21,7 @@ import layouts as LYT
 import dsl as DSL
 import sources as SRC
 import snippets as SNP
+import gradients as GRD
 import text as TXT
 import marks as MK
 
@@ -262,6 +263,12 @@ def run(self, __version__):
     except Exception as ex:
         _l.w(f"[spritesheets.global] scan/register failed: {ex}")
         global_spritesheets = {}
+    # Register global gradients once.
+    try:
+        global_gradients = GRD.register_gradients_from_comments(global_comment_lines_exp or [], SM.defs_root) or {}
+    except Exception as ex:
+        _l.w(f"[gradients.global] scan/register failed: {ex}")
+        global_gradients = {}
 
     # Global counters across dataset sections (ids must remain unique in the SVG).
     use_seq = [0]
@@ -389,6 +396,15 @@ def run(self, __version__):
             except Exception as ex:
                 _l.w(f"[spritesheets.local] scan/register failed: {ex}")
                 local_spritesheets = {}
+        local_gradients = {}
+        if ds_idx == (global_section_idx or -1):
+            local_gradients = {}
+        else:
+            try:
+                local_gradients = GRD.register_gradients_from_comments(local_comment_lines_exp or [], SM.defs_root) or {}
+            except Exception as ex:
+                _l.w(f"[gradients.local] scan/register failed: {ex}")
+                local_gradients = {}
 
         spritesheets = {}
         try:
@@ -400,6 +416,7 @@ def run(self, __version__):
             spritesheets = dict(local_spritesheets or {})
 
         _l.i(f"[spritesheets] merged: global={len(global_spritesheets or {})} local={len(local_spritesheets or {})} total={len(spritesheets or {})}")
+        _l.i(f"[gradients] merged: global={len(global_gradients or {})} local={len(local_gradients or {})} total={len((global_gradients or {})) + len((local_gradients or {}))}")
 
         _l.s("PROTOTYPE: detect")
 
