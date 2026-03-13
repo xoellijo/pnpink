@@ -170,23 +170,39 @@ def _parse_array_token(token: str):
     tail = s[end+1:].strip()
 
     items = []
+
+    def _append_array_item(raw_item: str):
+        tt2 = (raw_item or '').strip()
+        if not tt2:
+            return
+        if tt2 == '-' or re.fullmatch(r"-+", tt2):
+            items.append(None)
+            return
+        m_gap = re.match(r"^(\d+)-$", tt2)
+        if m_gap:
+            items.extend([None] * int(m_gap.group(1)))
+            return
+        base_txt, _sep, ops_txt = tt2.partition("~")
+        base_txt = base_txt.strip()
+        ops_txt = ops_txt.strip()
+        if not base_txt:
+            return
+        items.append({"id": base_txt, "ops": ops_txt})
+
     for t in _split_multivalue(body):
         tt = (t or '').strip()
         if not tt:
             continue
-        if tt == '-' or re.fullmatch(r"-+", tt):
-            items.append(None)
+        # Repetition shorthand inside arrays: K*X
+        # Example: [5*:Ic(potato)] -> five items ":Ic(potato)".
+        m_rep = re.match(r"^(\d+)\*(.+)$", tt)
+        if m_rep:
+            k = int(m_rep.group(1))
+            rhs = (m_rep.group(2) or '').strip()
+            for _ in range(max(0, k)):
+                _append_array_item(rhs)
             continue
-        m = re.match(r"^(\d+)-$", tt)
-        if m:
-            items.extend([None] * int(m.group(1)))
-            continue
-        base_txt, _sep, ops_txt = tt.partition("~")
-        base_txt = base_txt.strip()
-        ops_txt = ops_txt.strip()
-        if not base_txt:
-            continue
-        items.append({"id": base_txt, "ops": ops_txt})
+        _append_array_item(tt)
 
     layout_spec = None
     m = re.search(r"\.(?:Layout|L)\s*(\{.*\})", tail)

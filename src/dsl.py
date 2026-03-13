@@ -545,24 +545,24 @@ def _fit_from_dict(args: Dict[str, Any]) -> FitSpec:
     if "b" in args and fs.border is None:
         b = _as_list(args.get("b"))
         fs.border = [_num_to_str_trim(x) for x in b]
-    # translate (formerly shift): translate/t (new) + compat shift/s (legacy).
-    if "translate" in args:
-        vals = _as_list(args.get("translate"))
-        if len(vals) != 2: raise DSLError("translate requiere [dx dy]")
-        fs.shift = [_to_number(vals[0]), _to_number(vals[1])]
-    # 't' is ambiguous: if True => 'tile' mode; if list/value => translate
-    if "t" in args and fs.shift is None and args.get("t") is not True:
-        vals = _as_list(args.get("t"))
-        if len(vals) != 2: raise DSLError("translate requiere [dx dy]")
-        fs.shift = [_to_number(vals[0]), _to_number(vals[1])]
-    # legacy
-    if "shift" in args and fs.shift is None:
+    # shift (primary): shift/s. Keep translate/t as legacy compatibility.
+    if "shift" in args:
         vals = _as_list(args.get("shift"))
-        if len(vals) != 2: raise DSLError("shift requiere [dx dy]")
+        if len(vals) != 2: raise DSLError("shift requires [dx dy]")
         fs.shift = [_to_number(vals[0]), _to_number(vals[1])]
     if "s" in args and fs.shift is None:
         vals = _as_list(args.get("s"))
-        if len(vals) != 2: raise DSLError("shift requiere [dx dy]")
+        if len(vals) != 2: raise DSLError("shift requires [dx dy]")
+        fs.shift = [_to_number(vals[0]), _to_number(vals[1])]
+    # legacy aliases
+    if "translate" in args and fs.shift is None:
+        vals = _as_list(args.get("translate"))
+        if len(vals) != 2: raise DSLError("shift requires [dx dy]")
+        fs.shift = [_to_number(vals[0]), _to_number(vals[1])]
+    # 't' is ambiguous: if True => 'tile' mode; if list/value => legacy translate
+    if "t" in args and fs.shift is None and args.get("t") is not True:
+        vals = _as_list(args.get("t"))
+        if len(vals) != 2: raise DSLError("shift requires [dx dy]")
         fs.shift = [_to_number(vals[0]), _to_number(vals[1])]
     if "rotate" in args:
         fs.rotate = _try_float(args.get("rotate"))

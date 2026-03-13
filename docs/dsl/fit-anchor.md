@@ -11,7 +11,7 @@ This places the element defined by ID inside its anchor rect, anchored at positi
 
 ## Syntax
 ```txt
-ID.Fit{ border fitmode anchor translate clip rotate mirror }
+ID.Fit{ border fitmode anchor shift clip rotate mirror }
 ```
 
 List elements are space-separated.
@@ -21,7 +21,7 @@ The compact Fit syntax is parsed in this order:
 
 1. Optional border list: `[t r b l]` or `[x]` or `[x y]`
 2. Mode + anchor (for example `i7`, `m5`, `a9`)
-3. Optional translate list: `[dx dy]`
+3. Optional shift list: `[dx dy]`
 4. Optional clip `!` (stage depends on position)
 5. Optional rotation `^deg` (or `^^` / `^^^`)
 6. Optional mirror `|` or `||`
@@ -58,6 +58,23 @@ Effective behavior:
 - Start with `border=[10x10]` from header.
 - Iterator global `~[0%]5` overrides border and sets `anchor=5`.
 - First item adds `~^^` (rotation), without changing the previous border/anchor unless explicitly redefined.
+
+## Array Repetition Shorthand
+When using array/list targets in a cell, you can repeat one token with `K*X`.
+
+Examples:
+
+```txt
+[:Ic(potato) :Ic(potato) :Ic(potato)]~i2
+[3*:Ic(potato)]~i2
+```
+
+Both are equivalent.
+
+Notes:
+
+- `K*X` works inside bracket array/list bodies.
+- `K:X` is not valid.
 
 ## Anchor
 `anchor = n`
@@ -160,19 +177,37 @@ border=[100%x-100%] -> vertical flip
 border=[-100%x100%] -> horizontal flip
 ```
 
-## Translate (translate= / t=)
+## Shift (shift= / s=)
 Offsets the final position `[x y]` relative to the anchor rect.
 
 ```txt
-ID.Fit{anchor=7 translate=[-100% -100%]}
+ID.Fit{anchor=7 shift=[-100% -100%]}
 ```
 
 This places the element outside the rect, touching its top-left corner.
 
 Notes:
 
-- Prefer `translate=[dx dy]` to avoid ambiguity.
-- `t=` is accepted but also used as a flag for `tile` mode in long form.
+- `%` values are relative to placeholder size (`x` uses width, `y` uses height).
+- `%` is shorthand for `100%`.
+- `-%` is shorthand for `-100%`.
+- This makes placement scale-safe: if placeholder size changes, the same `%` shift still keeps the intended relative position.
+- `translate=` and `t=` are accepted as legacy aliases.
+- Shift order with clip is significant: `![dx dy]` is not the same as `[dx dy]!`.
+
+Useful patterns:
+
+```txt
+ID~i8[0 %]
+```
+
+`i8` anchors at top-center. `shift=[0 100%]` moves the target down one full placeholder height, so it lands just below the box.
+
+```txt
+ID~i8[-50% 0]
+```
+
+Moves half a placeholder width to the left from top-center. This is a relative offset pattern (different intent than just changing anchor).
 
 ## Clip (c or !)
 Clips everything outside the **original** anchor rect.
@@ -186,6 +221,15 @@ Clip stage in shorthand depends on position:
 
 - `!` before a shift means pre-clip.
 - `!` after a shift means post-clip.
+
+Reminder:
+
+```txt
+ID~i8![0 %]   # pre-clip then shift
+ID~i8[0 %]!   # shift then post-clip
+```
+
+These two forms are intentionally different.
 
 ## Rotate (r= or ^)
 Rotates the target element (default 90 deg for bare `^`).

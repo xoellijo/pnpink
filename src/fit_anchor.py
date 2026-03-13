@@ -202,11 +202,23 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
     mir_v = bool(mir_v) ^ bool(border_mir_v)
 
     # 8) optional shift
+    # Percent values are relative to placeholder size on each axis.
     shift_x = shift_y = 0.0
+    def _shift_to_px(v, axis_base_px: float) -> float:
+        if isinstance(v, str):
+            s = v.strip()
+            if "%" in s:
+                try:
+                    base_mm = float(axis_base_px) / float(getattr(svg, "PX_PER_MM", 1.0) or 1.0)
+                    return float(svg.measure_to_mm(s, base_mm=base_mm)) * float(getattr(svg, "PX_PER_MM", 1.0) or 1.0)
+                except Exception:
+                    pass
+            return float(svg.parse_len_px(svgdoc, s))
+        return float(v)
     if getattr(fs, "shift", None) and isinstance(fs.shift, (list, tuple)) and len(fs.shift) >= 2:
         sx_raw, sy_raw = fs.shift[0], fs.shift[1]
-        shift_x = svg.parse_len_px(svgdoc, str(sx_raw)) if isinstance(sx_raw, str) else float(sx_raw)
-        shift_y = svg.parse_len_px(svgdoc, str(sy_raw)) if isinstance(sy_raw, str) else float(sy_raw)
+        shift_x = _shift_to_px(sx_raw, float(rw))
+        shift_y = _shift_to_px(sy_raw, float(rh))
 
     # 9) scale according to mode
     if fit_mode == "n":
@@ -343,8 +355,19 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
     # Use the "inner" (with border) to position inside the effective area.
     inner_off_x = ix_l - rx_l
     inner_off_y = iy_l - ry_l
-    target_x_local = inner_off_x + (ax * iw_l) + shift_lx
-    target_y_local = inner_off_y + (ay * ih_l) + shift_ly
+    target_x_local_base = inner_off_x + (ax * iw_l)
+    target_y_local_base = inner_off_y + (ay * ih_l)
+    clip_stage = str(getattr(fs, "clip_stage", "post") or "post").lower()
+    clip_pre = bool(getattr(fs, "clip", False)) and clip_stage == "pre"
+    # Shift ordering:
+    # - post (default): place with shift, then clip (legacy behavior)
+    # - pre: clip first, then shift the clipped result
+    if clip_pre:
+        target_x_local = target_x_local_base
+        target_y_local = target_y_local_base
+    else:
+        target_x_local = target_x_local_base + shift_lx
+        target_y_local = target_y_local_base + shift_ly
 
     # Base bbox: use full visual bbox (including offsets) for clip alignment.
     # visual_bbox(base) is in document coords, which match <defs> user space.
@@ -379,8 +402,15 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
     wrapper.set('id', wrapper_id)
     wrapper.set('transform', f"translate({rx_l},{ry_l})")
 
-    # Inner group to which we apply the clip
-    clip_g = etree.SubElement(wrapper, inkex.addNS('g', 'svg'))
+    # Inner group to which we apply the clip.
+    # For pre-clip stage, apply shift at a parent group so it happens AFTER clip.
+    clip_parent = wrapper
+    if clip_pre and (abs(shift_lx) > 1e-9 or abs(shift_ly) > 1e-9):
+        post_shift_g = etree.SubElement(wrapper, inkex.addNS('g', 'svg'))
+        post_shift_g.set('id', f"{wrapper_id}_postshift")
+        post_shift_g.set('transform', f"translate({shift_lx},{shift_ly})")
+        clip_parent = post_shift_g
+    clip_g = etree.SubElement(clip_parent, inkex.addNS('g', 'svg'))
     clip_g_id = f"{wrapper_id}_clip"
     clip_g.set('id', clip_g_id)
 
@@ -585,7 +615,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
     # Diagnostic logs
     _l.d(
         f"{LOG_PREFIX} FA clipwrap wrapper='{wrapper_id}' clip_id='{clip_id}' "
-        f"clip_kind='{clip_kind}' clip_use_inner={clip_use_inner} "
+        f"clip_kind='{clip_kind}' clip_use_inner={clip_use_inner} clip_stage='{clip_stage}' "
         f"rect_local=({rx_l:.2f},{ry_l:.2f},{rw_l:.2f},{rh_l:.2f}) "
         f"inner_local=({ix_l:.2f},{iy_l:.2f},{iw_l:.2f},{ih_l:.2f}) "
         f"target_local=({target_x_local:.2f},{target_y_local:.2f}) "

@@ -33,6 +33,14 @@ Wildcard IDs are supported inside arrays:
 
 This expands to all matching IDs and keeps array/list semantics (single card instance).
 
+Array repetition shorthand is also supported:
+
+```txt
+[3*:Ic(potato)]~i2
+```
+
+Equivalent to writing the same token three times in the list.
+
 ## Iterator (`*...`)
 When a cell starts with `*`, it becomes an iterator expression.
 

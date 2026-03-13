@@ -8,7 +8,7 @@ This section defines rules that apply to the whole DSL.
 - `|` and `||` always mean mirror (horizontal, vertical).
 - `!` always means clip (see Fit for stage rules).
 - `:` allways means substitution (inline :icons: in text or :snippets() )
-- `*` wildcard means "ALL" (sufix o IDs (ID*), file wilcards (file*.png), iterators: *[list of ids], repetition: 3*ID, all items in list: [*])
+- `*` wildcard means "ALL" (suffix in IDs (`ID*`), file wildcards (`file*.png`), iterators `*[list]`, and all items selector `[*]`).
  
 ## IDs and Targets
 An SVG `id` is the primary selector.
@@ -26,12 +26,19 @@ Lists are space-separated:
 [ID1 ID2 ID3]
 ```
 
-Gaps and multipliers are supported:
+Gaps and multipliers are supported in array/list bodies:
 
 ```txt
 [ID1 - - - ID4]  -> same as [ID1 3- ID4], "-" means empty slots
 3*ID             -> [ID ID ID]
+5*:Ic(potato)    -> [:Ic(potato) :Ic(potato) :Ic(potato) :Ic(potato) :Ic(potato)]
 ```
+
+Notes:
+
+- `K*X` means "repeat token `X` exactly `K` times".
+- This is valid inside bracket list/array bodies (for example `[ ... ]~i2`).
+- `K:X` is not a valid repetition form.
 
 Ranges and selectors:
 
