@@ -194,6 +194,15 @@ Examples:
 This cell is **not** a normal dataset field; it controls row-level layout/flow.
 Its directives apply before regular field replacements in that row.
 
+If a row uses only column-A controls and all payload cells (columns B+) are empty,
+PnPInk applies the controls but does **not** generate a card/instance for that row.
+
+```txt
+card_bbox,title,cost
+{A4},,
+,Fireball,3
+```
+
 ## @back -- Back-Side Templates (Back Pass)
 Use `@back` for duplex output where back faces must align with front slot geometry.
 

@@ -2746,6 +2746,17 @@ def render_phase(ctx):
                     marks_current = DSL.parse_marks_block(row_marks)
                 except Exception as ex:
                     _l.w(f"marks tail inválido '{row_marks}': {ex}")
+        # Control-only row: apply Page/Layout/Marks but do not create an instance
+        # when all payload cells (columns B+) are empty.
+        if (row_page or row_layout or row_marks):
+            has_payload = False
+            for v in _row_cells(row):
+                if str(v or "").strip() != "":
+                    has_payload = True
+                    break
+            if not has_payload:
+                _l.s(f"ROW {idx}: control-only row (empty payload) -> no instance")
+                continue
         # Collect any @page requests from this row (they'll be executed when their referenced slot is reached)
         _queue_page_requests(row, row_map)
 

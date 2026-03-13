@@ -428,40 +428,138 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
 
     clip_use_inner = not (getattr(fs, "border", None) and getattr(fs, "clip", False))
     clip_shape = None
-    try:
-        # Build shape clip only for rect/path placeholders.
-        # Transform from placeholder local coords -> parent local coords:
-        #   T_parent<-rect = inv(parent_ctm) @ rect_ctm
+    clip_kind = "none"
+    tag = str(getattr(rect, "tag", "") or "")
+    rid = (rect.get('id') or rect_id or "").strip()
+
+    def _shape_transform_wrap_from_rect():
         rect_ctm = _ctm_to_root(rect)
         T_parent_from_rect = inv_parent @ rect_ctm
-        # wrapper local = parent local translated by (-rx_l, -ry_l)
         T_wrap_from_parent = inkex.Transform(f"translate({-rx_l},{-ry_l})")
-        T_wrap_from_rect = T_wrap_from_parent @ T_parent_from_rect
+        return T_wrap_from_parent @ T_parent_from_rect
 
-        tag = str(getattr(rect, "tag", "") or "")
-        if tag.endswith('rect'):
-            s = etree.SubElement(cp, inkex.addNS('rect', 'svg'))
-            for k in ("x", "y", "width", "height", "rx", "ry"):
-                v = rect.get(k)
-                if v is not None and str(v) != "":
-                    s.set(k, str(v))
-            if s is not None:
-                s.set("transform", str(T_wrap_from_rect))
-                clip_shape = s
-        elif tag.endswith('path'):
-            d = rect.get('d') or ""
-            if d.strip():
-                s = etree.SubElement(cp, inkex.addNS('path', 'svg'))
-                s.set('d', d)
-                s.set("transform", str(T_wrap_from_rect))
-                clip_shape = s
+    # 1) Prefer exact-placeholder clip via <use href="#id"> when clipping to full outline.
+    # This is more robust than transformed geometry for transformed paths.
+    try:
+        same_inner_as_rect = (
+            abs(float(ix_l) - float(rx_l)) < 1e-6 and
+            abs(float(iy_l) - float(ry_l)) < 1e-6 and
+            abs(float(iw_l) - float(rw_l)) < 1e-6 and
+            abs(float(ih_l) - float(rh_l)) < 1e-6
+        )
     except Exception:
-        clip_shape = None
+        same_inner_as_rect = False
+    if rid and ((not clip_use_inner) or same_inner_as_rect):
+        try:
+            u = etree.SubElement(cp, inkex.addNS('use', 'svg'))
+            svg.set_href(u, f"#{rid}")
+            u.set('transform', f"translate({-rx_l},{-ry_l})")
+            clip_shape = u
+            clip_kind = "use-shape"
+        except Exception:
+            clip_shape = None
 
-    # Clip rect in wrapper coords (0,0 at placeholder origin)
+    # 2) Closed SVG shapes -> clip by transformed geometry.
+    if any(tag.endswith(t) for t in ('path', 'polygon', 'circle', 'ellipse')):
+        try:
+            if clip_shape is None:
+                T_wrap_from_rect = _shape_transform_wrap_from_rect()
+                if tag.endswith('path'):
+                    d = (rect.get('d') or "").strip()
+                    if d:
+                        s = etree.SubElement(cp, inkex.addNS('path', 'svg'))
+                        s.set('d', d)
+                        s.set('transform', str(T_wrap_from_rect))
+                        clip_shape = s
+                        clip_kind = "path-xf"
+                elif tag.endswith('polygon'):
+                    pts = (rect.get('points') or "").strip()
+                    if pts:
+                        s = etree.SubElement(cp, inkex.addNS('polygon', 'svg'))
+                        s.set('points', pts)
+                        s.set('transform', str(T_wrap_from_rect))
+                        clip_shape = s
+                        clip_kind = "polygon-xf"
+                elif tag.endswith('circle'):
+                    cx = (rect.get('cx') or "").strip()
+                    cy = (rect.get('cy') or "").strip()
+                    r0 = (rect.get('r') or "").strip()
+                    if cx != "" and cy != "" and r0 != "":
+                        s = etree.SubElement(cp, inkex.addNS('circle', 'svg'))
+                        s.set('cx', cx)
+                        s.set('cy', cy)
+                        s.set('r', r0)
+                        s.set('transform', str(T_wrap_from_rect))
+                        clip_shape = s
+                        clip_kind = "circle-xf"
+                elif tag.endswith('ellipse'):
+                    cx = (rect.get('cx') or "").strip()
+                    cy = (rect.get('cy') or "").strip()
+                    rx0 = (rect.get('rx') or "").strip()
+                    ry0 = (rect.get('ry') or "").strip()
+                    if cx != "" and cy != "" and rx0 != "" and ry0 != "":
+                        s = etree.SubElement(cp, inkex.addNS('ellipse', 'svg'))
+                        s.set('cx', cx)
+                        s.set('cy', cy)
+                        s.set('rx', rx0)
+                        s.set('ry', ry0)
+                        s.set('transform', str(T_wrap_from_rect))
+                        clip_shape = s
+                        clip_kind = "ellipse-xf"
+        except Exception:
+            clip_shape = None
+
+    # 3) Rect placeholder -> clip by local rect preserving rounded corners when possible.
+    elif tag.endswith('rect'):
+        try:
+            if clip_use_inner:
+                cx = float(ix_l - rx_l)
+                cy = float(iy_l - ry_l)
+                cw = float(iw_l)
+                ch = float(ih_l)
+            else:
+                cx = 0.0
+                cy = 0.0
+                cw = float(rw_l)
+                ch = float(rh_l)
+
+            s = etree.SubElement(cp, inkex.addNS('rect', 'svg'))
+            s.set('x', f"{cx}")
+            s.set('y', f"{cy}")
+            s.set('width', f"{cw}")
+            s.set('height', f"{ch}")
+
+            # Preserve corner radii from placeholder rect.
+            rx_attr = (rect.get('rx') or '').strip()
+            ry_attr = (rect.get('ry') or '').strip()
+            try:
+                rr_x = float(rx_attr) if rx_attr != '' else None
+            except Exception:
+                rr_x = None
+            try:
+                rr_y = float(ry_attr) if ry_attr != '' else None
+            except Exception:
+                rr_y = None
+
+            # If clipping inner rect, scale radii proportionally to keep visual shape.
+            if clip_use_inner and (rw_l > 1e-9) and (rh_l > 1e-9):
+                sx_r = max(0.0, cw / float(rw_l))
+                sy_r = max(0.0, ch / float(rh_l))
+            else:
+                sx_r = sy_r = 1.0
+
+            if rr_x is not None:
+                s.set('rx', f"{rr_x * sx_r}")
+            if rr_y is not None:
+                s.set('ry', f"{rr_y * sy_r}")
+            clip_shape = s
+            clip_kind = "rect-local"
+        except Exception:
+            clip_shape = None
+
+    # 4) Final fallback: rectangular clip in wrapper coords.
     if clip_shape is None:
         r = etree.SubElement(cp, inkex.addNS('rect', 'svg'))
-        clip_use_inner = not (getattr(fs, "border", None) and getattr(fs, "clip", False))
         if clip_use_inner:
             r.set('x', f"{ix_l - rx_l}")
             r.set('y', f"{iy_l - ry_l}")
@@ -472,6 +570,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
             r.set('y', "0")
             r.set('width', f"{rw_l}")
             r.set('height', f"{rh_l}")
+        clip_kind = "rect-fallback"
     clip_g.set('clip-path', f"url(#{clip_id})")
 
     # Place base inside the clipped group, applying the local transform
@@ -486,6 +585,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
     # Diagnostic logs
     _l.d(
         f"{LOG_PREFIX} FA clipwrap wrapper='{wrapper_id}' clip_id='{clip_id}' "
+        f"clip_kind='{clip_kind}' clip_use_inner={clip_use_inner} "
         f"rect_local=({rx_l:.2f},{ry_l:.2f},{rw_l:.2f},{rh_l:.2f}) "
         f"inner_local=({ix_l:.2f},{iy_l:.2f},{iw_l:.2f},{ih_l:.2f}) "
         f"target_local=({target_x_local:.2f},{target_y_local:.2f}) "

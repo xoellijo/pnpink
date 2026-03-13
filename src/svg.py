@@ -1918,10 +1918,10 @@ def transform_bbox_to_rect(*, bx, by, bw, bh, dst_x, dst_y, dst_w, dst_h,
 
 # ========= Unique ID helpers for deepcopies (minimal, no ref rewrites) ======
 
-_PNP_SUFFIX_RX = re.compile(r"^(?P<base>.+?)_pnp(?P<num>\d+)$")
+_PNP_SUFFIX_RX = re.compile(r"^(?P<base>.+?)_pnp(?P<num>\d+)(?:[_-]\d+)?$")
 
 def strip_pnp_suffix(id_str: str) -> str:
-    """Remove trailing _pnp{n} once, if present."""
+    """Remove trailing _pnp{n} once, tolerating collision tails (_1/-1)."""
     if not id_str:
         return id_str
     m = _PNP_SUFFIX_RX.match(id_str)

@@ -51,6 +51,15 @@ Put a page/layout preset in the first cell of column A:
 {A4 b=[-5]} L{p=3x3 g=2}
 ```
 
+You can also put it in a control-only row:
+
+```txt
+{A4 b=[-5]} L{p=3x3 g=2},,,
+,Fireball,3,images/fireball.png
+```
+
+If columns B+ are empty in that row, no card is generated for that line.
+
 This means:
 
 - A4 page with a 5 mm inward margin.
