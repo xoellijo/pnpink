@@ -144,6 +144,9 @@ def _normcase_path(p: Path) -> str:
 
 def _expand_user_env(s: str) -> str:
     if not s: return s
+    s = str(s).strip()
+    if len(s) >= 2 and ((s[0] == '"' and s[-1] == '"') or (s[0] == "'" and s[-1] == "'")):
+        s = s[1:-1].strip()
     try:
         s = os.path.expandvars(s)
     except Exception:
@@ -386,7 +389,9 @@ class PathResolver:
         If name includes an extension, try as-is in folder order.
         Otherwise, try extensions in self.ext_priority().
         """
-        name = name.strip()
+        name = str(name or "").strip()
+        if len(name) >= 2 and ((name[0] == '"' and name[-1] == '"') or (name[0] == "'" and name[-1] == "'")):
+            name = name[1:-1].strip()
         name = _norm_sep(name)
         stem, ext = os.path.splitext(name)
         dirs = self.candidate_dirs()
@@ -1243,9 +1248,20 @@ class SourceManager:
         if not alias_key:
             return None
 
-        # Reuse if already registered
+        # Redefinition policy: last definition wins (top-to-bottom in comments).
+        # If alias already exists, drop cached frame refs for this alias so new
+        # layout/src are applied deterministically.
         if alias_key in self._spritesheets:
-            return self._spritesheets[alias_key]
+            try:
+                old_n = len(self._sprite_frames)
+                self._sprite_frames = {
+                    k: v for k, v in (self._sprite_frames or {}).items()
+                    if not (isinstance(k, tuple) and len(k) >= 1 and str(k[0]) == alias_key)
+                }
+                new_n = len(self._sprite_frames)
+                _l.i(f"[spritesheets] alias '@{alias_key}' redefined: last definition wins; cleared {old_n - new_n} cached frame(s)")
+            except Exception:
+                pass
 
         # --- Extract src ---
         try:
@@ -1254,6 +1270,9 @@ class SourceManager:
                 _l.w(f"[spritesheets] alias '{alias_key}': invalid chain target; expected SourceRef")
                 return None
             src_raw = getattr(tgt, 'src', '') or ''
+            src_raw = str(src_raw).strip()
+            if len(src_raw) >= 2 and ((src_raw[0] == '"' and src_raw[-1] == '"') or (src_raw[0] == "'" and src_raw[-1] == "'")):
+                src_raw = src_raw[1:-1].strip()
         except Exception as ex:
             _l.w(f"[spritesheets] alias '{alias_key}': cannot read src: {ex}")
             return None

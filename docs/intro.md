@@ -1,4 +1,4 @@
-# Introduction
+﻿# Introduction
 
 ## What is PnPInk?
 PnPInk is an open-source extension suite for Inkscape that turns it into a practical production environment for print-and-play components: cards, tiles, counters, boards, and player aids.
@@ -47,7 +47,7 @@ PnPInk uses one internal object as template bounding box (`bbox`) to understand:
 
 The `bbox` can be a rect or another simple shape. What matters is that its outline correctly wraps the component you want to replicate.
 
-### How IDs connect data to graphics
+### How IDs connect data to graphics {#ids-workflow}
 In PnPInk, IDs are the connection between dataset and drawing.
 
 If a dataset column is named `title` and your SVG contains `id="title"`, that object can be updated for each generated row.
@@ -163,7 +163,7 @@ At a glance:
 - `{A4 b=[-5]}`: A4 page with 5 mm inner margin at every side.
 - `.L{p=4x3 g=2}`: layout of cards in a pattern of 4x3 grid with 2 mm gap.
 
-This short notation is part of the PnPInk DSL. It lets you control placement, scaling, rotations, grids, gaps, bleeds, marks, and more.
+This short notation is part of the PnPInk DSL (Domain Language). It lets you control placement, scaling, rotations, grids, gaps, bleeds, marks, and more.
 
 PnPInk is designed to be simple by default, and powerful when you need it.
 
@@ -241,7 +241,7 @@ Apply layout directly to selected IDs:
 ```
 
 `-` reserves an empty slot without rendering.
-See [Core Syntax](dsl/index.md).
+See [Core Syntax](dsl/nomenclature.md).
 
 ### Slot-level alignment
 Align content inside each layout slot:
@@ -280,5 +280,5 @@ This is one of the main differences between PnPInk and many manual or coordinate
 2. [Dataset Format and Sources](dataset-overview.md)
 3. [Dataset Reference](dataset.md)
 4. [DSL Nomenclature](dsl/nomenclature.md)
-5. [DSL Modules](dsl/index.md)
+5. [DSL Modules](dsl/nomenclature.md)
 6. [Fit and Anchor](dsl/fit-anchor.md)

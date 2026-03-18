@@ -371,6 +371,8 @@ def is_source_expr(s: str) -> bool:
 
 def _source_from_body(body: str) -> SourceRef:
     b = body.strip()
+    if (len(b) >= 2) and ((b[0] == '"' and b[-1] == '"') or (b[0] == "'" and b[-1] == "'")):
+        b = b[1:-1].strip()
 
     if b.lower() in {"img", "pdf", "url", "file", "iconify", "svg"}:
         raise DSLError("Source requiere src")
@@ -545,7 +547,7 @@ def _fit_from_dict(args: Dict[str, Any]) -> FitSpec:
     if "b" in args and fs.border is None:
         b = _as_list(args.get("b"))
         fs.border = [_num_to_str_trim(x) for x in b]
-    # shift (primary): shift/s. Keep translate/t as legacy compatibility.
+    # shift (primary): shift/s.
     if "shift" in args:
         vals = _as_list(args.get("shift"))
         if len(vals) != 2: raise DSLError("shift requires [dx dy]")
@@ -554,16 +556,12 @@ def _fit_from_dict(args: Dict[str, Any]) -> FitSpec:
         vals = _as_list(args.get("s"))
         if len(vals) != 2: raise DSLError("shift requires [dx dy]")
         fs.shift = [_to_number(vals[0]), _to_number(vals[1])]
-    # legacy aliases
-    if "translate" in args and fs.shift is None:
-        vals = _as_list(args.get("translate"))
-        if len(vals) != 2: raise DSLError("shift requires [dx dy]")
-        fs.shift = [_to_number(vals[0]), _to_number(vals[1])]
-    # 't' is ambiguous: if True => 'tile' mode; if list/value => legacy translate
-    if "t" in args and fs.shift is None and args.get("t") is not True:
-        vals = _as_list(args.get("t"))
-        if len(vals) != 2: raise DSLError("shift requires [dx dy]")
-        fs.shift = [_to_number(vals[0]), _to_number(vals[1])]
+    # No retro-compat aliases for simplicity.
+    if "translate" in args:
+        raise DSLError("translate is not supported; use shift=[dx dy]")
+    # 't' is reserved for tile mode (boolean flag), never for shift.
+    if "t" in args and args.get("t") is not True:
+        raise DSLError("t is reserved for tile mode; use shift=[dx dy]")
     if "rotate" in args:
         fs.rotate = _try_float(args.get("rotate"))
     if "r" in args and fs.rotate is None:

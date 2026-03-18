@@ -1,117 +1,136 @@
-# Fit and Anchor
-The **Fit** module (`Fit{}` or shorthand `F{}` or `~`) positions one element relative to another, usually a rect acting as a **placeholder**.
+# Fit-Anchor
+Fit-Anchor is one of the most important modules in PnPInk.
+It is the placement engine that lets you position objects relative to placeholders without manual coordinates and without hardcoding object/template sizes.
 
+In practice, Fit-Anchor lets you place one or many objects on a placeholder and then align, scale, rotate, mirror, shift, and clip them with compact syntax.
+
+## Dataset Mental Model
+Fit-Anchor is easier to understand if you keep this model in mind:
+
+- the dataset header points to a placeholder object in the SVG,
+- each row cell provides one or many source objects,
+- Fit-Anchor defines how those source objects are positioned relative to that placeholder for each generated card/instance.
+
+## What Is an "Object" Here?
+In this documentation, we call IDs "objects" (not "elements") from the DSL/user point of view.
+
+An object can be:
+
+- an existing SVG object by ID (rect, path, group, text, image, etc.),
+- a dynamic object created by `Source` (local file, spritesheet frame, internet URL, Wikimedia/Pixabay, icon library),
+- a multivalue object list in one cell: `id1~7 id2~9 id3~3`,
+- an explicit object array: `[id1 id2 id3]` (optionally with local array layout).
+
+Representative examples:
+
+```txt
+main_art-8
+heart_icon
+@{assets/picture.png}~i5
+@sp1[14]~m5
+@{wkmc://File:Example.svg/svg#nodeX}~i5
+id1~7 id2~9 id3~3
+[id_a id_b id_c].L{3x1 g=2}~i5
+```
+
+## Syntax and Style
+Fit-Anchor follows the same DSL conventions as other modules:
+
+- `Module{ key=value ... }` long form,
+- short aliases (`a`, `b`, `s`, etc.),
+- default parameters can be omitted,
+- compact shorthand with `~` is available and heavily used in real datasets.
+
+Long form:
+
+```txt
+object_id.Fit{ border fitmode anchor shift clip rotate mirror }
+```
+
+Compact form:
+
+```txt
+object_id~...
+```
+
+### Compact Example (Explained)
 Example:
 
 ```txt
-ID.Fit{ inside anchor=7 }
+id1~[10%]i7^^[-50% 0]!
 ```
 
-This places the element defined by ID inside its anchor rect, anchored at position 7 (top-left).
+Read it left to right:
 
-## Syntax
-```txt
-ID.Fit{ border fitmode anchor shift clip rotate mirror }
-```
+- `[10%]` -> border (resize context around placeholder),
+- `i` -> fit mode `inside`,
+- `7` -> anchor top-left,
+- `^^` -> rotate 180 deg,
+- `[-50% 0]` -> shift left by half placeholder width,
+- `!` -> clip to the placeholder shape.
 
-List elements are space-separated.
+This compact style is very expressive once you know the token order.
 
-## Shorthand Token Order
-The compact Fit syntax is parsed in this order:
+## Fit-Anchor Parameters
+The following subsections describe each Fit-Anchor parameter and what it changes in final placement.
+Order matters conceptually.
 
-1. Optional border list: `[t r b l]` or `[x]` or `[x y]`
-2. Mode + anchor (for example `i7`, `m5`, `a9`)
-3. Optional shift list: `[dx dy]`
-4. Optional clip `!` (stage depends on position)
-5. Optional rotation `^deg` (or `^^` / `^^^`)
-6. Optional mirror `|` or `||`
+### Border (`b=`)
+Border changes the usable fit area around the placeholder.
+
+- positive values expand,
+- negative values shrink.
+
+Important behavior:
+
+- `border` modifies placeholder size **only for Fit Mode scaling**.
+- `anchor`, `shift`, and `clip` still use the **original placeholder** as geometric reference.
+
+In other words:
+
+1. border adjusts the fit area,
+2. fit mode computes object scale in that adjusted area,
+3. anchor/shift/clip are evaluated against the original placeholder.
+
+This is why defining `border` first is conceptually important: it controls object size before final positioning.
 
 Examples:
 
 ```txt
-ID~[2]i7
-ID~i7[3 -2]^45|
+border=[-2]
+border=[2 3]
+border=[2 3 4 5]
+object_id~[-2]i
 ```
 
-## Priority and Overrides
-When multiple Fit/Anchor layers apply to the same target, use this order:
-
-1. Header default/global ops (for example `main_art-8=~[10x10]`).
-2. Iterator/global ops (for example `*[...]~[0%]5`).
-3. Item-local ops (for example `:fig(g918)~^^`).
-
-Later layers override earlier ones for conflicting properties.
-This means local item ops are the final override.
-
-Quick example:
+Percent and absolute-size forms are supported:
 
 ```txt
-Header:
-main_art-8=~[10x10]
-
-Cell value:
-*[:fig(g918)~^^ :fig(g1720) :fig(g1264) :fig(g13590)]~[0%]5
+border=[50%]
+border=[125%]
+border=[40x60]
+border=[50%x20]
+border=[23x?]
+border=[?x12]
 ```
 
-Effective behavior:
+Negative `WxH` components can flip orientation:
 
-- Start with `border=[10x10]` from header.
-- Iterator global `~[0%]5` overrides border and sets `anchor=5`.
-- First item adds `~^^` (rotation), without changing the previous border/anchor unless explicitly redefined.
+```txt
+border=[100%x-100%]
+border=[-100%x100%]
+```
 
-## Array Repetition Shorthand
-When using array/list targets in a cell, you can repeat one token with `K*X`.
+### Fit Mode
+Fit mode defines scaling behavior relative to the (possibly border-adjusted) fit area.
+If omitted, `inside` is the practical default.
 
 Examples:
 
 ```txt
-[:Ic(potato) :Ic(potato) :Ic(potato)]~i2
-[3*:Ic(potato)]~i2
+object_id.Fit{fitmode=inside}
+object_id~i
 ```
-
-Both are equivalent.
-
-Notes:
-
-- `K*X` works inside bracket array/list bodies.
-- `K:X` is not valid.
-
-## Anchor
-`anchor = n`
-
-`n` ranges from 1-9 following the numeric keypad layout:
-
-7 8 9
-
-4 5 6
-
-1 2 3
-
-Examples:
-
-```txt
-ID.Fit{anchor=7} -> top-left
-ID.F{a=7} -> shorthand
-ID~7 -> minimal form
-```
-
-![Anchor keypad](media/image1.png)
-
-If not specified, the default anchor is `~5` (center).
-
-## Fit Mode (*f=)
-Defines how the target scales relative to its anchor rect.
-It is the default parameter, so `fitmode=` can be omitted.
-
-Examples:
-
-```txt
-ID.Fit{fitmode=inside}
-ID.F{i}
-ID~i
-```
-
-If no fit mode is given, `inside` (scaling to fit inside) is assumed.
 
 ### Fit Mode Reference
 | **Code** | **Name** | **Description** |
@@ -124,137 +143,183 @@ If no fit mode is given, `inside` (scaling to fit inside) is assumed.
 | x | x-stretch | Stretches width to match rect (non-proportional). |
 | y | y-stretch | Stretches height to match rect (non-proportional). |
 | a | all-stretch | Scales independently in X/Y to fill rect exactly. |
-| t | tile | Tiles the element as a pattern within the rect. |
+| t | tile | Tiles the object as a pattern within the rect. |
 | b | best-fit | Smart mode that mixes m, a, and clipping for balance. |
 | ? | auto-fit | Alias of `b` (best-fit). |
 
-## Border (b=)
-Defines padding or margin around the anchor rect.
-Positive expands (padding), negative shrinks (margin).
+### Anchor
+Anchor selects the reference point used to align an object to the placeholder.
+Think of it as: "which point of the object goes to which point of the placeholder."
+
+Anchor uses the **original placeholder** (not the border-adjusted fit area).
+This makes anchor behavior stable and predictable while `border` only affects scale.
+
+`anchor = 1..9` follows numeric keypad:
+
+7 8 9
+
+4 5 6
+
+1 2 3
 
 Examples:
 
 ```txt
-border=[-2] -> 2 mm margin on all sides
-border=[2 3] -> 2 mm vertical, 3 mm horizontal
-border=[2 3 4] -> top=2, bottom=3, sides=4
-border=[2 3 4 5] -> top, right, bottom, left
+object_id.Fit{anchor=7}
+object_id~7
 ```
 
-Short form:
+![Anchor keypad](media/image1.png)
+
+If no explicit anchor is provided, center (`5`) is used as default.
+
+### Shift (`shift=` / `s=`)
+Shift offsets final position after anchor/fit.
 
 ```txt
-ID~[-2]i -> fits inside with 2 mm margin
-```
-
-Percentages are allowed with absolute-size semantics:
-
-```txt
-border=[50%]   -> final size is 50% of current (x0.5)
-border=[125%]  -> final size is 125% of current (x1.25)
-border=[50% %] -> height x0.5, width x1.0  (% means 100%)
+object_id.Fit{anchor=7 shift=[-100% -100%]}
+object_id~i8[0 %]
+object_id~i8[-50% 0]
 ```
 
 Notes:
 
-- This applies to 1-token and 2-token percentage forms.
-- 3/4-token border lists still work as per-side offsets.
+- `%` is relative to placeholder size,
+- `%` means `100%`,
+- `-%` means `-100%`,
+- mixed expressions are valid (`shift=[25%+2 0]`).
+- shift uses the original placeholder frame as reference.
 
-### Absolute size mode (WxH)
-If border is a single value containing `x` (no spaces), it defines an absolute target size centered on the original rect:
-
-```txt
-border=[40x60] -> rect becomes 40x60 mm (centered)
-border=[50%x20] -> width = 50% of original, height = 20 mm
-border=[23x?] -> width = 23 mm, height keeps current size (100%)
-border=[?x12] -> width keeps current size (100%), height = 12 mm
-```
-
-Negative values in `WxH` flip (mirror) the content:
+### Rotate (`r=` / `^`)
+Rotates the target object.
 
 ```txt
-border=[100%x-100%] -> vertical flip
-border=[-100%x100%] -> horizontal flip
+object_id.Fit{rotate=-42.4}
+object_id~^^^
+object_id~^-45i7
 ```
 
-## Shift (shift= / s=)
-Offsets the final position `[x y]` relative to the anchor rect.
-
-```txt
-ID.Fit{anchor=7 shift=[-100% -100%]}
-```
-
-This places the element outside the rect, touching its top-left corner.
-
-Notes:
-
-- `%` values are relative to placeholder size (`x` uses width, `y` uses height).
-- `%` is shorthand for `100%`.
-- `-%` is shorthand for `-100%`.
-- This makes placement scale-safe: if placeholder size changes, the same `%` shift still keeps the intended relative position.
-- `translate=` and `t=` are accepted as legacy aliases.
-- Shift order with clip is significant: `![dx dy]` is not the same as `[dx dy]!`.
-
-Useful patterns:
-
-```txt
-ID~i8[0 %]
-```
-
-`i8` anchors at top-center. `shift=[0 100%]` moves the target down one full placeholder height, so it lands just below the box.
-
-```txt
-ID~i8[-50% 0]
-```
-
-Moves half a placeholder width to the left from top-center. This is a relative offset pattern (different intent than just changing anchor).
-
-## Clip (c or !)
-Clips everything outside the **original** anchor rect.
-
-Short forms:
-
-- `c` in the long form.
-- `!` in the shorthand form.
-
-Clip stage in shorthand depends on position:
-
-- `!` before a shift means pre-clip.
-- `!` after a shift means post-clip.
-
-Reminder:
-
-```txt
-ID~i8![0 %]   # pre-clip then shift
-ID~i8[0 %]!   # shift then post-clip
-```
-
-These two forms are intentionally different.
-
-## Rotate (r= or ^)
-Rotates the target element (default 90 deg for bare `^`).
-
-Examples:
-
-```txt
-ID.Fit{rotate=-42.4}
-ID~^^^ -> rotates -90 deg before fitting
-ID~^-45i7 -> rotates -45 deg, fits inside, anchored top-left
-```
-
-## Mirror (m= or |)
+### Mirror (`m=` / `|`)
 Mirrors the target.
 
-Default is horizontal (across the vertical axis).
-
-Shortcuts:
-
-- `|` = horizontal
-- `||` = vertical
-
-Examples:
+- `|` horizontal,
+- `||` vertical.
 
 ```txt
-ID.Fit{mirror=v}
-ID~||
+object_id.Fit{mirror=v}
+object_id~||
 ```
+
+### Clip (`c` / `!`)
+Clips outside the original placeholder shape.
+
+```txt
+object_id~i8![0 %]   # pre-clip then shift
+object_id~i8[0 %]!   # shift then post-clip
+```
+
+Position of `!` matters.
+
+## Compact Token Order (Reference)
+When using shorthand `~`, tokens are parsed in this order:
+
+1. Optional border list (`[t r b l]`, `[x]`, `[x y]`)
+2. Fit mode + anchor (`i7`, `m5`, `a9`, etc.)
+3. Optional shift list (`[dx dy]`)
+4. Optional clip (`!`)
+5. Optional rotation (`^deg`, `^^`, `^^^`)
+6. Optional mirror (`|`, `||`)
+
+## Priority and Overrides
+When multiple Fit-Anchor layers apply, use this precedence:
+
+1. Header defaults/global ops
+2. Iterator/global ops
+3. Item-local ops
+
+Later layers override earlier ones for conflicting properties.
+
+Example:
+
+```txt
+Header:
+main_art-8=~[10x10]
+
+Cell:
+*[:fig(g918)~^^ :fig(g1720) :fig(g1264) :fig(g13590)]~[0%]5
+```
+
+Effective merge:
+
+- start from header border,
+- apply iterator-level defaults,
+- apply item-level overrides last.
+
+## Practical Examples
+This section intentionally groups compact real-life patterns.
+
+## Compact Notation (Clarifications)
+This section consolidates the compact syntax details that usually cause confusion.
+
+### With `~` and without `~`
+For simple rotate/mirror/clip operations, `~` can be omitted:
+
+- `id~^15` and `id^15` are equivalent.
+- `id~!` and `id!` are equivalent.
+- `id~|` and `id|` are equivalent.
+- `id~||` and `id||` are equivalent.
+
+Use the `~` form when you want the full compact chain in one expression (`border + fit/anchor + shift + clip + rotate + mirror`).
+
+### Combined compact operations
+You can combine these operators in one token, for example:
+
+```txt
+id~i5^^!
+id^90|
+id~m7[0 5%]!
+```
+
+### Parsing and precedence reminder
+- The compact parser still applies the same Fit-Anchor merge precedence: header defaults -> iterator/global ops -> item-local ops.
+- For conflicting properties, the last layer overrides previous ones.
+
+### Example 1: Simple inside-center
+
+```txt
+art_id~i5
+```
+
+Places object inside placeholder, centered.
+
+### Example 2: Cover and clip
+
+```txt
+art_id~m5!
+```
+
+Covers placeholder area, then clips overflow to placeholder shape.
+
+### Example 3: Corner icon with offset
+
+```txt
+icon_id~i7[2 -2]
+```
+
+Inside fit, top-left anchor, then fine offset.
+
+### Example 4: Multiple objects in one cell
+
+```txt
+id1~7 id2~9 id3~3
+```
+
+Places three objects in one placeholder flow, each with its own anchor.
+
+### Example 5: Array group with local layout
+
+```txt
+[id1 id2 id3].L{3x1 g=2}~i5
+```
+
+Builds an array object, lays it out locally, then applies Fit-Anchor as one grouped target.

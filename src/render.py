@@ -13,7 +13,10 @@ import math
 
 # ---------------- spritesheet alias token parsing ----------------
 
-_ALIAS_TOKEN_RE = re.compile(r"^@(?P<name>[A-Za-z][\w\-\.]*)((?:\[[^\]]+\])+)(?:~(?P<ops>.*))?$")
+_ALIAS_TOKEN_RE = re.compile(
+    r"^@(?P<name>[A-Za-z][\w\-\.]*)((?:\[[^\]]+\])+)"
+    r"(?:(?:~(?P<ops_tilde>.*))|(?P<ops_compact>[\^!\|].*))?$"
+)
 
 def _expand_index_expr(expr: str):
     """Expand a single bracket expression into a list.
@@ -67,7 +70,7 @@ def _parse_sprite_alias_token(raw_token: str):
         return None
     name = m.group('name')
     idxs_raw = m.group(2) or ''
-    ops = (m.group('ops') or '').strip()
+    ops = (m.group('ops_tilde') or m.group('ops_compact') or '').strip()
     inner = idxs_raw[1:-1]
     chunks = inner.split('][') if inner else []
     dims = []
@@ -138,14 +141,18 @@ def _parse_object_token(token: str) -> Tuple[str, str, str]:
     m = re.match(r"""
         ^(?P<id>[A-Za-z_][-A-Za-z0-9_:.]*\*?)
         (?P<mode>[=+])?
-        (?:~(?P<ops>.+))?
+        (?:
+            ~(?P<ops_tilde>.+)
+          |
+            (?P<ops_compact>[\^!\|].*)
+        )?
         \s*$
     """, token or "", re.VERBOSE)
     if not m:
         raise ValueError(f"Invalid object token: '{token}'")
     base_id = m.group("id")
     mod     = m.group("mode")
-    ops     = m.group("ops") or ""
+    ops     = (m.group("ops_tilde") or m.group("ops_compact") or "")
     place   = "clone" if mod is None else ("copy" if mod=="=" else "clone+unlink")
     return base_id, place, ops
 
@@ -182,6 +189,16 @@ def _parse_array_token(token: str):
         if m_gap:
             items.extend([None] * int(m_gap.group(1)))
             return
+        try:
+            base_txt, _place, ops_txt = _parse_object_token(tt2)
+            base_txt = (base_txt or "").strip()
+            ops_txt = (ops_txt or "").strip()
+            if not base_txt:
+                return
+            items.append({"id": base_txt, "ops": ops_txt})
+            return
+        except Exception:
+            pass
         base_txt, _sep, ops_txt = tt2.partition("~")
         base_txt = base_txt.strip()
         ops_txt = ops_txt.strip()
@@ -189,20 +206,46 @@ def _parse_array_token(token: str):
             return
         items.append({"id": base_txt, "ops": ops_txt})
 
-    for t in _split_multivalue(body):
-        tt = (t or '').strip()
+    def _expand_array_body_expr(expr: str):
+        out_exprs = []
+        tt = (expr or '').strip()
         if not tt:
-            continue
+            return out_exprs
+        # Group repetition: K*(...)
+        m_rep_grp = re.match(r"^(\d+)\*\((.*)\)$", tt)
+        if m_rep_grp:
+            k = int(m_rep_grp.group(1))
+            inner = (m_rep_grp.group(2) or '').strip()
+            inner_toks = _split_multivalue(inner) if inner else []
+            expanded_inner = []
+            for it in inner_toks:
+                expanded_inner.extend(_expand_array_body_expr(it))
+            for _ in range(max(0, k)):
+                out_exprs.extend(expanded_inner)
+            return out_exprs
+        # Single grouped block: (...)
+        if tt.startswith("(") and tt.endswith(")"):
+            inner = tt[1:-1].strip()
+            inner_toks = _split_multivalue(inner) if inner else []
+            for it in inner_toks:
+                out_exprs.extend(_expand_array_body_expr(it))
+            return out_exprs
         # Repetition shorthand inside arrays: K*X
         # Example: [5*:Ic(potato)] -> five items ":Ic(potato)".
         m_rep = re.match(r"^(\d+)\*(.+)$", tt)
         if m_rep:
             k = int(m_rep.group(1))
             rhs = (m_rep.group(2) or '').strip()
+            rhs_expanded = _expand_array_body_expr(rhs)
             for _ in range(max(0, k)):
-                _append_array_item(rhs)
-            continue
-        _append_array_item(tt)
+                out_exprs.extend(rhs_expanded)
+            return out_exprs
+        out_exprs.append(tt)
+        return out_exprs
+
+    for t in _split_multivalue(body):
+        for expr in _expand_array_body_expr(t):
+            _append_array_item(expr)
 
     layout_spec = None
     m = re.search(r"\.(?:Layout|L)\s*(\{.*\})", tail)
@@ -226,10 +269,40 @@ def _parse_array_token(token: str):
     return {'items': items, 'layout': layout_spec, 'ops': ops}
 
 
-def _resolve_array_item(root_doc, inst_node, item_id: str, sm=None):
+def _resolve_array_item(root_doc, inst_node, item_id: str, sm=None, ss_registry=None):
     s = (item_id or '').strip()
     if not s:
         return None
+    # Spritesheet alias token inside array item: @sp1[14], @sp1[2][1], @sp1[1][2][3]
+    if s.startswith('@') and (not s.startswith('@{')) and sm is not None and ss_registry is not None:
+        parsed = _parse_sprite_alias_token(s)
+        if parsed:
+            a_name, dims, _ops_tail = parsed
+            if a_name in ss_registry:
+                frame = None
+                page = 1
+                col = None
+                row_i = None
+                try:
+                    if len(dims) == 1:
+                        frame = next((x for x in dims[0] if isinstance(x, int)), None)
+                        if frame is None:
+                            frame = 1
+                    elif len(dims) == 2:
+                        col = next((x for x in dims[0] if isinstance(x, int)), None)
+                        row_i = next((x for x in dims[1] if isinstance(x, int)), None)
+                    elif len(dims) == 3:
+                        page = next((x for x in dims[0] if isinstance(x, int)), None)
+                        col = next((x for x in dims[1] if isinstance(x, int)), None)
+                        row_i = next((x for x in dims[2] if isinstance(x, int)), None)
+                except Exception:
+                    pass
+                try:
+                    sref = sm.register_spritesheet_frame(a_name, frame=frame, page=page, col=col, row=row_i)
+                    if sref is not None and getattr(sref, "symbol_id", None):
+                        s = str(sref.symbol_id)
+                except Exception:
+                    pass
     if sm is not None:
         src_val, sel_src, _ops, _tag = _parse_source_token_with_selector(s)
         if src_val:
@@ -258,7 +331,7 @@ def _resolve_array_item(root_doc, inst_node, item_id: str, sm=None):
     return base
 
 
-def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, group_id_prefix='dm_array'):
+def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, ss_registry=None, group_id_prefix='dm_array'):
     if not items:
         return None, None
     g = inkex.Group()
@@ -277,7 +350,7 @@ def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, grou
             continue
         item_id = (it.get("id") if isinstance(it, dict) else None) or ""
         item_ops = (it.get("ops") if isinstance(it, dict) else "") or ""
-        base = _resolve_array_item(root_doc, inst_node, item_id, sm=sm)
+        base = _resolve_array_item(root_doc, inst_node, item_id, sm=sm, ss_registry=ss_registry)
         if base is None:
             _l.w(f"[array] target not found: '{item_id}'")
             resolved.append(None)
@@ -700,6 +773,8 @@ def _parse_header_default_spec(spec: str, target_id: str) -> Tuple[Optional[str]
     if rest:
         if rest.startswith("~"):
             default_ops = rest
+        elif rest.startswith("^") or rest.startswith("!") or rest.startswith("|"):
+            default_ops = "~" + rest
         elif rest.startswith(".Fit"):
             default_ops = _fit_suffix_to_ops(rest)
         else:
@@ -919,14 +994,16 @@ def _parse_source_like_token(raw_token: str):
         return None, "", ""
 
     m_all = re.match(
-        r'^\s*@\{\s*(?P<body>[^}]*)\s*\}\s*(?:(?:\.(?P<fit>Fit\s*\{[^}]*\}))|(?:~(?P<ops>.*)))?\s*$',
+        r'^\s*@\{\s*(?P<body>[^}]*)\s*\}\s*'
+        r'(?:(?:\.(?P<fit>Fit\s*\{[^}]*\}))|(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$',
         s,
         re.IGNORECASE,
     )
     tag = "@{...}"
     if not m_all:
         m_all = re.match(
-            r'^\s*(?:Source|S)\s*\{\s*(?P<body>[^}]*)\s*\}\s*(?:(?:\.(?P<fit>Fit\s*\{[^}]*\}))|(?:~(?P<ops>.*)))?\s*$',
+            r'^\s*(?:Source|S)\s*\{\s*(?P<body>[^}]*)\s*\}\s*'
+            r'(?:(?:\.(?P<fit>Fit\s*\{[^}]*\}))|(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$',
             s,
             re.IGNORECASE,
         )
@@ -950,6 +1027,7 @@ def _parse_source_like_token(raw_token: str):
 
         fit_text = m_all.group("fit")
         legacy_ops = m_all.group("ops")
+        compact_ops = m_all.group("ops_compact")
         if fit_text:
             try:
                 fit_cmd = DSL.parse(f"X.{fit_text}")
@@ -959,17 +1037,29 @@ def _parse_source_like_token(raw_token: str):
                 ops = ""
         elif legacy_ops:
             ops = f"~{legacy_ops.strip()}"
+        elif compact_ops:
+            ops = f"~{compact_ops.strip()}"
         else:
             ops = ""
         ops = _normalize_ops_chain(ops)
         return src_val, ops, tag
 
     # Bare URL token (optionally with ~ops).
-    m_url = re.match(r"^\s*(?P<url>https?://\S+?)(?:~(?P<ops>.*))?\s*$", s, re.IGNORECASE)
+    m_url = re.match(
+        r"^\s*(?P<url>https?://\S+?)\s*(?:(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$",
+        s,
+        re.IGNORECASE,
+    )
     if m_url:
         url = (m_url.group("url") or "").strip()
         ops = (m_url.group("ops") or "").strip()
-        ops = (f"~{ops}" if ops else "")
+        ops_compact = (m_url.group("ops_compact") or "").strip()
+        if ops:
+            ops = f"~{ops}"
+        elif ops_compact:
+            ops = f"~{ops_compact}"
+        else:
+            ops = ""
         ops = _normalize_ops_chain(ops)
         return url, ops, "url"
 
@@ -979,7 +1069,7 @@ def _parse_source_like_token(raw_token: str):
     # Keep this restricted to known extensions to avoid colliding with normal IDs.
     m_local = re.match(
         r"^\s*(?P<sigil>@)?(?P<path>[^\s\[\]~]+?\.(?:png|jpe?g|gif|bmp|webp|svgz?|pdf|tiff?))\s*"
-        r"(?:(?:\.(?P<fit>Fit\s*\{[^}]*\}))|(?:~(?P<ops>.*)))?\s*$",
+        r"(?:(?:\.(?P<fit>Fit\s*\{[^}]*\}))|(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$",
         s,
         re.IGNORECASE,
     )
@@ -987,6 +1077,7 @@ def _parse_source_like_token(raw_token: str):
         src_val = (m_local.group("path") or "").strip()
         fit_text = m_local.group("fit")
         legacy_ops = m_local.group("ops")
+        compact_ops = m_local.group("ops_compact")
         if fit_text:
             try:
                 fit_cmd = DSL.parse(f"X.{fit_text}")
@@ -996,6 +1087,8 @@ def _parse_source_like_token(raw_token: str):
                 ops = ""
         elif legacy_ops:
             ops = f"~{legacy_ops.strip()}"
+        elif compact_ops:
+            ops = f"~{compact_ops.strip()}"
         else:
             ops = ""
         ops = _normalize_ops_chain(ops)
@@ -1040,7 +1133,13 @@ def _select_1based_with_warning(items: list, selector: str, warn_tag: str) -> li
 def _parse_source_token_with_selector(raw_token: str):
     """Parse source-like token plus optional trailing selector [...]."""
     s = (raw_token or "").strip()
-    m = re.match(r"^\s*(?P<core>(?:@\{[^}]*\}|(?:Source|S)\s*\{[^}]*\}|https?://\S+?))\s*(?P<sel>\[[^\]]*\])?\s*(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*)?)\s*$", s, re.IGNORECASE)
+    m = re.match(
+        r"^\s*(?P<core>(?:@\{[^}]*\}|(?:Source|S)\s*\{[^}]*\}|https?://\S+?))\s*"
+        r"(?P<sel>\[[^\]]*\])?\s*"
+        r"(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
+        s,
+        re.IGNORECASE,
+    )
     if not m:
         src_val, ops, tag = _parse_source_like_token(s)
         if src_val:
@@ -1481,14 +1580,20 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
     # For non-text placeholders, normalized source tokens without explicit fit ops
     # should still go through FitAnchor with default behavior (inside+center).
     force_fa_default = False
+    compact_ops_present = False
+    try:
+        _bidc, _placec, _opsc = _parse_object_token(raw_token)
+        compact_ops_present = bool((_opsc or "").strip()) and ("~" not in raw_token)
+    except Exception:
+        compact_ops_present = False
     if source_was_normalized and symbol_id_for_fallback:
-        has_fa_sig = ("~" in raw_token) or raw_token.endswith("=") or raw_token.endswith("+") or ("=~" in raw_token) or ("+~" in raw_token) or raw_token.lstrip().startswith('[')
+        has_fa_sig = compact_ops_present or ("~" in raw_token) or raw_token.endswith("=") or raw_token.endswith("+") or ("=~" in raw_token) or ("+~" in raw_token) or raw_token.lstrip().startswith('[')
         if (not header_plus) and (not has_fa_sig):
             force_fa_default = True
     else:
         # Local object ids should behave like other sources: implicit Fit/Anchor when
         # no explicit FA signature is provided (default ~i5).
-        has_fa_sig = ("~" in raw_token) or raw_token.endswith("=") or raw_token.endswith("+") or ("=~" in raw_token) or ("+~" in raw_token) or raw_token.lstrip().startswith('[')
+        has_fa_sig = compact_ops_present or ("~" in raw_token) or raw_token.endswith("=") or raw_token.endswith("+") or ("=~" in raw_token) or ("+~" in raw_token) or raw_token.lstrip().startswith('[')
         if (not header_plus) and (not has_fa_sig):
             try:
                 _base_id, _place, _ops_tok = _parse_object_token(raw_token)
@@ -1498,7 +1603,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
             except Exception:
                 pass
 
-    is_fa_token = force_fa_default or header_plus or ("~" in raw_token) or raw_token.endswith("=") or raw_token.endswith("+") or ("=~" in raw_token) or ("+~" in raw_token) or raw_token.lstrip().startswith('[')
+    is_fa_token = force_fa_default or header_plus or compact_ops_present or ("~" in raw_token) or raw_token.endswith("=") or raw_token.endswith("+") or ("=~" in raw_token) or ("+~" in raw_token) or raw_token.lstrip().startswith('[')
     if header_plus and ("~" not in raw_token):
         raw_token = raw_token + "~i"
 
@@ -1573,7 +1678,10 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                     continue
                 ops_body = (arr.get('ops') or "") or default_ops
                 ops_full = _merge_header_global_ops(ops_body)
-                g_node, g_id = _build_array_group(inst, root_doc, arr.get('items'), arr.get('layout'), sm=sm)
+                g_node, g_id = _build_array_group(
+                    inst, root_doc, arr.get('items'), arr.get('layout'),
+                    sm=sm, ss_registry=ss_registry
+                )
                 if g_id:
                     # Use deep-copy for arrays so the temp group can be removed safely.
                     fa_jobs.append((g_id, rect_id_val, ops_full, 'copy', g_node, rect_elem_for_fa))
@@ -1765,10 +1873,43 @@ def render_phase(ctx):
                     n, rem = divmod(n - 1, 26)
                     out.append(chr(rem + 65))
                 return "".join(reversed(out))
-            # split by comma OR whitespace
-            toks = [t for t in re.split(r"[\s,]+", body) if t]
+            # split by top-level whitespace/comma, preserving (...) groups as one token
+            toks_ws = _split_multivalue(body)
+            toks = []
+            for tw in (toks_ws or []):
+                for tcom in [x for x in re.split(r"\s*,\s*", (tw or "").strip()) if x]:
+                    toks.append(tcom)
             out = []
             for t in toks:
+                t = (t or "").strip()
+                if not t:
+                    continue
+                # Group repetition in iterator lists: K*(...)
+                m_rep_grp = re.match(r"^(\d+)\*\((.*)\)$", t)
+                if m_rep_grp:
+                    k = int(m_rep_grp.group(1))
+                    inner = (m_rep_grp.group(2) or "").strip()
+                    inner_toks = _split_multivalue(inner) if inner else []
+                    inner_item = " ".join([x for x in inner_toks if (x or "").strip()]).strip()
+                    if inner_item:
+                        out.extend([inner_item] * max(0, k))
+                    continue
+                # Grouped multivalue item: (id2 id3) -> one iterator item "id2 id3"
+                if t.startswith("(") and t.endswith(")"):
+                    inner = t[1:-1].strip()
+                    inner_toks = _split_multivalue(inner) if inner else []
+                    inner_item = " ".join([x for x in inner_toks if (x or "").strip()]).strip()
+                    if inner_item:
+                        out.append(inner_item)
+                    continue
+                # Scalar repetition: K*X
+                m_rep = re.match(r"^(\d+)\*(.+)$", t)
+                if m_rep:
+                    k = int(m_rep.group(1))
+                    rhs = (m_rep.group(2) or "").strip()
+                    if rhs:
+                        out.extend([rhs] * max(0, k))
+                    continue
                 m = re.match(r"^([A-Za-z]+|\d+)\s*\.\.\s*([A-Za-z]+|\d+)$", t)
                 if m:
                     a_raw = m.group(1)
@@ -1891,6 +2032,8 @@ def render_phase(ctx):
                 return ''
             if t.startswith(".Fit"):
                 t = _fit_suffix_to_ops(t)
+            elif t.startswith("^") or t.startswith("!") or t.startswith("|"):
+                t = "~" + t
             elif not t.startswith("~"):
                 return ''
             t = _normalize_ops_chain(t)
@@ -1947,7 +2090,9 @@ def render_phase(ctx):
 
                 # 1) Source-like token (supports optional selector + fit suffix).
                 m_src = re.match(
-                    r"^\s*(?P<core>(?:@\{[^}]*\}|(?:Source|S)\s*\{[^}]*\}|https?://\S+?))\s*(?P<sel>\[[^\]]*\])?\s*(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*)?)\s*$",
+                    r"^\s*(?P<core>(?:@\{[^}]*\}|(?:Source|S)\s*\{[^}]*\}|https?://\S+?))\s*"
+                    r"(?P<sel>\[[^\]]*\])?\s*"
+                    r"(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
                     tok,
                     re.IGNORECASE,
                 )
@@ -1961,6 +2106,8 @@ def render_phase(ctx):
                             item_ops = _fit_suffix_to_ops(tail)
                         elif tail.startswith("~"):
                             item_ops = _normalize_ops_chain(tail)
+                        elif tail.startswith("^") or tail.startswith("!") or tail.startswith("|"):
+                            item_ops = _normalize_ops_chain("~" + tail)
                     merged = _merge_fit_ops(gops, item_ops)
                     return f"{core}{sel}{merged}" if merged else f"{core}{sel}"
 
@@ -2005,7 +2152,11 @@ def render_phase(ctx):
 
             # '@{...}' filesystem glob, optionally with fit/anchor suffix.
             if s.startswith('@{'):
-                m_glob = re.match(r"^\s*(?P<core>@\{[^}]*\})\s*(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*)?)\s*$", s, re.IGNORECASE)
+                m_glob = re.match(
+                    r"^\s*(?P<core>@\{[^}]*\})\s*(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
+                    s,
+                    re.IGNORECASE,
+                )
                 if m_glob:
                     core = (m_glob.group("core") or "").strip()
                     tail = (m_glob.group("tail") or "").strip()
@@ -2019,7 +2170,11 @@ def render_phase(ctx):
                         return seq
 
             # '@alias[*]' spritesheet wildcard, optionally with fit/anchor suffix.
-            m_ss = re.match(r"^\s*(?P<core>@[A-Za-z0-9_\-]+\[\*\])\s*(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*)?)\s*$", s, re.IGNORECASE)
+            m_ss = re.match(
+                r"^\s*(?P<core>@[A-Za-z0-9_\-]+\[\*\])\s*(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
+                s,
+                re.IGNORECASE,
+            )
             ss_core = (m_ss.group("core") if m_ss else s)
             ss_tail = (m_ss.group("tail") if m_ss else "")
             ss = _expand_spritesheet_wildcard(ss_core)

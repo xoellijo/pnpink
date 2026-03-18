@@ -1,4 +1,4 @@
-# DSL Architecture
+﻿# DSL Architecture
 High-level flow of how PnPInk applies the DSL.
 
 ## Data to SVG Pipeline
@@ -46,7 +46,6 @@ These panels are the operational bridge between visual authoring and dataset-dri
 
 PnPInk relies on Inkscape objects and IDs:
 
-- IDs and structure: `Object > Objects...` (Shift+Ctrl+O).
-- Low-level XML/SVG: `Object > XML Editor` (Shift+Ctrl+X).
+- IDs and structure workflow: [Introduction -> How IDs connect data to graphics](../intro.md#ids-workflow).
 - Symbols: `Object > Symbols` (Shift+Ctrl+Y).
 - Layers: `Layer > Layers` (Shift+Ctrl+L).

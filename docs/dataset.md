@@ -1,4 +1,4 @@
-# Dataset Reference
+﻿# Dataset Reference
 This chapter is the exact behavioral reference for dataset parsing and execution.
 Use [Dataset Format and Sources](dataset-overview.md) first if you are new to the model.
 
@@ -7,10 +7,8 @@ This section explains how table headers bind to SVG content.
 
 Dataset headers are matched to SVG IDs.
 
-To inspect or edit IDs in Inkscape:
-
-- `Object > XML Editor` (Shift+Ctrl+X)
-- `Object > Objects...` (Shift+Ctrl+O)
+For the Inkscape ID workflow (where to inspect and edit IDs), see
+[Introduction -> How IDs connect data to graphics](intro.md#ids-workflow).
 
 IDs must be unique and follow XML rules (letters first, no spaces).
 

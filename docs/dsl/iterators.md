@@ -41,6 +41,14 @@ Array repetition shorthand is also supported:
 
 Equivalent to writing the same token three times in the list.
 
+Grouped repetition is also supported with parentheses:
+
+```txt
+[id1 - 3*(id2 3- 3*id3) 4- id4]
+```
+
+Parentheses are grouping operators inside list/array bodies, so you can repeat a block as one unit.
+
 ## Iterator (`*...`)
 When a cell starts with `*`, it becomes an iterator expression.
 
@@ -55,6 +63,34 @@ Result:
 - by default (without explicit copies), generated cards count equals iterator length.
 
 Conceptually: one different card per value.
+
+### Parentheses inside iterator lists
+Inside `*[ ... ]`, parentheses define one grouped iterator item (multivalue in the same generated card instance):
+
+```txt
+*[id1 id2 id3]
+```
+
+This iterates 3 scalar items (`id1`, then `id2`, then `id3`).
+
+```txt
+*[id1 (id2 id3)]
+```
+
+This iterates 2 items:
+
+- first iteration: `id1`
+- second iteration: `id2 id3` (multivalue group in the same card)
+
+So `*[id1 id2 id3]` and `*[id1 (id2 id3)]` are intentionally different.
+
+Group repetition also works:
+
+```txt
+*[id1 2*(id2 id3)]
+```
+
+Equivalent iterator sequence: `id1`, `(id2 id3)`, `(id2 id3)`.
 
 Wildcard IDs are also supported in scalar/multivalue cells:
 

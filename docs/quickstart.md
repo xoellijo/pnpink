@@ -1,4 +1,4 @@
-# Basic Workflow
+﻿# Basic Workflow
 This chapter is a practical "first successful run" guide.
 If you are starting from zero, complete it once end-to-end before reading full DSL reference pages.
 
@@ -20,8 +20,7 @@ Recommended:
 
 Inkscape ID workflow:
 
-- `Object > Objects...` (Shift+Ctrl+O): inspect hierarchy, groups, and Z-order.
-- `Object > XML Editor` (Shift+Ctrl+X): edit SVG/XML attributes directly.
+See [Introduction -> How IDs connect data to graphics](intro.md#ids-workflow).
 
 ## 2. Prepare the Dataset
 This step connects table columns to SVG IDs so each row can produce one variation.
@@ -82,8 +81,10 @@ The most relevant ones are:
 
 - `Object > Layers and Objects...` (Shift+Ctrl+L): inspect object tree, layer/group hierarchy, and Z-order.
 - `Object > Object Properties...` (Shift+Ctrl+O): edit object metadata and properties that affect matching and behavior.
-- `Object > XML Editor` (Shift+Ctrl+X): inspect and edit low-level SVG/XML attributes exactly.
 - `Object > Symbols` (Shift+Ctrl+Y): inspect symbol definitions used by Source and icon workflows.
 - `Object > Fill and Stroke` (Shift+Ctrl+F): review visual style values that can influence readability and print output.
 - `Object > Transform...` (Shift+Ctrl+M): apply deterministic transforms before generation if geometry is inconsistent.
 - `Object > Align and Distribute` (Shift+Ctrl+A): enforce consistent alignment in templates before cloning.
+
+For ID-specific inspection/editing panels, use the single reference in
+[Introduction -> How IDs connect data to graphics](intro.md#ids-workflow).

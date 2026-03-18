@@ -17,9 +17,8 @@ nav:
       - Format and Sources: dataset-overview.md
       - Dataset Reference: dataset.md
   - DSL:
-      - Nomenclature: dsl/nomenclature.md
+      - DSL Nomenclature: dsl/nomenclature.md
       - Architecture: dsl/architecture.md
-      - Core Syntax: dsl/index.md
       - Iterators and Copies: dsl/iterators.md
       - Fit and Anchor: dsl/fit-anchor.md
       - Layout: dsl/layout.md

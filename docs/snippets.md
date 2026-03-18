@@ -1,6 +1,12 @@
-# Snippets
+﻿# Snippets
 Snippets are reusable text templates expanded before normal `${var}` replacement.
 This feature is designed to keep datasets readable when text patterns repeat.
+
+## What snippets are
+Snippets are a compact mini-language inside PnPInk.
+They let you define short aliases that expand into longer fragments (text, SVG-rich text, paths, URL fragments, style fragments, and reusable token patterns).
+
+Snippets are always processed first, immediately after DeckMaker reads dataset values and before normal variable substitution.
 
 ## Syntax
 This section defines the only supported definition format in the current engine.
@@ -49,15 +55,35 @@ If a snippet has exactly one parameter, that parameter captures the full inner t
 :Bold(This is bold text) -> <b>This is bold text</b>
 ```
 
-## Escaping and Errors
-These rules explain why malformed or unknown calls do not break generation.
+## Defaults and Optional Parts
+Default values are used when a parameter is omitted.
 
+```txt
+# :Box(text color=black) = <rect stroke='${color}'/><text>${text}</text>
+
+:Box(Title)     -> <rect stroke='black'/><text>Title</text>
+:Box(Title red) -> <rect stroke='red'/><text>Title</text>
+```
+
+## Quoting, Spaces, and Escaping
+- Parameters containing spaces must use quotes.
 - Use `\:` to keep a call literal.
 - If a snippet does not exist, the call stays literal.
 - If a call is malformed, it stays literal.
 
 ```txt
-\:Join(a b) -> :Join(a b)
+:Join("My Folder" file.svg) -> My Folder/file.svg
+\:Join(a b)                  -> :Join(a b)
+```
+
+## Nesting
+Snippets can call other snippets and are expanded inside-out.
+
+```txt
+# :B(text) = <b>${text}</b>
+# :C(text color) = <span fill='${color}'>${text}</span>
+
+:C(:B(Name) red) -> <span fill='red'><b>Name</b></span>
 ```
 
 ## Practical SVG Text Helpers
@@ -84,3 +110,21 @@ For each dataset cell:
 1. Snippets are expanded.
 2. `${var}` replacements are applied.
 3. DSL placement and rendering run.
+
+## Summary Table
+| Concept | Syntax | Example | Result |
+|----|----|----|----|
+| Definition | `# :Name(a b=def) = text` | `# :Hello(name) = Hi ${name}` | defines snippet |
+| Use | `:Hello(World)` |  | `Hi World` |
+| Default | `param=value` | `# :Box(t color=red)` | uses red if omitted |
+| Conditional | `${p? text}` | `${size? font-size='${size}'}` | adds only if defined |
+| Escape | `\Name()` |  | prevents expansion |
+| Nested | `:A(:B(x))` |  | inner first |
+| One parameter | `:Bold(any text)` |  | captures all |
+| Quoted values | `:Join("My Folder" file)` |  | handles spaces |
+
+## Design Principles
+- Consistent: follows the same spacing and escaping rules as the rest of PnPInk.
+- Readable: complex SVG text becomes short and maintainable.
+- Composable: snippets can be nested and combined incrementally.
+- Deterministic: plain text substitution rules, no runtime scripting.
