@@ -88,10 +88,10 @@ jobs:
           cp .artifacts/pnpink.pdf src/docs/pnpink.pdf
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet -- src/docs/pnpink.pdf; then
+          git add src/docs/pnpink.pdf
+          if git diff --cached --quiet -- src/docs/pnpink.pdf; then
             echo "No changes in src/docs/pnpink.pdf"
           else
-            git add src/docs/pnpink.pdf
             git commit -m "docs(pdf): update generated documentation PDF"
             git push
           fi
