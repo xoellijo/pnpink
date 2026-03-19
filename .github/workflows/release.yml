@@ -46,7 +46,8 @@ jobs:
           if not manifest_path.exists():
               raise SystemExit("manifest.json not found")
 
-          data = json.loads(manifest_path.read_text(encoding="utf-8"))
+          # Accept UTF-8 with or without BOM.
+          data = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
           missing = [k for k in ("name", "version", "channel") if k not in data]
           if missing:
               raise SystemExit(f"manifest.json missing keys: {', '.join(missing)}")
