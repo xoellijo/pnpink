@@ -16,6 +16,7 @@ nav:
   - Dataset:
       - Format and Sources: dataset-overview.md
       - Dataset Reference: dataset.md
+  - Package Formats (`.zvg` / `.pnp`): dsl/packages.md
   - DSL:
       - DSL Nomenclature: dsl/nomenclature.md
       - Architecture: dsl/architecture.md
@@ -26,7 +27,6 @@ nav:
       - Source: dsl/source.md
       - Marks: dsl/marks.md
       - Gradients (Experimental): dsl/gradients.md
-      - ZVG and PNP Packages: dsl/packages.md
       - Advanced: dsl/advanced.md
   - PnPInk Overview: pnpink-general.md
   - Basic Workflow: quickstart.md

@@ -11,6 +11,7 @@ sys.path.append(os.path.dirname(__file__))
 import inkex
 
 import engine as ENG
+import dataset_state as DSTATE
 class DeckMaker(inkex.EffectExtension):
     def add_arguments(self, pars):
         pars.add_argument("--tab")
@@ -54,6 +55,26 @@ class DeckMaker(inkex.EffectExtension):
     def effect(self):
         # Core pipeline lives in engine.py; keep entrypoint compatible with current .inx.
         ENG.run(self, __version__)
+        # Persist last valid dataset source externally (not in SVG, so Undo won't lose it).
+        try:
+            sid = str(
+                getattr(self.options, "sheet_id", "")
+                or getattr(self.options, "gsheet_id", "")
+                or ""
+            ).strip()
+            srg = str(
+                getattr(self.options, "sheet_range", "")
+                or getattr(self.options, "gsheet_range", "")
+                or ""
+            ).strip()
+            if sid:
+                p = self._document_path_or_abort()
+                DSTATE.set_gsheet_for_svg(p, sid, srg)
+                _l.i(f"[dataset_state] saved svg='{p}' sheet_id='{sid}' range='{srg}'")
+            else:
+                _l.i("[dataset_state] skip: empty sheet_id")
+        except Exception:
+            _l.w("[dataset_state] save failed", exc_info=True)
 
 
 if __name__ == "__main__":

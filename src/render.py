@@ -1,4 +1,4 @@
-# [2026-02-18] Change: remove %...% variable expansion in dataset values.
+﻿# [2026-02-18] Change: remove %...% variable expansion in dataset values.
 # Changelog: add target array grouping with explicit group bbox for fit_anchor.
 # [2026-02-19] Add: split layout gaps into gaps + offset properties.
 # [2026-02-20] Add: split-board rendering for oversized templates using fit+clip pipeline.
@@ -35,7 +35,7 @@ def _expand_index_expr(expr: str):
     if not s:
         return []
     if ',' in s:
-        raise ValueError("No se permiten comas en índices")
+        raise ValueError("No se permiten comas en Ã­ndices")
     toks = s.split()
     out = []
     for t in toks:
@@ -57,7 +57,7 @@ def _expand_index_expr(expr: str):
             out.extend(list(range(a, b + step, step))); continue
         if re.match(r"^\d+$", t):
             out.append(int(t)); continue
-        raise ValueError(f"Índice no reconocido: '{t}'")
+        raise ValueError(f"Ãndice no reconocido: '{t}'")
     return out
 
 def _parse_sprite_alias_token(raw_token: str):
@@ -778,8 +778,8 @@ def _parse_header_default_spec(spec: str, target_id: str) -> Tuple[Optional[str]
         elif rest.startswith(".Fit"):
             default_ops = _fit_suffix_to_ops(rest)
         else:
-            # Unknown tail; ignore to stay forward-compatible.
-            default_ops = ""
+            # Not a valid id+ops tail (e.g. 'url(#g1)'): treat full RHS as literal expression.
+            return None, "", "", s
     return default_id, (default_ops or ""), (global_ops or ""), (default_expr or "")
 
 def _is_id_wildcard_token(token: str) -> bool:
@@ -935,12 +935,12 @@ def parse_header_key_full(key: str) -> Dict[str, object]:
     left = (left or "").strip()
     right = (right or "").strip()
 
-    # Optional property suffix only on LEFT side, and only for supported props.
+    # Optional property suffix only on LEFT side.
     prop = "text"
-    m_prop = re.match(r"^(?P<id>.+?)\[(?P<prop>[A-Za-z_][A-Za-z0-9_]*)\]\s*$", left)
+    m_prop = re.match(r"^(?P<id>.+?)\[(?P<prop>[A-Za-z_][A-Za-z0-9_-]*)\]\s*$", left)
     if m_prop:
         p = (m_prop.group("prop") or "").strip().lower()
-        if p in ("text", "xml"):
+        if p:
             prop = p
             left = (m_prop.group("id") or "").strip()
 
@@ -1235,7 +1235,7 @@ class CardPlanner:
                                                              self.pages[0]["w"],
                                                              self.pages[0]["h"])
         if self.plan.per_page <= 0:
-            raise inkex.AbortExtension("No caben cartas en la página con el preset/layout actual.")
+            raise inkex.AbortExtension("No caben cartas en la pÃ¡gina con el preset/layout actual.")
         _l.d("planner.init", {"slots_per_page": self.plan.per_page})
     def _ensure_fallback_plan_for_split(self):
         if getattr(self.plan, 'per_page', 0) > 0:
@@ -1318,9 +1318,9 @@ class CardPlanner:
     def begin_slot(self):
         """
         Devuelve (slot_x_abs, slot_y_abs) del slot actual.
-        - self.local_slots contiene (x,y) o (x,y,w,h) en coords LOCALES al content-box de la página.
+        - self.local_slots contiene (x,y) o (x,y,w,h) en coords LOCALES al content-box de la pÃ¡gina.
         - Para hacerlas absolutas en el documento, sumamos:
-            page_offset (p.x,p.y) + content_origin (márgenes) + centering (left,top) + local(x,y).
+            page_offset (p.x,p.y) + content_origin (mÃ¡rgenes) + centering (left,top) + local(x,y).
         """
         if self.slot_index >= len(self.local_slots):
             return None, None
@@ -1394,6 +1394,7 @@ def _center_use_over_placeholder(u, placeholder):
             _l.w(f"removing placeholder '{placeholder.get('id')}' failed: {ex}")
 
 def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs, use_seq, sm=None, ss_registry=None):
+    global _P1_KEEP_SET
     hk = parse_header_key_full(key)
     target_tokens = hk.get('target_ids') if isinstance(hk, dict) else None
     if not target_tokens:
@@ -1420,21 +1421,132 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
     target_id = target_ids[0] if target_ids else (hk.get('target_id') or '')
     prop = hk.get('prop') or 'text'
     header_plus = bool(hk.get('header_plus') or False)
+    try:
+        _default_id = hk.get('default_id') if isinstance(hk, dict) else None
+        _default_ops = (hk.get('default_ops') or '') if isinstance(hk, dict) else ''
+        _global_ops = (hk.get('global_ops') or '') if isinstance(hk, dict) else ''
+        _default_expr = (hk.get('default_expr') or '') if isinstance(hk, dict) else ''
+        _default_raw = (hk.get('default_raw') or '') if isinstance(hk, dict) else ''
+    except Exception:
+        _default_id = None
+        _default_ops = ''
+        _global_ops = ''
+        _default_expr = ''
+        _default_raw = ''
     value = expand_value(raw_val, row)
+    def _normalize_style_value(_prop: str, _raw):
+        s = str(_raw or "").strip()
+        if _prop not in ("fill", "stroke"):
+            return s, None, None
+        h = s.lstrip("#")
+        if re.fullmatch(r"[0-9A-Fa-f]{3,8}", h):
+            s = f"#{h}"
+        # SVG compatibility: prefer #RRGGBB + *-opacity over rgba(...)
+        m4 = re.fullmatch(r"#([0-9A-Fa-f]{4})", s)
+        if m4:
+            hx = m4.group(1)
+            rgb = f"#{hx[0]}{hx[0]}{hx[1]}{hx[1]}{hx[2]}{hx[2]}"
+            a = int(hx[3] + hx[3], 16) / 255.0
+            op_key = "fill-opacity" if _prop == "fill" else "stroke-opacity"
+            return rgb, op_key, f"{a:.4f}".rstrip("0").rstrip(".")
+        m8 = re.fullmatch(r"#([0-9A-Fa-f]{8})", s)
+        if m8:
+            hx = m8.group(1)
+            a = int(hx[6:8], 16) / 255.0
+            rgb = f"#{hx[0:6]}"
+            op_key = "fill-opacity" if _prop == "fill" else "stroke-opacity"
+            return rgb, op_key, f"{a:.4f}".rstrip("0").rstrip(".")
+        return s, None, None
     tgt = SVG.find_target_exact_in(inst, target_id)
     if tgt is None:
         _l.d(f"field '{key}': target id='{target_id}' NOT FOUND in clone")
         return 0, "miss"
     if SVG.is_text_like(tgt) or (tgt.tag in TEXT_LIKE):
+        if (not str(value or "").strip()):
+            if _default_expr:
+                value = expand_value(str(_default_expr), row)
+            elif _default_id and (prop == "text"):
+                value = str(_default_id)
         if prop == "xml":
             SVG.replace_xml(tgt, value)
-            _l.d(f"field '{key}': XML → id='{target_id}'")
+            _l.d(f"field '{key}': XML -> id='{target_id}'")
             return 1, "xml"
+        if prop != "text":
+            try:
+                v, op_key, op_val = _normalize_style_value(prop, value)
+                if v == "":
+                    _l.d(f"field '{key}': STYLE[{prop}] empty -> keep current style id='{target_id}'")
+                    return 0, "skip"
+                smap = SVG.style_map(tgt)
+                smap[prop] = v
+                if op_key:
+                    smap[op_key] = op_val
+                SVG.style_set(tgt, smap)
+                # Text styles are often set on tspans; propagate style there too.
+                try:
+                    for _ch in tgt.iter():
+                        if _ch is tgt:
+                            continue
+                        _tag = str(getattr(_ch, "tag", "") or "")
+                        if not _tag.endswith("tspan"):
+                            continue
+                        _sm = SVG.style_map(_ch)
+                        _sm[prop] = v
+                        if op_key:
+                            _sm[op_key] = op_val
+                        SVG.style_set(_ch, _sm)
+                except Exception:
+                    pass
+                _l.d(f"field '{key}': STYLE[{prop}] -> id='{target_id}'")
+                return 1, "style"
+            except Exception as ex:
+                _l.w(f"field '{key}': STYLE[{prop}] failed on id='{target_id}': {ex}")
+                return 0, "miss"
         SVG.replace_text(tgt, value)
-        _l.d(f"field '{key}': TEXT → id='{target_id}'")
+        _l.d(f"field '{key}': TEXT -> id='{target_id}'")
         return 1, "text"
+    if prop == "xml":
+        _l.w(f"field '{key}': [xml] is only supported on text-like targets (id='{target_id}')")
+        return 0, "miss"
+    if prop != "text":
+        try:
+            if (not str(value or "").strip()):
+                if _default_expr:
+                    value = expand_value(str(_default_expr), row)
+                elif _default_id:
+                    value = str(_default_id)
+                elif _default_raw:
+                    value = expand_value(str(_default_raw), row)
+            v, op_key, op_val = _normalize_style_value(prop, value)
+            if v == "":
+                if _is_rect_elem(tgt):
+                    try:
+                        if isinstance(_P1_KEEP_SET, set):
+                            _P1_KEEP_SET.add(target_id)
+                    except Exception:
+                        pass
+                _l.d(f"field '{key}': STYLE[{prop}] empty -> keep current style id='{target_id}'")
+                return 0, "skip"
+            smap = SVG.style_map(tgt)
+            smap[prop] = v
+            if op_key:
+                smap[op_key] = op_val
+            SVG.style_set(tgt, smap)
+            # If a rect anchor receives an explicit style update, keep it visible.
+            # Otherwise Phase-1 finalize may hide rect anchors that don't use '+'.
+            if _is_rect_elem(tgt):
+                try:
+                    if isinstance(_P1_KEEP_SET, set):
+                        _P1_KEEP_SET.add(target_id)
+                except Exception:
+                    pass
+            _l.d(f"field '{key}': STYLE[{prop}] -> id='{target_id}'")
+            return 1, "style"
+        except Exception as ex:
+            _l.w(f"field '{key}': STYLE[{prop}] failed on id='{target_id}': {ex}")
+            return 0, "miss"
     raw_token = (value or "").strip()
-    # Phase-1: multivalue cells — split into top-level whitespace-separated tokens (Z-order by token order)
+    # Phase-1: multivalue cells â€” split into top-level whitespace-separated tokens (Z-order by token order)
     # and process each token independently against the SAME header/target.
     if raw_token and any(ch.isspace() for ch in raw_token):
         toks = _split_multivalue(raw_token)
@@ -1446,17 +1558,6 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
             return total, 'multi'
 
     # Header defaults ('ph_id=...') and global fit ('ph_id=~.../.Fit{...}') apply only to non-text targets.
-    try:
-        _default_id = hk.get('default_id') if isinstance(hk, dict) else None
-        _default_ops = (hk.get('default_ops') or '') if isinstance(hk, dict) else ''
-        _global_ops = (hk.get('global_ops') or '') if isinstance(hk, dict) else ''
-        _default_expr = (hk.get('default_expr') or '') if isinstance(hk, dict) else ''
-    except Exception:
-        _default_id = None
-        _default_ops = ''
-        _global_ops = ''
-        _default_expr = ''
-
     if not raw_token:
         if _default_expr:
             raw_token = expand_value(str(_default_expr), row).strip()
@@ -1465,6 +1566,10 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
             if raw_token and _default_ops:
                 # default_ops already includes leading '~' when present
                 raw_token = f"{raw_token}{_default_ops}"
+        elif _global_ops and (not SVG.is_text_like(tgt)) and (tgt.tag not in TEXT_LIKE):
+            # Non-text placeholder with header-global fit only (e.g. bb_card=~i5):
+            # treat target id as implicit base object for empty cells.
+            raw_token = (target_id or "").strip()
 
     raw_token = _expand_wildcard_ids_in_value(raw_token, root_doc)
 
@@ -1522,7 +1627,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                             symbol_id_for_fallback = sref.symbol_id
                             raw_token = f"{sref.symbol_id}" + (f"~{ops_tail}" if ops_tail else "")
                             source_was_normalized = True
-                            _l.d(f"[spritesheets] normalized '@{a_name}[...]' → '{raw_token}'")
+                            _l.d(f"[spritesheets] normalized '@{a_name}[...]' â†’ '{raw_token}'")
                     except Exception as ex:
                         _l.w(f"[spritesheets] frame resolve failed '{raw_token}': {ex}")
             else:
@@ -1549,13 +1654,13 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                         else:
                             raw_token = "[" + " ".join(ids) + "]" + (ops_from_token or "")
                         source_was_normalized = True
-                        _l.d(f"[deckmaker.src] normalized virtual '{src_tag}' → '{raw_token}'")
+                        _l.d(f"[deckmaker.src] normalized virtual '{src_tag}' â†’ '{raw_token}'")
                 else:
                     sref = sm.register(src_val)
                     symbol_id_for_fallback = sref.symbol_id
                     raw_token = f"{sref.symbol_id}{ops_from_token}"
                     source_was_normalized = True
-                    _l.d(f"[deckmaker.src] normalized '{src_tag}' → '{raw_token}' (symbol in <defs>)")
+                    _l.d(f"[deckmaker.src] normalized '{src_tag}' â†’ '{raw_token}' (symbol in <defs>)")
             except Exception as ex:
                 _l.w(f"field '{key}': SOURCE normalize failed '{raw_token}': {ex}")
 
@@ -1574,7 +1679,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                 sref = sm.register(src_val)
                 raw_token = f"{sref.symbol_id}{sep}{ops_tail}" if sep else sref.symbol_id
                 source_was_normalized = True
-                _l.d(f"[deckmaker.src] normalized 'icon://' → '{raw_token}' (symbol in <defs>)")
+                _l.d(f"[deckmaker.src] normalized 'icon://' â†’ '{raw_token}' (symbol in <defs>)")
             except Exception as ex:
                 _l.w(f"field '{key}': icon:// normalize failed '{raw_token}': {ex}")
     # For non-text placeholders, normalized source tokens without explicit fit ops
@@ -1795,7 +1900,7 @@ def render_phase(ctx):
             else:
                 new_idx = int(float(expr)) - 1
         except Exception as ex:
-            raise inkex.AbortExtension(f"Cursor de páginas inválido at='{expr}': {ex}")
+            raise inkex.AbortExtension(f"Cursor de pÃ¡ginas invÃ¡lido at='{expr}': {ex}")
         if new_idx < 0:
             new_idx = 0
         planner_obj.page_index = int(new_idx)
@@ -1813,7 +1918,7 @@ def render_phase(ctx):
             sx, sy = planner_obj.begin_slot()
         if sx is None:
             raise inkex.AbortExtension(
-                f"No hay huecos disponibles (slots) para colocar más cartas. "
+                f"No hay huecos disponibles (slots) para colocar mÃ¡s cartas. "
                 f"per_page={getattr(planner_obj.plan,'per_page',-1)} "
                 f"page={planner_obj.page_index+1} slot_index={planner_obj.slot_index}"
             )
@@ -2445,7 +2550,7 @@ def render_phase(ctx):
                     ops = "~5" + tail
             return slot_no, ops
 
-        # Form 2: ops-only → bind to current slot/page.
+        # Form 2: ops-only â†’ bind to current slot/page.
         # Accept both long and short Fit/Anchor syntaxes.
         if s.startswith(('.', '~', '{')) or re.match(r"^[A-Za-z][\w\-.]*\s*\.Fit\s*\{", s):
             return 0, s
@@ -2466,7 +2571,7 @@ def render_phase(ctx):
                 continue
             slot_no, ops = _parse_slot_selector(raw)
             if slot_no is None:
-                _l.w(f"[@page] invalid selector '{raw}' in col '{ckey or ''}' → skipped")
+                _l.w(f"[@page] invalid selector '{raw}' in col '{ckey or ''}' â†’ skipped")
                 continue
             if int(slot_no) == 0:
                 # ops-only: bind to current row/slot page (resolved later, once slot_no is known)
@@ -2491,7 +2596,7 @@ def render_phase(ctx):
                 continue
             slot_no, ops = _parse_slot_selector(raw)
             if slot_no is None:
-                _l.w(f"[@page @back] invalid selector '{raw}' in col '{ckey or ''}' → skipped")
+                _l.w(f"[@page @back] invalid selector '{raw}' in col '{ckey or ''}' â†’ skipped")
                 continue
             if int(slot_no) == 0:
                 # ops-only @page @back: bind to this row's current front slot (resolved later)
@@ -2808,7 +2913,7 @@ def render_phase(ctx):
                             prefix = (prefix or '').strip().lower()
                             name = (name or '').strip()
                         else:
-                            # icon://name  → default set
+                            # icon://name  â†’ default set
                             prefix = 'noto'
                             name = token.strip()
                         if prefix and name:
@@ -2842,7 +2947,7 @@ def render_phase(ctx):
                     is_placeholder = False
                     break
             if is_placeholder:
-                _l.s(f"ROW {idx}: placeholder (empty row) → skip slot")
+                _l.s(f"ROW {idx}: placeholder (empty row) â†’ skip slot")
                 planner.commit_slot()
                 continue
         if row_page:
@@ -2892,13 +2997,13 @@ def render_phase(ctx):
                         _flush_marks_for_page(_old_page_idx)
                     if ps_for_cursor is not None:
                         _apply_page_cursor_from_page(planner, ps_for_cursor)
-            _l.i(f"Grid {planner.plan.cols}x{planner.plan.rows}, gaps {planner.current.gaps.h}×{planner.current.gaps.v} mm; slots/page {planner.slots_per_page()}")
+            _l.i(f"Grid {planner.plan.cols}x{planner.plan.rows}, gaps {planner.current.gaps.h}Ã—{planner.current.gaps.v} mm; slots/page {planner.slots_per_page()}")
         if row_layout:
             _l.s(f"ROW {idx}: apply LAYOUT tail")
             try:
                 ls = DSL.parse_layout_block(row_layout)
             except Exception as ex:
-                _l.w(f"layout tail inválido '{row_layout}': {ex}")
+                _l.w(f"layout tail invÃ¡lido '{row_layout}': {ex}")
                 ls = None
             if ls is not None:
                 page, card, layout, gaps = LYT.apply_layout_spec((page, card, layout, gaps), ls)
@@ -2907,7 +3012,7 @@ def render_phase(ctx):
                 planner.apply_preset(current)
                 if int(planner.page_index) != _old_page_idx:
                     _flush_marks_for_page(_old_page_idx)
-                _l.i(f"Tail applied: g={layout.cols}x{layout.rows} inv=({layout.invert_cols},{layout.invert_rows}) rowMajor={layout.sweep_rows_first} k={gaps.h}×{gaps.v} s='{card.name or ''}'")
+                _l.i(f"Tail applied: g={layout.cols}x{layout.rows} inv=({layout.invert_cols},{layout.invert_rows}) rowMajor={layout.sweep_rows_first} k={gaps.h}Ã—{gaps.v} s='{card.name or ''}'")
         if row_marks:
             _l.s(f"ROW {idx}: apply MARKS tail")
             if row_marks in ("0", "-"):
@@ -2916,7 +3021,7 @@ def render_phase(ctx):
                 try:
                     marks_current = DSL.parse_marks_block(row_marks)
                 except Exception as ex:
-                    _l.w(f"marks tail inválido '{row_marks}': {ex}")
+                    _l.w(f"marks tail invÃ¡lido '{row_marks}': {ex}")
         # Control-only row: apply Page/Layout/Marks but do not create an instance
         # when all payload cells (columns B+) are empty.
         if (row_page or row_layout or row_marks):

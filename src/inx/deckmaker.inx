@@ -2,7 +2,7 @@
 <inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
 
   <!-- Visible name -->
-  <_name>DeckMaker v0.41</_name>
+  <_name>DeckMaker v0.44</_name>
 
   <!-- Unique id (NO cambiar) -->
   <id>pnpink.deckmaker</id>
@@ -21,7 +21,7 @@
 
     <!-- Mantén el resto de páginas que ya tenías; aquí dejo About mínima para no romper -->
     <page name="about" gui-text="About">
-      <label>DeckMaker v0.41 — CSV/Google Sheets input.</label>
+      <label>DeckMaker v0.44 — CSV/Google Sheets input.</label>
     </page>
   </param>
 

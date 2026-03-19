@@ -1,0 +1,54 @@
+/* Minimal custom styles */
+
+/* Compact note blocks: ::: notes */
+.md-typeset .notes {
+  font-size: 0.92rem;
+  line-height: 1.35;
+  margin: 0.45em 0;
+  padding: 0.45em 0.6em;
+  border-left: 3px solid #9fb7d9;
+  background: #f6f9ff;
+}
+
+/* DSL/code readability */
+.md-typeset code,
+.md-typeset pre code {
+  background: #eef4ff;
+  color: #1e3a8a;
+}
+
+/* CSV dataset tables */
+.md-typeset {
+  --pnpink-dataset-font-size: 0.72rem;
+}
+
+.md-typeset table.csv-dataset th {
+  background: #fde8e8;
+  color: #7f1d1d;
+  font-weight: 700;
+  font-size: var(--pnpink-dataset-font-size);
+}
+
+.md-typeset table.csv-dataset tbody td {
+  background: #dbeafe;
+  color: #1e3a8a;
+  font-size: var(--pnpink-dataset-font-size);
+}
+
+.md-typeset table.csv-dataset tbody td:first-child {
+  font-weight: 600;
+}
+
+.md-typeset pre.csv-view,
+.md-typeset pre.csv-view .csv-header {
+  font-size: var(--pnpink-dataset-font-size);
+}
+
+.md-typeset pre.csv-view {
+  background: #dbeafe;
+  border: 1px solid #bfdbfe;
+}
+
+.md-typeset pre.csv-view code {
+  background: transparent;
+}

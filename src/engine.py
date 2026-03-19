@@ -1478,4 +1478,3 @@ def run(self, __version__):
         _l.w("[deckmaker.text] traceback:\n" + _tb.format_exc())
 
     _l.s("END DeckMaker")
-    _l.close()

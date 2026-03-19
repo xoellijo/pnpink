@@ -161,9 +161,8 @@ Comments are processed **before any other operation**.
 - `##` after a directive/comment -> everything after `##` is ignored.
 
 ### Inside the dataset
-- `####` at the start of column A -> ignores the rest of the dataset (including following sections).
-- `###` at the start of column A -> the entire row is ignored.
-- `##` in a cell comments out the rest of that cell **only for non-text fields**.
+- `##` at the start of column A -> the entire row is ignored.
+- `#` in a cell comments out the rest of that cell **only for non-text fields**.
 - `#col` in a header disables that column.
 - `##col` in a header disables that column and all columns to the right.
 

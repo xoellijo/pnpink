@@ -157,6 +157,7 @@ class Logger:
             if self._fh and not self._fh.closed:
                 self._fh.flush()
                 self._fh.close()
+            self._fh = None
         except Exception:
             pass
 
@@ -209,6 +210,7 @@ def close():
     if _LOGGER is not None:
         try: _LOGGER.close()
         except: pass
+        _LOGGER = None
 
 # ------------------- shorthand API (import as _l) ----------------------------
 def _ensure_logger():

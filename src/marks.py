@@ -171,11 +171,18 @@ def _norm_trbl_tokens(tokens: Optional[List[str]], default: List[str]) -> List[s
     return (vals + ["0", "0", "0", "0"])[:4]
 
 
-def _tokens_to_mm4(tokens4: List[str]) -> List[float]:
-    out = []
-    for t in tokens4[:4]:
-        out.append(float(SVG.measure_to_mm(t, base_mm=None)))
-    return out
+def _tokens_to_mm4(tokens4: List[str], *, base_w_mm: float, base_h_mm: float) -> List[float]:
+    """Normalize border-like tokens to TRBL mm using the shared SVG parser.
+
+    This keeps Marks{b=...} fully aligned with Page/Fit border semantics:
+    - %, expressions, 1/2/3/4 CSS-like forms
+    - single WxH form (absolute target size)
+    """
+    try:
+        mm4 = SVG.border_tokens_to_mm4(tokens4, base_w_mm=float(base_w_mm), base_h_mm=float(base_h_mm))
+    except Exception:
+        mm4 = [0.0, 0.0, 0.0, 0.0]
+    return [float(v) for v in list(mm4 or [0.0, 0.0, 0.0, 0.0])[:4]]
 
 
 def _len_to_mm2(
@@ -341,7 +348,9 @@ def render_slot_marks(
     # b: inset/outset offset of the *reference bbox* (same TRBL grammar as border).
     # Default is 0 (flush to the slot bbox). Negative values move marks inward.
     b4 = _norm_trbl_tokens(b_tokens, default=["0"])
-    b_mm = _tokens_to_mm4(b4)
+    base_w_mm = float(w) / float(px_per_mm or 1.0)
+    base_h_mm = float(h) / float(px_per_mm or 1.0)
+    b_mm = _tokens_to_mm4(b4, base_w_mm=base_w_mm, base_h_mm=base_h_mm)
     b_px = [v * px_per_mm for v in b_mm]
     bt, br, bb, bl = b_px
     x0 = x0 - bl

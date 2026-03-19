@@ -209,6 +209,14 @@ def _parse_gradient_rhs(name: str, rhs: str) -> Optional[GradientSpec]:
             angle = float(a0.strip())
         except Exception:
             angle = 0.0
+    else:
+        # Also accept angle as an explicit standalone token: '^90'
+        if len(toks) > 1 and str(toks[1]).strip().startswith("^"):
+            try:
+                angle = float(str(toks[1]).strip()[1:].strip())
+                toks = [toks[0]] + toks[2:]
+            except Exception:
+                angle = 0.0
     base = _parse_hex_color(t0)
     if base is None:
         return None
@@ -327,6 +335,7 @@ def register_gradients_from_comments(comment_lines, defs_parent) -> Dict[str, Gr
         try:
             _upsert_linear_gradient(defs_parent, spec)
             out[name] = spec
+            _l.d(f"[gradients] registered '{name}' angle={spec.angle}")
         except Exception as ex:
             _l.w(f"[gradients] register failed '{name}': {ex}")
     if out:
@@ -337,4 +346,3 @@ def register_gradients_from_comments(comment_lines, defs_parent) -> Dict[str, Gr
 
 
 __all__ = ["GradientSpec", "GradientStopSpec", "register_gradients_from_comments"]
-

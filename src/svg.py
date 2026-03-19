@@ -840,8 +840,53 @@ def is_text_like(el) -> bool:
     return (t.endswith("text") or t.endswith("tspan") or t.endswith("textPath")
             or t.endswith("flowRoot") or t.endswith("flowPara"))
 
+def _inherit_text_style_from_first_tspan(text_el):
+    """Before flattening text, copy relevant style from first styled <tspan>.
+
+    This preserves visual outline/fill when templates keep paint attributes
+    in child tspans and dataset replacement rewrites plain text content.
+    """
+    try:
+        if text_el is None:
+            return
+        first = None
+        for n in text_el.iter():
+            if n is text_el:
+                continue
+            tag = str(getattr(n, "tag", "") or "")
+            if not tag.endswith("tspan"):
+                continue
+            if n.get("style") or n.get("stroke") or n.get("stroke-width") or n.get("fill"):
+                first = n
+                break
+        if first is None:
+            return
+
+        keys = [
+            "fill", "fill-opacity",
+            "stroke", "stroke-width", "stroke-opacity",
+            "stroke-linecap", "stroke-linejoin", "paint-order",
+            "font-family", "font-size", "font-weight", "font-style",
+            "text-decoration", "letter-spacing", "word-spacing",
+        ]
+        dst = style_map(text_el)
+        src = style_map(first)
+        for k in keys:
+            v = src.get(k)
+            if v and not dst.get(k):
+                dst[k] = v
+        for k in keys:
+            v = first.get(k)
+            if v and not dst.get(k):
+                dst[k] = v
+        if dst:
+            style_set(text_el, dst)
+    except Exception:
+        pass
+
 def replace_text(el, value: str):
     try:
+        _inherit_text_style_from_first_tspan(el)
         clear_children(el); el.text = "" if value is None else str(value)
     except Exception as e:
         _l.e(f"replace_text failed: {e}")

@@ -49,7 +49,6 @@ If multiple SVG files are included, set `manifest.json` with the `svg` field to 
 - `.pnp` favors minimal payload:
   - includes required local project assets,
   - skips cache-like downloaded files when possible,
-  - if local CSV is missing and `gsheet_id` is available (options or manifest), export generates a CSV snapshot from Google Sheets and includes it,
   - may run DeckMaker on import when requested by manifest (`run_deckmaker_on_import`).
 
 ## Compression Policy

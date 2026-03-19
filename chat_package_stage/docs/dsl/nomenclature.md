@@ -95,7 +95,8 @@ Repetition:
 
 - `n*Id` means repeat `Id` `n` times.
 - Example: `[3*Id]` is equivalent to `[Id Id Id]`.
-- `Id` can be a `( )` grouped block: `[2*(idA idB)]` is equivalent to `[idA idB idA idB]`.
+- `Id` can be a grouped block: `[2*(idA idB)]` is equivalent to `[idA idB idA idB]`.
+- `K:X` is not a valid repetition form.
 
 Ranges and selectors:
 
@@ -107,23 +108,24 @@ target[*]      -> all items
 target[2][3]   -> chained selector for nested/indexed structures
 ```
 
-Note that `target[*]` (selector) and `*[ ... ]` (iterator) are not the same operation.
+Important:
+
+- `target[*]` (selector) and `*[ ... ]` (iterator) are not the same operation.
 - `target[*]` selects all items inside one target expression.
-- `*[ ... ]` expands rows/instances during iterator processing (asign items to diferent cards)
+- `*[ ... ]` expands rows/instances during iterator processing.
 
 ## Units and Expressions
-In paramters, most numeric tokens accept:
+Most numeric tokens accept:
 
 - plain numbers (current default unit),
 - `mm`, `px`, `%`,
 - mixed expressions such as `-25%+2`.
 
 Percentages are evaluated against a base size.
-For example border=[80% 110%+3] define a new rect size with 80% of actual width, and 110% of height + 3 mm.
-
+If a required base size is missing, PnPInk logs a warning and applies fallback behavior.
 
 ## Comment Directives and Declarations
-Comment rows (`# ...`) can declare DSL directives (aliases, variables, spritesheets... ) outside normal data rows.
+Comment rows (`# ...`) can declare reusable DSL resources outside normal data rows.
 Typical examples:
 
 ```txt
@@ -136,7 +138,7 @@ Typical examples:
 These declarations are read by their corresponding modules/subsystems and then reused in dataset rows.
 
 ## Abbreviations, Defaults, and State Reuse
-Keyword abbreviations are supported with the firs character.
+Keyword abbreviations are supported when defined by a module:
 
 ```txt
 Layout{} -> L{}
@@ -144,9 +146,8 @@ inside -> i
 Page{pagesize=A4 border=[-2]} -> P{A4 b=[-2]}
 ```
 
-Most modules define default parameters, so compact forms can omit explicit keys. I.e. you dont need to specify p=A4 because "pagesize" is the default parameter por Page{} module.
+Most modules define default parameters, so compact forms can omit explicit keys.
 
 When a required value is omitted, the last active state may be reused (module-dependent behavior).
-
 For exact page-state rules, see [Page](page.md).
 For Fit-Anchor shorthand order and precedence, see [Fit-Anchor](fit-anchor.md).

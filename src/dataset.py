@@ -54,26 +54,27 @@ def _strip_line_trailing_hard_comment(text: str) -> str:
     return s[:k].rstrip()
 
 
-def _strip_cell_trailing_comment(text: str, enable: bool = True) -> str:
+def _strip_cell_trailing_comment(text: str, enable: bool = True, marker: str = "#") -> str:
     """Dataset cell comments (pre-DSL).
 
-    New semantics (simplified):
-      - A '#' in any position comments out the rest of the cell.
-        (Keep what comes before '#', with rstrip.)
-
-    Note: the special case of '##' inside the dataset is NOT resolved here.
-    The active rule is: if '##' appears at the start of the first cell (column A),
-    the row is fully suppressed (see parse loops in _matrix_to_datasets()).
+    - Outside dataset (default marker '#'):
+      '#' in any position comments out the rest of the cell.
+    - Inside dataset (marker '##'):
+      '##' comments out the rest of the cell.
     """
     if text is None:
         return ""
     if not enable:
         return str(text)
     s = str(text)
-    # If the cell starts with '##' we do not cut here; the row rule handles it.
-    if s.lstrip().startswith("##"):
+    mk = str(marker or "")
+    if not mk:
         return s
-    k = s.find("#")
+    # Legacy compatibility for outside-dataset parsing:
+    # if the line starts with '##', keep it for hard-comment row handling.
+    if mk == "#" and s.lstrip().startswith("##"):
+        return s
+    k = s.find(mk)
     if k < 0:
         return s
     return s[:k].rstrip()
@@ -82,7 +83,7 @@ parse_template_header_cell = HF.parse_template_header_cell
 
 
 def _is_nontext_dataset_field(header_key: str) -> bool:
-    """Minimal heuristic to decide if a dataset cell can use '#' as a comment.
+    """Minimal heuristic to decide if a dataset cell can use '##' as a comment.
 
     Goal: avoid collisions of '#' inside real content (especially text).
     Therefore, **by default** we do NOT interpret '#' in data cells. We only
@@ -130,6 +131,36 @@ def _apply_header_disabling(headers_raw):
         active.append(i)
     headers = [headers_raw[i] for i in active]
     return headers, active
+
+
+def _extract_header_target_id_for_inherit(header_key: str) -> str:
+    s = str(header_key or "").strip()
+    if not s:
+        return ""
+    left = s.partition("=")[0].strip()
+    if left.endswith("+"):
+        left = left[:-1].strip()
+    m = re.match(r"^(?P<id>.+?)\[[A-Za-z_][A-Za-z0-9_-]*\]\s*$", left)
+    if m:
+        left = (m.group("id") or "").strip()
+    if not left or any(ch.isspace() for ch in left):
+        return ""
+    return left
+
+
+def _expand_property_only_headers(headers_raw):
+    """Allow shorthand property columns: '[font-size]' inherits previous target id."""
+    out = []
+    last_target = ""
+    for h in (headers_raw or []):
+        hs = str(h or "").strip()
+        if hs.startswith("[") and last_target:
+            hs = f"{last_target}{hs}"
+        out.append(hs)
+        tid = _extract_header_target_id_for_inherit(hs)
+        if tid:
+            last_target = tid
+    return out
 
 
 def _extract_template_columns(headers):
@@ -227,13 +258,16 @@ def _matrix_to_datasets(matrix):
                     continue
 
             # --- Inside dataset ---
-            # Hard rule: if the first cell starts with '##', the row is suppressed
-            # fully (as if it did not exist).
+            # Hard rules inside dataset (column A):
+            # - '####' -> stop processing the rest of the dataset (including next sections).
+            # - '###'  -> suppress only this row.
             lead0 = _norm_cell(r[0]) if len(r) > 0 else ""
-            if str(lead0).lstrip().startswith("##"):
+            if str(lead0).lstrip().startswith("####"):
+                break
+            if str(lead0).lstrip().startswith("###"):
                 continue
 
-            # 1) always allow '#...' as a comment in column A (leading cell)
+            # 1) always allow '##...' as a comment in column A (leading cell)
             # 2) in the rest of cells, ONLY if they are non-text fields (header heuristic)
             #    and only once we have headers.
             cells_raw = [_norm_cell(c) for c in r]
@@ -252,9 +286,9 @@ def _matrix_to_datasets(matrix):
             # Inside the dataset there are no longer "comment rows" (col A starting with '#'):
             # this now means an empty cell. Directives go BEFORE the marker.
 
-            # Apply '#' comments (only where applicable) before parsing marker or lead.
+            # Apply inside-dataset comments (##) before parsing marker or lead.
             # Note: here we still do not know if this is a marker or data row.
-            cells[0] = _strip_cell_trailing_comment(cells[0], enable=True)
+            cells[0] = _strip_cell_trailing_comment(cells[0], enable=True, marker="##")
             c0 = str(cells[0]).strip()
             decl = DSL.parse_dataset_decl(c0, allow_bare=False)
             if decl is not None:
@@ -286,8 +320,9 @@ def _matrix_to_datasets(matrix):
                     except Exception:
                         lead0 = None
 
-                # In headers we do not expect literal '#'; allow comments for cleanup.
-                headers_raw = [str(_strip_cell_trailing_comment(h or "", enable=True)).strip() for h in cells[1:]]
+                # Inside dataset headers, comments use '##' (single '#' is valid content).
+                headers_raw = [str(_strip_cell_trailing_comment(h or "", enable=True, marker="##")).strip() for h in cells[1:]]
+                headers_raw = _expand_property_only_headers(headers_raw)
                 headers_raw, active_idx = _apply_header_disabling(headers_raw)
                 headers_norm, template_cols = _extract_template_columns(headers_raw)
 
@@ -323,11 +358,11 @@ def _matrix_to_datasets(matrix):
             elif len(cells) > len(headers) + 1:
                 cells = cells[:len(headers) + 1]
 
-            # Apply per-cell comments conservatively.
-            cells[0] = _strip_cell_trailing_comment(cells[0], enable=True)
+            # Apply per-cell comments conservatively (inside dataset: ##).
+            cells[0] = _strip_cell_trailing_comment(cells[0], enable=True, marker="##")
             for j in range(1, len(cells)):
                 h = headers[j - 1] if (j - 1) < len(headers) else ""
-                cells[j] = _strip_cell_trailing_comment(cells[j], enable=_is_nontext_dataset_field(h))
+                cells[j] = _strip_cell_trailing_comment(cells[j], enable=_is_nontext_dataset_field(h), marker="##")
 
             lead_text = cells[0]
             copies, copies_explicit, holes, page_preset, layout_tail, marks_tail = _parse_lead_to_meta(lead_text)
@@ -375,9 +410,9 @@ def _matrix_to_datasets(matrix):
             continue
 
         # Outside dataset (shorthand): we still do not know if this row is the header.
-        # Here we do apply '#' as a comment (directive compatibility),
-        # but we do NOT apply the dataset '##' rule (that only applies *inside*).
-        cells = [_strip_cell_trailing_comment(_norm_cell(c), enable=True) for c in r]
+        # Do not strip '#' here, otherwise values like url(#lg1) in header defaults
+        # are truncated before header parsing.
+        cells = [_norm_cell(c) for c in r]
         if _is_blank_row(cells):
             continue
         header_row = cells
@@ -410,7 +445,8 @@ def _matrix_to_datasets(matrix):
         )
     main_bbox_id = templates_bbox_ids[0] if templates_bbox_ids else None
 
-    headers_raw = [str(_strip_cell_trailing_comment(h or "")).strip() for h in header_row[1:]]
+    headers_raw = [str(_strip_cell_trailing_comment(h or "", enable=True, marker="##")).strip() for h in header_row[1:]]
+    headers_raw = _expand_property_only_headers(headers_raw)
     headers_raw, active_idx = _apply_header_disabling(headers_raw)
     headers, template_cols = _extract_template_columns(headers_raw)
     _l.d(f"dataset.headers={headers} (shorthand; main_bbox_id={main_bbox_id} templates={[c.get('bbox_id') for c in (template_cols or [])]})")
@@ -431,10 +467,13 @@ def _matrix_to_datasets(matrix):
     for r in (matrix or [])[header_idx + 1:]:
         if r is None or len(r) == 0:
             continue
-        # Inside the dataset (after header):
-        #   - '##' at the start of the first cell => suppress full row.
+        # Inside the dataset (after header), column A controls hard comments:
+        #   - '####' at start => stop processing the rest of the dataset.
+        #   - '###'  at start => suppress this row.
         lead0 = _norm_cell(r[0]) if len(r) > 0 else ""
-        if str(lead0).lstrip().startswith("##"):
+        if str(lead0).lstrip().startswith("####"):
+            break
+        if str(lead0).lstrip().startswith("###"):
             continue
 
         cells = [_norm_cell(c) for c in r]
@@ -454,11 +493,11 @@ def _matrix_to_datasets(matrix):
         elif len(cells) > len(headers) + 1:
             cells = cells[:len(headers) + 1]
 
-        # Apply per-cell comments conservatively.
-        cells[0] = _strip_cell_trailing_comment(cells[0], enable=True)
+        # Apply per-cell comments conservatively (inside dataset: ##).
+        cells[0] = _strip_cell_trailing_comment(cells[0], enable=True, marker="##")
         for j in range(1, len(cells)):
             h = headers[j - 1] if (j - 1) < len(headers) else ""
-            cells[j] = _strip_cell_trailing_comment(cells[j], enable=_is_nontext_dataset_field(h))
+            cells[j] = _strip_cell_trailing_comment(cells[j], enable=_is_nontext_dataset_field(h), marker="##")
 
         lead_text = cells[0]
         copies, copies_explicit, holes, page_preset, layout_tail, marks_tail = _parse_lead_to_meta(lead_text)

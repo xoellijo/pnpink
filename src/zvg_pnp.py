@@ -8,12 +8,15 @@ import posixpath
 import re
 import shutil
 import zipfile
+import csv
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import inkex
+import gsheets_client_pkce as GS
+import dataset_state as DSTATE
 
 import log as LOG
 _l = LOG
@@ -159,6 +162,38 @@ def _build_manifest(kind: str, svg_name: str, csv_name: Optional[str], deckmaker
     return out
 
 
+def _choose_sheet_and_range_for_export(doc_path: Optional[Path], sheet_id: str, range_a1: Optional[str]) -> str:
+    rng = (range_a1 or "").strip()
+    if "!" in rng:
+        return rng if rng.split("!", 1)[1] else (rng + "A1:Z999")
+    svg_stem = (doc_path.stem if doc_path else "Sheet1")
+    titles = GS.list_sheet_titles(sheet_id)
+    sheet_name = next((t for t in titles if t.strip().lower() == svg_stem.strip().lower()), (titles[0] if titles else "Sheet1"))
+    cells = "A1:Z999" if not rng else rng
+    return f"{sheet_name}!{cells}"
+
+
+def _fetch_gsheet_csv_bytes(doc_path: Optional[Path], sheet_id: str, range_a1: Optional[str]) -> Optional[bytes]:
+    sid = (sheet_id or "").strip()
+    if not sid:
+        return None
+    client_id = os.environ.get("PNPINK_GSHEETS_CLIENT_ID") or GS.CLIENT_ID
+    try:
+        rng = _choose_sheet_and_range_for_export(doc_path, sid, range_a1)
+        values = GS.fetch_sheet(sid, rng, client_id or None)
+        matrix = [[("" if v is None else str(v)) for v in r] for r in (values or [])]
+        sio = io.StringIO(newline="")
+        w = csv.writer(sio, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL, lineterminator="\n")
+        for r in matrix:
+            w.writerow(r)
+        out = sio.getvalue().encode("utf-8")
+        _l.i(f"[pnp] generated CSV from GSheet id='{sid}' range='{rng}' rows={len(matrix)}")
+        return out
+    except Exception as ex:
+        _l.w(f"[pnp] could not generate CSV from GSheet id='{sid}': {ex}")
+        return None
+
+
 def export_package(ext, stream, *, kind: str) -> None:
     svg_root = getattr(ext, "svg", None)
     if svg_root is None:
@@ -205,19 +240,61 @@ def export_package(ext, stream, *, kind: str) -> None:
 
     csv_name = None
     csv_abs = None
+    csv_generated_bytes = None
+    ext_man: Dict[str, object] = {}
+
+    if doc_path is not None:
+        try:
+            man_path = doc_path.with_suffix(".manifest.json")
+            if man_path.is_file():
+                x = json.loads(man_path.read_text(encoding="utf-8", errors="replace"))
+                if isinstance(x, dict):
+                    ext_man = x
+        except Exception:
+            ext_man = {}
+
     if doc_path is not None:
         csv_abs = doc_path.with_suffix(".csv")
         if csv_abs.is_file():
             csv_name = csv_abs.name
 
+    if kind == "pnp" and not csv_name:
+        opt = getattr(ext, "options", None)
+        state_sid = ""
+        state_srg = ""
+        if doc_path is not None:
+            try:
+                rec = DSTATE.get_gsheet_for_svg(str(doc_path))
+                if rec:
+                    state_sid = str(rec.get("sheet_id") or "").strip()
+                    state_srg = str(rec.get("sheet_range") or "").strip()
+            except Exception:
+                pass
+        sheet_id = str(
+            (getattr(opt, "sheet_id", "") if opt is not None else "")
+            or ext_man.get("gsheet_id")
+            or state_sid
+            or ""
+        ).strip()
+        sheet_range = str(
+            (getattr(opt, "sheet_range", "") if opt is not None else "")
+            or ext_man.get("gsheet_range")
+            or state_srg
+            or ""
+        ).strip()
+        if sheet_id:
+            csv_generated_bytes = _fetch_gsheet_csv_bytes(doc_path, sheet_id, sheet_range)
+            if csv_generated_bytes:
+                csv_name = _default_csv_for_svg(svg_name)
+                ext_man.setdefault("gsheet_id", sheet_id)
+                if sheet_range:
+                    ext_man.setdefault("gsheet_range", sheet_range)
+
     manifest = _build_manifest(kind, svg_name, csv_name, deckmaker=(kind == "pnp"))
     if doc_path is not None:
         try:
-            man_path = doc_path.with_suffix(".manifest.json")
-            if man_path.is_file():
-                ext_man = json.loads(man_path.read_text(encoding="utf-8", errors="replace"))
-                if isinstance(ext_man, dict):
-                    manifest.update(ext_man)
+            if ext_man:
+                manifest.update(ext_man)
         except Exception:
             pass
 
@@ -227,11 +304,14 @@ def export_package(ext, stream, *, kind: str) -> None:
         zf.writestr(svg_name, _as_bytes(svg_clone), compress_type=zipfile.ZIP_DEFLATED)
         if csv_abs is not None and csv_abs.is_file():
             _zip_add_file(zf, csv_abs, csv_name or csv_abs.name)
+        elif csv_generated_bytes is not None and csv_name:
+            zf.writestr(csv_name, csv_generated_bytes, compress_type=zipfile.ZIP_DEFLATED)
         for src, arc in sorted(asset_map.items(), key=lambda kv: kv[1]):
             _zip_add_file(zf, src, arc)
 
     stream.write(out.getvalue())
-    _l.i(f"[{kind}] export ok: svg='{svg_name}' assets={len(asset_map)} csv={'yes' if csv_abs and csv_abs.is_file() else 'no'}")
+    csv_ok = bool((csv_abs and csv_abs.is_file()) or (csv_generated_bytes is not None and csv_name))
+    _l.i(f"[{kind}] export ok: svg='{svg_name}' assets={len(asset_map)} csv={'yes' if csv_ok else 'no'}")
 
 
 def _extract_package(stream, package_path: Path) -> PackageInfo:

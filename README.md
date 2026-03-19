@@ -3,15 +3,15 @@
 # PnPInk
 [![Latest release](https://img.shields.io/github/v/release/xoellijo/pnpink?label=latest%20release)](https://github.com/xoellijo/pnpink/releases)
 
-PnPInk is a free, open-source, cross-platform toolkit for creating high-quality print-and-play materials for board games (cards, boards, tokens, tiles, and more) directly inside Inkscape.
+PnPInk is a free, open-source, cross-platform data-merge engine for Inkscape.
 
 PnPInk is inspired by [CounterSheets](https://github.com/lifelike/countersheetsextension).
 
-It is a native extension suite that turns Inkscape into a complete publishing environment, accompanying creators from their first prototypes to final professional print compositions.
+It turns Inkscape into a visual composition system where one SVG template plus structured data (CSV/Google Sheets/web sources) can generate rich, editable outputs at scale.
 
-PnPInk automates the creation of card decks, boards, and punchboards, including hex or square grids, player sheets, counters, and tiles.
+PnPInk automates print-and-play production (cards, boards, punchboards, counters, tiles), but it also works for broader publishing tasks such as labels, data-driven sheets, and vector-heavy PDF compositions.
 
-It combines Inkscape's full graphic power (gradients, filters, paths, symbols, and layers) with a visual GUI and a data-driven workflow (Google Sheets or CSV), producing editable, print-ready layouts with pixel-precise results.
+It combines Inkscape's full graphic power (gradients, filters, paths, symbols, and layers) with a visual GUI and a data-driven workflow (Google Sheets/CSV plus internet resources), producing editable, print-ready layouts with pixel-precise results.
 
 PnPInk also includes a simple but powerful DSL (domain-specific language) that enables advanced layouts without complex scripting.
 
@@ -41,6 +41,7 @@ The DSL is designed to match how designers think, not how programmers write code
 - Inline text icons: type icon names in text flow and render vector icons in-place.
 - Source catalogs: resolve assets by name from the dataset, including large free libraries (200K+ icons and 2M+ images, depending on source).
 - Spritesheet workflows for atlas-based assets and high-volume content pipelines.
+- Package formats (`.zvg` / `.pnp`) for portable projects with SVG, dataset, manifest, and assets.
 - Fully editable SVG output after generation, not flattened exports.
 - Native Inkscape workflow: design, compose, iterate, and export without leaving the editor.
 
@@ -67,25 +68,7 @@ One template and one dataset can produce hundreds of print-ready components in s
 
 ## Documentation
 
-- Quickstart: [`docs/quickstart.md`](docs/quickstart.md)
-- Introduction: [`docs/intro.md`](docs/intro.md)
-- General manual: [`docs/pnpink-general.md`](docs/pnpink-general.md)
-
-## Package Formats (`.zvg` / `.pnp`)
-
-- `File > Save As` / `Save a Copy` now supports:
-  - `PnPInk ZVG package (*.zvg)`
-  - `PnPInk PNP package (*.pnp)`
-- `File > Open` supports opening both package types directly.
-- Both formats are ZIP-based and can include:
-  - one main SVG in zip root,
-  - optional CSV dataset (default: same SVG name),
-  - optional `manifest.json`,
-  - required local assets.
-- On `File > Open`, package contents are extracted to a sibling folder named after the package file
-  (without extension), so each package keeps its own isolated assets.
-- `.zvg`: includes referenced local/cache assets for reproducible portability.
-- `.pnp`: tries to stay minimal; web cache files are skipped and import tries to run DeckMaker when requested by manifest.
+- Start here (searchable docs site): [Introduction](https://xoellijo.github.io/pnpink/intro/)
 
 ## Project Status
 
@@ -97,4 +80,4 @@ Join the community on the BGG Guild to follow progress, share use cases, and inf
 
 ## Long-Term Roadmap
 
-Potential long-term directions (no guarantees): deeper professional PDF workflows, a compact `ZVG/PNP` packaging format, exports for virtual tabletop platforms, and local AI-assisted bulk production tools.
+Potential long-term directions (no guarantees): deeper professional PDF workflows, exports for virtual tabletop platforms, local AI-assisted bulk production tools, and professional integrations for QR/barcode and labeling standards.
