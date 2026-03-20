@@ -1567,9 +1567,9 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                 # default_ops already includes leading '~' when present
                 raw_token = f"{raw_token}{_default_ops}"
         elif _global_ops and (not SVG.is_text_like(tgt)) and (tgt.tag not in TEXT_LIKE):
-            # Non-text placeholder with header-global fit only (e.g. bb_card=~i5):
-            # treat target id as implicit base object for empty cells.
-            raw_token = (target_id or "").strip()
+            # Header-global fit only (e.g. id=~i5) must NOT create implicit content
+            # for empty cells. It only augments explicit per-cell/object values.
+            raw_token = ""
 
     raw_token = _expand_wildcard_ids_in_value(raw_token, root_doc)
 

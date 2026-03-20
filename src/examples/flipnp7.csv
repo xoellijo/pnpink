@@ -1,0 +1,35 @@
+# lg1=G{#64b0c5^80 [25 80 30] [-25 5 30]},,,,,,
+# lg2=G{#e2b653^80 [30 50 40]},,,,,,
+# lg3=G{#b64949^110 [40 50 30]},,,,,,
+# lg4=G{#d3c209^80 [30 50 40]},,,,,,
+# lg5=G{#26e4b6^25 [30 35 30] [30 65 30]},,,,,,
+bb_card,text1*,[font-size],text1-2[fill],text3,"text9=""If you repeat, lose.\n7 different, +15""",bb_card[fill]=url(#lg1)
+{A4 b=-5}.L{s=poker}.M{},,,,,,
+1,1,,#2e0331,,,
+2,2,,dd0b0eff,,,
+3,3,,#2316cfff,,,
+4,4,,bfc5a8,,,
+5,5,,4c4b2a,,,
+6,6,,e0db2d,,,
+7,7,,833b39,,,
+8,8,,5ec9b0,,,
+9,9,,313e89,,,
+10,10,,835282,,,
+11,11,,308600,,,
+12,12,,e0a169,,,
+,+2,125px,833b39,,Add +2 to your score,url(#lg2)
+,+4,125px,833b39,,Add +4 to your score,url(#lg2)
+,+6,125px,833b39,,Add +6 to your score,url(#lg2)
+,+8,125px,833b39,,Add +8 to your score,url(#lg2)
+,+10,125px,833b39,,Add +10 to your score,url(#lg2)
+,x2,125px,833b39,,Multiply x2 your score,url(#lg2)
+3,,,, Stop,Play it on an active player,url(#lg3)
+3,,,,Second\n\nChance,Reserve this card for second chance,url(#lg4)
+3,,,,Flip\n\nthree,Play it on an active player,url(#lg5)
+,,,,,,
+####,,,,,,
+,,,,,Faltan,
+,,,,,,multiheader
+,,,,,,gradients
+,,,,,,traseras
+,,,,,,labels

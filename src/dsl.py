@@ -1478,7 +1478,8 @@ def parse_copies_page_tail(cell0):
     rest = s
 
     # { ... } block (page / breaks)
-    m_page = re.search(r"\{.*?\}", rest)
+    # IMPORTANT: do not capture dataset markers "{{...}}" as a Page block.
+    m_page = re.search(r"(?<!\{)\{[^{}]*\}(?!\})", rest)
     if m_page:
         page_block = m_page.group(0)
         rest = rest[:m_page.start()] + rest[m_page.end():]

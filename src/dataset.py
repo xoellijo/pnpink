@@ -19,49 +19,32 @@ def strip_bom(s: str) -> str:
 
 
 def _row_is_comment(cells: List[str]) -> bool:
-    """Comment row (only outside the dataset).
-
-    - '#...'  -> comment (kept for directives like snippets)
-    - '##...' -> hard comment: ignored completely (not kept)
-
-    Note: inside the dataset this function is NOT used; there '#' is per-cell.
-    """
+    """Line-start directive comment row: '#...' (but not '##...')."""
     if not cells:
         return False
-    # Allow indentation in sheets/CSV without introducing dataset ambiguity,
-    # we consider it a comment if the first *non-whitespace* char is '#'.
     c0 = str(cells[0] or "")
     c0l = c0.lstrip()
     return c0l.startswith("#") and not c0l.startswith("##")
 
 
 def _row_is_hard_comment(cells: List[str]) -> bool:
-    """Hard comment (only outside the dataset): '##' at the start of the line."""
+    """Line-start hard comment row: '##...' (but not '####...' EOF)."""
     if not cells:
         return False
     c0 = str(cells[0] or "")
-    return c0.lstrip().startswith("##")
-
-def _strip_line_trailing_hard_comment(text: str) -> str:
-    """Outside dataset: if a comment/directive line has trailing '##', strip from there."""
-    s = str(text or "")
-    s_l = s.lstrip()
-    if not s_l.startswith("#") or s_l.startswith("##"):
-        return s
-    k = s.find("##")
-    if k < 0:
-        return s
-    return s[:k].rstrip()
+    c0l = c0.lstrip()
+    return c0l.startswith("##") and not c0l.startswith("####")
 
 
-def _strip_cell_trailing_comment(text: str, enable: bool = True, marker: str = "#") -> str:
-    """Dataset cell comments (pre-DSL).
+def _row_is_eof_comment(cells: List[str]) -> bool:
+    """EOF marker row: '####...' at line start, stops further parsing."""
+    if not cells:
+        return False
+    c0 = str(cells[0] or "")
+    return c0.lstrip().startswith("####")
 
-    - Outside dataset (default marker '#'):
-      '#' in any position comments out the rest of the cell.
-    - Inside dataset (marker '##'):
-      '##' comments out the rest of the cell.
-    """
+def _strip_cell_trailing_comment(text: str, enable: bool = True, marker: str = "##") -> str:
+    """Cell-level comment marker: '##' comments out the rest of the cell."""
     if text is None:
         return ""
     if not enable:
@@ -70,14 +53,33 @@ def _strip_cell_trailing_comment(text: str, enable: bool = True, marker: str = "
     mk = str(marker or "")
     if not mk:
         return s
-    # Legacy compatibility for outside-dataset parsing:
-    # if the line starts with '##', keep it for hard-comment row handling.
-    if mk == "#" and s.lstrip().startswith("##"):
-        return s
     k = s.find(mk)
     if k < 0:
         return s
     return s[:k].rstrip()
+
+
+def _apply_inline_row_comments(cells: List[str]) -> List[str]:
+    """Apply inline dataset comments to a row.
+
+    Rules (when row is NOT a line-start comment):
+      - '##'  => comment rest of current cell
+      - '###' => comment rest of current cell AND all remaining cells (rest of line)
+    """
+    out = [("" if c is None else str(c)) for c in (cells or [])]
+    if not out:
+        return out
+    for i, s in enumerate(out):
+        k3 = s.find("###")
+        k2 = s.find("##")
+        if k3 >= 0 and (k2 < 0 or k3 <= k2):
+            out[i] = s[:k3].rstrip()
+            for j in range(i + 1, len(out)):
+                out[j] = ""
+            break
+        if k2 >= 0:
+            out[i] = s[:k2].rstrip()
+    return out
 
 parse_template_header_cell = HF.parse_template_header_cell
 
@@ -112,8 +114,8 @@ def _is_nontext_dataset_field(header_key: str) -> bool:
 
 def _apply_header_disabling(headers_raw):
     """Apply header '#' semantics:
-       - '#col'   -> disable this column
-       - '##col'  -> disable this and all columns to the right
+       - '##col'   -> disable this column
+       - '###col'  -> disable this and all columns to the right
        - '#' not at start already handled as trailing comment.
        Returns filtered headers list and active index list.
     """
@@ -123,10 +125,10 @@ def _apply_header_disabling(headers_raw):
         hs = str(h or "").strip()
         if disable_all_right:
             continue
-        if hs.startswith("##"):
+        if hs.startswith("###"):
             disable_all_right = True
             continue
-        if hs.startswith("#"):
+        if hs.startswith("##"):
             continue
         active.append(i)
     headers = [headers_raw[i] for i in active]
@@ -160,6 +162,21 @@ def _expand_property_only_headers(headers_raw):
         tid = _extract_header_target_id_for_inherit(hs)
         if tid:
             last_target = tid
+    return out
+
+
+def _normalize_row_cells_for_headers(cells, headers_len: int, active_idx) -> List[str]:
+    """Pad/truncate a row to safely index all active header columns.
+
+    `active_idx` contains indices in the *original* header row (before disabling),
+    so it may be larger than `headers_len-1`.
+    """
+    out = list(cells or [])
+    min_by_headers = int(headers_len or 0) + 1  # + leading column A
+    min_by_active = (max(active_idx) + 2) if active_idx else 1
+    need = max(min_by_headers, min_by_active)
+    if len(out) < need:
+        out += [""] * (need - len(out))
     return out
 
 
@@ -213,6 +230,14 @@ def _matrix_to_datasets(matrix):
             layout_tail = getattr(lead, "layout_block", None)
             marks_tail = getattr(lead, "marks_block", None)
             copies_explicit = bool(getattr(lead, "copies_explicit", False))
+            # Defensive: ignore malformed page blocks in free text (column A),
+            # so render does not abort on values like "{{t=...}".
+            if page_preset:
+                try:
+                    DSL.parse_page_block(page_preset)
+                except Exception:
+                    _l.w(f"dataset.row_cell0: ignoring invalid page block '{page_preset}'")
+                    page_preset = None
 
         _l.d(f"dataset.row_cell0='{lead_text}' → copies={copies} explicit={copies_explicit} page={page_preset} L={layout_tail} M={marks_tail}")
         return copies, copies_explicit, holes, page_preset, layout_tail, marks_tail
@@ -222,9 +247,13 @@ def _matrix_to_datasets(matrix):
     for r in (matrix or []):
         if not r:
             continue
-        # Column A may contain DSL/marker; we apply '#' comment semantics here
-        # to minimize noise in the marker parser.
-        c0 = str(_strip_cell_trailing_comment(_norm_cell(r[0]), enable=True)).strip() if len(r) > 0 else ""
+        raw_cells = [_norm_cell(c) for c in r]
+        if _row_is_eof_comment(raw_cells):
+            break
+        if _row_is_hard_comment(raw_cells) or _row_is_comment(raw_cells):
+            continue
+        cells = _apply_inline_row_comments(raw_cells)
+        c0 = str(cells[0]).strip() if len(cells) > 0 else ""
         if DSL.parse_dataset_decl(c0, allow_bare=False) is not None:
             has_markers = True
             break
@@ -234,44 +263,26 @@ def _matrix_to_datasets(matrix):
     # --- Marker mode: multiple datasets in one sheet ---
     if has_markers:
         current = None
-        # Preserve comment rows *only before the first marker* so they can be used for
-        # snippet definitions / globals / spritesheets.
-        #
-        # Outside-dataset semantics:
-        #   - '#...'  -> preserved in pending_comments
-        #   - '##...' -> ignored completely ("comment directives too")
+        # Preserve comment/directive rows before first marker, and attach
+        # directive rows inside active datasets to current.comments.
         pending_comments: List[List[str]] = []
         for r in (matrix or []):
             if r is None or len(r) == 0:
                 continue
             raw_cells = [_norm_cell(c) for c in r]
-
-            # --- Outside dataset (before first marker): row-level comments/directives ---
-            if current is None:
-                if _row_is_hard_comment(raw_cells):
-                    continue
-                if _row_is_comment(raw_cells):
-                    rc = list(raw_cells)
-                    if rc:
-                        rc[0] = _strip_line_trailing_hard_comment(rc[0])
-                    pending_comments.append(rc)
-                    continue
-
-            # --- Inside dataset ---
-            # Hard rules inside dataset (column A):
-            # - '####' -> stop processing the rest of the dataset (including next sections).
-            # - '###'  -> suppress only this row.
-            lead0 = _norm_cell(r[0]) if len(r) > 0 else ""
-            if str(lead0).lstrip().startswith("####"):
+            if _row_is_eof_comment(raw_cells):
                 break
-            if str(lead0).lstrip().startswith("###"):
+            if _row_is_hard_comment(raw_cells):
+                continue
+            if _row_is_comment(raw_cells):
+                rc = _apply_inline_row_comments(raw_cells)
+                if current is not None and isinstance(current.get("comments"), list):
+                    current["comments"].append(rc)
+                else:
+                    pending_comments.append(rc)
                 continue
 
-            # 1) always allow '##...' as a comment in column A (leading cell)
-            # 2) in the rest of cells, ONLY if they are non-text fields (header heuristic)
-            #    and only once we have headers.
-            cells_raw = [_norm_cell(c) for c in r]
-            cells = list(cells_raw)
+            cells = _apply_inline_row_comments(raw_cells)
 
             if _is_blank_row(cells):
                 # Preserve blank rows *inside* a dataset as placeholder slots (do not shift subsequent cards).
@@ -283,12 +294,6 @@ def _matrix_to_datasets(matrix):
                     base['__dm_holes__'] = []
                     current['rows'].append(base)
                 continue
-            # Inside the dataset there are no longer "comment rows" (col A starting with '#'):
-            # this now means an empty cell. Directives go BEFORE the marker.
-
-            # Apply inside-dataset comments (##) before parsing marker or lead.
-            # Note: here we still do not know if this is a marker or data row.
-            cells[0] = _strip_cell_trailing_comment(cells[0], enable=True, marker="##")
             c0 = str(cells[0]).strip()
             decl = DSL.parse_dataset_decl(c0, allow_bare=False)
             if decl is not None:
@@ -320,7 +325,6 @@ def _matrix_to_datasets(matrix):
                     except Exception:
                         lead0 = None
 
-                # Inside dataset headers, comments use '##' (single '#' is valid content).
                 headers_raw = [str(_strip_cell_trailing_comment(h or "", enable=True, marker="##")).strip() for h in cells[1:]]
                 headers_raw = _expand_property_only_headers(headers_raw)
                 headers_raw, active_idx = _apply_header_disabling(headers_raw)
@@ -352,17 +356,12 @@ def _matrix_to_datasets(matrix):
                 continue
 
             headers = current["headers"]
-            # normalize row length to header width (+ lead col)
-            if len(cells) < len(headers) + 1:
-                cells += [""] * ((len(headers) + 1) - len(cells))
-            elif len(cells) > len(headers) + 1:
-                cells = cells[:len(headers) + 1]
+            cells = _normalize_row_cells_for_headers(cells, len(headers), active_idx)
 
-            # Apply per-cell comments conservatively (inside dataset: ##).
+            # Apply per-cell comments (##) uniformly.
             cells[0] = _strip_cell_trailing_comment(cells[0], enable=True, marker="##")
             for j in range(1, len(cells)):
-                h = headers[j - 1] if (j - 1) < len(headers) else ""
-                cells[j] = _strip_cell_trailing_comment(cells[j], enable=_is_nontext_dataset_field(h), marker="##")
+                cells[j] = _strip_cell_trailing_comment(cells[j], enable=True, marker="##")
 
             lead_text = cells[0]
             copies, copies_explicit, holes, page_preset, layout_tail, marks_tail = _parse_lead_to_meta(lead_text)
@@ -391,8 +390,8 @@ def _matrix_to_datasets(matrix):
 
     # --- Shorthand single dataset mode (no markers) ---
     # Find first non-blank, non-comment row as header row.
-    # Keep comment rows *before header* so they can be used for snippet definitions, etc.
-    # '##' rows are ignored completely.
+    # Keep '#...' rows as directives/comments before header.
+    # '##...' rows are ignored. '####' stops parsing.
     header_row = None
     header_idx = None
     comments_shorthand: List[List[str]] = []
@@ -400,19 +399,16 @@ def _matrix_to_datasets(matrix):
         if r is None:
             continue
         raw_cells = [_norm_cell(c) for c in r]
+        if _row_is_eof_comment(raw_cells):
+            break
         if _row_is_hard_comment(raw_cells):
             continue
         if _row_is_comment(raw_cells):
-            rc = list(raw_cells)
-            if rc:
-                rc[0] = _strip_line_trailing_hard_comment(rc[0])
+            rc = _apply_inline_row_comments(raw_cells)
             comments_shorthand.append(rc)
             continue
 
-        # Outside dataset (shorthand): we still do not know if this row is the header.
-        # Do not strip '#' here, otherwise values like url(#lg1) in header defaults
-        # are truncated before header parsing.
-        cells = [_norm_cell(c) for c in r]
+        cells = _apply_inline_row_comments(raw_cells)
         if _is_blank_row(cells):
             continue
         header_row = cells
@@ -467,16 +463,16 @@ def _matrix_to_datasets(matrix):
     for r in (matrix or [])[header_idx + 1:]:
         if r is None or len(r) == 0:
             continue
-        # Inside the dataset (after header), column A controls hard comments:
-        #   - '####' at start => stop processing the rest of the dataset.
-        #   - '###'  at start => suppress this row.
-        lead0 = _norm_cell(r[0]) if len(r) > 0 else ""
-        if str(lead0).lstrip().startswith("####"):
+        raw_cells = [_norm_cell(c) for c in r]
+        if _row_is_eof_comment(raw_cells):
             break
-        if str(lead0).lstrip().startswith("###"):
+        if _row_is_hard_comment(raw_cells):
+            continue
+        if _row_is_comment(raw_cells):
+            ds.setdefault("comments", []).append(_apply_inline_row_comments(raw_cells))
             continue
 
-        cells = [_norm_cell(c) for c in r]
+        cells = _apply_inline_row_comments(raw_cells)
         if _is_blank_row(cells):
             # Preserve blank rows as placeholder slots inside the dataset (do not shift subsequent cards).
             base = {"cells": ['' for _ in range(0, len(headers))]}
@@ -485,19 +481,12 @@ def _matrix_to_datasets(matrix):
             base['__dm_holes__'] = []
             ds.setdefault('rows', []).append(base)
             continue
-        # Inside the dataset (after the header) we do not treat rows as "comment rows".
+        cells = _normalize_row_cells_for_headers(cells, len(headers), active_idx)
 
-        # normalize row length to header width (+ lead col)
-        if len(cells) < len(headers) + 1:
-            cells += [""] * ((len(headers) + 1) - len(cells))
-        elif len(cells) > len(headers) + 1:
-            cells = cells[:len(headers) + 1]
-
-        # Apply per-cell comments conservatively (inside dataset: ##).
+        # Apply per-cell comments (##) uniformly.
         cells[0] = _strip_cell_trailing_comment(cells[0], enable=True, marker="##")
         for j in range(1, len(cells)):
-            h = headers[j - 1] if (j - 1) < len(headers) else ""
-            cells[j] = _strip_cell_trailing_comment(cells[j], enable=_is_nontext_dataset_field(h), marker="##")
+            cells[j] = _strip_cell_trailing_comment(cells[j], enable=True, marker="##")
 
         lead_text = cells[0]
         copies, copies_explicit, holes, page_preset, layout_tail, marks_tail = _parse_lead_to_meta(lead_text)

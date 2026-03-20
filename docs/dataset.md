@@ -150,27 +150,20 @@ Supported modifiers:
 Template columns are rendered as additional instances; they do not replace the main template column logic.
 
 ## Comments and Directives (#)
-Comment behavior is context-dependent (outside dataset vs inside dataset).
-This section prevents accidental data loss from misinterpreted `#`.
-
 Comments are processed **before any other operation**.
+Rules are global (same behavior everywhere; no inside/outside distinction).
 
-### Outside the dataset
-- `#` at line start -> comment line (kept for directives like snippets).
-- `##` at line start -> hard comment (ignored).
-- `##` after a directive/comment -> everything after `##` is ignored.
+- `#` at line start (first non-space char in column A): comment/directive row.
+- `##` at line start: full comment row (not a directive).
+- `####` at line start: EOF marker, stops parsing the rest of the file/sheet.
+- `##` inside a cell: comments out the rest of that cell.
+- `###` inside a row (not line start): comments out the rest of that cell and all cells to the right (rest of line).
+- Single `#` inside a cell is normal text (not a comment).
 
-### Inside the dataset
-- `####` at the start of column A -> ignores the rest of the dataset (including following sections).
-- `###` at the start of column A -> the entire row is ignored.
-- `##` in a cell comments out the rest of that cell **only for non-text fields**.
-- `#col` in a header disables that column.
-- `##col` in a header disables that column and all columns to the right.
+Header disabling still works:
 
-Non-text fields are detected by header conventions:
-
-- internal keys (`__dm_...`)
-- headers starting with `.`
+- `##header` disables that column.
+- `###header` disables that column and all columns to the right.
 
 ## Leading Cell (column A in data rows)
 Leading-cell directives are row-level controls, not regular data fields.

@@ -27,8 +27,8 @@
      inkscape:deskcolor="#d1d1d1"
      inkscape:document-units="mm"
      inkscape:zoom="0.08"
-     inkscape:cx="-2918.75"
-     inkscape:cy="-681.25"
+     inkscape:cx="3718.75"
+     inkscape:cy="868.75"
      inkscape:window-width="1920"
      inkscape:window-height="974"
      inkscape:window-x="-11"
@@ -1245,16 +1245,6 @@
          height="31.087748"
          id="rect3647" />
     </clipPath>
-    <image
-       id="img_sp1"
-       x="0"
-       y="0"
-       width="1915.0542"
-       height="1955.2709"
-       preserveAspectRatio="none"
-       xlink:href="C:\Users\t148888\Documents\My Games\Tabletop Simulator\Mods\Images\httpssteamusercontentaakamaihdnetugc2277195874839931161CE5A585A4645D9EF04FB30A3BBFD53F88CD7A177.jpg"
-       href="C:\Users\t148888\Documents\My Games\Tabletop Simulator\Mods\Images\httpssteamusercontentaakamaihdnetugc2277195874839931161CE5A585A4645D9EF04FB30A3BBFD53F88CD7A177.jpg"
-       sodipodi:absref="C:\Users\t148888\Documents\My Games\Tabletop Simulator\Mods\Images\httpssteamusercontentaakamaihdnetugc2277195874839931161CE5A585A4645D9EF04FB30A3BBFD53F88CD7A177.jpg" />
     <g
        id="sp_sp1_5281"
        clip-path="url(#clip_sp1)">
@@ -1627,9 +1617,9 @@
        transform="translate(15.621904,10.289876)"><tspan
          x="47.294273"
          y="235.80989"
-         id="tspan3"><tspan
+         id="tspan12"><tspan
            style="fill:#251f6f"
-           id="tspan2">This is a label</tspan></tspan></text>
+           id="tspan11">This is a label</tspan></tspan></text>
   </g>
   <g
      id="g450"
@@ -1677,17 +1667,17 @@
        inkscape:label="main_text"><tspan
          x="-241.08886"
          y="229.73633"
-         id="tspan5">This is the template of a card. 
+         id="tspan13">This is the template of a card. 
 </tspan><tspan
          x="-286.78496"
          y="253.0697"
-         id="tspan6">With PnPInk&gt;deckmaker you can create </tspan><tspan
+         id="tspan14">With PnPInk&gt;deckmaker you can create </tspan><tspan
          x="-287.14894"
          y="276.40308"
-         id="tspan7">lots of variations from this from a csv or </tspan><tspan
+         id="tspan15">lots of variations from this from a csv or </tspan><tspan
          x="-162.74471"
          y="299.73645"
-         id="tspan8">google sheet</tspan></text>
+         id="tspan16">google sheet</tspan></text>
     <text
        xml:space="preserve"
        transform="matrix(0,-0.199295,0.263167,0,98.5138,36.7166)"
@@ -1698,7 +1688,7 @@
        inkscape:label="example of vertical text frame"><tspan
          x="-268.16883"
          y="225.3227"
-         id="tspan9">vertical text example</tspan></text>
+         id="tspan18">vertical text example</tspan></text>
     <use
        x="0"
        y="0"
@@ -1715,15 +1705,32 @@
        transform="translate(-10.189012,67.001137)"
        inkscape:label="rect for placement of other elements. id is &quot;clone_icon&quot; (can be even a clone of other element)"
        style="display:inline" />
+    <path
+       sodipodi:type="star"
+       style="fill:none;stroke:#150000;stroke-width:0.10850643;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:6.2;stroke-opacity:1"
+       id="main_icon"
+       inkscape:flatsided="true"
+       sodipodi:sides="6"
+       sodipodi:cx="40.925648"
+       sodipodi:cy="92.959686"
+       sodipodi:r1="18.914816"
+       sodipodi:r2="15.854604"
+       sodipodi:arg1="0.28800259"
+       sodipodi:arg2="0.81160136"
+       inkscape:rounded="0.1"
+       inkscape:randomized="0"
+       d="M 59.061422,98.332206 C 58.52417,100.14578 47.180026,110.91047 45.340796,111.35199 43.501566,111.7935 28.507,107.35153 27.205022,105.97947 25.903044,104.6074 22.252622,89.400744 22.789874,87.587166 23.327126,85.773589 34.671269,75.0089 36.5105,74.567386 c 1.83923,-0.441515 16.833795,4.000457 18.135773,5.372519 1.301978,1.372063 4.952401,16.578724 4.415149,18.392301 z"
+       transform="matrix(0.9235943,0,0,0.91961867,98.082404,14.548538)" />
     <rect
        style="opacity:0.15;fill:none;fill-opacity:0.690196;stroke:#000000;stroke-width:0.0713475;paint-order:markers fill stroke"
-       id="main_icon"
-       width="43.780624"
+       id="main_icon2"
+       width="43.780998"
        height="31.087748"
        x="113.29566"
        y="82.745346"
        ry="0"
-       inkscape:label="main_icon" />
+       inkscape:label="main_icon_rect"
+       rx="5" />
     <rect
        style="display:inline;opacity:1;fill:none;fill-opacity:0.690196;stroke:#ff0000;stroke-width:0.1;stroke-dasharray:none;stroke-opacity:1;paint-order:markers fill stroke"
        id="rect_big"
@@ -1743,7 +1750,7 @@
        y="0"><tspan
          x="-214.06019"
          y="266.91398"
-         id="tspan10">fit and anchor</tspan></text>
+         id="tspan19">fit and anchor</tspan></text>
   </g>
   <g
      id="g1462"
