@@ -12,10 +12,10 @@ If `sheet_id` is empty, DeckMaker loads CSV from the same folder as the SVG:
 ```
 
 ## Google Sheets Setup
-In `Extensions > PnPInk DEV > DeckMaker v0.24dev`, fill:
+In `Extensions > PnPInk > DeckMaker`, fill:
 
-- `Google Sheet Id (optional)`
-- `Range (A1, optional)`
+- `GSheet ID`
+- `Sheet!range/gid` (optional)
 
 How to get `sheet_id`:
 
@@ -23,16 +23,19 @@ How to get `sheet_id`:
   `https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit#gid=0`
 - Use the part between `/d/` and `/edit`.
 
-## Sheet Selection Logic
-When `sheet_id` is set:
+## Google Sheets Access Modes
+When `GSheet ID` is set, PnPInk supports two access modes:
 
-1. If `Range` includes a sheet name (`Sheet2!A1:Z999`), that sheet is used.
-2. Otherwise, PnPInk searches a sheet whose title matches the SVG filename (without extension), case-insensitive.
-3. If no match is found, it uses the first sheet.
+1. Public access (no OAuth).
+   Use numeric `gid` in `Sheet!range/gid` (example: `381688145`).
+   If this field is empty, PnPInk uses `gid=0`.
+2. Private access (OAuth, authenticated).
+   This is the more secure mode.
+   If `Sheet!range/gid` is empty, PnPInk tries sheet name = SVG filename, then falls back to the first sheet.
 
-Default range is `A1:Z999` if empty.
+You can also set an explicit selector:
 
-This lets one Google Spreadsheet host multiple projects (one tab per SVG).
+- `SheetName!A1:Z99`
 
 ## Dataset Section Structure
 Each dataset section has:

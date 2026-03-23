@@ -1,31 +1,30 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
 
-  <!-- Visible name -->
   <_name>DeckMaker v0.44</_name>
-
-  <!-- Unique id (NO cambiar) -->
   <id>pnpink.deckmaker</id>
 
-  <!-- UI -->
   <param name="tab" type="notebook">
     <page name="data" gui-text="Data">
-      <label>Build a deck from SVG template (current document) + CSV/google sheets.</label>
+      <param name="sheet_id" type="string" gui-text="GSheet ID" appearance="full"/>
+      <label>If empty: load &lt;svg_name&gt;.csv from the same folder.</label>
 
-      <!-- NUEVOS CAMPOS (manteniendo el resto tal cual) -->
-      <param name="sheet_id" type="string" gui-text="Google Sheet Id (optional)" appearance="full"/>
-      <param name="sheet_range" type="string" gui-text="Range (A1, optional)" appearance="full">A1:Z999</param>
-
-      <label>If Sheet Id is empty, a same_svg_name.csv in same dir will be used.</label>
+      <param name="sheet_range" type="string" gui-text="Sheet!range/gid" appearance="full"/>
+      <label>Public access: numeric gid (empty = gid 0).</label>
+      <label>OAuth/private: if empty, try sheet = SVG name, else first sheet.</label>
     </page>
 
-    <!-- Mantén el resto de páginas que ya tenías; aquí dejo About mínima para no romper -->
     <page name="about" gui-text="About">
-      <label>DeckMaker v0.44 — CSV/Google Sheets input.</label>
+      <label>DeckMaker builds cards from the current SVG template and a dataset.</label>
+      <label>Flow:</label>
+      <label>1) Empty GSheet ID: use &lt;svg_name&gt;.csv in the same folder.</label>
+      <label>2) With GSheet ID: try public access first, then OAuth fallback.</label>
+      <label>3) Selector supports Sheet!range or numeric gid.</label>
+      <label>4) Empty selector: public uses gid 0; OAuth uses SVG-name sheet or first sheet.</label>
     </page>
   </param>
 
-  <effect needs-live-preview="true">
+  <effect needs-live-preview="false">
     <object-type>all</object-type>
     <effects-menu>
       <submenu _name="PnPInk"/>
@@ -33,7 +32,6 @@
     <menu-tip>Build a deck from current document + CSV/google sheets.</menu-tip>
   </effect>
 
-  <!-- Launch -->
   <script>
     <command reldir="extensions" interpreter="python">pnpink/deckmaker.py</command>
   </script>

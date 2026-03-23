@@ -67,10 +67,13 @@ class DeckMaker(inkex.EffectExtension):
                 or getattr(self.options, "gsheet_range", "")
                 or ""
             ).strip()
+            sam = str(getattr(self.options, "_dataset_access_mode", "") or "").strip().lower()
+            if sam not in ("public", "oauth"):
+                sam = ""
             if sid:
                 p = self._document_path_or_abort()
-                DSTATE.set_gsheet_for_svg(p, sid, srg)
-                _l.i(f"[dataset_state] saved svg='{p}' sheet_id='{sid}' range='{srg}'")
+                DSTATE.set_gsheet_for_svg(p, sid, srg, sam)
+                _l.i(f"[dataset_state] saved svg='{p}' sheet_id='{sid}' range='{srg}' access_mode='{sam or '-'}'")
             else:
                 _l.i("[dataset_state] skip: empty sheet_id")
         except Exception:

@@ -30,7 +30,8 @@ Create a CSV or Google Sheet where:
 - Column A contains the template bbox id.
 - Column B+ contains IDs that match your SVG objects.
 
-If using Google Sheets, set `Google Sheet Id` and optional `Range` in DeckMaker.
+If using Google Sheets, set `GSheet ID` and optional `Sheet!range/gid` in DeckMaker.
+Public mode uses numeric `gid` (empty means `gid=0`); private mode uses OAuth and is more secure.
 See [Dataset Format and Sources](dataset-overview.md).
 
 Example:

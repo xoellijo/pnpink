@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
 # [2026-02-18 | v0.20+] Align comment semantics with documented rules.
 # [2026-02-16 | v0.20+] Header '#' and '##' column disabling semantics added.
-import os, re, csv
+import os, re, csv, io, ssl
+import urllib.parse
+import urllib.request
 
 import log as LOG
 _l = LOG
 import gsheets_client_pkce as GS
 _gs = GS
 from typing import List, Optional, Tuple
+import dataset_state as DSTATE
 
 import inkex
 import dsl as DSL
@@ -548,27 +551,151 @@ def _load_ini_datasets(base_dir: str, *, warn_if_missing: bool = False) -> Optio
         return None
 
 
-def _choose_sheet_and_range(effect, sheet_id: str, range_a1: Optional[str]) -> str:
-    rng = (range_a1 or "").strip()
-    if "!" in rng:
-        return rng if rng.split("!",1)[1] else (rng + "A1:Z999")
+def _split_selector(selector: Optional[str]) -> Tuple[str, str]:
+    """Return (kind, value) for sheet selector.
+
+    Kinds:
+      - ""      : empty selector
+      - "gid"   : numeric gid (public export CSV)
+      - "range" : sheet/range selector, e.g. "Sheet1!A1:Z99"
+      - "sheet" : plain sheet title
+    """
+    s = str(selector or "").strip()
+    if not s:
+        return "", ""
+    if re.fullmatch(r"\d+", s):
+        return "gid", s
+    if "!" in s:
+        return "range", s
+    return "sheet", s
+
+
+def _choose_sheet_and_range(effect, sheet_id: str, selector: Optional[str]) -> str:
+    kind, val = _split_selector(selector)
+    if kind == "range":
+        # Keep current behavior: if "Sheet!" has empty cells part, default to A1:Z999.
+        sh, cells = val.split("!", 1)
+        sh = (sh or "").strip()
+        cells = (cells or "").strip() or "A1:Z999"
+        return f"{sh}!{cells}"
+    if kind == "sheet":
+        return f"{val}!A1:Z999"
+    # gid / empty -> keep oauth behavior unchanged (by SVG name, else first sheet)
     doc_path = effect._document_path_or_abort()
     svg_stem = os.path.splitext(os.path.basename(doc_path))[0]
     titles = _gs.list_sheet_titles(sheet_id)
     sheet_name = next((t for t in titles if t.strip().lower()==svg_stem.strip().lower()), (titles[0] if titles else "Sheet1"))
-    cells = "A1:Z999" if not rng else rng
-    return f"{sheet_name}!{cells}"
+    return f"{sheet_name}!A1:Z999"
 
 
-def _fetch_gsheet_matrix(effect, sheet_id: str, range_a1: Optional[str], client_id_env: Optional[str]) -> List[List[str]]:
-    rng = _choose_sheet_and_range(effect, sheet_id, range_a1)
+def _fetch_gsheet_matrix_oauth(effect, sheet_id: str, selector: Optional[str], client_id_env: Optional[str]) -> List[List[str]]:
+    rng = _choose_sheet_and_range(effect, sheet_id, selector)
     values = _gs.fetch_sheet(sheet_id, rng, client_id_env or None)
     matrix = [[("" if v is None else str(v)) for v in r] for r in values]
     # Raw dataset log (user request)
     for i, r in enumerate(matrix, start=1):
         c0 = r[0] if r else ""
-        _l.d(f"dataset.raw(GSheet)#{i}: cell0='{c0}' row={r}")
+        _l.d(f"dataset.raw(GSheet OAuth)#{i}: cell0='{c0}' row={r}")
     return matrix
+
+
+def _fetch_gsheet_matrix_public(effect, sheet_id: str, selector: Optional[str]) -> Optional[List[List[str]]]:
+    """Best-effort public fetch (no OAuth) for link-shared sheets.
+
+    Strategy:
+      - If range has explicit sheet name (Sheet!A1:Z999), use gviz CSV directly.
+      - Otherwise, try with SVG stem as sheet name.
+      - Finally, try first-sheet export by gid=0.
+    Returns None when every public attempt fails.
+    """
+    sid = str(sheet_id or "").strip()
+    if not sid:
+        return None
+
+    kind, val = _split_selector(selector)
+
+    urls = []
+    if kind == "gid":
+        urls.append(f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid={val}")
+    elif kind == "":
+        # Requested behavior: public + blank selector => gid=0.
+        urls.append(f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid=0")
+    elif kind == "range":
+        sheet_name, cells = val.split("!", 1)
+        sheet_name = (sheet_name or "").strip()
+        cells = (cells or "").strip() or "A1:Z999"
+        q_sheet = urllib.parse.quote(sheet_name, safe="")
+        q_cells = urllib.parse.quote(cells, safe="!:$")
+        urls.append(f"https://docs.google.com/spreadsheets/d/{sid}/gviz/tq?tqx=out:csv&sheet={q_sheet}&range={q_cells}")
+    elif kind == "sheet":
+        # Keep compatibility when user provides sheet name only.
+        q_sheet = urllib.parse.quote(val, safe="")
+        q_cells = urllib.parse.quote("A1:Z999", safe="!:$")
+        urls.append(f"https://docs.google.com/spreadsheets/d/{sid}/gviz/tq?tqx=out:csv&sheet={q_sheet}&range={q_cells}")
+    else:
+        urls.append(f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid=0")
+
+    for u in urls:
+        try:
+            req = urllib.request.Request(
+                u,
+                headers={
+                    "User-Agent": "PnPInk/gsheet-public",
+                    "Accept": "text/csv,*/*;q=0.8",
+                },
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    raw = resp.read().decode("utf-8-sig", errors="replace")
+            except Exception as ex0:
+                msg = str(ex0)
+                if "CERTIFICATE_VERIFY_FAILED" not in msg:
+                    raise
+                _l.w("[datasets] gsheet public SSL verify failed; retrying unverified TLS")
+                ctx = ssl._create_unverified_context()
+                with urllib.request.urlopen(req, timeout=12, context=ctx) as resp:
+                    raw = resp.read().decode("utf-8-sig", errors="replace")
+            rows = list(csv.reader(io.StringIO(raw), delimiter=","))
+            matrix = [[("" if v is None else str(v)) for v in r] for r in rows]
+            if not matrix:
+                continue
+            for i, r in enumerate(matrix, start=1):
+                c0 = r[0] if r else ""
+                _l.d(f"dataset.raw(GSheet Public)#{i}: cell0='{c0}' row={r}")
+            _l.i(f"[datasets] gsheet public fetch ok url='{u}' rows={len(matrix)}")
+            return matrix
+        except Exception as ex:
+            _l.d(f"[datasets] gsheet public fetch failed url='{u}': {ex}")
+            continue
+    return None
+
+
+def _fetch_gsheet_matrix(
+    effect,
+    sheet_id: str,
+    selector: Optional[str],
+    client_id_env: Optional[str],
+    access_hint: str = "",
+) -> Tuple[List[List[str]], str]:
+    hint = str(access_hint or "").strip().lower()
+    order = ["public", "oauth"] if hint != "oauth" else ["oauth", "public"]
+    last_err = None
+    for mode in order:
+        try:
+            if mode == "public":
+                m = _fetch_gsheet_matrix_public(effect, sheet_id, selector)
+                if m is not None:
+                    return m, "public"
+                continue
+            m = _fetch_gsheet_matrix_oauth(effect, sheet_id, selector, client_id_env)
+            return m, "oauth"
+        except Exception as ex:
+            last_err = ex
+            _l.d(f"[datasets] gsheet {mode} fetch failed: {ex}")
+            continue
+    if last_err is not None:
+        raise last_err
+    return [], ""
 
 # --------------------- pages ---------------------
 
@@ -628,8 +755,29 @@ def load_datasets(effect, doc_path: Optional[str] = None):
             ini_datasets.extend(svg_ini)
 
     # 1) Read matrix
+    used_access_mode = ""
     if sheet_id:
-        matrix = _fetch_gsheet_matrix(effect, sheet_id, range_a1, client_id)
+        access_hint = ""
+        try:
+            if doc_path:
+                rec = DSTATE.get_gsheet_for_svg(doc_path) or {}
+                sid0 = str(rec.get("sheet_id") or "").strip()
+                if sid0 and sid0 == sheet_id:
+                    access_hint = str(rec.get("access_mode") or "").strip().lower()
+        except Exception:
+            access_hint = ""
+        matrix, used_access_mode = _fetch_gsheet_matrix(effect, sheet_id, range_a1, client_id, access_hint=access_hint)
+        if used_access_mode:
+            _l.i(f"[datasets] gsheet access mode='{used_access_mode}'")
+            try:
+                setattr(options, "_dataset_access_mode", used_access_mode)
+            except Exception:
+                pass
+            try:
+                if doc_path:
+                    DSTATE.set_gsheet_for_svg(doc_path, sheet_id, range_a1 or "", used_access_mode)
+            except Exception:
+                pass
     else:
         # Keep original behavior: require a saved SVG and a CSV file (unless sheet_id is used).
         if not doc_path:

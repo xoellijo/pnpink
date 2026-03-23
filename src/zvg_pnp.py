@@ -163,14 +163,23 @@ def _build_manifest(kind: str, svg_name: str, csv_name: Optional[str], deckmaker
 
 
 def _choose_sheet_and_range_for_export(doc_path: Optional[Path], sheet_id: str, range_a1: Optional[str]) -> str:
-    rng = (range_a1 or "").strip()
+    rng = str(range_a1 or "").strip()
+    if rng.startswith("!") and rng.count("!") >= 2:
+        rng = rng[1:]
     if "!" in rng:
-        return rng if rng.split("!", 1)[1] else (rng + "A1:Z999")
+        sh, cells = rng.split("!", 1)
+        sh = (sh or "").strip()
+        cells = (cells or "").strip() or "A1:Z999"
+        return f"{sh}!{cells}"
+    if re.fullmatch(r"\d+", rng or ""):
+        # GID has no direct OAuth values.get equivalent. Keep prior oauth behavior.
+        rng = ""
+    if rng:
+        return f"{rng}!A1:Z999"
     svg_stem = (doc_path.stem if doc_path else "Sheet1")
     titles = GS.list_sheet_titles(sheet_id)
     sheet_name = next((t for t in titles if t.strip().lower() == svg_stem.strip().lower()), (titles[0] if titles else "Sheet1"))
-    cells = "A1:Z999" if not rng else rng
-    return f"{sheet_name}!{cells}"
+    return f"{sheet_name}!A1:Z999"
 
 
 def _fetch_gsheet_csv_bytes(doc_path: Optional[Path], sheet_id: str, range_a1: Optional[str]) -> Optional[bytes]:

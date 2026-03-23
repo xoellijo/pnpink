@@ -46,10 +46,13 @@ def _save_state(data: Dict[str, object]) -> None:
     os.replace(tmp, STATE_FILE)
 
 
-def set_gsheet_for_svg(svg_path: str, sheet_id: str, sheet_range: str = "") -> None:
+def set_gsheet_for_svg(svg_path: str, sheet_id: str, sheet_range: str = "", access_mode: str = "") -> None:
     sp = _norm_svg_path(svg_path)
     sid = str(sheet_id or "").strip()
     srg = str(sheet_range or "").strip()
+    am = str(access_mode or "").strip().lower()
+    if am not in ("", "public", "oauth"):
+        am = ""
     if not sp or not sid:
         return
     state = _load_state()
@@ -60,6 +63,7 @@ def set_gsheet_for_svg(svg_path: str, sheet_id: str, sheet_range: str = "") -> N
         "kind": "gsheet",
         "sheet_id": sid,
         "sheet_range": srg,
+        "access_mode": am,
         "updated_at": int(time.time()),
     }
     state["version"] = 1
@@ -80,7 +84,9 @@ def get_gsheet_for_svg(svg_path: str) -> Optional[Dict[str, str]]:
         return None
     sid = str(rec.get("sheet_id") or "").strip()
     srg = str(rec.get("sheet_range") or "").strip()
+    am = str(rec.get("access_mode") or "").strip().lower()
+    if am not in ("", "public", "oauth"):
+        am = ""
     if not sid:
         return None
-    return {"sheet_id": sid, "sheet_range": srg}
-
+    return {"sheet_id": sid, "sheet_range": srg, "access_mode": am}
