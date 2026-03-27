@@ -516,9 +516,33 @@ def _build_row_map(headers: list, row: dict) -> Dict[str, str]:
     return out
 
 def _iter_row_fields(headers: list, row: dict):
-    """Yield (header_key, raw_cell) for each column, preserving order and duplicates."""
+    """Yield (header_key, raw_cell) for each column.
+
+    For repeated header keys, iterate duplicates right-to-left. This keeps the
+    rightmost dataset column visually on top when multiple columns target the
+    same placeholder/anchor, because insertion happens relative to the same DOM
+    anchor and natural left-to-right processing would invert stacking.
+    """
     cells = _row_cells(row)
-    for i, h in enumerate(headers or []):
+    headers = list(headers or [])
+    by_header = {}
+    for i, h in enumerate(headers):
+        by_header.setdefault(h, []).append(i)
+    yielded = set()
+    order = []
+    for i, h in enumerate(headers):
+        if i in yielded:
+            continue
+        idxs = by_header.get(h) or [i]
+        if len(idxs) > 1:
+            idxs = list(reversed(idxs))
+        for j in idxs:
+            if j in yielded:
+                continue
+            yielded.add(j)
+            order.append(j)
+    for i in order:
+        h = headers[i]
         raw = cells[i] if i < len(cells) else ""
         yield h, ("" if raw is None else str(raw))
 
@@ -1403,10 +1427,13 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
     if not target_ids:
         target_ids = [hk.get('target_id') or '']
     # Multiheader / wildcard headers: apply the same value to each resolved target.
+    # IMPORTANT: every placed element is inserted relative to its placeholder, so
+    # processing targets left->right would invert the visual stacking order.
+    # Iterate in reverse so the rightmost/rearmost declared header ends up on top.
     if len(target_ids) > 1:
         total = 0
         status = "miss"
-        for _tid in target_ids:
+        for _tid in reversed(target_ids):
             sub_key = _build_single_target_header_key(hk, _tid)
             c, st = apply_field_in_clone(
                 inst, sub_key, raw_val, row,
@@ -1546,13 +1573,16 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
             _l.w(f"field '{key}': STYLE[{prop}] failed on id='{target_id}': {ex}")
             return 0, "miss"
     raw_token = (value or "").strip()
-    # Phase-1: multivalue cells â€” split into top-level whitespace-separated tokens (Z-order by token order)
+    # Phase-1: multivalue cells â€” split into top-level whitespace-separated tokens
     # and process each token independently against the SAME header/target.
+    # IMPORTANT: each clone/use/FA job is inserted relative to the same placeholder,
+    # so iterating A B C in natural order would leave C on top of B on top of A.
+    # Reverse the processing order so the first token remains at the back.
     if raw_token and any(ch.isspace() for ch in raw_token):
         toks = _split_multivalue(raw_token)
         if len(toks) > 1:
             total = 0
-            for _tok in toks:
+            for _tok in reversed(toks):
                 c, _ = apply_field_in_clone(inst, key, _tok, row, root_doc=root_doc, use_jobs=use_jobs, fa_jobs=fa_jobs, use_seq=use_seq, sm=sm, ss_registry=ss_registry)
                 total += int(c or 0)
             return total, 'multi'
@@ -2369,8 +2399,8 @@ def render_phase(ctx):
                             i_k = idx_stack[_k] if _k < len(idx_stack) else 0
                             val = ''
                             try:
-                                if i_k < len(_seq):
-                                    val = str(_seq[i_k] or '').strip()
+                                if _seq:
+                                    val = str(_seq[i_k % len(_seq)] or '').strip()
                             except Exception:
                                 val = ''
                             if val:

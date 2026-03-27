@@ -207,16 +207,22 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
     def _shift_to_px(v, axis_base_px: float) -> float:
         if isinstance(v, str):
             s = v.strip()
-            if "%" in s:
-                try:
-                    base_mm = float(axis_base_px) / float(getattr(svg, "PX_PER_MM", 1.0) or 1.0)
-                    return float(svg.measure_to_mm(s, base_mm=base_mm)) * float(getattr(svg, "PX_PER_MM", 1.0) or 1.0)
-                except Exception:
-                    pass
-            return float(svg.parse_len_px(svgdoc, s))
-        return float(v)
-    if getattr(fs, "shift", None) and isinstance(fs.shift, (list, tuple)) and len(fs.shift) >= 2:
-        sx_raw, sy_raw = fs.shift[0], fs.shift[1]
+            try:
+                px_per_mm = float(svgdoc.unittouu("1mm"))
+            except Exception:
+                px_per_mm = float(getattr(svg, "PX_PER_MM", 1.0) or 1.0)
+            try:
+                base_mm = float(axis_base_px) / px_per_mm if px_per_mm else None
+            except Exception:
+                base_mm = None
+            return float(svg.measure_to_px(svgdoc, s, base_mm=base_mm if "%" in s else None))
+        try:
+            return float(svg.measure_to_px(svgdoc, v, base_mm=None))
+        except Exception:
+            return float(v)
+    if getattr(fs, "shift", None) and isinstance(fs.shift, (list, tuple)) and len(fs.shift) >= 1:
+        sx_raw = fs.shift[0]
+        sy_raw = fs.shift[1] if len(fs.shift) >= 2 else fs.shift[0]
         shift_x = _shift_to_px(sx_raw, float(rw))
         shift_y = _shift_to_px(sy_raw, float(rh))
 

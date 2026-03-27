@@ -172,6 +172,22 @@ def _as_list(v: Any) -> List[Any]:
         return []
     return v if isinstance(v, list) else [v]
 
+
+def _normalize_short_list(vals: List[Any], *, name: str, allowed: tuple[int, ...], duplicate_1_to_2: bool = False) -> List[Any]:
+    vals = list(vals or [])
+    if duplicate_1_to_2 and len(vals) == 1 and 2 in allowed:
+        return [vals[0], vals[0]]
+    if len(vals) not in allowed:
+        if duplicate_1_to_2 and 2 in allowed:
+            raise DSLError(f"{name} requires 1 or 2 values")
+        allowed_txt = " or ".join(str(n) for n in allowed)
+        raise DSLError(f"{name} requires {allowed_txt} values")
+    return vals
+
+
+def _normalize_shift_pair(vals: List[Any]) -> List[Any]:
+    return _normalize_short_list(vals, name="shift", allowed=(2,), duplicate_1_to_2=True)
+
 def _num_to_str_trim(v: Any) -> str:
     try:
         f = float(v)
@@ -549,12 +565,10 @@ def _fit_from_dict(args: Dict[str, Any]) -> FitSpec:
         fs.border = [_num_to_str_trim(x) for x in b]
     # shift (primary): shift/s.
     if "shift" in args:
-        vals = _as_list(args.get("shift"))
-        if len(vals) != 2: raise DSLError("shift requires [dx dy]")
+        vals = _normalize_shift_pair(_as_list(args.get("shift")))
         fs.shift = [_to_number(vals[0]), _to_number(vals[1])]
     if "s" in args and fs.shift is None:
-        vals = _as_list(args.get("s"))
-        if len(vals) != 2: raise DSLError("shift requires [dx dy]")
+        vals = _normalize_shift_pair(_as_list(args.get("s")))
         fs.shift = [_to_number(vals[0]), _to_number(vals[1])]
     # No retro-compat aliases for simplicity.
     if "translate" in args:
@@ -640,10 +654,8 @@ def _parse_fit_shorthand(trail: str) -> FitSpec:
 
         if t in ('t','s'):
             if i+1 >= len(toks) or not (toks[i+1].startswith('[') and toks[i+1].endswith(']')):
-                raise DSLError("shift requiere [dx dy]")
-            lst = _parse_list(toks[i+1])
-            if len(lst) != 2:
-                raise DSLError("shift requiere [dx dy]")
+                raise DSLError("shift requires [dx dy] or [d]")
+            lst = _normalize_shift_pair(_parse_list(toks[i+1]))
             dx, dy = lst[0], lst[1]
             dxv = float(dx) if _num_pure_re.match(dx) else dx
             dyv = float(dy) if _num_pure_re.match(dy) else dy
@@ -664,7 +676,7 @@ def _parse_fit_shorthand(trail: str) -> FitSpec:
             elif fs.border is None:
                 fs.border = [_num_to_str_trim(x) for x in lst]
             else:
-                if len(lst) != 2: raise DSLError("shift requiere [dx dy]")
+                lst = _normalize_shift_pair(lst)
                 dx, dy = lst[0], lst[1]
                 dxv = float(dx) if _num_pure_re.match(dx) else dx
                 dyv = float(dy) if _num_pure_re.match(dy) else dy
@@ -778,8 +790,7 @@ def fit_spec_from_ops(ops: str) -> FitSpec:
                 elif fs.border is None:
                     fs.border = [_num_to_str_trim(x) for x in lst]
                 else:
-                    if len(lst) != 2:
-                        raise DSLError("shift requiere [dx dy]")
+                    lst = _normalize_shift_pair(lst)
                     dx, dy = lst[0], lst[1]
                     dxv = float(dx) if _num_pure_re.match(dx) else dx
                     dyv = float(dy) if _num_pure_re.match(dy) else dy
@@ -911,8 +922,8 @@ def _parse_gaps_v2(val: Union[str, List[Any]]) -> List[Union[float, str]]:
         else:
             out.append(t)
 
-    if len(out) > 2:
-        raise DSLError("gaps admite como máximo 2 valores [x y]")
+    if out:
+        out = _normalize_short_list(out, name="gaps", allowed=(1, 2))
 
     return out
 
@@ -954,8 +965,8 @@ def _parse_offset_v2(val: Union[str, List[Any]]) -> List[Union[float, str]]:
         else:
             out.append(t)
 
-    if len(out) > 4:
-        raise DSLError("offset admite como máximo 4 valores [w1 h1 w2 h2]")
+    if out:
+        out = _normalize_short_list(out, name="offset", allowed=(1, 2, 3, 4))
 
     return out
 

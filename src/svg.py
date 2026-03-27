@@ -135,6 +135,15 @@ def measure_to_mm(value, *, base_mm: float | None = None) -> float:
     return float(total)
 
 
+def measure_to_px(svgdoc, value, *, base_mm: float | None = None) -> float:
+    """Convert a measure to document units (px-like UU), defaulting unitless values to mm."""
+    try:
+        px_per_mm = float(svgdoc.unittouu("1mm"))
+    except Exception:
+        px_per_mm = 1.0
+    return float(measure_to_mm(value, base_mm=base_mm)) * px_per_mm
+
+
 _BORDER_WXH_SPLIT_RE = re.compile(r"^\s*(?P<w>[^x]+)x(?P<h>.+?)\s*$", re.IGNORECASE)
 
 def _normalize_wxh_component(tok: str) -> str:
@@ -273,9 +282,7 @@ def border_tokens_to_pad_px(svgdoc, rect_w_px: float, rect_h_px: float, tokens):
         s = (tok or '').strip()
         if not s:
             return 0.0
-        if '%' in s:
-            return float(measure_to_mm(s, base_mm=base_mm)) * px_per_mm
-        return float(parse_len_px(svgdoc, s))
+        return float(measure_to_px(svgdoc, s, base_mm=base_mm))
 
     def _pct_scale(tok: str) -> float:
         # 100% -> 1.0, 50% -> 0.5, % -> 1.0

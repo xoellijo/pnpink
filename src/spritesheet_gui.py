@@ -469,21 +469,28 @@ class SpriteSheetGui:
 
     def _draw_background(self):
         if self._pil_base is not None:
-            from PIL import ImageTk
-            w = max(1, int(self.bw * self.zoom))
-            h = max(1, int(self.bh * self.zoom))
-            if self._pil_image is None or self._last_pil_size != (w, h):
-                # Use a faster resampling to improve zoom responsiveness.
-                resampling = getattr(Image, "Resampling", Image)
-                resized = self._pil_base.resize((w, h), resample=getattr(resampling, "BILINEAR", 2))
-                self._pil_image = ImageTk.PhotoImage(resized)
-                self._last_pil_size = (w, h)
-            if self._img_id is None:
-                self._img_id = self.canvas.create_image(self.pan_x, self.pan_y, anchor="nw", image=self._pil_image)
-            else:
-                self.canvas.coords(self._img_id, self.pan_x, self.pan_y)
-                self.canvas.itemconfigure(self._img_id, image=self._pil_image)
-            return
+            try:
+                from PIL import Image, ImageTk
+
+                w = max(1, int(self.bw * self.zoom))
+                h = max(1, int(self.bh * self.zoom))
+                if self._pil_image is None or self._last_pil_size != (w, h):
+                    # Use a faster resampling to improve zoom responsiveness.
+                    resampling = getattr(Image, "Resampling", Image)
+                    resized = self._pil_base.resize((w, h), resample=getattr(resampling, "BILINEAR", 2))
+                    self._pil_image = ImageTk.PhotoImage(resized)
+                    self._last_pil_size = (w, h)
+                if self._img_id is None:
+                    self._img_id = self.canvas.create_image(self.pan_x, self.pan_y, anchor="nw", image=self._pil_image)
+                else:
+                    self.canvas.coords(self._img_id, self.pan_x, self.pan_y)
+                    self.canvas.itemconfigure(self._img_id, image=self._pil_image)
+                return
+            except Exception as ex:
+                _l.w("[spritesheet_gui] PIL draw failed: ", ex)
+                self._pil_base = None
+                self._pil_image = None
+                self._last_pil_size = None
         if self._photo is not None:
             if self._img_id is None:
                 self._img_id = self.canvas.create_image(self.pan_x, self.pan_y, anchor="nw", image=self._photo)
@@ -519,53 +526,57 @@ class SpriteSheetGui:
 
     def redraw(self):
         self._pending_redraw = None
-        t0 = perf_counter()
-        spec = self._normalized_spec()
-        spec_key = (
-            spec["card_mode"],
-            spec["cols"],
-            spec["rows"],
-            spec["card_preset"],
-            spec["card_w_mm"],
-            spec["card_h_mm"],
-            spec["margin"],
-            spec["gap"],
-        )
-        if spec_key != self._last_spec_key:
-            self._last_grid = _compute_grid(spec, self.bw, self.bh, self.svgdoc)
-            self._last_spec_key = spec_key
-        grid = self._last_grid
-
-        self.canvas.delete("grid")
-        self._draw_background()
-
-        if grid is None:
-            self.vars["status"].set("Invalid params or no fit")
-            self.vars["layout_text"].set("")
-            return
-        for (x, y, w, h) in grid["rects"]:
-            x0 = self.pan_x + x * self.zoom
-            y0 = self.pan_y + y * self.zoom
-            x1 = self.pan_x + (x + w) * self.zoom
-            y1 = self.pan_y + (y + h) * self.zoom
-            self.canvas.create_rectangle(x0, y0, x1, y1, outline="#1a73e8", width=1, tags=("grid",))
-
-        self.vars["layout_text"].set(
-            _layout_expr(
-                grid["rows"],
-                grid["cols"],
-                grid["mt_mm"],
-                grid["ml_mm"],
-                grid["mb_mm"],
-                grid["mr_mm"],
-                grid["gv_mm"],
-                grid["gh_mm"],
+        try:
+            t0 = perf_counter()
+            spec = self._normalized_spec()
+            spec_key = (
+                spec["card_mode"],
+                spec["cols"],
+                spec["rows"],
+                spec["card_preset"],
+                spec["card_w_mm"],
+                spec["card_h_mm"],
+                spec["margin"],
+                spec["gap"],
             )
-        )
-        self.vars["status"].set(f"{grid['cols']}x{grid['rows']} slots")
-        dt = int((perf_counter() - t0) * 1000)
-        if dt >= 25:
-            _l.d("[spritesheet_gui] redraw_ms=", dt, "slots=", len(grid["rects"]))
+            if spec_key != self._last_spec_key:
+                self._last_grid = _compute_grid(spec, self.bw, self.bh, self.svgdoc)
+                self._last_spec_key = spec_key
+            grid = self._last_grid
+
+            self.canvas.delete("grid")
+            self._draw_background()
+
+            if grid is None:
+                self.vars["status"].set("Invalid params or no fit")
+                self.vars["layout_text"].set("")
+                return
+            for (x, y, w, h) in grid["rects"]:
+                x0 = self.pan_x + x * self.zoom
+                y0 = self.pan_y + y * self.zoom
+                x1 = self.pan_x + (x + w) * self.zoom
+                y1 = self.pan_y + (y + h) * self.zoom
+                self.canvas.create_rectangle(x0, y0, x1, y1, outline="#1a73e8", width=1, tags=("grid",))
+
+            self.vars["layout_text"].set(
+                _layout_expr(
+                    grid["rows"],
+                    grid["cols"],
+                    grid["mt_mm"],
+                    grid["ml_mm"],
+                    grid["mb_mm"],
+                    grid["mr_mm"],
+                    grid["gv_mm"],
+                    grid["gh_mm"],
+                )
+            )
+            self.vars["status"].set(f"{grid['cols']}x{grid['rows']} slots")
+            dt = int((perf_counter() - t0) * 1000)
+            if dt >= 25:
+                _l.d("[spritesheet_gui] redraw_ms=", dt, "slots=", len(grid["rects"]))
+        except Exception as ex:
+            self.vars["status"].set("Preview redraw failed")
+            _l.w("[spritesheet_gui] redraw failed: ", ex)
 
     def _zoom_at(self, factor, x, y):
         old = self.zoom
