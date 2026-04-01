@@ -22,7 +22,7 @@ __version__ = "v0.1"
 
 from dataclasses import dataclass
 from typing import Optional, Dict, Tuple, List, Set
-import os, re, hashlib, threading, urllib.request, urllib.error, shutil, mimetypes, ssl
+import os, re, hashlib, threading, shutil, mimetypes
 from concurrent.futures import ThreadPoolExecutor, Future
 from pathlib import Path
 from urllib.parse import urlparse, unquote, urlunparse
@@ -35,6 +35,7 @@ _l = LOG
 import svg as SVG
 import const as CONST
 import sources_web as WEB
+import net as NET
 
 # --------------------------------------------------------------------------------------
 # Iconify integration (icon://set/name)
@@ -243,6 +244,14 @@ def _build_key_for_pxby(expr: str) -> SourceKey:
 
 def _build_key_for_oclp(expr: str) -> SourceKey:
     return SourceKey(scheme="oclp", path=(expr or "").strip(), mtime=0.0)
+
+
+def _is_missing_ref(ref: Optional[SourceRef]) -> bool:
+    try:
+        sid = str(getattr(ref, "symbol_id", "") or "")
+        return sid.startswith("src_missing_")
+    except Exception:
+        return True
 
 def _try_resolve_as_is(candidate: Path) -> Optional[Path]:
     try:
@@ -476,7 +485,7 @@ class SourceManager:
         self.assets_dir = self._ensure_assets_dir()
         self.web = WEB.WebSources(self.assets_dir)
         self._dl_lock = threading.RLock()
-        self._dl_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="pnpink-src")
+        self._dl_pool = ThreadPoolExecutor(max_workers=NET.DEFAULT_HOST_WORKERS, thread_name_prefix="pnpink-src")
         self._dl_futures: Dict[str, Future] = {}
         self._dl_done: Dict[str, Optional[Path]] = {}
 
@@ -518,6 +527,24 @@ class SourceManager:
     def resolve_oclp_urls(self, expr: str) -> Optional[List[str]]:
         return self.web.resolve_oclp_urls(expr)
 
+    def _register_first_valid_web_candidate(self, urls: List[str], *, hint_type: Optional[str], dpi=None,
+                                            fragment: str = "", page: int = 0,
+                                            log_prefix: str = "[sources] web") -> Optional[SourceRef]:
+        total = len(urls or [])
+        for idx, u in enumerate([str(x).strip() for x in (urls or []) if str(x or "").strip()], start=1):
+            try:
+                ref = self.register(u, hint_type=hint_type, dpi=dpi, fragment=fragment, page=page)
+            except Exception as ex:
+                _l.w(f"{log_prefix} candidate {idx}/{total} failed: {ex}")
+                continue
+            if _is_missing_ref(ref):
+                _l.w(f"{log_prefix} candidate {idx}/{total} failed -> placeholder")
+                continue
+            if idx > 1:
+                _l.i(f"{log_prefix} candidate {idx}/{total} selected")
+            return ref
+        return None
+
     @staticmethod
     def _guess_ext_from_url_or_type(url: str, content_type: str = "") -> str:
         try:
@@ -551,45 +578,32 @@ class SourceManager:
         return None
 
     def _download_http_to_cache(self, url: str) -> Optional[Path]:
-        def _do_download(unverified: bool = False) -> Optional[Path]:
-            req = urllib.request.Request(
-                url,
-                headers={
-                    "User-Agent": "pnpink/1.0 (+https://github.com/pnpink)",
-                    "Accept": "image/*,*/*;q=0.8",
-                },
-            )
-            ctx = ssl._create_unverified_context() if unverified else None
-            with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
-                ctype = str(resp.headers.get("Content-Type") or "")
-                ext = self._guess_ext_from_url_or_type(url, ctype)
-                out = self._http_cache_path(url, ext_hint=ext)
-                if out.is_file():
-                    return out.resolve()
-                tmp = out.with_suffix(out.suffix + ".part")
-                with open(tmp, "wb") as f:
-                    shutil.copyfileobj(resp, f)
-                os.replace(str(tmp), str(out))
-                _l.i(f"[sources] web cached -> {out.name}")
-                return out.resolve()
-
         try:
             ext_hint = self._guess_ext_from_url_or_type(url, "")
             out0 = self._http_cache_path(url, ext_hint=ext_hint)
             if out0.is_file():
                 return out0.resolve()
-            return _do_download(unverified=False)
-        except urllib.error.URLError as ex:
-            msg = str(ex)
-            if "CERTIFICATE_VERIFY_FAILED" in msg:
-                try:
-                    _l.w(f"[sources] SSL verify failed for '{url}', retrying unverified TLS")
-                    return _do_download(unverified=True)
-                except Exception as ex2:
-                    _l.w(f"[sources] web download failed '{url}' after unverified retry: {ex2}")
-                    return None
-            _l.w(f"[sources] web download failed '{url}': {ex}")
-            return None
+            raw, hdrs, _status = NET.fetch_bytes(
+                url,
+                headers={
+                    "User-Agent": "pnpink/1.0 (+https://github.com/pnpink)",
+                    "Accept": "image/*,*/*;q=0.8",
+                },
+                timeout=30,
+                retries=4,
+                log_prefix="[sources] web",
+            )
+            ctype = str((hdrs or {}).get("Content-Type") or "")
+            ext = self._guess_ext_from_url_or_type(url, ctype)
+            out = self._http_cache_path(url, ext_hint=ext)
+            if out.is_file():
+                return out.resolve()
+            tmp = out.with_suffix(out.suffix + ".part")
+            with open(tmp, "wb") as f:
+                f.write(raw)
+            os.replace(str(tmp), str(out))
+            _l.i(f"[sources] web cached -> {out.name}")
+            return out.resolve()
         except Exception as ex:
             _l.w(f"[sources] web download failed '{url}': {ex}")
             return None
@@ -817,8 +831,13 @@ class SourceManager:
                 sid, wh = _make_placeholder_symbol(self.defs, raw, "wkmc no results")
                 return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
             if len(urls) > 1:
-                _l.w(f"[sources] wkmc produced {len(urls)} results; using first (use selector outside source)")
-            ref = self.register(urls[0], hint_type=hint_type, dpi=dpi, fragment=fragment, page=page)
+                _l.w(f"[sources] wkmc produced {len(urls)} results; trying candidates in order")
+            ref = self._register_first_valid_web_candidate(
+                urls, hint_type=hint_type, dpi=dpi, fragment=fragment, page=page, log_prefix="[sources] wkmc"
+            )
+            if ref is None:
+                sid, wh = _make_placeholder_symbol(self.defs, raw, "wkmc no valid candidate")
+                return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
             self._cache[key_w] = ref
             return ref
 
@@ -834,8 +853,13 @@ class SourceManager:
                 sid, wh = _make_placeholder_symbol(self.defs, raw, "pxby no results")
                 return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
             if len(urls) > 1:
-                _l.w(f"[sources] pxby produced {len(urls)} results; using first (use selector outside source)")
-            ref = self.register(urls[0], hint_type=hint_type, dpi=dpi, fragment=fragment, page=page)
+                _l.w(f"[sources] pxby produced {len(urls)} results; trying candidates in order")
+            ref = self._register_first_valid_web_candidate(
+                urls, hint_type=hint_type, dpi=dpi, fragment=fragment, page=page, log_prefix="[sources] pxby"
+            )
+            if ref is None:
+                sid, wh = _make_placeholder_symbol(self.defs, raw, "pxby no valid candidate")
+                return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
             self._cache[key_p] = ref
             return ref
 
@@ -851,8 +875,13 @@ class SourceManager:
                 sid, wh = _make_placeholder_symbol(self.defs, raw, "oclp no results")
                 return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
             if len(urls) > 1:
-                _l.w(f"[sources] oclp produced {len(urls)} results; using first (use selector outside source)")
-            ref = self.register(urls[0], hint_type=hint_type, dpi=dpi, fragment=fragment, page=page)
+                _l.w(f"[sources] oclp produced {len(urls)} results; trying candidates in order")
+            ref = self._register_first_valid_web_candidate(
+                urls, hint_type=hint_type, dpi=dpi, fragment=fragment, page=page, log_prefix="[sources] oclp"
+            )
+            if ref is None:
+                sid, wh = _make_placeholder_symbol(self.defs, raw, "oclp no valid candidate")
+                return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
             self._cache[key_o] = ref
             return ref
 

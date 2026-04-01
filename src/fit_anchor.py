@@ -358,11 +358,10 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
         shift_lx = shift_ly = 0.0
 
     # Target in wrapper LOCAL coords (wrapper = placeholder origin).
-    # Use the "inner" (with border) to position inside the effective area.
-    inner_off_x = ix_l - rx_l
-    inner_off_y = iy_l - ry_l
-    target_x_local_base = inner_off_x + (ax * iw_l)
-    target_y_local_base = inner_off_y + (ay * ih_l)
+    # Keep anchor semantics consistent with the non-clip path:
+    # border only affects the fit/scale area, not the anchor reference rect.
+    target_x_local_base = ax * rw_l
+    target_y_local_base = ay * rh_l
     clip_stage = str(getattr(fs, "clip_stage", "post") or "post").lower()
     clip_pre = bool(getattr(fs, "clip", False)) and clip_stage == "pre"
     # Shift ordering:
@@ -485,7 +484,10 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
         )
     except Exception:
         same_inner_as_rect = False
-    if rid and ((not clip_use_inner) or same_inner_as_rect):
+    # Do not reuse non-shape placeholders such as <image> / <use> as clip geometry.
+    # In practice that can yield an empty/invalid clip and the placed source disappears.
+    can_reuse_placeholder_shape = not any(tag.endswith(t) for t in ('image', 'use'))
+    if can_reuse_placeholder_shape and rid and ((not clip_use_inner) or same_inner_as_rect):
         try:
             u = etree.SubElement(cp, inkex.addNS('use', 'svg'))
             svg.set_href(u, f"#{rid}")

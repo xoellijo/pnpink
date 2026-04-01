@@ -18,7 +18,7 @@ __all__ = [
     "tokenize_chain", "parse_chain", "maybe_parse_chain",
     "is_source_expr", "split_source_token", "normalize_ops_suffix",
     "ops_from_fit_spec", "fit_spec_from_ops",
-    "parse_copies_page_tail", "measure_to_mm",
+    "parse_copies_page_tail", "parse_index_selector_1based", "measure_to_mm",
     "parse_dataset_decl"
 ]
 
@@ -1472,7 +1472,8 @@ def maybe_parse_chain(s: str) -> Optional[Chain]:
 def parse_copies_page_tail(cell0):
     """
     Return (copies, page_block, layout_block, marks_block)
-    and expose holes in parse_copies_page_tail.__holes__ (1-based list).
+    and expose holes in parse_copies_page_tail.__holes__ (1-based list)
+    and iterator selectors in parse_copies_page_tail.__iter_select__.
 
     Supports:
       - {A4 b=[...]} / {A3^} / {} / {3} / {3*A4}
@@ -1486,11 +1487,12 @@ def parse_copies_page_tail(cell0):
     page_block = None
     layout_block = None
     marks_block = None
+    iter_select: List[int] = []
     rest = s
 
     # { ... } block (page / breaks)
     # IMPORTANT: do not capture dataset markers "{{...}}" as a Page block.
-    m_page = re.search(r"(?<!\{)\{[^{}]*\}(?!\})", rest)
+    m_page = re.search(r"(?<![\w\{])\{[^{}]*\}(?!\})", rest)
     if m_page:
         page_block = m_page.group(0)
         rest = rest[:m_page.start()] + rest[m_page.end():]
@@ -1504,26 +1506,30 @@ def parse_copies_page_tail(cell0):
     # accidentally consume bracket lists from Layout/Page tails (e.g. g=[...], o=[...]).
     m_seq = re.search(r"\[([^\[\]]*)\]\s*$", rest.strip())
     if m_seq:
-        toks = [t for t in re.split(r"[\s,]+", m_seq.group(1).strip()) if t]
-        run = 0
-        for t in toks:
-            if re.fullmatch(r"-+", t):
-                if run > 0:
-                    for _ in range(len(t)):
-                        holes.append(run)  # empty slot(s) AFTER copy 'run'
-                continue
-            m_h = re.fullmatch(r"(\d+)-", t)
-            if m_h:
-                if run > 0:
-                    n_holes = int(m_h.group(1))
-                    for _ in range(max(0, n_holes)):
-                        holes.append(run)  # empty slot(s) AFTER copy 'run'
-                continue
-            if t.isdigit():
-                run += int(t)
-        if run > 0:
-            copies = run
-            copies_explicit = True
+        seq_body = m_seq.group(1).strip()
+        toks = [t for t in re.split(r"[\s,]+", seq_body) if t]
+        if any(".." in t for t in toks):
+            iter_select = parse_index_selector_1based(seq_body)
+        else:
+            run = 0
+            for t in toks:
+                if re.fullmatch(r"-+", t):
+                    if run > 0:
+                        for _ in range(len(t)):
+                            holes.append(run)  # empty slot(s) AFTER copy 'run'
+                    continue
+                m_h = re.fullmatch(r"(\d+)-", t)
+                if m_h:
+                    if run > 0:
+                        n_holes = int(m_h.group(1))
+                        for _ in range(max(0, n_holes)):
+                            holes.append(run)  # empty slot(s) AFTER copy 'run'
+                    continue
+                if t.isdigit():
+                    run += int(t)
+            if run > 0:
+                copies = run
+                copies_explicit = True
         rest = rest[:m_seq.start()]
     # trailing number as copies (ignoring numbers inside [] and {})
     if copies == 1:
@@ -1550,6 +1556,7 @@ def parse_copies_page_tail(cell0):
         rest = rest[:m_tail.start()] + rest[m_tail.end():]
 
     parse_copies_page_tail.__holes__ = holes
+    parse_copies_page_tail.__iter_select__ = iter_select
     parse_copies_page_tail.__copies_explicit__ = bool(copies_explicit)
     return copies, page_block, layout_block, marks_block
 
@@ -1557,10 +1564,33 @@ def parse_copies_page_tail(cell0):
 from dataclasses import dataclass
 from typing import Optional, List
 
+def parse_index_selector_1based(sel: str) -> List[int]:
+    """Parse selector body like '2 4..12 15..26' into 1-based integer indices."""
+    body = str(sel or '').strip()
+    if body.startswith('[') and body.endswith(']'):
+        body = body[1:-1].strip()
+    if not body:
+        return []
+    out: List[int] = []
+    toks = [t for t in re.split(r'[\s,]+', body) if t]
+    for t in toks:
+        m = re.match(r'^(\d+)\s*\.\.\s*(\d+)$', t)
+        if m:
+            a = int(m.group(1))
+            b = int(m.group(2))
+            step = 1 if b >= a else -1
+            out.extend(list(range(a, b + step, step)))
+            continue
+        if re.match(r'^\d+$', t):
+            out.append(int(t))
+            continue
+    return out
+
 @dataclass
 class DLeadingCell:
     copies: int
     holes: List[int]
+    iter_select: List[int] = field(default_factory=list)
     copies_explicit: bool = False
     page_block: Optional[str] = None   # texto "{A3 ...}" o None
     layout_block: Optional[str] = None # texto "L{ ... }" o "{ ... }" o None
@@ -1657,6 +1687,7 @@ def parse_marks_block(text: str) -> "MarksSpec":
 def parse_leading_cell(cell0) -> DLeadingCell:
     copies, page_block, layout_block, marks_block = parse_copies_page_tail(cell0)
     holes = getattr(parse_copies_page_tail, "__holes__", [])
+    iter_select = getattr(parse_copies_page_tail, "__iter_select__", [])
     copies_explicit = bool(getattr(parse_copies_page_tail, "__copies_explicit__", False))
     ps = None
     ls = None
@@ -1679,6 +1710,7 @@ def parse_leading_cell(cell0) -> DLeadingCell:
     return DLeadingCell(
         copies=int(copies or 1),
         holes=list(holes or []),
+        iter_select=list(iter_select or []),
         copies_explicit=copies_explicit,
         page_block=page_block,
         layout_block=layout_block,

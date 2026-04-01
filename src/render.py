@@ -1120,25 +1120,7 @@ def _parse_source_like_token(raw_token: str):
     return None, "", ""
 
 def _parse_index_selector_1based(sel: str) -> list:
-    """Parse selector body like '2 4..12 15..26' into 1-based integer indices."""
-    body = str(sel or "").strip()
-    if body.startswith("[") and body.endswith("]"):
-        body = body[1:-1].strip()
-    if not body:
-        return []
-    out = []
-    toks = [t for t in re.split(r"[\s,]+", body) if t]
-    for t in toks:
-        m = re.match(r"^(\d+)\s*\.\.\s*(\d+)$", t)
-        if m:
-            a = int(m.group(1)); b = int(m.group(2))
-            step = 1 if b >= a else -1
-            out.extend(list(range(a, b + step, step)))
-            continue
-        if re.match(r"^\d+$", t):
-            out.append(int(t))
-            continue
-    return out
+    return list(DSL.parse_index_selector_1based(sel) or [])
 
 def _select_1based_with_warning(items: list, selector: str, warn_tag: str) -> list:
     arr = list(items or [])
@@ -1885,6 +1867,7 @@ def render_phase(ctx):
     root = ctx.root
     SM = ctx.SM
     ss_registry = getattr(ctx, 'spritesheets', None)
+    doc_path = getattr(ctx, 'doc_path', None)
     ds_idx = ctx.ds_idx
     headers = ctx.headers
     rows_data = ctx.rows_data
@@ -2438,6 +2421,24 @@ def render_phase(ctx):
 
         for _row in (rows or []):
             row_list, has_iter = _expand_row_iterators(_row)
+            iter_select = _row.get('__dm_iter_select__', []) or []
+            if has_iter and iter_select:
+                idx_sel = []
+                if isinstance(iter_select, (list, tuple)):
+                    for _v in iter_select:
+                        try:
+                            idx_sel.append(int(_v))
+                        except Exception:
+                            pass
+                else:
+                    idx_sel = _parse_index_selector_1based(str(iter_select))
+                if idx_sel:
+                    row_list = [
+                        row_list[i1 - 1]
+                        for i1 in idx_sel
+                        if 1 <= int(i1) <= len(row_list)
+                    ]
+                has_iter = bool(row_list)
             n_iter = len(row_list) if has_iter else 1
             try:
                 copies_decl = int(_row.get('__dm_copies__', 1) or 1)
@@ -2532,6 +2533,11 @@ def render_phase(ctx):
             except Exception as ex:
                 _l.w(f"{warn_tag} deferred fit-anchor failed base='{base_id}' rect='{r_id}': {ex}")
         return _fa_remove_later
+
+    def _absolutize_instance_linked_images(inst_node):
+        if inst_node is None or not doc_path:
+            return
+        SVG.absolutize_all_linked_images(inst_node, doc_path)
     # --- end dedup helpers ---
 
     marks_current = getattr(ctx, 'header_marks_current', None)
@@ -2787,7 +2793,9 @@ def render_phase(ctx):
                                 break
                     except Exception:
                         pass
-                if _e is None or (not _is_rect_elem(_e)):
+                if _e is None:
+                    continue
+                if SVG.is_text_like(_e) or (_e.tag in TEXT_LIKE):
                     continue
                 base_rid = SVG.strip_pnp_suffix(_rid_eff)
                 if (_rid_eff in _keep) or (base_rid in _keep):
@@ -3127,6 +3135,7 @@ def render_phase(ctx):
         card_group = inkex.Group()
         inst_main = deepcopy(proto_root)
         _flatten_group_transform(inst_main)
+        _absolutize_instance_linked_images(inst_main)
         suffix_main = f"_pnp{next_n}"; next_n += 1
         SVG.uniquify_all_ids_in_scope(inst_main, suffix_main, root.get_unique_id)
         inst_jobs = []  # list of dicts: {node, use_jobs, fa_jobs, suffix, bbox_id}
@@ -3148,6 +3157,7 @@ def render_phase(ctx):
             if inst_ov is None:
                 continue
             _flatten_group_transform(inst_ov)
+            _absolutize_instance_linked_images(inst_ov)
             suffix_ov = f"_pnp{next_n}_t{ot_i}"; next_n += 1
             SVG.uniquify_all_ids_in_scope(inst_ov, suffix_ov, root.get_unique_id)
             inst_jobs.append({
@@ -3498,7 +3508,7 @@ def render_phase(ctx):
             except Exception:
                 pass
 
-        # Phase-1: hide rect anchors at the end of the row, unless any duplicate header for that base id used '+'.
+        # Phase-1: hide non-text anchors at the end of the row, unless any duplicate header for that base id used '+'.
         # This must happen AFTER all bbox measurements / placements.
         try:
             _keep = _P1_KEEP_SET if isinstance(_P1_KEEP_SET, set) else set()
@@ -3535,7 +3545,9 @@ def render_phase(ctx):
                                 _e = _cand
                                 _rid_eff = _cid
                                 break
-                    if _e is None or (not _is_rect_elem(_e)):
+                    if _e is None:
+                        continue
+                    if SVG.is_text_like(_e) or (_e.tag in TEXT_LIKE):
                         continue
                     base_rid = SVG.strip_pnp_suffix(_rid_eff)
                     if (_rid in _keep) or (base_rid in _keep):
@@ -3753,6 +3765,7 @@ def render_phase(ctx):
                     card_group = inkex.Group()
                     inst = deepcopy(tmpl_root)
                     _flatten_group_transform(inst)
+                    _absolutize_instance_linked_images(inst)
                     suffix = f"_pnp{next_n}_b{bt_i}"; next_n += 1
                     SVG.uniquify_all_ids_in_scope(inst, suffix, root.get_unique_id)
 

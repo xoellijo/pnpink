@@ -6,11 +6,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional, Tuple, List
-import json, hashlib, urllib.request, urllib.error, urllib.parse, ssl, os, re, sys
+import json, hashlib, urllib.parse, os, re, sys
 from pathlib import Path
 
 import log as LOG
 _l = LOG
+import net as NET
 
 
 @dataclass
@@ -148,35 +149,65 @@ class WebSources:
         k = hashlib.sha256(f"{query}|{size}".encode("utf-8")).hexdigest()
         return self.assets_dir / f"wkmc_{k}.json"
 
+    @staticmethod
+    def _wkmc_sort_candidates(cands: List[Tuple[str, int, int, int]], size: str) -> List[str]:
+        spec = WebSources._parse_size_spec(size)
+        if not cands:
+            return []
+        if spec.get("kind") == "vector":
+            return [c[0] for c in cands]
+
+        min_side_map = {
+            "tiny": 150,
+            "small": 640,
+            "medium": 960,
+            "large": 1280,
+            "xlarge": 1920,
+        }
+
+        min_w = 0
+        min_h = 0
+        min_side = 0
+        if spec.get("kind") == "min_box":
+            min_w = int(spec.get("min_w") or 0)
+            min_h = int(spec.get("min_h") or 0)
+        elif spec.get("kind") == "min_side":
+            min_side = int(spec.get("min_side") or 0)
+        elif spec.get("kind") == "preset":
+            p = str(spec.get("preset") or "medium")
+            if p == "largest":
+                return [c[0] for c in sorted(cands, key=lambda t: (max(t[1], t[2]), t[3]), reverse=True)]
+            min_side = int(min_side_map.get(p, 960))
+
+        def _meets(c: Tuple[str, int, int, int]) -> bool:
+            _u, w, h, _rank = c
+            if min_w > 0 and w > 0 and w < min_w:
+                return False
+            if min_h > 0 and h > 0 and h < min_h:
+                return False
+            if min_side > 0:
+                m = max(w, h)
+                if m > 0 and m < min_side:
+                    return False
+            return True
+
+        good = [c for c in cands if _meets(c)]
+        if good:
+            good = sorted(good, key=lambda t: ((max(t[1], t[2]) if (t[1] or t[2]) else 10**9), t[3]))
+            return [c[0] for c in good]
+        # Fallback: keep largest-first when nothing satisfies the requested minimum.
+        return [c[0] for c in sorted(cands, key=lambda t: (max(t[1], t[2]), t[3]), reverse=True)]
+
     def _wkmc_fetch_urls(self, query: str, size: str) -> List[str]:
         out: List[str] = []
+        cands: List[Tuple[str, int, int, int]] = []
         spec = WebSources._parse_size_spec(size)
         want_vector = (spec.get("kind") == "vector")
         req_w, req_h = self._wkmc_thumb_constraints(size)
         mode, qv = self._wkmc_query_mode(query)
         cont = None
         seen = set()
-        ssl_unverified = False
-
-        def _open_json(req: urllib.request.Request) -> dict:
-            nonlocal ssl_unverified
-            try:
-                if ssl_unverified:
-                    ctx = ssl._create_unverified_context()
-                    with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
-                        return json.loads(resp.read().decode("utf-8", errors="replace"))
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    return json.loads(resp.read().decode("utf-8", errors="replace"))
-            except Exception as ex:
-                msg = str(ex)
-                if (not ssl_unverified) and ("CERTIFICATE_VERIFY_FAILED" in msg):
-                    _l.w("[sources] wkmc SSL verify failed; retrying unverified TLS")
-                    ssl_unverified = True
-                    ctx = ssl._create_unverified_context()
-                    with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
-                        return json.loads(resp.read().decode("utf-8", errors="replace"))
-                raise
-
+        rank = 0
         for _ in range(0, 12):  # max 12 pages
             params = {
                 "action": "query",
@@ -214,8 +245,7 @@ class WebSources:
             # remove None
             params = {k: v for k, v in params.items() if v is not None}
             url = "https://commons.wikimedia.org/w/api.php?" + urllib.parse.urlencode(params)
-            req = urllib.request.Request(url, headers={"User-Agent": "PnPInk"})
-            data = _open_json(req)
+            data = NET.fetch_json(url, timeout=30, retries=4, log_prefix="[sources] wkmc")
             pages = ((data or {}).get("query") or {}).get("pages") or {}
             for _pid, pg in pages.items():
                 ii = (pg or {}).get("imageinfo") or []
@@ -229,13 +259,17 @@ class WebSources:
                 if url0 in seen:
                     continue
                 seen.add(url0)
-                out.append(url0)
+                w = self._parse_int(ii0.get("width"))
+                h = self._parse_int(ii0.get("height"))
+                cands.append((url0, w, h, rank))
+                rank += 1
             cobj = (data or {}).get("continue") or {}
             cont = cobj.get("gcmcontinue") if mode == "category" else cobj.get("gsroffset")
             if mode == "file":
                 cont = None
             if not cont:
                 break
+        out = self._wkmc_sort_candidates(cands, size)
         return out
 
     def resolve_wkmc_urls(self, expr: str) -> Optional[List[str]]:
@@ -409,28 +443,9 @@ class WebSources:
             _l.w("[sources] pxby: missing API key (set PNPINK_PIXABAY_KEY/PIXABAY_API_KEY or key file)")
             return []
         base = "https://pixabay.com/api/"
-        ssl_unverified = False
-
         def _call(params: dict) -> dict:
-            nonlocal ssl_unverified
             url = base + "?" + urllib.parse.urlencode(params)
-            req = urllib.request.Request(url, headers={"User-Agent": "PnPInk"})
-            try:
-                if ssl_unverified:
-                    ctx = ssl._create_unverified_context()
-                    with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
-                        return json.loads(resp.read().decode("utf-8", errors="replace"))
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    return json.loads(resp.read().decode("utf-8", errors="replace"))
-            except Exception as ex:
-                msg = str(ex)
-                if (not ssl_unverified) and ("CERTIFICATE_VERIFY_FAILED" in msg):
-                    _l.w("[sources] pxby SSL verify failed; retrying unverified TLS")
-                    ssl_unverified = True
-                    ctx = ssl._create_unverified_context()
-                    with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
-                        return json.loads(resp.read().decode("utf-8", errors="replace"))
-                raise
+            return NET.fetch_json(url, timeout=30, retries=4, log_prefix="[sources] pxby")
 
         # Direct access: no spaces
         if not re.search(r"\s", query):
@@ -613,27 +628,8 @@ class WebSources:
     def _oclp_fetch_urls(self, query: str, size: str) -> List[str]:
         out: List[str] = []
         seen = set()
-        ssl_unverified = False
-
         def _call_json(url: str) -> dict:
-            nonlocal ssl_unverified
-            req = urllib.request.Request(url, headers={"User-Agent": "PnPInk"})
-            try:
-                if ssl_unverified:
-                    ctx = ssl._create_unverified_context()
-                    with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
-                        return json.loads(resp.read().decode("utf-8", errors="replace"))
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    return json.loads(resp.read().decode("utf-8", errors="replace"))
-            except Exception as ex:
-                msg = str(ex)
-                if (not ssl_unverified) and ("CERTIFICATE_VERIFY_FAILED" in msg):
-                    _l.w("[sources] oclp SSL verify failed; retrying unverified TLS")
-                    ssl_unverified = True
-                    ctx = ssl._create_unverified_context()
-                    with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
-                        return json.loads(resp.read().decode("utf-8", errors="replace"))
-                raise
+            return NET.fetch_json(url, timeout=30, retries=4, log_prefix="[sources] oclp")
 
         # Specific item by id (id:123, 123, or detail URL).
         qid = self._oclp_extract_id(query)

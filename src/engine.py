@@ -61,6 +61,10 @@ def run(self, __version__):
     except Exception:
         _doc_path = None
 
+    fixed_imgs = SVG.absolutize_all_linked_images(root, _doc_path)
+    if fixed_imgs:
+        _l.i(f"[images] absolutized linked images: {fixed_imgs}")
+
     SVG.fix_all_paths(root)
 
     # SourceManager is created after reading dataset directives (_DM_*), so it can
@@ -1444,6 +1448,7 @@ def run(self, __version__):
             SM=SM, datasets=datasets, ds_idx=ds_idx, ds_meta=ds_meta, headers=headers, rows_data=rows_data,
             use_seq=use_seq, next_n=next_n, placed_total=placed_total, start_page_index=start_page_index,
             planner=planner, proto_root=proto_root, out_layer=out_layer,
+            doc_path=_doc_path,
             declared_bbox_id=declared_bbox_id,
             overlay_templates=overlay_templates,
             back_templates=back_templates,
@@ -1476,5 +1481,9 @@ def run(self, __version__):
     except Exception as ex:
         _l.w(f"[deckmaker.text] inline_icons ONE-PASS failed: {ex}")
         _l.w("[deckmaker.text] traceback:\n" + _tb.format_exc())
+
+    fixed_imgs_end = SVG.absolutize_all_linked_images(root, _doc_path)
+    if fixed_imgs_end:
+        _l.i(f"[images] final absolutize linked images: {fixed_imgs_end}")
 
     _l.s("END DeckMaker")

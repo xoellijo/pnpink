@@ -345,6 +345,7 @@ LAYER_LABELS = {"root":"DeckMaker","cards":"Cards","guides":"Guides"}
 
 XLINK_HREF  = inkex.addNS('href','xlink')
 SODI_ABSREF = inkex.addNS('absref','sodipodi')
+_WINDOWS_HOME_DIR_ANCHORS = {"Documents", "Downloads", "Desktop", "Pictures", "Music", "Videos"}
 
 def get_href(node):
     """Return href value for <use>/<image> etc., preferring xlink:href but accepting href."""
@@ -946,6 +947,16 @@ BBox = namedtuple("BBox", "left top width height")
 def _write_temp_svg(tree: etree._ElementTree) -> str:
     path = tempfile.mktemp(suffix=".svg")
     etree.register_namespace("xlink", NSS.get('xlink', getattr(CONST,'NS_XLINK','http://www.w3.org/1999/xlink')))
+    try:
+        # Temp query SVGs live outside the original document folder, so relative linked
+        # images can stop resolving there even if they work in the source SVG. Re-absolutize
+        # using any existing sodipodi:absref / absolute href we already carry in the tree.
+        absolutize_all_linked_images(tree, None)
+    except Exception as ex:
+        try:
+            _l.w(f"[_write_temp_svg] absolutize linked images failed: {ex}")
+        except Exception:
+            pass
     tree.write(path, pretty_print=False, xml_declaration=True, encoding="UTF-8")
     return path
 
@@ -1195,6 +1206,14 @@ def _resolve_image_path(href: str|None, absref: str|None, svg_real_path: str|Non
         if rel:
             guess = (b/rel).resolve()
             if guess.is_file(): return guess
+    if rel and os.name == "nt":
+        parts = list(rel.parts)
+        home = Path.home()
+        for i, part in enumerate(parts):
+            if part in _WINDOWS_HOME_DIR_ANCHORS:
+                guess = (home / Path(*parts[i:])).resolve()
+                if guess.is_file():
+                    return guess
     return None
 
 def absolutize_all_linked_images(svgdoc, svg_real_path: str|None, *,

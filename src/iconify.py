@@ -29,6 +29,7 @@ import prefs
 import svg as SVG
 import log as LOG
 _l = LOG
+import net as NET
 
 try:
     import urllib3
@@ -54,20 +55,25 @@ def url_svg(prefix: str, name: str) -> str:
     return f"{API_BASE}/{prefix}/{name}.svg"
 
 def _http_get(url: str, *, session: Optional[requests.Session] = None, timeout_s: int = 15) -> requests.Response:
-    s = session or requests.Session()
     try:
-        return s.get(url, timeout=timeout_s)
+        return NET.requests_get(url, session=session, timeout=timeout_s, retries=4, log_prefix="[iconify]")
     except requests.exceptions.SSLError:
-        # CA store roto en algunos bundles -> fallback
+        # Keep old warning-suppression behavior for requests/urllib3 users.
         _suppress_insecure_request_warnings_once()
-        return s.get(url, timeout=timeout_s, verify=False)
+        return NET.requests_get(url, session=session, timeout=timeout_s, retries=4, verify=False, log_prefix="[iconify]")
 
 def open_url_bytes(url: str, *, session: Optional[requests.Session] = None, timeout_s: int = 15) -> bytes:
     r = _http_get(url, session=session, timeout_s=timeout_s)
-    content = r.content or b""
-    if r.status_code != 200:
-        raise requests.HTTPError(f"HTTP {r.status_code}", response=r)
-    return content
+    try:
+        content = r.content or b""
+        if r.status_code != 200:
+            raise requests.HTTPError(f"HTTP {r.status_code}", response=r)
+        return content
+    finally:
+        try:
+            r.close()
+        except Exception:
+            pass
 
 def _parse_svg_document(svg_text: str):
     # Parse full <svg ...> document

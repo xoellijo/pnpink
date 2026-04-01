@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 # [2026-02-18 | v0.20+] Align comment semantics with documented rules.
 # [2026-02-16 | v0.20+] Header '#' and '##' column disabling semantics added.
-import os, re, csv, io, ssl
+import os, re, csv, io
 import urllib.parse
-import urllib.request
 
 import log as LOG
 _l = LOG
@@ -11,6 +10,7 @@ import gsheets_client_pkce as GS
 _gs = GS
 from typing import List, Optional, Tuple
 import dataset_state as DSTATE
+import net as NET
 
 import inkex
 import dsl as DSL
@@ -222,6 +222,7 @@ def _matrix_to_datasets(matrix):
 
         copies = 1
         holes = []
+        iter_select = []
         page_preset = None
         layout_tail = None
         marks_tail = None
@@ -229,6 +230,7 @@ def _matrix_to_datasets(matrix):
         if lead is not None:
             copies = int(getattr(lead, "copies", 1) or 1)
             holes = list(getattr(lead, "holes", []) or [])
+            iter_select = list(getattr(lead, "iter_select", []) or [])
             page_preset = getattr(lead, "page_block", None)
             layout_tail = getattr(lead, "layout_block", None)
             marks_tail = getattr(lead, "marks_block", None)
@@ -242,8 +244,8 @@ def _matrix_to_datasets(matrix):
                     _l.w(f"dataset.row_cell0: ignoring invalid page block '{page_preset}'")
                     page_preset = None
 
-        _l.d(f"dataset.row_cell0='{lead_text}' → copies={copies} explicit={copies_explicit} page={page_preset} L={layout_tail} M={marks_tail}")
-        return copies, copies_explicit, holes, page_preset, layout_tail, marks_tail
+        _l.d(f"dataset.row_cell0='{lead_text}' → copies={copies} explicit={copies_explicit} select={iter_select} page={page_preset} L={layout_tail} M={marks_tail}")
+        return copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail
 
     # --- Pre-scan to detect any explicit marker rows {{...}} in column A ---
     has_markers = False
@@ -367,7 +369,7 @@ def _matrix_to_datasets(matrix):
                 cells[j] = _strip_cell_trailing_comment(cells[j], enable=True, marker="##")
 
             lead_text = cells[0]
-            copies, copies_explicit, holes, page_preset, layout_tail, marks_tail = _parse_lead_to_meta(lead_text)
+            copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail = _parse_lead_to_meta(lead_text)
             if copies <= 0:
                 _l.i("row skipped due to copies <= 0")
                 continue
@@ -377,6 +379,7 @@ def _matrix_to_datasets(matrix):
             base["__dm_copies__"] = copies
             base["__dm_copies_explicit__"] = bool(copies_explicit)
             base["__dm_holes__"] = holes
+            base["__dm_iter_select__"] = iter_select
             if page_preset:
                 base["__dm_page__"] = page_preset
             if layout_tail:
@@ -492,7 +495,7 @@ def _matrix_to_datasets(matrix):
             cells[j] = _strip_cell_trailing_comment(cells[j], enable=True, marker="##")
 
         lead_text = cells[0]
-        copies, copies_explicit, holes, page_preset, layout_tail, marks_tail = _parse_lead_to_meta(lead_text)
+        copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail = _parse_lead_to_meta(lead_text)
         if copies <= 0:
             _l.i("row skipped due to copies <= 0")
             continue
@@ -502,6 +505,7 @@ def _matrix_to_datasets(matrix):
         base["__dm_copies__"] = copies
         base["__dm_copies_explicit__"] = bool(copies_explicit)
         base["__dm_holes__"] = holes
+        base["__dm_iter_select__"] = iter_select
         if page_preset:
             base["__dm_page__"] = page_preset
         if layout_tail:
@@ -637,24 +641,18 @@ def _fetch_gsheet_matrix_public(effect, sheet_id: str, selector: Optional[str]) 
 
     for u in urls:
         try:
-            req = urllib.request.Request(
+            raw, _hdrs, _status = NET.fetch_text(
                 u,
                 headers={
                     "User-Agent": "PnPInk/gsheet-public",
                     "Accept": "text/csv,*/*;q=0.8",
                 },
+                timeout=12,
+                retries=3,
+                encoding="utf-8-sig",
+                errors="replace",
+                log_prefix="[datasets] gsheet public",
             )
-            try:
-                with urllib.request.urlopen(req, timeout=12) as resp:
-                    raw = resp.read().decode("utf-8-sig", errors="replace")
-            except Exception as ex0:
-                msg = str(ex0)
-                if "CERTIFICATE_VERIFY_FAILED" not in msg:
-                    raise
-                _l.w("[datasets] gsheet public SSL verify failed; retrying unverified TLS")
-                ctx = ssl._create_unverified_context()
-                with urllib.request.urlopen(req, timeout=12, context=ctx) as resp:
-                    raw = resp.read().decode("utf-8-sig", errors="replace")
             rows = list(csv.reader(io.StringIO(raw), delimiter=","))
             matrix = [[("" if v is None else str(v)) for v in r] for r in rows]
             if not matrix:
