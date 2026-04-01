@@ -230,7 +230,7 @@ def _matrix_to_datasets(matrix):
         if lead is not None:
             copies = int(getattr(lead, "copies", 1) or 1)
             holes = list(getattr(lead, "holes", []) or [])
-            iter_select = list(getattr(lead, "iter_select", []) or [])
+            iter_select = getattr(lead, "iter_select_raw", None) or list(getattr(lead, "iter_select", []) or [])
             page_preset = getattr(lead, "page_block", None)
             layout_tail = getattr(lead, "layout_block", None)
             marks_tail = getattr(lead, "marks_block", None)

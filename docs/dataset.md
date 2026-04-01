@@ -175,16 +175,38 @@ Column A in data rows can carry row-level DSL:
 - `M{...}` marks tail
 - trailing copies number
 - optional hole patterns in `[...]`
+- optional iterator selection in `[...]` when using numeric ranges like `1..5 7..100`
 
 Examples:
 
 ```txt
 {A4 b=[-5]} L{p=3x3 g=2} M{mk_cut} 2
 [3 - 2-]            -> 3 copies, then 1 hole, then 2 holes
+[1..5 7..100]       -> keep iterator items 1..5 and 7..100 (skip 6)
+[1..4 3- 7..9]      -> keep 1..4, then 3 holes, then keep 7..9
 ```
+
+Hole syntax in the final `[...]`:
+
+- `-` = 1 hole after the current copy count
+- `N-` = `N` holes after the current copy count
+- plain numbers add copies before later holes are placed
+
+Examples:
+
+```txt
+[3 - 2-]    -> 3 copies, then 1 hole, then 2 more holes
+[2 3- 5]    -> 2 copies, then 3 holes, then 5 more copies
+```
+
+When the final `[...]` contains numeric ranges (`..`), it filters row iterators (`*[...]`).
+Hole markers (`-`, `N-`) can still be mixed in the same block and are applied after the accumulated selected run.
 
 This cell is **not** a normal dataset field; it controls row-level layout/flow.
 Its directives apply before regular field replacements in that row.
+
+For the full sequencing rules of column A with iterators, copies, holes, reordering and `?`,
+see [Iterators](dsl/iterators.md), section **Row Sequencing from Column A**.
 
 If a row uses only column-A controls and all payload cells (columns B+) are empty,
 PnPInk applies the controls but does **not** generate a card/instance for that row.

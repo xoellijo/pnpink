@@ -121,21 +121,178 @@ Current parser supports iterator payloads such as:
 
 If an iterator resolves to zero values, that row yields zero generated instances.
 
-## Copies in Column A (Card Quantity)
-Column A can declare explicit quantity (copies) for a row.
-With iterators, behavior is:
+## Row Sequencing from Column A
+Column A can control the final sequence of generated cards for a row.
+This is broader than just "number of cards": it can skip execution, set a fixed count,
+filter iterator positions, reorder them, and insert empty slots.
 
-1. No explicit copies in column A:
-   Iterator count defines card count.
-2. Explicit copies in column A and copies > iterator count:
-   Iterator values wrap around.
-3. Explicit copies in column A and copies < iterator count:
-   Iterator sequence is truncated.
+Think of the pipeline like this:
 
-This gives predictable control when you need either:
+1. Expand row iterators (`*[...]`, `**[...]`, source iterators, etc.).
+2. Apply any selector written in the final column-A `[...]`.
+3. Apply explicit copies if present.
+4. Insert holes after the selected/generated sequence positions.
 
-- one card per iterator value,
-- or a fixed number of cards regardless of iterator length.
+### Default behavior
+If column A does not specify copies:
+
+- without iterators: the row generates `1` card
+- with iterators: the row generates the full iterator length
+
+Examples:
+
+```txt
+Column A: <empty>
+art = icon_fire
+```
+
+Interpretation: one card.
+
+```txt
+Column A: <empty>
+art = *[A B C]
+```
+
+Interpretation: three cards -> `A`, `B`, `C`.
+
+### `0` means "do not generate this row"
+If column A resolves to `0` copies, the row is skipped completely.
+
+```txt
+Column A: 0
+art = *[A B C]
+```
+
+Interpretation: no cards are generated from that row.
+
+### Explicit copies
+Column A can declare an explicit quantity.
+
+With iterators:
+
+1. If copies > iterator length, values wrap around.
+2. If copies < iterator length, the sequence is truncated.
+
+Examples:
+
+```txt
+Column A: 5
+art = *[A B C]
+```
+
+Interpretation: `A, B, C, A, B`.
+
+```txt
+Column A: 2
+art = *[A B C]
+```
+
+Interpretation: `A, B`.
+
+### Selector syntax in the final `[...]`
+The final bracket block in column A can select iterator positions explicitly.
+
+Examples:
+
+```txt
+[1..5 7..100]
+```
+
+Interpretation:
+- keep `1,2,3,4,5`
+- skip `6`
+- then keep `7..100`
+
+```txt
+[3..1 4..5]
+```
+
+Interpretation:
+- reorder the beginning as `3,2,1`
+- then continue with `4,5`
+
+This selector is applied to the expanded iterator sequence before copy wrapping/truncation.
+
+### Unknown end: `?`
+Use `?` to mean "the final iterator position calculated by PnPInk".
+
+Examples:
+
+```txt
+[13..?]
+```
+
+Interpretation: keep from `13` to the last iterator item.
+
+```txt
+[?..12]
+```
+
+Interpretation: keep from the last iterator item down to `12`, in reverse order.
+
+### Empty slots (holes)
+Hole syntax uses:
+
+- `-` = 1 empty slot
+- `N-` = `N` empty slots
+
+Holes are inserted **after the accumulated generated run at that point**.
+
+Examples:
+
+```txt
+[3 - 2-]
+```
+
+Interpretation:
+- generate 3 cards
+- then insert 1 empty slot
+- then insert 2 more empty slots
+
+```txt
+[2 3- 5]
+```
+
+Interpretation:
+- generate 2 cards
+- insert 3 empty slots
+- then generate 5 more cards
+
+### Mixing selection, reordering and holes
+Selection and holes can be mixed in the same final `[...]`.
+
+Examples:
+
+```txt
+[1..4 3- 7..9]
+```
+
+Interpretation:
+- keep iterator items `1,2,3,4`
+- insert 3 empty slots
+- keep iterator items `7,8,9`
+
+```txt
+[3..1 2- 4..5 7..9 ?..12]
+```
+
+Interpretation:
+- reorder the first block as `3,2,1`
+- insert 2 empty slots
+- keep `4,5`
+- keep `7,8,9`
+- then append from the last item down to `12`
+
+### Practical summary
+Column A can therefore be used to:
+
+- leave default generation untouched
+- skip a row with `0`
+- force a fixed number of copies
+- skip parts of an iterator sequence
+- reorder iterator positions
+- refer to the unknown end with `?`
+- insert empty slots between selected/generated runs
 
 ## Examples
 ### One card with grouped IDs

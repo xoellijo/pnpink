@@ -1119,12 +1119,12 @@ def _parse_source_like_token(raw_token: str):
         return src_val, ops, ("@file" if (m_local.group("sigil") or "") else "file")
     return None, "", ""
 
-def _parse_index_selector_1based(sel: str) -> list:
-    return list(DSL.parse_index_selector_1based(sel) or [])
+def _parse_index_selector_1based(sel: str, size: int | None = None) -> list:
+    return list(DSL.parse_index_selector_1based(sel, size=size) or [])
 
 def _select_1based_with_warning(items: list, selector: str, warn_tag: str) -> list:
     arr = list(items or [])
-    idxs = _parse_index_selector_1based(selector)
+    idxs = _parse_index_selector_1based(selector, size=len(arr))
     if not idxs:
         return arr
     out = []
@@ -2431,7 +2431,7 @@ def render_phase(ctx):
                         except Exception:
                             pass
                 else:
-                    idx_sel = _parse_index_selector_1based(str(iter_select))
+                    idx_sel = _parse_index_selector_1based(str(iter_select), size=len(row_list))
                 if idx_sel:
                     row_list = [
                         row_list[i1 - 1]
@@ -2439,6 +2439,24 @@ def render_phase(ctx):
                         if 1 <= int(i1) <= len(row_list)
                     ]
                 has_iter = bool(row_list)
+            holes_list = []
+            _holes_raw = _row.get('__dm_holes__', []) or []
+            if isinstance(_holes_raw, (list, tuple)):
+                for _h in _holes_raw:
+                    try:
+                        holes_list.append(int(_h))
+                    except Exception:
+                        pass
+            elif isinstance(_holes_raw, str):
+                try:
+                    holes_list = [int(n) for n in re.findall(r"\d+", _holes_raw)]
+                except Exception:
+                    holes_list = []
+            else:
+                try:
+                    holes_list = [int(_holes_raw)]
+                except Exception:
+                    holes_list = []
             n_iter = len(row_list) if has_iter else 1
             try:
                 copies_decl = int(_row.get('__dm_copies__', 1) or 1)
@@ -2455,6 +2473,8 @@ def render_phase(ctx):
                 if isinstance(r.get('cells'), list):
                     r['cells'] = list(r.get('cells') or [])
                 r['_i'] = _i
+                if holes_list:
+                    r['__dm_holes_after__'] = int(holes_list.count(_i + 1))
                 if _i > 0 and '__dm_page__' in r:
                     r['__dm_page__'] = ''  # copias no repiten page
                 yield r
@@ -3603,7 +3623,9 @@ def render_phase(ctx):
         try:
             holes = _coerce_holes(row.get('__dm_holes__', []) or [])
             cur_copy_idx = int(row.get('_i', 0) or 0) + 1
-            n_extra = holes.count(cur_copy_idx) if holes else 0
+            n_extra = int(row.get('__dm_holes_after__', 0) or 0)
+            if n_extra <= 0:
+                n_extra = holes.count(cur_copy_idx) if holes else 0
             if n_extra > 0:
                 for _ in range(n_extra):
                     planner.commit_slot()

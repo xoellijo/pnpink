@@ -1488,6 +1488,7 @@ def parse_copies_page_tail(cell0):
     layout_block = None
     marks_block = None
     iter_select: List[int] = []
+    iter_select_raw = None
     rest = s
 
     # { ... } block (page / breaks)
@@ -1501,6 +1502,8 @@ def parse_copies_page_tail(cell0):
     #   - plain number "N" adds cards
     #   - "H-" adds H empty slots after the current accumulated copy
     #   - "-" (or "---") adds 1 (or many) empty slots
+    #   - when ranges are present ("A..B"), numbers/ranges select iterator
+    #     positions and hole markers still apply after the accumulated selected run
     holes: List[int] = []
     # IMPORTANT: capture only the *final* flat bracket block, so we do not
     # accidentally consume bracket lists from Layout/Page tails (e.g. g=[...], o=[...]).
@@ -1509,7 +1512,33 @@ def parse_copies_page_tail(cell0):
         seq_body = m_seq.group(1).strip()
         toks = [t for t in re.split(r"[\s,]+", seq_body) if t]
         if any(".." in t for t in toks):
-            iter_select = parse_index_selector_1based(seq_body)
+            iter_select_raw = seq_body
+            run = 0
+            for t in toks:
+                if re.fullmatch(r"-+", t):
+                    if run > 0:
+                        for _ in range(len(t)):
+                            holes.append(run)
+                    continue
+                m_h = re.fullmatch(r"(\d+)-", t)
+                if m_h:
+                    if run > 0:
+                        n_holes = int(m_h.group(1))
+                        for _ in range(max(0, n_holes)):
+                            holes.append(run)
+                    continue
+                m_r = re.fullmatch(r"(\d+)\s*\.\.\s*(\d+)", t)
+                if m_r:
+                    a = int(m_r.group(1))
+                    b = int(m_r.group(2))
+                    step = 1 if b >= a else -1
+                    seq = list(range(a, b + step, step))
+                    iter_select.extend(seq)
+                    run += len(seq)
+                    continue
+                if t.isdigit():
+                    iter_select.append(int(t))
+                    run += 1
         else:
             run = 0
             for t in toks:
@@ -1557,6 +1586,7 @@ def parse_copies_page_tail(cell0):
 
     parse_copies_page_tail.__holes__ = holes
     parse_copies_page_tail.__iter_select__ = iter_select
+    parse_copies_page_tail.__iter_select_raw__ = iter_select_raw
     parse_copies_page_tail.__copies_explicit__ = bool(copies_explicit)
     return copies, page_block, layout_block, marks_block
 
@@ -1564,25 +1594,37 @@ def parse_copies_page_tail(cell0):
 from dataclasses import dataclass
 from typing import Optional, List
 
-def parse_index_selector_1based(sel: str) -> List[int]:
-    """Parse selector body like '2 4..12 15..26' into 1-based integer indices."""
+def parse_index_selector_1based(sel: str, size: Optional[int] = None) -> List[int]:
+    """Parse selector body like '2 4..12 15..?' into 1-based integer indices."""
     body = str(sel or '').strip()
     if body.startswith('[') and body.endswith(']'):
         body = body[1:-1].strip()
     if not body:
         return []
     out: List[int] = []
+
+    def _parse_endpoint(tok: str):
+        t = str(tok or "").strip().lower()
+        if t == "?":
+            return int(size) if size is not None else None
+        if re.match(r'^\d+$', t):
+            return int(t)
+        return None
+
     toks = [t for t in re.split(r'[\s,]+', body) if t]
     for t in toks:
-        m = re.match(r'^(\d+)\s*\.\.\s*(\d+)$', t)
+        m = re.match(r'^([A-Za-z0-9?]+)\s*\.\.\s*([A-Za-z0-9?]+)$', t)
         if m:
-            a = int(m.group(1))
-            b = int(m.group(2))
+            a = _parse_endpoint(m.group(1))
+            b = _parse_endpoint(m.group(2))
+            if a is None or b is None:
+                continue
             step = 1 if b >= a else -1
             out.extend(list(range(a, b + step, step)))
             continue
-        if re.match(r'^\d+$', t):
-            out.append(int(t))
+        v = _parse_endpoint(t)
+        if v is not None:
+            out.append(v)
             continue
     return out
 
@@ -1591,6 +1633,7 @@ class DLeadingCell:
     copies: int
     holes: List[int]
     iter_select: List[int] = field(default_factory=list)
+    iter_select_raw: Optional[str] = None
     copies_explicit: bool = False
     page_block: Optional[str] = None   # texto "{A3 ...}" o None
     layout_block: Optional[str] = None # texto "L{ ... }" o "{ ... }" o None
@@ -1688,6 +1731,7 @@ def parse_leading_cell(cell0) -> DLeadingCell:
     copies, page_block, layout_block, marks_block = parse_copies_page_tail(cell0)
     holes = getattr(parse_copies_page_tail, "__holes__", [])
     iter_select = getattr(parse_copies_page_tail, "__iter_select__", [])
+    iter_select_raw = getattr(parse_copies_page_tail, "__iter_select_raw__", None)
     copies_explicit = bool(getattr(parse_copies_page_tail, "__copies_explicit__", False))
     ps = None
     ls = None
@@ -1711,6 +1755,7 @@ def parse_leading_cell(cell0) -> DLeadingCell:
         copies=int(copies or 1),
         holes=list(holes or []),
         iter_select=list(iter_select or []),
+        iter_select_raw=(str(iter_select_raw).strip() if iter_select_raw else None),
         copies_explicit=copies_explicit,
         page_block=page_block,
         layout_block=layout_block,
