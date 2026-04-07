@@ -113,11 +113,11 @@ class MarksSpec:
     """Marks{} / M{} specification.
 
     Dev note:
-      - The default parameter is the style id (s=...).
+      - The style template is selected with t=...
       - b and d reuse the same list grammar as Page/Fit border: 1/2/3/4 tokens.
       - Rendering is slot-based (per placed instance).
     """
-    style: Optional[str] = None   # s
+    style: Optional[str] = None   # t
     layer: Optional[str] = None   # target layer label
     # b: bbox inset/outset tokens (default 0). Negative values move marks inward.
     b: Optional[List[str]] = None
@@ -1667,7 +1667,7 @@ def parse_marks_block(text: str) -> "MarksSpec":
       - "{ ... }"  (internal use)
 
     Notes:
-      - Default parameter is the style id: ".M{ mk_style d=0 }" => s=mk_style
+      - Style template is declared with t=style_id.
       - b/d use the same list grammar as border in Page/Fit (no new ad-hoc parsing).
     """
     s = (text or "").strip()
@@ -1682,19 +1682,8 @@ def parse_marks_block(text: str) -> "MarksSpec":
 
     ms = MarksSpec()
 
-    # default parameter: style id
-    # Our brace-dict parser treats bare tokens as {token: True}.
-    # For Marks{}, the first bare token is the style id unless s=... is provided.
-    if args.get("s") is None:
-        for k, v in list(args.items()):
-            if v is True and k not in ("b", "d", "layer", "len", "l", "length", "lengh"):
-                ms.style = str(k)
-                # remove it so it doesn't accidentally look like an unknown key later
-                del args[k]
-                break
-
-    if args.get("s") is not None:
-        ms.style = str(args.get("s") or "") or None
+    if args.get("t") is not None:
+        ms.style = str(args.get("t") or "") or None
     if args.get("layer") is not None:
         ms.layer = str(args.get("layer") or "") or None
 

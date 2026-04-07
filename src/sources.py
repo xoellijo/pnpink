@@ -245,6 +245,9 @@ def _build_key_for_pxby(expr: str) -> SourceKey:
 def _build_key_for_oclp(expr: str) -> SourceKey:
     return SourceKey(scheme="oclp", path=(expr or "").strip(), mtime=0.0)
 
+def _build_key_for_osm(expr: str) -> SourceKey:
+    return SourceKey(scheme="osm", path=(expr or "").strip(), mtime=0.0)
+
 
 def _is_missing_ref(ref: Optional[SourceRef]) -> bool:
     try:
@@ -527,6 +530,9 @@ class SourceManager:
     def resolve_oclp_urls(self, expr: str) -> Optional[List[str]]:
         return self.web.resolve_oclp_urls(expr)
 
+    def resolve_osm_urls(self, expr: str) -> Optional[List[str]]:
+        return self.web.resolve_osm_urls(expr)
+
     def _register_first_valid_web_candidate(self, urls: List[str], *, hint_type: Optional[str], dpi=None,
                                             fragment: str = "", page: int = 0,
                                             log_prefix: str = "[sources] web") -> Optional[SourceRef]:
@@ -605,6 +611,12 @@ class SourceManager:
             _l.i(f"[sources] web cached -> {out.name}")
             return out.resolve()
         except Exception as ex:
+            u0 = str(url or "").strip().lower()
+            if ("render.openstreetmap.org/cgi-bin/export" in u0) and ("HTTP Error 400" in str(ex or "")):
+                _l.w(
+                    "[sources] OSM export rejected the request. "
+                    "The official export endpoint is a hidden API and may require a valid token and/or stricter bbox/scale."
+                )
             _l.w(f"[sources] web download failed '{url}': {ex}")
             return None
 
@@ -883,6 +895,42 @@ class SourceManager:
                 sid, wh = _make_placeholder_symbol(self.defs, raw, "oclp no valid candidate")
                 return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
             self._cache[key_o] = ref
+            return ref
+
+        # OpenStreetMap virtual source (single SVG export URL).
+        if raw.lower().startswith("osm://"):
+            key_m = _build_key_for_osm(raw if not fragment else f"{raw}#{fragment}")
+            if key_m in self._cache:
+                self._cache_hits += 1
+                return self._cache[key_m]
+            self._cache_misses += 1
+            urls = self.resolve_osm_urls(raw) or []
+            if not urls:
+                sid, wh = _make_placeholder_symbol(self.defs, raw, "osm no results")
+                return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
+            ref = None
+            total = len(urls or [])
+            for idx, cand in enumerate([str(x).strip() for x in urls if str(x or "").strip()], start=1):
+                try:
+                    p = Path(_expand_user_env(cand))
+                    if p.is_file() and _is_svg_path(p):
+                        ref0 = self._create_symbol_from_svg_document_path(p)
+                    else:
+                        ref0 = self.register(cand, hint_type=hint_type, dpi=dpi, fragment=fragment, page=page)
+                except Exception as ex:
+                    _l.w(f"[sources] osm candidate {idx}/{total} failed: {ex}")
+                    continue
+                if _is_missing_ref(ref0):
+                    _l.w(f"[sources] osm candidate {idx}/{total} failed -> placeholder")
+                    continue
+                ref = ref0
+                if idx > 1:
+                    _l.i(f"[sources] osm candidate {idx}/{total} selected")
+                break
+            if ref is None:
+                sid, wh = _make_placeholder_symbol(self.defs, raw, "osm no valid candidate")
+                return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
+            self._cache[key_m] = ref
             return ref
 
         # a) data: URI
@@ -1176,6 +1224,89 @@ class SourceManager:
         return SourceRef(symbol_id=sid, content_type="svg", intrinsic_box=(float(w), float(h)),
                         preserve_aspect="xMidYMid meet", canonical_key=None)
 
+    def _create_symbol_from_svg_document_path(self, abspath: Path) -> SourceRef:
+        try:
+            if str(abspath).lower().endswith(".svgz"):
+                with gzip.open(str(abspath), "rb") as f:
+                    src_root = SVG.etree.fromstring(f.read())
+            else:
+                src_root = SVG.etree.parse(str(abspath)).getroot()
+        except Exception as ex:
+            sid, wh = _make_placeholder_symbol(self.defs, str(abspath), f"svg parse failed: {ex}")
+            return SourceRef(symbol_id=sid, content_type="svg", intrinsic_box=wh, canonical_key=None)
+
+        dep_copies: List[object] = []
+        body_copies: List[object] = []
+        for child in list(src_root):
+            ln = self._local_name(getattr(child, "tag", "")).lower()
+            if ln == "defs":
+                for sub in list(child):
+                    dep_copies.append(deepcopy(sub))
+            else:
+                body_copies.append(deepcopy(child))
+
+        id_map: Dict[str, str] = {}
+        for n in dep_copies + body_copies:
+            for el in n.iter():
+                oid = str(el.get("id") or "").strip()
+                if not oid:
+                    continue
+                if oid not in id_map:
+                    try:
+                        id_map[oid] = self.root.get_unique_id(f"srcimp_{oid}")
+                    except Exception:
+                        id_map[oid] = _unique_symbol_id(self.defs, "srcimp_")
+        for n in dep_copies + body_copies:
+            for el in n.iter():
+                oid = str(el.get("id") or "").strip()
+                if oid and oid in id_map:
+                    el.set("id", id_map[oid])
+            self._rewrite_id_refs_in_subtree(n, id_map)
+
+        sid = _unique_symbol_id(self.defs, "src_")
+        sym = SVG.etree.SubElement(self.defs, inkex.addNS('symbol', 'svg'))
+        sym.set('id', sid)
+        if dep_copies:
+            d = SVG.etree.SubElement(sym, inkex.addNS('defs', 'svg'))
+            for dep in dep_copies:
+                d.append(dep)
+        wrapper = SVG.etree.SubElement(sym, inkex.addNS('g', 'svg'))
+        for k, v in dict(src_root.attrib or {}).items():
+            kl = str(k).lower()
+            if kl in ("id", "width", "height", "viewbox"):
+                continue
+            try:
+                wrapper.set(k, v)
+            except Exception:
+                pass
+        for node in body_copies:
+            wrapper.append(node)
+
+        w = h = 0.0
+        try:
+            vb = str(src_root.get("viewBox") or "").strip()
+            nums = [float(x) for x in vb.replace(",", " ").split() if x.strip()]
+            if len(nums) == 4 and nums[2] > 0 and nums[3] > 0:
+                sym.set("viewBox", f"{nums[0]} {nums[1]} {nums[2]} {nums[3]}")
+                w, h = float(nums[2]), float(nums[3])
+        except Exception:
+            pass
+        if w <= 0 or h <= 0:
+            try:
+                bx, by, bw, bh = SVG.visual_bbox(wrapper)
+                if bw > 0 and bh > 0:
+                    sym.set("viewBox", f"{bx} {by} {bw} {bh}")
+                    w, h = float(bw), float(bh)
+            except Exception:
+                pass
+        if w <= 0 or h <= 0:
+            w, h = _guess_svg_size_px(abspath)
+            sym.set("viewBox", f"0 0 {w} {h}")
+
+        _l.i(f"[sources] svg import: {abspath.name} -> {sid} ({w:.2f}x{h:.2f})")
+        return SourceRef(symbol_id=sid, content_type="svg", intrinsic_box=(float(w), float(h)),
+                         preserve_aspect="xMidYMid meet", canonical_key=None)
+
     def _create_symbol_from_svg_image_path(self, abspath: Path) -> SourceRef:
         w, h = _guess_svg_size_px(abspath)
         sid = _unique_symbol_id(self.defs, "src_")
@@ -1377,6 +1508,10 @@ class SourceManager:
                 if urls:
                     if len(urls) > 1:
                         _l.w(f"[spritesheets] alias '{alias_key}': oclp produced {len(urls)} results; using first")
+                    src_for_path = str(urls[0] or "").strip()
+            elif sl.startswith("osm://"):
+                urls = list(self.resolve_osm_urls(src_for_path) or [])
+                if urls:
                     src_for_path = str(urls[0] or "").strip()
         except Exception as ex:
             _l.w(f"[spritesheets] alias '{alias_key}': virtual src resolve failed: {ex}")

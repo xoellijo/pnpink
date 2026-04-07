@@ -23,6 +23,7 @@ _l = LOG
 import inkex
 import svg as SVG
 import prefs
+import paths as PATHS
 
 
 _STROKE_KEYS = (
@@ -82,79 +83,8 @@ def _extract_stroke_style(el) -> Dict[str, str]:
     return out
 
 
-def _resolve_style_layers(root, style_id: Optional[str]) -> List[Dict[str, str]]:
-    """Return a list of style dicts to render.
-
-    Style selection model (v0.1.8):
-      - Always look up by id.
-      - If the id refers to a <g>, use *all descendant <path>* elements in document
-        order as a style stack (one layer per path).
-      - If the id refers to a non-<g> element, use its stroke style as a single layer.
-
-    If the id is missing/not found, fall back to prefs defaults.
-    """
-    if not style_id:
-        return [prefs.get_marks_style_dict()]
-
-    sid = str(style_id).strip()
-    if not sid:
-        return [prefs.get_marks_style_dict()]
-
-    el = root.find(f".//*[@id='{sid}']")
-    if el is None:
-        _l.w(f"[marks] style id '{sid}' not found; using prefs defaults")
-        return [prefs.get_marks_style_dict()]
-
-    # Style stack resolution (user-facing semantics):
-    #   - The user provides an id that typically points to a *path*.
-    #   - If that element is inside a <g>, we treat that ancestor group as a
-    #     "style stack" and use all descendant paths of that <g> in document
-    #     order.
-    #   - If the id itself points to a <g>, we also treat it as a style stack.
-    #   - Otherwise, we use the single element's stroke style.
-
-    def _is_g(node) -> bool:
-        try:
-            t = node.tag
-        except Exception:
-            return False
-        return isinstance(t, str) and t.endswith('g')
-
-    group = None
-    if _is_g(el):
-        # The user may still point directly to a <g> (supported).
-        group = el
-    else:
-        # Main intended workflow: user points to a *path* that may live inside a
-        # <g> "style stack" group. We only accept the *direct parent* <g> to
-        # avoid accidentally capturing an entire layer or other higher-level
-        # grouping.
-        try:
-            parent = el.getparent()
-        except Exception:
-            parent = None
-        if parent is not None and _is_g(parent):
-            group = parent
-
-    if group is not None:
-        layers: List[Dict[str, str]] = []
-        try:
-            # Namespace-safe selection (works with lxml/inkex etree)
-            paths = group.findall(".//{%s}path" % inkex.NSS['svg'])
-            if not paths:
-                # fallback if namespaces are stripped
-                paths = group.findall('.//path')
-            for p in paths:
-                try:
-                    layers.append(_extract_stroke_style(p))
-                except Exception:
-                    continue
-        except Exception:
-            layers = []
-        if layers:
-            return layers
-
-    return [_extract_stroke_style(el)]
+def _resolve_style_layers(root, style_id: Optional[str]):
+    return PATHS.resolve_style_templates_for_marks(root, style_id)
 
 
 def _norm_trbl_tokens(tokens: Optional[List[str]], default: List[str]) -> List[str]:
@@ -409,9 +339,7 @@ def render_slot_marks(
 
     created = 0
     for st in styles:
-        p = SVG.etree.Element(inkex.addNS('path', 'svg'))
-        p.set('d', d_attr)
-        p.set('style', _style_dict_to_attr(st))
+        p = PATHS.instantiate_styled_path(st, d_attr)
         layer.append(p)
         created += 1
 
@@ -713,10 +641,7 @@ def render_hextiles_page_marks(
         d_attr = f"M {x1:.3f},{y1:.3f} L {x2:.3f},{y2:.3f}"
         emitted = 0
         for st in styles:
-            p = SVG.etree.Element(inkex.addNS('path', 'svg'))
-            p.set('d', d_attr)
-            if st:
-                p.set('style', _style_dict_to_attr(st))
+            p = PATHS.instantiate_styled_path(st, d_attr)
             layer.append(p)
             emitted += 1
         return emitted

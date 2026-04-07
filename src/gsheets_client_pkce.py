@@ -39,6 +39,7 @@ _l = LOG
 _l.i('gsheets ', __version__)
 
 import base64, hashlib, json, os, random, socket, sys, time, threading, urllib.parse, webbrowser
+import net as NET
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Dict, Optional, Tuple, Any
 
@@ -356,14 +357,17 @@ def fetch_sheet(spreadsheet_id: str, range_a1: str, client_id: Optional[str] = N
     """
     range_a1 = range_a1 or "A1:Z999"
     params = {"majorDimension": "ROWS", "valueRenderOption": "UNFORMATTED_VALUE"}
-    url = f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{urllib.parse.quote(range_a1, safe='!:$')}"
+    url = (
+        f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/"
+        f"{urllib.parse.quote(range_a1, safe='!:$')}?{urllib.parse.urlencode(params)}"
+    )
     hdr = _auth_header(client_id)
-    r = requests.get(url, headers=hdr, params=params, timeout=30)
+    r = NET.requests_get(url, headers=hdr, timeout=30, retries=4, log_prefix="[gsheets]")
     if r.status_code == 401:
         # intentar una vez tras refresh/relogin
         _ensure_tokens(client_id)
         hdr = _auth_header(client_id)
-        r = requests.get(url, headers=hdr, params=params, timeout=30)
+        r = NET.requests_get(url, headers=hdr, timeout=30, retries=4, log_prefix="[gsheets]")
     r.raise_for_status()
     data = r.json() or {}
     values = data.get("values", [])
@@ -377,11 +381,11 @@ def list_sheet_titles(spreadsheet_id: str, client_id: Optional[str] = None):
     """
     url = f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}?fields=sheets(properties(title))"
     hdr = _auth_header(client_id)
-    r = requests.get(url, headers=hdr, timeout=30)
+    r = NET.requests_get(url, headers=hdr, timeout=30, retries=4, log_prefix="[gsheets]")
     if r.status_code == 401:
         _ensure_tokens(client_id)
         hdr = _auth_header(client_id)
-        r = requests.get(url, headers=hdr, timeout=30)
+        r = NET.requests_get(url, headers=hdr, timeout=30, retries=4, log_prefix="[gsheets]")
     r.raise_for_status()
     data = r.json() or {}
     return [s.get("properties", {}).get("title", "") for s in data.get("sheets", []) if isinstance(s, dict)]

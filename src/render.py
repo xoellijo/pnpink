@@ -95,6 +95,7 @@ TEXT_LIKE = set(getattr(SVG, "TEXT_LIKE", ()))
 import layouts as LYT
 import dsl as DSL
 import fit_anchor as FA
+import paths as PATHS
 from typing import Dict, Optional, Tuple
 _HEADER_RE = re.compile(r"^(?P<id>[^\[\]]+)(?:\[(?P<prop>[^\]]+)\])?$")
 
@@ -155,6 +156,15 @@ def _parse_object_token(token: str) -> Tuple[str, str, str]:
     ops     = (m.group("ops_tilde") or m.group("ops_compact") or "")
     place   = "clone" if mod is None else ("copy" if mod=="=" else "clone+unlink")
     return base_id, place, ops
+
+def _split_paths_suffix(token: str) -> Tuple[str, str]:
+    s = str(token or "").strip()
+    if not s:
+        return "", ""
+    m = re.match(r"^(?P<core>.+?)\.(?:P)\s*(?P<body>\{.*\})\s*$", s)
+    if not m:
+        return s, ""
+    return (m.group("core") or "").strip(), ("P" + (m.group("body") or "")).strip()
 
 def _parse_array_token(token: str):
     s = (token or '').strip()
@@ -1163,6 +1173,8 @@ def _virtual_warn_tag(src_val: str, base_tag: str) -> str:
         return (base_tag or "pxby").replace("wkmc", "pxby")
     if s.startswith("oclp://"):
         return (base_tag or "oclp").replace("wkmc", "oclp")
+    if s.startswith("osm://"):
+        return (base_tag or "osm").replace("wkmc", "osm")
     return base_tag
 
 def _resolve_virtual_source_urls(sm, src_val: str, selector: Optional[str], *, warn_tag: str) -> Optional[list]:
@@ -1170,7 +1182,9 @@ def _resolve_virtual_source_urls(sm, src_val: str, selector: Optional[str], *, w
         return None
     s = (src_val or "").strip()
     frag = ""
-    if "#" in s:
+    sl0 = s.lower()
+    hash_is_part_of_source = sl0.startswith("osm://#map=")
+    if ("#" in s) and (not hash_is_part_of_source):
         # Keep node fragment for later '@{resolved_url#node}' registration.
         s0, f0 = s.rsplit("#", 1)
         if s0.strip() and f0.strip():
@@ -1183,6 +1197,8 @@ def _resolve_virtual_source_urls(sm, src_val: str, selector: Optional[str], *, w
         urls = list(sm.resolve_pxby_urls(s) or [])
     elif sl.startswith("oclp://"):
         urls = list(sm.resolve_oclp_urls(s) or [])
+    elif sl.startswith("osm://"):
+        urls = list(sm.resolve_osm_urls(s) or [])
     else:
         return None
     urls = _select_1based_with_warning(urls, selector or "", warn_tag)
@@ -1395,11 +1411,16 @@ def _center_use_over_placeholder(u, placeholder):
         if _is_rect_elem(placeholder):
             return
         try:
+            if str(placeholder.get('data-dm-keep-paths') or '').strip() == '1':
+                return
+        except Exception:
+            pass
+        try:
             par.remove(placeholder)
         except Exception as ex:
             _l.w(f"removing placeholder '{placeholder.get('id')}' failed: {ex}")
 
-def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs, use_seq, sm=None, ss_registry=None):
+def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs, path_jobs, use_seq, layout_obj=None, sm=None, ss_registry=None):
     global _P1_KEEP_SET
     hk = parse_header_key_full(key)
     target_tokens = hk.get('target_ids') if isinstance(hk, dict) else None
@@ -1419,7 +1440,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
             sub_key = _build_single_target_header_key(hk, _tid)
             c, st = apply_field_in_clone(
                 inst, sub_key, raw_val, row,
-                root_doc=root_doc, use_jobs=use_jobs, fa_jobs=fa_jobs, use_seq=use_seq,
+                root_doc=root_doc, use_jobs=use_jobs, fa_jobs=fa_jobs, path_jobs=path_jobs, use_seq=use_seq, layout_obj=layout_obj,
                 sm=sm, ss_registry=ss_registry
             )
             total += int(c or 0)
@@ -1565,7 +1586,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
         if len(toks) > 1:
             total = 0
             for _tok in reversed(toks):
-                c, _ = apply_field_in_clone(inst, key, _tok, row, root_doc=root_doc, use_jobs=use_jobs, fa_jobs=fa_jobs, use_seq=use_seq, sm=sm, ss_registry=ss_registry)
+                c, _ = apply_field_in_clone(inst, key, _tok, row, root_doc=root_doc, use_jobs=use_jobs, fa_jobs=fa_jobs, path_jobs=path_jobs, use_seq=use_seq, layout_obj=layout_obj, sm=sm, ss_registry=ss_registry)
                 total += int(c or 0)
             return total, 'multi'
 
@@ -1584,10 +1605,19 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
             raw_token = ""
 
     raw_token = _expand_wildcard_ids_in_value(raw_token, root_doc)
+    raw_token, raw_paths_spec = _split_paths_suffix(raw_token)
 
     # Header-global ops ('id=~...') are merged later per token in FA queue stage.
     # Doing it there gives deterministic precedence with iterator/item ops.
     if not raw_token:
+        if raw_paths_spec:
+            try:
+                tgt.set('data-dm-keep-paths', '1')
+            except Exception:
+                pass
+            path_jobs.append((tgt, raw_paths_spec, (getattr(layout_obj, 'smart_hex_orient', None) if layout_obj is not None else None)))
+            _l.d(f"field '{key}': PATHS only -> id='{target_id}'")
+            return 1, "paths"
         # Phase-1: NEVER delete rect anchors (duplicate headers / multivalue need a stable, unique anchor element).
         if _is_rect_elem(tgt):
             _l.d(f"field '{key}': empty rect anchor kept id='{target_id}'")
@@ -1781,15 +1811,17 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
             rect_id_val = _resolved
 
         queued = 0
+        queued_paths = 0
         for tok in (tokens or []):
             tok = (tok or "").strip()
             if not tok:
                 continue
-            if tok.lstrip().startswith('['):
+            tok_core, tok_paths_spec = _split_paths_suffix(tok)
+            if tok_core.lstrip().startswith('['):
                 try:
-                    arr = _parse_array_token(tok)
+                    arr = _parse_array_token(tok_core)
                 except Exception:
-                    _l.w(f"[deckmaker.fa] placeholder '{key}': array token invalido '{tok}'")
+                    _l.w(f"[deckmaker.fa] placeholder '{key}': array token invalido '{tok_core}'")
                     continue
                 if not arr or not arr.get('items'):
                     continue
@@ -1804,19 +1836,33 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                     fa_jobs.append((g_id, rect_id_val, ops_full, 'copy', g_node, rect_elem_for_fa))
                     queued += 1
                     _l.d(f"[deckmaker.fa] queued '{key}' -> base='{g_id}' rect='{rect_id_val}' place=copy ops='{ops_full or '~'}'")
+                    if tok_paths_spec:
+                        try:
+                            tgt.set('data-dm-keep-paths', '1')
+                        except Exception:
+                            pass
+                        path_jobs.append((tgt, tok_paths_spec, (getattr(layout_obj, 'smart_hex_orient', None) if layout_obj is not None else None)))
+                        queued_paths += 1
                 continue
             try:
-                base_id, place, ops_tok = _parse_object_token(tok)
+                base_id, place, ops_tok = _parse_object_token(tok_core)
             except Exception:
-                _l.w(f"[deckmaker.fa] placeholder '{key}': token invalido '{tok}'")
+                _l.w(f"[deckmaker.fa] placeholder '{key}': token invalido '{tok_core}'")
                 continue
             ops_body = (ops_tok or "") or default_ops
             ops_full = _merge_header_global_ops(ops_body)
             fa_jobs.append((base_id, rect_id_val, ops_full, place, None, rect_elem_for_fa))
             queued += 1
             _l.d(f"[deckmaker.fa] queued '{key}' -> base='{base_id}' rect='{rect_id_val}' place={place} ops='{ops_full or '~'}'")
+            if tok_paths_spec:
+                try:
+                    tgt.set('data-dm-keep-paths', '1')
+                except Exception:
+                    pass
+                path_jobs.append((tgt, tok_paths_spec, (getattr(layout_obj, 'smart_hex_orient', None) if layout_obj is not None else None)))
+                queued_paths += 1
         # Remove placeholder immediately only when it is NOT serving as the rect itself.
-        if (queued > 0) and (not used_placeholder_as_rect):
+        if (queued > 0) and (not used_placeholder_as_rect) and (queued_paths <= 0):
             par = tgt.getparent()
             if par is not None:
                 try:
@@ -1837,6 +1883,12 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
             u.set(inkex.addNS('href','xlink'), f"#{symbol_id_for_fallback}")
             par.insert(par.index(tgt) + 1, u)
             use_jobs.append((tgt, u))
+            if raw_paths_spec:
+                try:
+                    tgt.set('data-dm-keep-paths', '1')
+                except Exception:
+                    pass
+                path_jobs.append((tgt, raw_paths_spec, (getattr(layout_obj, 'smart_hex_orient', None) if layout_obj is not None else None)))
             _l.d(f"field '{key}': SOURCE(use) id='{use_id}' symbol='{symbol_id_for_fallback}' [fallback center]")
             return 1, 'source'
         except Exception as ex:
@@ -1859,6 +1911,12 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
     else:
         parent.insert(parent.index(tgt) + 1, u)
         use_jobs.append((tgt, u))
+        if raw_paths_spec:
+            try:
+                tgt.set('data-dm-keep-paths', '1')
+            except Exception:
+                pass
+            path_jobs.append((tgt, raw_paths_spec, (getattr(layout_obj, 'smart_hex_orient', None) if layout_obj is not None else None)))
         _l.d(f"field '{key}': INSERT use id='{use_id}' wrap='{wrap_id}' (src_bbox w={bw:.2f} h={bh:.2f})")
         return 1, "clone"
     return 0, "miss"
@@ -2507,8 +2565,8 @@ def render_phase(ctx):
         except Exception:
             return []
     # --- Dedup: shared helpers for @page/@back field fill and deferred FA (nested for safe closure) ---
-    def _fill_instance_fields(inst_node, row_inst, row_map, use_jobs, fa_jobs, *, clone_first: bool = False):
-        """Apply dataset fields into a template instance, collecting <use> jobs and deferred fit-anchor jobs."""
+    def _fill_instance_fields(inst_node, row_inst, row_map, use_jobs, fa_jobs, path_jobs, *, clone_first: bool = False):
+        """Apply dataset fields into a template instance, collecting deferred jobs."""
         passes = (True, False) if clone_first else (False, True)
         for want_clone in passes:
             for k, raw in _iter_row_fields(headers, row_inst):
@@ -2522,12 +2580,12 @@ def render_phase(ctx):
                         continue
                 apply_field_in_clone(
                     inst_node, k, raw, row_map,
-                    root_doc=root, use_jobs=use_jobs, fa_jobs=fa_jobs,
-                    use_seq=use_seq, sm=SM, ss_registry=ss_registry
+                    root_doc=root, use_jobs=use_jobs, fa_jobs=fa_jobs, path_jobs=path_jobs,
+                    use_seq=use_seq, layout_obj=planner.current.layout, sm=SM, ss_registry=ss_registry
                 )
 
-    def _exec_use_and_fa(inst_node, use_jobs, fa_jobs, *, warn_tag: str):
-        """Center <use> elements over placeholders, then execute deferred Fit/Anchor jobs."""
+    def _exec_use_fa_paths(inst_node, use_jobs, fa_jobs, path_jobs, *, warn_tag: str):
+        """Center <use> elements, execute deferred Fit/Anchor jobs, then Paths jobs."""
         def _apply_fa(scope_node, base_id, r_id, ops_full, place_mode, rect_elem):
             try:
                 return FA.apply_to_by_ids(scope_node, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem)
@@ -2552,6 +2610,11 @@ def render_phase(ctx):
                     _fa_remove_later.append(placeholder_to_remove)
             except Exception as ex:
                 _l.w(f"{warn_tag} deferred fit-anchor failed base='{base_id}' rect='{r_id}': {ex}")
+        for (target_el, paths_spec_raw, orient_hint) in (path_jobs or []):
+            try:
+                PATHS.render_paths_for_target(inst_node, target_el, paths_spec_raw, orient_hint=orient_hint)
+            except Exception as ex:
+                _l.w(f"{warn_tag} deferred paths failed target='{(target_el.get('id') if target_el is not None else '')}': {ex}")
         return _fa_remove_later
 
     def _absolutize_instance_linked_images(inst_node):
@@ -2746,14 +2809,14 @@ def render_phase(ctx):
         page_wrap.append(inst)
         tmp_group.append(page_wrap)
         # Fill fields (same rules as normal templates)
-        use_jobs = []; fa_jobs = []
+        use_jobs = []; fa_jobs = []; path_jobs = []
         row_map = _build_row_map(headers, row_inst)
 
         # Phase-1: reset per-instance keep-visible set (populated by parse_header_key on headers with '+')
         global _P1_KEEP_SET
         _P1_KEEP_SET = set()
 
-        _fill_instance_fields(inst, row_inst, row_map, use_jobs, fa_jobs, clone_first=False)
+        _fill_instance_fields(inst, row_inst, row_map, use_jobs, fa_jobs, path_jobs, clone_first=False)
         # Execute <use> centering and deferred FA on the base instance (still in temp group)
         # DEBUG: collect rect/placeholder ids that FA will touch in this instance so we can detect early placeholder removals
         global _DBG_FA_RECT_IDS
@@ -2768,7 +2831,7 @@ def render_phase(ctx):
                     if _rid: _DBG_FA_RECT_IDS.add(_rid)
         except Exception:
             _DBG_FA_RECT_IDS = None
-        _fa_remove_later = _exec_use_and_fa(inst, use_jobs, fa_jobs, warn_tag='[@page]')
+        _fa_remove_later = _exec_use_fa_paths(inst, use_jobs, fa_jobs, path_jobs, warn_tag='[@page]')
         # Phase-1: never delete rect anchors. At the end of this instance, hide rect anchors unless any header uses '+'.
         try:
             _keep = _P1_KEEP_SET if isinstance(_P1_KEEP_SET, set) else set()
@@ -3158,11 +3221,12 @@ def render_phase(ctx):
         _absolutize_instance_linked_images(inst_main)
         suffix_main = f"_pnp{next_n}"; next_n += 1
         SVG.uniquify_all_ids_in_scope(inst_main, suffix_main, root.get_unique_id)
-        inst_jobs = []  # list of dicts: {node, use_jobs, fa_jobs, suffix, bbox_id}
+        inst_jobs = []  # list of dicts: {node, use_jobs, fa_jobs, path_jobs, suffix, bbox_id}
         inst_jobs.append({
             'node': inst_main,
             'use_jobs': [],
             'fa_jobs': [],
+            'path_jobs': [],
             'suffix': suffix_main,
             'bbox_id': (declared_bbox_id or ''),
             'overlay_ops': '',
@@ -3184,6 +3248,7 @@ def render_phase(ctx):
                 'node': inst_ov,
                 'use_jobs': [],
                 'fa_jobs': [],
+                'path_jobs': [],
                 'suffix': suffix_ov,
                 'bbox_id': ((ot or {}).get('bbox_id') or ''),
                 'overlay_ops': ctrl_val,
@@ -3192,8 +3257,8 @@ def render_phase(ctx):
             for j in inst_jobs:
                 cnt, st = apply_field_in_clone(
                     j['node'], key, raw, row_map,
-                    root_doc=root, use_jobs=j['use_jobs'], fa_jobs=j['fa_jobs'],
-                    use_seq=use_seq, sm=SM, ss_registry=ss_registry
+                    root_doc=root, use_jobs=j['use_jobs'], fa_jobs=j['fa_jobs'], path_jobs=j['path_jobs'],
+                    use_seq=use_seq, layout_obj=planner.current.layout, sm=SM, ss_registry=ss_registry
                 )
                 if st != 'miss':
                     return cnt, st
@@ -3517,6 +3582,11 @@ def render_phase(ctx):
                         _fa_remove_later.append(placeholder_to_remove)
                 except Exception as ex:
                     _l.w(f"[deckmaker.fa] EXEC FAILED base='{base_id}' rect='{r_id}' ops='{ops_full or '~'}': {ex}")
+            for (target_el, paths_spec_raw, orient_hint) in (j.get('path_jobs') or []):
+                try:
+                    PATHS.render_paths_for_target(inst0, target_el, paths_spec_raw, orient_hint=orient_hint)
+                except Exception as ex:
+                    _l.w(f"[deckmaker.paths] EXEC FAILED target='{(target_el.get('id') if target_el is not None else '')}': {ex}")
         # Remove placeholders at the end so the same rect can be reused (multivalue/dup headers).
         for _ph in list(dict.fromkeys(_fa_remove_later)):
             try:
@@ -3793,9 +3863,10 @@ def render_phase(ctx):
 
                     use_jobs = []
                     fa_jobs = []
-                    _fill_instance_fields(inst, row, row_map, use_jobs, fa_jobs, clone_first=False)
+                    path_jobs = []
+                    _fill_instance_fields(inst, row, row_map, use_jobs, fa_jobs, path_jobs, clone_first=False)
 
-                    _fa_remove_later = _exec_use_and_fa(inst, use_jobs, fa_jobs, warn_tag='[@back]')
+                    _fa_remove_later = _exec_use_fa_paths(inst, use_jobs, fa_jobs, path_jobs, warn_tag='[@back]')
                     for _ph in list(dict.fromkeys(_fa_remove_later)):
                         try:
                             par = _ph.getparent()

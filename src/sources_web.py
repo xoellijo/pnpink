@@ -6,12 +6,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional, Tuple, List
-import json, hashlib, urllib.parse, os, re, sys
+import json, hashlib, urllib.parse, os, re, sys, math
 from pathlib import Path
 
 import log as LOG
 _l = LOG
 import net as NET
+import osm as OSM
 
 
 @dataclass
@@ -197,6 +198,9 @@ class WebSources:
             return [c[0] for c in good]
         # Fallback: keep largest-first when nothing satisfies the requested minimum.
         return [c[0] for c in sorted(cands, key=lambda t: (max(t[1], t[2]), t[3]), reverse=True)]
+
+    def resolve_osm_urls(self, expr: str) -> Optional[List[str]]:
+        return OSM.OSMMapSource(self.assets_dir).resolve(expr)
 
     def _wkmc_fetch_urls(self, query: str, size: str) -> List[str]:
         out: List[str] = []
