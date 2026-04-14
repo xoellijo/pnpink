@@ -278,6 +278,93 @@ def _path_quad(a: _PT, c: _PT, b: _PT) -> str:
     return f"M {a[0]:.6f},{a[1]:.6f} Q {c[0]:.6f},{c[1]:.6f} {b[0]:.6f},{b[1]:.6f}"
 
 
+def _line_intersection(p1: _PT, d1: _PT, p2: _PT, d2: _PT) -> Optional[_PT]:
+    x1, y1 = float(p1[0]), float(p1[1])
+    x2, y2 = float(p2[0]), float(p2[1])
+    dx1, dy1 = float(d1[0]), float(d1[1])
+    dx2, dy2 = float(d2[0]), float(d2[1])
+    det = dx1 * dy2 - dy1 * dx2
+    if abs(det) <= 1e-9:
+        return None
+    qx = x2 - x1
+    qy = y2 - y1
+    t = (qx * dy2 - qy * dx2) / det
+    return (x1 + t * dx1, y1 + t * dy1)
+
+
+def _cross_z(a: _PT, b: _PT) -> float:
+    return float(a[0]) * float(b[1]) - float(a[1]) * float(b[0])
+
+
+def _path_arc(a: _PT, b: _PT, center: _PT) -> str:
+    r = _dist(a, center)
+    if r <= 1e-9:
+        return _path_line(a, b)
+    ax = float(a[0]) - float(center[0])
+    ay = float(a[1]) - float(center[1])
+    bx = float(b[0]) - float(center[0])
+    by = float(b[1]) - float(center[1])
+    a0 = math.atan2(ay, ax)
+    a1 = math.atan2(by, bx)
+    # Shortest signed sweep, so the curve stays on the intended circular solution.
+    da = a1 - a0
+    while da <= -math.pi:
+        da += 2.0 * math.pi
+    while da > math.pi:
+        da -= 2.0 * math.pi
+    # Single cubic approximation of the circular arc segment.
+    k = (4.0 / 3.0) * math.tan(da / 4.0)
+    c1 = (
+        float(a[0]) + (-ay) * k,
+        float(a[1]) + (ax) * k,
+    )
+    c2 = (
+        float(b[0]) - (-by) * k,
+        float(b[1]) - (bx) * k,
+    )
+    return (
+        f"M {a[0]:.6f},{a[1]:.6f} "
+        f"C {c1[0]:.6f},{c1[1]:.6f} {c2[0]:.6f},{c2[1]:.6f} {b[0]:.6f},{b[1]:.6f}"
+    )
+
+
+def _path_cubic_tangent(a: _PT, c1: _PT, c2: _PT, b: _PT) -> str:
+    return (
+        f"M {a[0]:.6f},{a[1]:.6f} "
+        f"C {c1[0]:.6f},{c1[1]:.6f} {c2[0]:.6f},{c2[1]:.6f} {b[0]:.6f},{b[1]:.6f}"
+    )
+
+
+def _path_side_arc(sides: dict, s1: str, s2: str, fallback_center: _PT) -> str:
+    p1 = sides[s1]['mid']
+    p2 = sides[s2]['mid']
+    n1 = sides[s1]['inward']
+    n2 = sides[s2]['inward']
+    center = _line_intersection(p1, n1, p2, n2)
+    # We keep the implementation simple and robust: cubic bezier with handles
+    # constrained to the inward tangents of each side. This keeps curves inside
+    # the hex and lets us tune short vs long connections separately.
+    if center is None:
+        center = fallback_center
+    d1 = _dist(p1, center)
+    d2 = _dist(p2, center)
+    if d1 <= 1e-9 or d2 <= 1e-9:
+        return _path_quad(p1, fallback_center, p2)
+
+    i1 = _SIDE_ORDER.index(s1)
+    i2 = _SIDE_ORDER.index(s2)
+    step = min((i2 - i1) % 6, (i1 - i2) % 6)
+    # step=1: short/tight curve (adjacent sides)
+    # step=2: long/gentle curve (one side in between)
+    if step <= 1:
+        k = 0.42
+    else:
+        k = 0.82
+    c1 = (float(p1[0]) + float(n1[0]) * d1 * k, float(p1[1]) + float(n1[1]) * d1 * k)
+    c2 = (float(p2[0]) + float(n2[0]) * d2 * k, float(p2[1]) + float(n2[1]) * d2 * k)
+    return _path_cubic_tangent(p1, c1, c2, p2)
+
+
 def token_to_path_d(token: str, geom: dict, *, scope_node=None, target_el=None, orient_hint: Optional[str] = None) -> str:
     t = str(token or '').strip()
     if not t:
@@ -315,12 +402,19 @@ def token_to_path_d(token: str, geom: dict, *, scope_node=None, target_el=None, 
         if d == 3:
             return _path_line(p1, p2)
         if d in (1, 2, 4, 5):
-            return _path_quad(p1, center, p2)
+            return _path_side_arc(sides, s1, s2, center)
         return ''
     return ''
 
 
-def render_paths_for_target(scope_node, target_el, paths_spec_raw: str, *, orient_hint: Optional[str] = None) -> int:
+def render_paths_for_target(
+    scope_node,
+    target_el,
+    paths_spec_raw: str,
+    *,
+    orient_hint: Optional[str] = None,
+    style_scope_node=None,
+) -> int:
     geom = hex_geometry_for_target(target_el, orient_hint)
     if not geom:
         _l.w(f"[paths] target id='{target_el.get('id') if target_el is not None else ''}' has no usable bbox")
@@ -331,8 +425,9 @@ def render_paths_for_target(scope_node, target_el, paths_spec_raw: str, *, orien
     blocks = parse_paths_block(paths_spec_raw)
     insert_at = parent.index(target_el) + 1
     created = 0
+    style_scope = style_scope_node if style_scope_node is not None else scope_node
     for blk in blocks:
-        layers = resolve_style_templates(scope_node, blk.get('style_id'))
+        layers = resolve_style_templates(style_scope, blk.get('style_id'))
         if not layers:
             _l.w(f"[paths] style '{blk.get('style_id')}' produced no path templates")
             continue

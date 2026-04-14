@@ -134,3 +134,5 @@ Smart shapes adjust gaps and offsets without changing card size:
 
 Inkscape tip: use `Tools > Stars and Polygons` (Shift+F9), set corners to 6,
 and hold Ctrl while resizing to keep alignment.
+
+For practical examples and the differences between `hexgrid`, `hextiles`, and hex cut lines, see [Hexes](/dsl/hexes/).

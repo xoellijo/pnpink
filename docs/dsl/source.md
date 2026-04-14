@@ -132,6 +132,17 @@ PnPInk supports virtual sources that resolve to real URLs:
 @{ oclp://query/size }
 ```
 
+PnPInk also supports dedicated map sources:
+
+```txt
+@{ osm://[...] }
+@{ ofm://[...] }
+@{ osm://madrid }
+@{ ofm://spain/z4 }
+```
+
+These sources generate maps from simple URLs. See [Maps](./maps.md) for the map syntax and examples.
+
 - `wkmc://` (Wikimedia Commons) supports:
  - search text: `wkmc://query/size`
  - specific file: `wkmc://File:Name.ext/size`

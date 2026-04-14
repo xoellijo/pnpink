@@ -200,7 +200,13 @@ class WebSources:
         return [c[0] for c in sorted(cands, key=lambda t: (max(t[1], t[2]), t[3]), reverse=True)]
 
     def resolve_osm_urls(self, expr: str) -> Optional[List[str]]:
+        # Tile-backed maps are rendered inline; keep the old hook as an empty compatibility shim.
+        if str(expr or "").strip().lower().startswith(("osm://", "ofm://")):
+            return []
         return OSM.OSMMapSource(self.assets_dir).resolve(expr)
+
+    def resolve_osm_svg(self, expr: str) -> Optional[str]:
+        return OSM.OSMMapSource(self.assets_dir).render_svg_text(expr)
 
     def _wkmc_fetch_urls(self, query: str, size: str) -> List[str]:
         out: List[str] = []

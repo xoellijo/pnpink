@@ -277,6 +277,8 @@ def _split_source_fragment(raw: str, fragment_hint: Optional[str] = None) -> Tup
         return "", (fragment_hint or "").strip()
     if (fragment_hint or "").strip():
         return s, (fragment_hint or "").strip()
+    if s.lower().startswith("osm://") or s.lower().startswith("ofm://"):
+        return s, ""
     if s.lower().startswith("data:"):
         return s, ""
     try:
@@ -533,6 +535,9 @@ class SourceManager:
     def resolve_osm_urls(self, expr: str) -> Optional[List[str]]:
         return self.web.resolve_osm_urls(expr)
 
+    def resolve_osm_svg(self, expr: str) -> Optional[str]:
+        return self.web.resolve_osm_svg(expr)
+
     def _register_first_valid_web_candidate(self, urls: List[str], *, hint_type: Optional[str], dpi=None,
                                             fragment: str = "", page: int = 0,
                                             log_prefix: str = "[sources] web") -> Optional[SourceRef]:
@@ -751,6 +756,25 @@ class SourceManager:
         raw, fragment = _split_source_fragment(raw, fragment)
         fragment = (fragment or "").strip()
 
+        # Tile-backed virtual map sources use bracketed bbox syntax, which is not
+        # compatible with Python's generic urlparse() netloc validation.
+        if raw.lower().startswith("osm://") or raw.lower().startswith("ofm://"):
+            svg_text = None
+            try:
+                svg_text = self.resolve_osm_svg(raw)
+            except Exception as ex:
+                _l.w(f"[sources] map inline resolve failed: {ex}")
+            if svg_text:
+                key_m = _build_key_for_osm(raw if not fragment else f"{raw}#{fragment}")
+                if key_m in self._cache:
+                    self._cache_hits += 1
+                    return self._cache[key_m]
+                self._cache_misses += 1
+                ref = self._create_group_from_svg_document_text(svg_text, key_hint=raw)
+                ref.canonical_key = key_m
+                self._cache[key_m] = ref
+                return ref
+
         # Allow dataset tokens like "@icon://..." to be passed through directly.
         if raw.lower().startswith("@icon://"):
             raw = raw[1:]
@@ -898,7 +922,22 @@ class SourceManager:
             return ref
 
         # OpenStreetMap virtual source (single SVG export URL).
-        if raw.lower().startswith("osm://"):
+        if raw.lower().startswith("osm://") or raw.lower().startswith("ofm://"):
+            svg_text = None
+            try:
+                svg_text = self.resolve_osm_svg(raw)
+            except Exception as ex:
+                _l.w(f"[sources] map inline resolve failed: {ex}")
+            if svg_text:
+                key_m = _build_key_for_osm(raw if not fragment else f"{raw}#{fragment}")
+                if key_m in self._cache:
+                    self._cache_hits += 1
+                    return self._cache[key_m]
+                self._cache_misses += 1
+                ref = self._create_group_from_svg_document_text(svg_text, key_hint=raw)
+                ref.canonical_key = key_m
+                self._cache[key_m] = ref
+                return ref
             key_m = _build_key_for_osm(raw if not fragment else f"{raw}#{fragment}")
             if key_m in self._cache:
                 self._cache_hits += 1
@@ -1306,6 +1345,121 @@ class SourceManager:
         _l.i(f"[sources] svg import: {abspath.name} -> {sid} ({w:.2f}x{h:.2f})")
         return SourceRef(symbol_id=sid, content_type="svg", intrinsic_box=(float(w), float(h)),
                          preserve_aspect="xMidYMid meet", canonical_key=None)
+
+    def _create_svg_container_from_text(self, svg_text: str, *, key_hint: str = "inline-svg", as_symbol: bool = True, force_deep: bool = False) -> SourceRef:
+        try:
+            src_root = SVG.etree.fromstring((svg_text or "").encode("utf-8"))
+        except Exception as ex:
+            sid, wh = _make_placeholder_symbol(self.defs, key_hint, f"svg text parse failed: {ex}")
+            return SourceRef(symbol_id=sid, content_type="svg", intrinsic_box=wh, canonical_key=None)
+
+        dep_copies: List[object] = []
+        body_copies: List[object] = []
+        for child in list(src_root):
+            ln = self._local_name(getattr(child, "tag", "")).lower()
+            if ln == "defs":
+                for dep in list(child):
+                    try:
+                        dep_copies.append(deepcopy(dep))
+                    except Exception:
+                        pass
+            else:
+                try:
+                    body_copies.append(deepcopy(child))
+                except Exception:
+                    pass
+        if not body_copies:
+            try:
+                body_copies = [deepcopy(src_root)]
+            except Exception:
+                sid, wh = _make_placeholder_symbol(self.defs, key_hint, "svg text had no drawable body")
+                return SourceRef(symbol_id=sid, content_type="svg", intrinsic_box=wh, canonical_key=None)
+
+        sid = _unique_symbol_id(self.defs, "src_")
+        if as_symbol:
+            sym = SVG.etree.SubElement(self.defs, inkex.addNS('symbol', 'svg'))
+        else:
+            sym = SVG.etree.SubElement(self.defs, inkex.addNS('g', 'svg'))
+            if force_deep:
+                sym.set("data-place-mode", "deep")
+        sym.set('id', sid)
+        if dep_copies:
+            d = SVG.etree.SubElement(sym, inkex.addNS('defs', 'svg'))
+            for dep in dep_copies:
+                d.append(dep)
+        wrapper = SVG.etree.SubElement(sym, inkex.addNS('g', 'svg'))
+        for k, v in dict(src_root.attrib or {}).items():
+            kl = str(k).lower()
+            if kl in ("id", "width", "height", "viewbox"):
+                continue
+            try:
+                wrapper.set(k, v)
+            except Exception:
+                pass
+        for node in body_copies:
+            wrapper.append(node)
+
+        w = h = 0.0
+        vb = str(src_root.get("viewBox") or "").strip()
+        if vb:
+            try:
+                nums = [float(x) for x in vb.replace(",", " ").split() if x.strip()]
+                if len(nums) == 4 and nums[2] > 0 and nums[3] > 0:
+                    sym.set("viewBox", f"0 0 {nums[2]} {nums[3]}")
+                    try:
+                        wrapper.set("transform", f"translate({-nums[0]},{-nums[1]})")
+                    except Exception:
+                        pass
+                    w, h = float(nums[2]), float(nums[3])
+            except Exception:
+                pass
+        if w <= 0 or h <= 0:
+            try:
+                bx, by, bw, bh = SVG.visual_bbox(wrapper)
+                if bw > 0 and bh > 0:
+                    try:
+                        wrapper.set("transform", f"translate({-bx},{-by})")
+                    except Exception:
+                        pass
+                    sym.set("viewBox", f"0 0 {bw} {bh}")
+                    w, h = float(bw), float(bh)
+            except Exception:
+                pass
+        if w <= 0 or h <= 0:
+            w = h = DEFAULT_W
+            sym.set("viewBox", f"0 0 {w} {h}")
+
+        try:
+            forced_bb = f"0 0 {float(w)} {float(h)}"
+            sym.set("data-bbox", forced_bb)
+            wrapper.set("data-bbox", forced_bb)
+        except Exception:
+            pass
+
+        # Ensure fit-anchor measures the full intended viewport, not just the
+        # visible painted features inside it.
+        try:
+            bbox_rect = SVG.etree.Element(inkex.addNS('rect', 'svg'))
+            bbox_rect.set("x", "0")
+            bbox_rect.set("y", "0")
+            bbox_rect.set("width", str(float(w)))
+            bbox_rect.set("height", str(float(h)))
+            bbox_rect.set("fill", "#000")
+            bbox_rect.set("fill-opacity", "0")
+            bbox_rect.set("stroke", "none")
+            wrapper.insert(0, bbox_rect)
+        except Exception:
+            pass
+
+        _l.i(f"[sources] svg text import: {key_hint} -> {sid} ({w:.2f}x{h:.2f})")
+        return SourceRef(symbol_id=sid, content_type="svg", intrinsic_box=(float(w), float(h)),
+                         preserve_aspect="xMidYMid meet", canonical_key=None)
+
+    def _create_symbol_from_svg_document_text(self, svg_text: str, *, key_hint: str = "inline-svg") -> SourceRef:
+        return self._create_svg_container_from_text(svg_text, key_hint=key_hint, as_symbol=True, force_deep=False)
+
+    def _create_group_from_svg_document_text(self, svg_text: str, *, key_hint: str = "inline-svg") -> SourceRef:
+        return self._create_svg_container_from_text(svg_text, key_hint=key_hint, as_symbol=False, force_deep=True)
 
     def _create_symbol_from_svg_image_path(self, abspath: Path) -> SourceRef:
         w, h = _guess_svg_size_px(abspath)

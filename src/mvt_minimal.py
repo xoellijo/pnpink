@@ -16,9 +16,10 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from collections import Counter, defaultdict
 import math
-import re
 import struct
 import xml.etree.ElementTree as ET
+
+import map_style as MAP_STYLE
 
 
 WIRE_VARINT = 0
@@ -344,47 +345,6 @@ def feature_to_svg_path(
     return " ".join(parts) if parts else None
 
 
-def _feature_label_text(feature: MVTFeature) -> Optional[str]:
-    for key in ("name", "name_en", "name:latin", "name_int"):
-        val = feature.properties.get(key)
-        if isinstance(val, str) and val.strip():
-            return val.strip()
-    return None
-
-
-def _kind(feature: MVTFeature) -> str:
-    v = feature.properties.get("kind")
-    if v in (None, ""):
-        v = feature.properties.get("class")
-    return str(v or "").strip().lower()
-
-
-def _slug(s: object) -> str:
-    t = str(s or "").strip().lower()
-    t = re.sub(r"[^a-z0-9]+", "_", t)
-    t = re.sub(r"_+", "_", t).strip("_")
-    return t or "item"
-
-
-def _feature_id(layer_name: str, feature: MVTFeature, counters: Dict[str, int]) -> str:
-    layer_slug = _slug(layer_name)
-    kind_slug = _slug(_kind(feature))
-    key = f"{layer_slug}:{kind_slug}"
-    counters[key] = counters.get(key, 0) + 1
-    suffix = counters[key]
-    if feature.id is not None:
-        return f"{kind_slug}_{feature.id}"
-    return f"{kind_slug}_{suffix}"
-
-
-def _zoom_band(z: int) -> int:
-    if z <= 9:
-        return 0
-    if z <= 11:
-        return 1
-    return 2
-
-
 def _feature_anchor_point(points: List[List[Tuple[float, float]]]) -> Optional[Tuple[float, float]]:
     if not points or not points[0]:
         return None
@@ -393,194 +353,6 @@ def _feature_anchor_point(points: List[List[Tuple[float, float]]]) -> Optional[T
     sy = sum(p[1] for p in ring)
     n = max(1, len(ring))
     return sx / n, sy / n
-
-
-def _layer_style(layer_name: str, geom_type: int) -> Dict[str, str]:
-    lname = (layer_name or "").lower()
-    if geom_type == GEOM_POLYGON:
-        if "ocean" in lname or "water" in lname:
-            return {"fill": "#95c8eb", "stroke": "#4d98cf", "stroke-width": "0.5"}
-        if "land" in lname:
-            return {"fill": "#d8d2bd", "stroke": "#5a4328", "stroke-width": "0.4"}
-        if "building" in lname:
-            return {"fill": "#d7c7c0", "stroke": "#8e776f", "stroke-width": "0.3"}
-        return {"fill": "#ddd", "stroke": "#666", "stroke-width": "0.4"}
-    if geom_type == GEOM_LINESTRING:
-        if "water" in lname:
-            return {"fill": "none", "stroke": "#4d98cf", "stroke-width": "0.9"}
-        if "street" in lname or "road" in lname or "transport" in lname:
-            return {"fill": "none", "stroke": "#7d6b5d", "stroke-width": "0.8"}
-        if "boundary" in lname:
-            return {"fill": "none", "stroke": "#996", "stroke-width": "0.5", "stroke-dasharray": "3 2"}
-        return {"fill": "none", "stroke": "#444", "stroke-width": "0.7"}
-    return {"fill": "#000", "stroke": "#fff", "stroke-width": "0.8"}
-
-
-def _default_include_feature(layer_name: str, feature: MVTFeature, z: int) -> bool:
-    lname = (layer_name or "").lower()
-    kind = _kind(feature)
-    band = _zoom_band(z)
-    rank = int(feature.properties.get("rank") or 999)
-    ele = int(feature.properties.get("ele") or -9999)
-    if lname == "ocean":
-        return True
-    if lname == "water":
-        return kind in ("ocean", "lake")
-    if lname == "water_name":
-        return band >= 1 and kind in ("bay", "lake", "ocean")
-    if lname == "waterway":
-        return kind in ("river",)
-    if lname == "water_polygons":
-        return kind in ("water", "river", "reservoir", "basin", "lagoon")
-    if lname == "water_lines":
-        return band >= 1 and kind in ("river",)
-    if lname == "water_polygons_labels":
-        return False
-    if lname == "boundaries":
-        return False
-    if lname == "mountain_peak":
-        if kind == "saddle":
-            return band >= 2 and rank <= 3
-        if band == 0:
-            return kind == "peak" and rank <= 2 and ele >= 300
-        if band == 1:
-            return kind == "peak" and rank <= 3 and ele >= 120
-        return kind == "peak" and rank <= 4 and ele >= 50
-    if lname == "park":
-        return band >= 1
-    if lname == "landcover":
-        return kind in ("wood", "grass", "wetland")
-    if lname == "landuse":
-        return band >= 1 and kind in ("industrial", "commercial", "university", "school", "hospital", "quarry", "military", "railway", "residential")
-    if lname == "place_labels":
-        if band == 0:
-            return kind in ("city", "town")
-        if band == 1:
-            return kind in ("city", "suburb", "village", "island")
-        return kind in ("city", "town", "suburb", "village", "island")
-    if lname == "place":
-        if band == 0:
-            return kind in ("city", "town", "island") and rank <= 8
-        if band == 1:
-            return kind in ("city", "town", "village", "island") and rank <= 10
-        return kind in ("city", "town", "village", "hamlet", "island") and rank <= 12
-    if lname == "land":
-        if band == 0:
-            return kind == "forest"
-        return kind in (
-            "forest", "park", "grass", "grassland", "meadow", "garden", "golf_course",
-            "orchard", "farmland", "farmyard", "beach", "industrial", "commercial",
-            "brownfield", "bare_rock", "heath", "allotments", "greenfield",
-            "greenhouse_horticulture", "garages",
-        )
-    if lname == "streets":
-        rail = int(feature.properties.get("rail") or 0)
-        if band == 0:
-            return rail == 1 or kind in ("motorway", "trunk", "primary", "narrow_gauge", "rail")
-        return rail == 1 or kind in ("motorway", "trunk", "primary", "secondary", "tertiary", "narrow_gauge", "rail")
-    if lname == "transportation":
-        return kind in ("motorway", "trunk", "primary", "secondary", "tertiary", "rail")
-    if lname == "transportation_name":
-        return kind in ("motorway", "trunk", "primary", "rail")
-    if lname == "street_labels":
-        return band >= 1 and kind in ("motorway", "rail", "funicular")
-    return True
-
-
-def _feature_style(layer_name: str, feature: MVTFeature) -> Dict[str, str]:
-    lname = (layer_name or "").lower()
-    kind = _kind(feature)
-    if feature.type == GEOM_POLYGON:
-        if lname == "ocean":
-            return {"fill": "#b9d8f2", "stroke": "none"}
-        if lname == "water":
-            if kind == "ocean":
-                return {"fill": "#b9d8f2", "stroke": "none"}
-            return {"fill": "#8ec4e8", "stroke": "#6baed6", "stroke-width": "0.35"}
-        if lname == "water_polygons":
-            if kind == "river":
-                return {"fill": "#9fcfee", "stroke": "#79b4db", "stroke-width": "0.35"}
-            return {"fill": "#8ec4e8", "stroke": "#6baed6", "stroke-width": "0.35"}
-        if lname == "landcover":
-            if kind == "wood":
-                return {"fill": "#c9ddb2", "stroke": "#a7c08a", "stroke-width": "0.2"}
-            if kind == "grass":
-                return {"fill": "#d9e7bf", "stroke": "#bccf95", "stroke-width": "0.18"}
-            if kind == "wetland":
-                return {"fill": "#cddfb3", "stroke": "#9ab88a", "stroke-width": "0.18"}
-        if lname == "landuse":
-            if kind in ("industrial", "commercial", "railway", "quarry", "military"):
-                return {"fill": "#d8d4cf", "stroke": "#bbb2aa", "stroke-width": "0.18"}
-            if kind in ("university", "school", "hospital"):
-                return {"fill": "#e8e5c8", "stroke": "#cfcaa1", "stroke-width": "0.18"}
-            if kind == "residential":
-                return {"fill": "#efe7dd", "stroke": "none"}
-        if lname == "park":
-            return {"fill": "#c6ddb0", "stroke": "#9fbe83", "stroke-width": "0.22"}
-        if lname == "land":
-            if kind in ("forest", "park", "grass", "grassland", "meadow", "garden", "golf_course", "orchard"):
-                return {"fill": "#c9ddb2", "stroke": "#a7c08a", "stroke-width": "0.25"}
-            if kind in ("farmland", "farmyard", "allotments", "greenhouse_horticulture"):
-                return {"fill": "#d8dfb0", "stroke": "#b7c184", "stroke-width": "0.22"}
-            if kind in ("beach",):
-                return {"fill": "#ecd8aa", "stroke": "#d7bf8a", "stroke-width": "0.2"}
-            if kind in ("industrial", "commercial", "brownfield", "garages", "greenfield"):
-                return {"fill": "#d8d4cf", "stroke": "#bbb2aa", "stroke-width": "0.2"}
-            if kind in ("bare_rock", "heath"):
-                return {"fill": "#d2c6b6", "stroke": "#b9ab99", "stroke-width": "0.2"}
-            return {"fill": "#d8d2bd", "stroke": "#c4bba8", "stroke-width": "0.18"}
-        return _layer_style(layer_name, feature.type)
-    if feature.type == GEOM_LINESTRING:
-        if lname == "waterway":
-            return {"fill": "none", "stroke": "#6fb2e4", "stroke-width": "0.8"}
-        if lname == "boundary":
-            return {"fill": "none", "stroke": "#988f84", "stroke-width": "0.4", "stroke-dasharray": "3 2"}
-        if lname == "transportation":
-            subclass = str(feature.properties.get("subclass") or "").strip().lower()
-            if kind == "rail" or subclass == "rail":
-                return {"fill": "none", "stroke": "#555", "stroke-width": "0.8"}
-            if kind == "motorway":
-                return {"fill": "none", "stroke": "#b76e3a", "stroke-width": "1.15"}
-            if kind == "trunk":
-                return {"fill": "none", "stroke": "#c58a57", "stroke-width": "0.95"}
-            if kind == "primary":
-                return {"fill": "none", "stroke": "#d6ab76", "stroke-width": "0.75"}
-            if kind == "secondary":
-                return {"fill": "none", "stroke": "#e0bf92", "stroke-width": "0.55"}
-            if kind == "tertiary":
-                return {"fill": "none", "stroke": "#e9d4b2", "stroke-width": "0.4"}
-        if lname == "transportation_name":
-            if kind == "motorway":
-                return {"fill": "none", "stroke": "#a55f31", "stroke-width": "0.9"}
-            if kind in ("trunk", "primary"):
-                return {"fill": "none", "stroke": "#b58457", "stroke-width": "0.7"}
-            return {"fill": "none", "stroke": "#555", "stroke-width": "0.7"}
-        if lname == "water_lines":
-            return {"fill": "none", "stroke": "#6fb2e4", "stroke-width": "0.8"}
-        if lname == "streets":
-            rail = int(feature.properties.get("rail") or 0)
-            if rail == 1 or kind in ("rail", "narrow_gauge"):
-                return {"fill": "none", "stroke": "#555", "stroke-width": "0.8"}
-            if kind == "motorway":
-                return {"fill": "none", "stroke": "#b76e3a", "stroke-width": "1.15"}
-            if kind == "trunk":
-                return {"fill": "none", "stroke": "#c58a57", "stroke-width": "0.95"}
-            if kind == "primary":
-                return {"fill": "none", "stroke": "#d6ab76", "stroke-width": "0.75"}
-            if kind == "secondary":
-                return {"fill": "none", "stroke": "#e0bf92", "stroke-width": "0.55"}
-            if kind == "tertiary":
-                return {"fill": "none", "stroke": "#e9d4b2", "stroke-width": "0.4"}
-        if lname == "street_labels":
-            if kind == "motorway":
-                return {"fill": "none", "stroke": "#a55f31", "stroke-width": "1.0"}
-            return {"fill": "none", "stroke": "#555", "stroke-width": "0.7"}
-        return _layer_style(layer_name, feature.type)
-    if lname == "mountain_peak":
-        if kind == "saddle":
-            return {"fill": "#7c6855", "stroke": "#fff", "stroke-width": "0.8"}
-        return {"fill": "#5f5244", "stroke": "#fff", "stroke-width": "0.8"}
-    return _layer_style(layer_name, feature.type)
 
 
 def export_debug_svg(
@@ -602,7 +374,22 @@ def export_debug_svg_multi(
     width: int = 1024,
     height: int = 1024,
     include_layers: Optional[Iterable[str]] = None,
+    bbox_override: Optional[Tuple[float, float, float, float]] = None,
 ) -> Path:
+    root = build_debug_svg_multi(tile_specs, width=width, height=height, include_layers=include_layers, bbox_override=bbox_override)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    ET.ElementTree(root).write(out_path, encoding="utf-8", xml_declaration=True)
+    return out_path
+
+
+def build_debug_svg_multi(
+    tile_specs: Sequence[Tuple[bytes, int, int, int]],
+    *,
+    width: int = 1024,
+    height: int = 1024,
+    include_layers: Optional[Iterable[str]] = None,
+    bbox_override: Optional[Tuple[float, float, float, float]] = None,
+) -> ET.Element:
     if not tile_specs:
         raise ValueError("tile_specs cannot be empty")
     zset = {int(spec[1]) for spec in tile_specs}
@@ -610,7 +397,7 @@ def export_debug_svg_multi(
         raise ValueError("All tiles must have the same zoom")
     z = int(tile_specs[0][1])
     bounds = [tile_bounds_mercator(tz, tx, ty) for (_raw, tz, tx, ty) in tile_specs]
-    bbox = (
+    bbox = bbox_override or (
         min(b[0] for b in bounds),
         min(b[1] for b in bounds),
         max(b[2] for b in bounds),
@@ -625,52 +412,34 @@ def export_debug_svg_multi(
             "height": str(height),
         },
     )
-    ET.SubElement(root, "rect", {"x": "0", "y": "0", "width": str(width), "height": str(height), "fill": "#eee6d1"})
+    defs = ET.SubElement(root, "defs")
+    clip = ET.SubElement(defs, "clipPath", {"id": "map-clip"})
+    ET.SubElement(clip, "rect", {"x": "0", "y": "0", "width": str(width), "height": str(height)})
+    scene = ET.SubElement(root, "g", {"clip-path": "url(#map-clip)"})
+    ET.SubElement(scene, "rect", {"x": "0", "y": "0", "width": str(width), "height": str(height), "fill": "#eee6d1"})
     allowed = {str(v) for v in include_layers} if include_layers else None
-    order = {
-        "ocean": 0,
-        "water": 1,
-        "water_polygons": 1,
-        "waterway": 2,
-        "water_lines": 2,
-        "landcover": 3,
-        "park": 4,
-        "landuse": 5,
-        "land": 6,
-        "transportation": 7,
-        "streets": 7,
-        "transportation_name": 8,
-        "street_labels": 8,
-        "mountain_peak": 9,
-        "place": 10,
-        "place_labels": 10,
-        "water_name": 11,
-        "water_polygons_labels": 11,
-        "boundaries": 12,
-        "boundary": 12,
-    }
     layer_groups: Dict[str, ET.Element] = {}
     feature_id_counters: Dict[str, int] = {}
     for raw_tile, tz, tx, ty in tile_specs:
         tile = decode_tile(raw_tile)
-        for layer in sorted(tile.layers, key=lambda lyr: (order.get(lyr.name, 50), lyr.name)):
+        for layer in sorted(tile.layers, key=lambda lyr: (MAP_STYLE.layer_order(lyr.name), lyr.name)):
             if allowed is not None and layer.name not in allowed:
                 continue
             g = layer_groups.get(layer.name)
             if g is None:
-                g = ET.SubElement(root, "g", {"id": layer.name})
+                g = ET.SubElement(scene, "g", {"id": layer.name})
                 layer_groups[layer.name] = g
             for feat in layer.features:
-                if allowed is None and not _default_include_feature(layer.name, feat, z):
+                if allowed is None and not MAP_STYLE.include_feature(layer.name, feat, z):
                     continue
-                elem_id = _feature_id(layer.name, feat, feature_id_counters)
+                elem_id = MAP_STYLE.feature_id(layer.name, feat, feature_id_counters)
                 pts = feature_to_viewbox_points(feat, layer, tz, tx, ty, bbox, width, height)
                 path_d = feature_to_svg_path(feat, layer, tz, tx, ty, bbox, width, height)
                 if feat.type in (GEOM_POLYGON, GEOM_LINESTRING):
                     if not path_d:
                         continue
                     style = {"d": path_d, "id": elem_id}
-                    style.update(_feature_style(layer.name, feat))
+                    style.update(MAP_STYLE.feature_style(layer.name, feat, feat.type))
                     ET.SubElement(g, "path", style)
                 elif feat.type == GEOM_POINT:
                     anchor = _feature_anchor_point(pts)
@@ -679,26 +448,13 @@ def export_debug_svg_multi(
                     cx, cy = anchor
                     if layer.name == "mountain_peak":
                         tri = f"M {cx:.2f},{cy - 3.4:.2f} L {cx - 3.0:.2f},{cy + 2.4:.2f} L {cx + 3.0:.2f},{cy + 2.4:.2f} Z"
-                        ET.SubElement(g, "path", {"id": elem_id, "d": tri, **_feature_style(layer.name, feat)})
+                        ET.SubElement(g, "path", {"id": elem_id, "d": tri, **MAP_STYLE.feature_style(layer.name, feat, feat.type)})
                     else:
-                        ET.SubElement(g, "circle", {"id": elem_id, "cx": f"{cx:.2f}", "cy": f"{cy:.2f}", "r": "2.2", **_feature_style(layer.name, feat)})
-                    label = _feature_label_text(feat)
+                        ET.SubElement(g, "circle", {"id": elem_id, "cx": f"{cx:.2f}", "cy": f"{cy:.2f}", "r": "2.2", **MAP_STYLE.feature_style(layer.name, feat, feat.type)})
+                    label = MAP_STYLE.feature_label_text(feat)
                     if label:
-                        kind = _kind(feat)
-                        fsize = "10"
-                        dx = 4.0
-                        dy = -2.0
-                        if layer.name in ("place", "place_labels"):
-                            if kind == "city":
-                                fsize = "12"
-                            elif kind == "town":
-                                fsize = "11"
-                        elif layer.name == "mountain_peak":
-                            fsize = "8"
-                            dx = 4.0
-                            dy = -4.0
-                        elif layer.name in ("water_name", "water_polygons_labels"):
-                            fsize = "9"
+                        dx, dy = MAP_STYLE.label_offset(layer.name, feat)
+                        text_style = MAP_STYLE.label_style(layer.name, feat)
                         t = ET.SubElement(
                             g,
                             "text",
@@ -706,19 +462,11 @@ def export_debug_svg_multi(
                                 "id": f"{elem_id}_label",
                                 "x": f"{cx + dx:.2f}",
                                 "y": f"{cy + dy:.2f}",
-                                "font-size": fsize,
-                                "font-family": "Segoe UI, sans-serif",
-                                "fill": "#111",
-                                "stroke": "#fff",
-                                "stroke-width": "1.2",
-                                "paint-order": "stroke fill",
-                                "stroke-linejoin": "round",
+                                **text_style,
                             },
                         )
                         t.text = label
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    ET.ElementTree(root).write(out_path, encoding="utf-8", xml_declaration=True)
-    return out_path
+    return root
 
 
 def describe_tile(raw_tile: bytes) -> List[str]:

@@ -23,8 +23,11 @@ nav:
       - Iterators and Copies: dsl/iterators.md
       - Fit and Anchor: dsl/fit-anchor.md
       - Layout: dsl/layout.md
+      - Hexes: dsl/hexes.md
+      - Paths: dsl/paths.md
       - Page: dsl/page.md
       - Source: dsl/source.md
+      - Maps: dsl/maps.md
       - Marks: dsl/marks.md
       - Gradients (Experimental): dsl/gradients.md
       - Advanced: dsl/advanced.md

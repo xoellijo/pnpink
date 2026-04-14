@@ -161,7 +161,10 @@ def _split_paths_suffix(token: str) -> Tuple[str, str]:
     s = str(token or "").strip()
     if not s:
         return "", ""
-    m = re.match(r"^(?P<core>.+?)\.(?:P)\s*(?P<body>\{.*\})\s*$", s)
+    # Accept both:
+    #   object_id.P{...}
+    #   .P{...}          -> paths attached directly to the current target
+    m = re.match(r"^(?P<core>.*?)\.(?:P)\s*(?P<body>\{.*\})\s*$", s)
     if not m:
         return s, ""
     return (m.group("core") or "").strip(), ("P" + (m.group("body") or "")).strip()
@@ -1045,17 +1048,24 @@ def _parse_source_like_token(raw_token: str):
     if m_all:
         body_for_dsl = (m_all.group("body") or "").strip()
         src_val = None
-        try:
-            cmd = DSL.maybe_parse(f"@{{{body_for_dsl}}}")
-        except Exception:
-            cmd = None
-        if cmd and getattr(cmd, "name", None) == "Source" and getattr(cmd, "target", None) is not None:
+        body_low = body_for_dsl.lower()
+        # Keep tile-backed virtual sources opaque here. The DSL parser may try to
+        # reinterpret bracketed bbox syntax, which breaks `osm://[...]` and
+        # `ofm://[...]` before SourceManager can resolve them.
+        if body_low.startswith("osm://") or body_low.startswith("ofm://"):
+            src_val = body_for_dsl
+        else:
             try:
-                src_val = cmd.target.args.get("src") if hasattr(cmd.target, "args") else None
-                if not src_val:
-                    src_val = getattr(cmd.target, "src", None)
+                cmd = DSL.maybe_parse(f"@{{{body_for_dsl}}}")
             except Exception:
-                src_val = None
+                cmd = None
+            if cmd and getattr(cmd, "name", None) == "Source" and getattr(cmd, "target", None) is not None:
+                try:
+                    src_val = cmd.target.args.get("src") if hasattr(cmd.target, "args") else None
+                    if not src_val:
+                        src_val = getattr(cmd.target, "src", None)
+                except Exception:
+                    src_val = None
         if not src_val:
             src_val = body_for_dsl
 
@@ -1175,6 +1185,8 @@ def _virtual_warn_tag(src_val: str, base_tag: str) -> str:
         return (base_tag or "oclp").replace("wkmc", "oclp")
     if s.startswith("osm://"):
         return (base_tag or "osm").replace("wkmc", "osm")
+    if s.startswith("ofm://"):
+        return (base_tag or "ofm").replace("wkmc", "ofm")
     return base_tag
 
 def _resolve_virtual_source_urls(sm, src_val: str, selector: Optional[str], *, warn_tag: str) -> Optional[list]:
@@ -1199,6 +1211,12 @@ def _resolve_virtual_source_urls(sm, src_val: str, selector: Optional[str], *, w
         urls = list(sm.resolve_oclp_urls(s) or [])
     elif sl.startswith("osm://"):
         urls = list(sm.resolve_osm_urls(s) or [])
+        if not urls:
+            # New tile-backed map sources are resolved inline by SourceManager.
+            # Keep the raw source token alive instead of failing normalization.
+            urls = [s]
+    elif sl.startswith("ofm://"):
+        urls = [s]
     else:
         return None
     urls = _select_1based_with_warning(urls, selector or "", warn_tag)
@@ -1318,6 +1336,10 @@ class CardPlanner:
                 round(mg.top,3), round(mg.right,3), round(mg.bottom,3), round(mg.left,3),
                 getattr(lay, 'cols', None), getattr(lay, 'rows', None),
                 getattr(lay, 'sweep_rows_first', None),
+                tuple(getattr(lay, 'gaps', None) or []),
+                tuple(getattr(lay, 'offset', None) or []),
+                getattr(lay, 'smart_shape', None),
+                getattr(lay, 'smart_hex_orient', None),
                 r.gaps.h, r.gaps.v,
                 card.name, card.width_mm, card.height_mm, card.landscape
             )
@@ -2612,7 +2634,13 @@ def render_phase(ctx):
                 _l.w(f"{warn_tag} deferred fit-anchor failed base='{base_id}' rect='{r_id}': {ex}")
         for (target_el, paths_spec_raw, orient_hint) in (path_jobs or []):
             try:
-                PATHS.render_paths_for_target(inst_node, target_el, paths_spec_raw, orient_hint=orient_hint)
+                PATHS.render_paths_for_target(
+                    inst_node,
+                    target_el,
+                    paths_spec_raw,
+                    orient_hint=orient_hint,
+                    style_scope_node=root,
+                )
             except Exception as ex:
                 _l.w(f"{warn_tag} deferred paths failed target='{(target_el.get('id') if target_el is not None else '')}': {ex}")
         return _fa_remove_later
@@ -3133,7 +3161,10 @@ def render_phase(ctx):
                 planner.apply_preset(current)
                 if int(planner.page_index) != _old_page_idx:
                     _flush_marks_for_page(_old_page_idx)
-                _l.i(f"Tail applied: g={layout.cols}x{layout.rows} inv=({layout.invert_cols},{layout.invert_rows}) rowMajor={layout.sweep_rows_first} k={gaps.h}Ã—{gaps.v} s='{card.name or ''}'")
+                _shape = (getattr(layout, 'smart_shape', None) or card.name or '').strip()
+                _orient = (getattr(layout, 'smart_hex_orient', None) or '').strip()
+                _shape_dbg = _shape if not _orient else f"{_shape}/{_orient}"
+                _l.i(f"Tail applied: g={layout.cols}x{layout.rows} inv=({layout.invert_cols},{layout.invert_rows}) rowMajor={layout.sweep_rows_first} k={gaps.h}Ã—{gaps.v} s='{_shape_dbg}'")
         if row_marks:
             _l.s(f"ROW {idx}: apply MARKS tail")
             if row_marks in ("0", "-"):
@@ -3584,7 +3615,13 @@ def render_phase(ctx):
                     _l.w(f"[deckmaker.fa] EXEC FAILED base='{base_id}' rect='{r_id}' ops='{ops_full or '~'}': {ex}")
             for (target_el, paths_spec_raw, orient_hint) in (j.get('path_jobs') or []):
                 try:
-                    PATHS.render_paths_for_target(inst0, target_el, paths_spec_raw, orient_hint=orient_hint)
+                    PATHS.render_paths_for_target(
+                        inst0,
+                        target_el,
+                        paths_spec_raw,
+                        orient_hint=orient_hint,
+                        style_scope_node=root,
+                    )
                 except Exception as ex:
                     _l.w(f"[deckmaker.paths] EXEC FAILED target='{(target_el.get('id') if target_el is not None else '')}': {ex}")
         # Remove placeholders at the end so the same rect can be reused (multivalue/dup headers).

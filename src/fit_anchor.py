@@ -251,6 +251,16 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
         "clone+unlink": "use+unlink",
     }
     place = mode_map.get(place_mode, "use")
+    try:
+        preferred_place = str(base.get("data-place-mode") or "").strip().lower()
+        if preferred_place in ("deep", "copy"):
+            place = "deep"
+        elif preferred_place in ("use", "clone"):
+            place = "use"
+        elif preferred_place in ("use+unlink", "clone+unlink", "unlink"):
+            place = "use+unlink"
+    except Exception:
+        pass
 
     # 12) parent where we place the clone
     #     - By default: same parent as the rect

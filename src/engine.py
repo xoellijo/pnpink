@@ -1272,8 +1272,9 @@ def run(self, __version__):
 
                 orient = _detect_hex_orientation(proto_root, declared_bbox_node)
                 if orient is None:
-                    # If we can't detect, default to pointy for hextile(s) and do nothing for hexgrid.
-                    orient = 'pointy' if sp in ('hextile', 'hextiles') else None
+                    # For map/overlay workflows there may be no hex path in the template to inspect.
+                    # Fall back to pointy instead of silently degrading to a rectangular grid.
+                    orient = 'pointy' if sp in ('hexgrid', 'hextile', 'hextiles') else None
 
                 # Persist the detected orientation for downstream consumers (e.g. Marks{} hextiles).
                 # This is intentionally simple (MVP): marks must not try to re-infer orientation

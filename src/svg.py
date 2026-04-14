@@ -1846,9 +1846,12 @@ def deepcopy_place(base, parent, T: inkex.Transform, *, insert_after=None, id_pr
     use = clone_as_use(base, parent, T, insert_after=insert_after, set_id=None)
     dup = unlink_use(use)
     try:
-        dup.set_random_ids(prefix=id_prefix)
+        _semanticize_ids_in_scope(dup, prefix=id_prefix)
     except Exception:
-        pass
+        try:
+            dup.set_random_ids(prefix=id_prefix)
+        except Exception:
+            pass
     return dup
 
 def place_node(base, parent, *,
@@ -2047,6 +2050,78 @@ def uniquify_all_ids_in_scope(scope, suffix: str, get_unique_id):
             unique = proposed
         if unique != cur:
             el.set('id', unique)
+
+def _semanticize_ids_in_scope(scope, prefix: str = "af"):
+    """
+    Preserve meaningful ids when deep-cloning a subtree while still making them
+    unique in the document and keeping local references valid.
+    """
+    if scope is None:
+        return
+
+    try:
+        root = scope
+        while root is not None and getattr(root, "getparent", None) and root.getparent() is not None:
+            root = root.getparent()
+    except Exception:
+        root = None
+
+    try:
+        get_unique_id = getattr(root, "get_unique_id", None)
+    except Exception:
+        get_unique_id = None
+
+    id_map = {}
+    for el in scope.iter():
+        if not hasattr(el, "tag") or not isinstance(el.tag, str):
+            continue
+        cur = str(el.get("id") or "").strip()
+        if not cur:
+            continue
+        base = strip_pnp_suffix(cur)
+        if el.get("data-origid") is None:
+            try:
+                el.set("data-origid", base)
+            except Exception:
+                pass
+        proposed = f"{prefix}_{base}" if prefix else base
+        try:
+            unique = get_unique_id(proposed) if callable(get_unique_id) else proposed
+        except Exception:
+            unique = proposed
+        id_map[cur] = unique
+        if base != cur:
+            id_map[base] = unique
+
+    rx_url = re.compile(r"url\(#([^)]+)\)")
+    for el in scope.iter():
+        if not hasattr(el, "tag") or not isinstance(el.tag, str):
+            continue
+        cur = str(el.get("id") or "").strip()
+        if cur and cur in id_map:
+            try:
+                el.set("id", id_map[cur])
+            except Exception:
+                pass
+        try:
+            attrs = dict(el.attrib or {})
+        except Exception:
+            attrs = {}
+        for k, v in attrs.items():
+            sv = str(v or "")
+            if not sv:
+                continue
+            newv = sv
+            if sv.startswith("#") and len(sv) > 1:
+                rid = sv[1:]
+                newv = "#" + id_map.get(rid, rid)
+            if "url(#" in newv:
+                newv = rx_url.sub(lambda m: f"url(#{id_map.get(m.group(1), m.group(1))})", newv)
+            if newv != sv:
+                try:
+                    el.set(k, newv)
+                except Exception:
+                    pass
 
 def common_group_ancestor(nodes):
     """
