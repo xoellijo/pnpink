@@ -24,6 +24,7 @@ This is especially useful for hex maps, hextiles, movement guides, borders, and 
 tile_id.P{path_style [a b]}
 tile_id.P{path_style [5a 79]}
 tile_id.P{path_style [ab cd]}
+.P{path_style [a b d]}
 ```
 
 You can define several styled groups in the same block:
@@ -41,11 +42,23 @@ Each pair is:
 The style id may reference:
 
 - one path
-- or a group of paths, used as a style stack
+- or a group of paths, used as a style stack in the same z-order
 
 ## Where It Applies
 
 `Paths` belongs to the cell content, not to the page layout header.
+
+You can attach it explicitly to a target:
+
+```txt
+tile_id.P{path_style [ab]}
+```
+
+or use it directly on the current placed target:
+
+```txt
+.P{path_style [ab]}
+```
 
 So this is the right mental model:
 
@@ -112,7 +125,7 @@ Examples:
 Depending on the relative position, this becomes:
 
 - a straight line for opposite sides
-- or a curved connection passing through the center for non-opposite sides
+- or a curved connection for non-opposite sides
 
 ## Center to Neighboring Hex
 
@@ -146,6 +159,8 @@ tile_id.P{path_thin [a b c] path_bold [5A5]}
 ```
 
 This lets you draw different local guides with different strokes while keeping the syntax compact.
+
+If the style id points to a group, PnPInk generates one path per child path in that group and preserves their stacking order. This is useful for multi-stroke styles such as railways, roads, or layered local guides.
 
 ## Related Pages
 

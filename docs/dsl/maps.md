@@ -61,6 +61,8 @@ PnPInk automatically:
 - clips the result to the requested area
 - inserts the generated SVG into the document
 
+Downloaded tiles and place lookups are cached automatically in `assets/maptiles/`, so repeated renders of the same areas are much faster.
+
 ## Map Content
 
 The generated SVG is layered and grouped, so it can contain examples such as water, rivers, roads, landcover, parks, labels, places, and mountain peaks depending on provider and zoom.
