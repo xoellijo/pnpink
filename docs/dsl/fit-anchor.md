@@ -2,8 +2,9 @@
 Fit-Anchor is one of the most important modules in PnPInk.
 It is the placement engine that lets you position objects relative to placeholders without manual coordinates and without hardcoding object/template sizes.
 
-In practice, Fit-Anchor lets you place one or many objects on a placeholder and then align, scale, rotate, mirror, shift, and clip them with compact syntax.
+In practice, Fit-Anchor lets you place one or many objects on a placeholder and then size, align, shift and clip them relative to that placeholder.
 
+Fit-Anchor is about the relationship between an object and its placeholder.
 For visual changes applied to the object itself after placement, use [Transform](/dsl/transform/).
 
 ## Dataset Mental Model
@@ -12,6 +13,25 @@ Fit-Anchor is easier to understand if you keep this model in mind:
 - the dataset header points to a placeholder object in the SVG,
 - each row cell provides one or many source objects,
 - Fit-Anchor defines how those source objects are positioned relative to that placeholder for each generated card/instance.
+
+## Fit vs Transform
+Use:
+
+- `Fit` / `Fit-Anchor` for placement relative to the placeholder
+- `Transform` for changes applied to the placed object itself
+
+Typical Fit-Anchor concerns are:
+
+- size inside the placeholder
+- alignment within the placeholder
+- border or fit area
+- clipping to the placeholder
+
+Typical Transform concerns are:
+
+- opacity
+- soft edges
+- later, other visual effects applied directly to the object
 
 ## What Is an "Object" Here?
 In this documentation, we call IDs "objects" (not "elements") from the DSL/user point of view.

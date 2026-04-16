@@ -4,6 +4,29 @@
 
 Use it when you want to alter the final appearance of an object without changing the placeholder logic of `Fit` or `Fit-Anchor`.
 
+`Transform` is not about the placeholder.
+It is about the object itself once placement is already solved.
+
+## Transform vs Fit
+Use:
+
+- `Fit` / `Fit-Anchor` for anything relative to the placeholder
+- `Transform` for anything applied to the object itself
+
+Examples of `Fit` concerns:
+
+- fit mode
+- anchor
+- border
+- clipping to the placeholder
+- placement inside the placeholder
+
+Examples of `Transform` concerns:
+
+- opacity
+- soft edges
+- later, other visual effects such as blur, color adjustments or shadows
+
 ## Syntax
 
 ```txt
@@ -64,13 +87,6 @@ This is useful for:
 - fading photos or textures
 - softening cutout edges
 - blending placed art into a tile or card background
-
-## Fit vs Transform
-
-Use:
-
-- `Fit` / `Fit-Anchor` for size, alignment, border, and clipping relative to the placeholder
-- `Transform` for visual changes to the placed object itself
 
 ## Related Pages
 
