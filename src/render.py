@@ -95,7 +95,9 @@ TEXT_LIKE = set(getattr(SVG, "TEXT_LIKE", ()))
 import layouts as LYT
 import dsl as DSL
 import fit_anchor as FA
+import geometry_registry as GREG
 import paths as PATHS
+import transform_fx as TFX
 from typing import Dict, Optional, Tuple
 _HEADER_RE = re.compile(r"^(?P<id>[^\[\]]+)(?:\[(?P<prop>[^\]]+)\])?$")
 
@@ -122,6 +124,44 @@ def _slot_index_to_rc(within: int, plan_obj, layout_obj):
     if bool(getattr(layout_obj, 'invert_cols', False)):
         c0 = (cols - 1) - c0
     return int(r0), int(c0)
+
+def _slot_rc_to_index_1based(r1: int, c1: int, plan_obj, layout_obj):
+    cols = int(getattr(plan_obj, 'cols', 0) or 0)
+    rows = int(getattr(plan_obj, 'rows', 0) or 0)
+    if cols <= 0 or rows <= 0:
+        return None
+    r0 = int(r1) - 1
+    c0 = int(c1) - 1
+    if not (0 <= r0 < rows and 0 <= c0 < cols):
+        return None
+    if bool(getattr(layout_obj, 'invert_rows', False)):
+        r0 = (rows - 1) - r0
+    if bool(getattr(layout_obj, 'invert_cols', False)):
+        c0 = (cols - 1) - c0
+    sweep_rows_first = bool(getattr(layout_obj, 'sweep_rows_first', True))
+    if sweep_rows_first:
+        within0 = (r0 * cols) + c0
+    else:
+        within0 = (c0 * rows) + r0
+    return int(within0) + 1
+
+def _excel_col_to_num(s: str):
+    txt = str(s or "").strip().upper()
+    if not txt or not re.fullmatch(r"[A-Z]+", txt):
+        return None
+    n = 0
+    for ch in txt:
+        n = n * 26 + (ord(ch) - 64)
+    return n
+
+def _parse_slot_ref(tok: str):
+    t = str(tok or "").strip()
+    if re.fullmatch(r"\d+", t):
+        return ("index", int(t))
+    m = re.fullmatch(r"([A-Za-z]+)([1-9]\d*)", t)
+    if m:
+        return ("cell", (_excel_col_to_num(m.group(1)), int(m.group(2))))
+    return (None, None)
 
 def _gaps_has_offsets(layout_obj) -> bool:
     """True only if gaps params 3..6 are non-zero."""
@@ -168,6 +208,30 @@ def _split_paths_suffix(token: str) -> Tuple[str, str]:
     if not m:
         return s, ""
     return (m.group("core") or "").strip(), ("P" + (m.group("body") or "")).strip()
+
+def _split_transform_suffixes(token: str):
+    s = str(token or "").strip()
+    if not s:
+        return "", None
+    specs = []
+    rx = re.compile(r"^(?P<base>.*?)(?P<mod>\.(?:Transform|T)\s*\{[^{}]*\})\s*$", re.IGNORECASE)
+    while True:
+        m = rx.match(s)
+        if not m:
+            break
+        mod_txt = (m.group("mod") or "").strip()
+        try:
+            ch = DSL.maybe_parse_chain("X" + mod_txt)
+        except Exception:
+            ch = None
+        if ch is None:
+            break
+        mod = next((mm for mm in (getattr(ch, "modules", None) or []) if str(getattr(mm, "name", "")).lower() in ("transform", "t")), None)
+        if mod is None or getattr(mod, "spec", None) is None:
+            break
+        specs.insert(0, getattr(mod, "spec"))
+        s = (m.group("base") or "").strip()
+    return s, TFX.merge_specs(specs)
 
 def _parse_array_token(token: str):
     s = (token or '').strip()
@@ -1442,7 +1506,7 @@ def _center_use_over_placeholder(u, placeholder):
         except Exception as ex:
             _l.w(f"removing placeholder '{placeholder.get('id')}' failed: {ex}")
 
-def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs, path_jobs, use_seq, layout_obj=None, sm=None, ss_registry=None):
+def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs, path_jobs, use_seq, layout_obj=None, sm=None, ss_registry=None, transform_jobs=None):
     global _P1_KEEP_SET
     hk = parse_header_key_full(key)
     target_tokens = hk.get('target_ids') if isinstance(hk, dict) else None
@@ -1463,6 +1527,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
             c, st = apply_field_in_clone(
                 inst, sub_key, raw_val, row,
                 root_doc=root_doc, use_jobs=use_jobs, fa_jobs=fa_jobs, path_jobs=path_jobs, use_seq=use_seq, layout_obj=layout_obj,
+                transform_jobs=transform_jobs,
                 sm=sm, ss_registry=ss_registry
             )
             total += int(c or 0)
@@ -1608,7 +1673,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
         if len(toks) > 1:
             total = 0
             for _tok in reversed(toks):
-                c, _ = apply_field_in_clone(inst, key, _tok, row, root_doc=root_doc, use_jobs=use_jobs, fa_jobs=fa_jobs, path_jobs=path_jobs, use_seq=use_seq, layout_obj=layout_obj, sm=sm, ss_registry=ss_registry)
+                c, _ = apply_field_in_clone(inst, key, _tok, row, root_doc=root_doc, use_jobs=use_jobs, fa_jobs=fa_jobs, path_jobs=path_jobs, use_seq=use_seq, layout_obj=layout_obj, sm=sm, ss_registry=ss_registry, transform_jobs=transform_jobs)
                 total += int(c or 0)
             return total, 'multi'
 
@@ -1628,6 +1693,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
 
     raw_token = _expand_wildcard_ids_in_value(raw_token, root_doc)
     raw_token, raw_paths_spec = _split_paths_suffix(raw_token)
+    raw_token, transform_spec = _split_transform_suffixes(raw_token)
 
     # Header-global ops ('id=~...') are merged later per token in FA queue stage.
     # Doing it there gives deterministic precedence with iterator/item ops.
@@ -1855,7 +1921,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                 )
                 if g_id:
                     # Use deep-copy for arrays so the temp group can be removed safely.
-                    fa_jobs.append((g_id, rect_id_val, ops_full, 'copy', g_node, rect_elem_for_fa))
+                    fa_jobs.append((g_id, rect_id_val, ops_full, 'copy', g_node, rect_elem_for_fa, transform_spec))
                     queued += 1
                     _l.d(f"[deckmaker.fa] queued '{key}' -> base='{g_id}' rect='{rect_id_val}' place=copy ops='{ops_full or '~'}'")
                     if tok_paths_spec:
@@ -1873,7 +1939,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                 continue
             ops_body = (ops_tok or "") or default_ops
             ops_full = _merge_header_global_ops(ops_body)
-            fa_jobs.append((base_id, rect_id_val, ops_full, place, None, rect_elem_for_fa))
+            fa_jobs.append((base_id, rect_id_val, ops_full, place, None, rect_elem_for_fa, transform_spec))
             queued += 1
             _l.d(f"[deckmaker.fa] queued '{key}' -> base='{base_id}' rect='{rect_id_val}' place={place} ops='{ops_full or '~'}'")
             if tok_paths_spec:
@@ -1904,7 +1970,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
             u = SVG.etree.Element(inkex.addNS('use','svg'))
             u.set(inkex.addNS('href','xlink'), f"#{symbol_id_for_fallback}")
             par.insert(par.index(tgt) + 1, u)
-            use_jobs.append((tgt, u))
+            use_jobs.append((tgt, u, transform_spec))
             if raw_paths_spec:
                 try:
                     tgt.set('data-dm-keep-paths', '1')
@@ -1932,7 +1998,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
         _l.w(f"Target '{target_id}' has no parent; cannot insert <use> '{use_id}'.")
     else:
         parent.insert(parent.index(tgt) + 1, u)
-        use_jobs.append((tgt, u))
+        use_jobs.append((tgt, u, transform_spec))
         if raw_paths_spec:
             try:
                 tgt.set('data-dm-keep-paths', '1')
@@ -2016,6 +2082,25 @@ def render_phase(ctx):
                 f"page={planner_obj.page_index+1} slot_index={planner_obj.slot_index}"
             )
         return sx, sy
+    def _slot_geom_for_within(planner_obj, within0):
+        try:
+            slot = planner_obj.local_slots[int(within0)]
+        except Exception:
+            return None
+        local_x = float(slot[0]); local_y = float(slot[1])
+        slot_w = slot_h = None
+        if len(slot) >= 4:
+            slot_w = float(slot[2]); slot_h = float(slot[3])
+        try:
+            p = planner_obj.pages[planner_obj.page_index]
+            px = float(p.get("x", 0.0)); py = float(p.get("y", 0.0))
+        except Exception:
+            px = py = 0.0
+        cx = float(getattr(planner_obj.plan, "content_x", 0.0))
+        cy = float(getattr(planner_obj.plan, "content_y", 0.0))
+        left = float(getattr(planner_obj.plan, "left", 0.0))
+        top = float(getattr(planner_obj.plan, "top", 0.0))
+        return (px + cx + left + local_x, py + cy + top + local_y, slot_w, slot_h)
     def _jump_page_with_marks(planner_obj):
         """Jump to next page flushing pending Marks for the current page."""
         _flush_marks_for_page(planner_obj.page_index)
@@ -2037,6 +2122,121 @@ def render_phase(ctx):
 
         from pathlib import Path
         import glob as _glob
+
+        def _slots_per_page():
+            try:
+                return int(planner.slots_per_page() or 0)
+            except Exception:
+                try:
+                    return int(len(getattr(planner, 'local_slots', []) or []))
+                except Exception:
+                    return 0
+
+        def _resolve_slot_ref_1based(tok: str):
+            kind, val = _parse_slot_ref(tok)
+            n = _slots_per_page()
+            if kind == "index":
+                return int(val) if 1 <= int(val) <= n else None
+            if kind == "cell":
+                c1, r1 = val
+                return _slot_rc_to_index_1based(r1, c1, planner.plan, planner.current.layout)
+            return None
+
+        def _expand_declarative_slot_selector(sel_raw: str):
+            body = str(sel_raw or "").strip()
+            if body.startswith('[') and body.endswith(']'):
+                body = body[1:-1].strip()
+            toks = [t for t in re.split(r'[\s,]+', body) if t]
+            n = _slots_per_page()
+            out = []
+            for t in toks:
+                if t == '*':
+                    out.extend(list(range(1, n + 1)))
+                    continue
+                m = re.fullmatch(r'(\d+)\s*\.\.\s*\?', t)
+                if m:
+                    a = int(m.group(1))
+                    if a <= n:
+                        out.extend(list(range(max(1, a), n + 1)))
+                    else:
+                        _l.w(f"[slots] selector out of range: {t} (size={n})")
+                    continue
+                m = re.fullmatch(r'([A-Za-z]+\d+)\s*\.\.\s*([A-Za-z]+\d+)', t)
+                if m:
+                    a = _resolve_slot_ref_1based(m.group(1))
+                    b = _resolve_slot_ref_1based(m.group(2))
+                    if a is None or b is None:
+                        _l.w(f"[slots] invalid sequential range '{t}'")
+                        continue
+                    step = 1 if b >= a else -1
+                    out.extend(list(range(a, b + step, step)))
+                    continue
+                m = re.fullmatch(r'([A-Za-z]+\d+)\s*:\s*([A-Za-z]+\d+)', t)
+                if m:
+                    ka, va = _parse_slot_ref(m.group(1))
+                    kb, vb = _parse_slot_ref(m.group(2))
+                    if ka != 'cell' or kb != 'cell':
+                        _l.w(f"[slots] invalid matrix range '{t}'")
+                        continue
+                    c1a, r1a = va
+                    c1b, r1b = vb
+                    cells = []
+                    for rr in range(min(r1a, r1b), max(r1a, r1b) + 1):
+                        for cc in range(min(c1a, c1b), max(c1a, c1b) + 1):
+                            s1 = _slot_rc_to_index_1based(rr, cc, planner.plan, planner.current.layout)
+                            if s1 is None:
+                                _l.w(f"[slots] selector cell out of range: {cc},{rr}")
+                                continue
+                            cells.append(int(s1))
+                    out.extend(sorted(cells))
+                    continue
+                m = re.fullmatch(r'(\d+)\s*\.\.\s*(\d+)', t)
+                if m:
+                    a = int(m.group(1)); b = int(m.group(2))
+                    step = 1 if b >= a else -1
+                    for i1 in range(a, b + step, step):
+                        if 1 <= i1 <= n:
+                            out.append(int(i1))
+                        else:
+                            _l.w(f"[slots] selector index out of range: {i1} (size={n})")
+                    continue
+                s1 = _resolve_slot_ref_1based(t)
+                if s1 is None:
+                    _l.w(f"[slots] invalid selector token '{t}'")
+                    continue
+                out.append(int(s1))
+            return out
+
+        def _expand_procedural_slot_selector(sel_raw: str):
+            toks = [t for t in re.split(r'[\s,]+', str(sel_raw or '').strip()) if t]
+            n = _slots_per_page()
+            out = []
+            cursor = int(getattr(planner, 'slot_index', 0) or 0) + 1
+            for t in toks:
+                m_gap = re.fullmatch(r'(\d+)-', t)
+                if m_gap:
+                    cursor += int(m_gap.group(1))
+                    continue
+                if re.fullmatch(r'[A-Za-z]+[1-9]\d*', t):
+                    s1 = _resolve_slot_ref_1based(t)
+                    if s1 is None:
+                        _l.w(f"[slots] invalid anchor '{t}'")
+                        continue
+                    cursor = int(s1)
+                    continue
+                if re.fullmatch(r'\d+', t):
+                    k = int(t)
+                    if k <= 0:
+                        continue
+                    for _ in range(k):
+                        if 1 <= cursor <= n:
+                            out.append(int(cursor))
+                        else:
+                            _l.w(f"[slots] procedural cursor out of range: {cursor} (size={n})")
+                        cursor += 1
+                    continue
+                _l.w(f"[slots] invalid procedural token '{t}'")
+            return out, max(0, cursor - 1)
 
         def _count_leading_stars(s: str) -> int:
             n = 0
@@ -2543,6 +2743,37 @@ def render_phase(ctx):
             except Exception:
                 copies_decl = 1
             copies_explicit = _as_bool(_row.get('__dm_copies_explicit__', False))
+            slot_select_raw = str(_row.get('__dm_slot_select__', '') or '').strip()
+            slot_select_mode = str(_row.get('__dm_slot_select_mode__', '') or '').strip().lower()
+            if slot_select_raw:
+                if slot_select_mode == 'declarative':
+                    targets = _expand_declarative_slot_selector(slot_select_raw)
+                    for _i, tgt in enumerate(targets):
+                        src = row_list[(_i % max(n_iter, 1))] if row_list else _row
+                        r = dict(src)
+                        if isinstance(r.get('cells'), list):
+                            r['cells'] = list(r.get('cells') or [])
+                        r['_i'] = _i
+                        r['__dm_target_slot__'] = int(tgt)
+                        if _i > 0 and '__dm_page__' in r:
+                            r['__dm_page__'] = ''
+                        yield r
+                    continue
+                if slot_select_mode == 'procedural':
+                    targets, cursor_after = _expand_procedural_slot_selector(slot_select_raw)
+                    for _i, tgt in enumerate(targets):
+                        src = row_list[(_i % max(n_iter, 1))] if row_list else _row
+                        r = dict(src)
+                        if isinstance(r.get('cells'), list):
+                            r['cells'] = list(r.get('cells') or [])
+                        r['_i'] = _i
+                        r['__dm_target_slot__'] = int(tgt)
+                        if _i == (len(targets) - 1):
+                            r['__dm_target_cursor_after__'] = int(cursor_after)
+                        if _i > 0 and '__dm_page__' in r:
+                            r['__dm_page__'] = ''
+                        yield r
+                    continue
             reps = max(copies_decl, 0) if copies_explicit else (n_iter if has_iter else 1)
             if reps <= 0:
                 continue
@@ -2587,7 +2818,7 @@ def render_phase(ctx):
         except Exception:
             return []
     # --- Dedup: shared helpers for @page/@back field fill and deferred FA (nested for safe closure) ---
-    def _fill_instance_fields(inst_node, row_inst, row_map, use_jobs, fa_jobs, path_jobs, *, clone_first: bool = False):
+    def _fill_instance_fields(inst_node, row_inst, row_map, use_jobs, fa_jobs, path_jobs, transform_jobs, *, clone_first: bool = False):
         """Apply dataset fields into a template instance, collecting deferred jobs."""
         passes = (True, False) if clone_first else (False, True)
         for want_clone in passes:
@@ -2603,10 +2834,11 @@ def render_phase(ctx):
                 apply_field_in_clone(
                     inst_node, k, raw, row_map,
                     root_doc=root, use_jobs=use_jobs, fa_jobs=fa_jobs, path_jobs=path_jobs,
-                    use_seq=use_seq, layout_obj=planner.current.layout, sm=SM, ss_registry=ss_registry
+                    use_seq=use_seq, layout_obj=planner.current.layout, sm=SM, ss_registry=ss_registry,
+                    transform_jobs=transform_jobs
                 )
 
-    def _exec_use_fa_paths(inst_node, use_jobs, fa_jobs, path_jobs, *, warn_tag: str):
+    def _exec_use_fa_paths(inst_node, use_jobs, fa_jobs, path_jobs, transform_jobs, *, warn_tag: str):
         """Center <use> elements, execute deferred Fit/Anchor jobs, then Paths jobs."""
         def _apply_fa(scope_node, base_id, r_id, ops_full, place_mode, rect_elem):
             try:
@@ -2619,30 +2851,27 @@ def render_phase(ctx):
                     return FA.apply_to_by_ids(root, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem)
                 raise
 
-        for placeholder, u in (use_jobs or []):
+        for placeholder, u, tr_spec in (use_jobs or []):
             try:
                 _center_use_over_placeholder(u, placeholder)
             except Exception:
                 pass
-        _fa_remove_later = []
-        for (base_id, r_id, ops_full, place_mode, placeholder_to_remove, rect_elem) in (fa_jobs or []):
             try:
-                _apply_fa(inst_node, base_id, r_id, ops_full, place_mode, rect_elem)
+                if tr_spec is not None:
+                    TFX.apply_transform_spec(root, u, tr_spec)
+            except Exception as ex:
+                _l.w(f"{warn_tag} deferred transform failed target='{(u.get('id') if u is not None else '')}': {ex}")
+        _fa_remove_later = []
+        for (base_id, r_id, ops_full, place_mode, placeholder_to_remove, rect_elem, tr_spec) in (fa_jobs or []):
+            try:
+                _placed = _apply_fa(inst_node, base_id, r_id, ops_full, place_mode, rect_elem)
+                if tr_spec is not None and _placed is not None:
+                    TFX.apply_transform_spec(root, _placed, tr_spec)
                 if placeholder_to_remove is not None:
                     _fa_remove_later.append(placeholder_to_remove)
             except Exception as ex:
                 _l.w(f"{warn_tag} deferred fit-anchor failed base='{base_id}' rect='{r_id}': {ex}")
-        for (target_el, paths_spec_raw, orient_hint) in (path_jobs or []):
-            try:
-                PATHS.render_paths_for_target(
-                    inst_node,
-                    target_el,
-                    paths_spec_raw,
-                    orient_hint=orient_hint,
-                    style_scope_node=root,
-                )
-            except Exception as ex:
-                _l.w(f"{warn_tag} deferred paths failed target='{(target_el.get('id') if target_el is not None else '')}': {ex}")
+        _queue_paths(int(planner.page_index), path_jobs, owner_group=None)
         return _fa_remove_later
 
     def _absolutize_instance_linked_images(inst_node):
@@ -2650,6 +2879,35 @@ def render_phase(ctx):
             return
         SVG.absolutize_all_linked_images(inst_node, doc_path)
     # --- end dedup helpers ---
+
+    def _queue_paths(page_index: int, path_jobs, *, owner_group=None):
+        for (target_el, paths_spec_raw, orient_hint) in (path_jobs or []):
+            deferred_path_jobs.append({
+                'page_index': int(page_index),
+                'target_el': target_el,
+                'paths_spec_raw': paths_spec_raw,
+                'orient_hint': orient_hint,
+                'owner_group': owner_group,
+            })
+
+    def _flush_deferred_paths(*, warn_tag: str):
+        if not deferred_path_jobs:
+            return
+        for job in list(deferred_path_jobs):
+            try:
+                PATHS.render_paths_for_target(
+                    geom_registry,
+                    job.get('target_el'),
+                    job.get('paths_spec_raw') or '',
+                    page_index=int(job.get('page_index', 0) or 0),
+                    orient_hint=job.get('orient_hint'),
+                    style_scope_node=root,
+                    insert_parent=out_layer,
+                    insert_after_elem=job.get('owner_group'),
+                )
+            except Exception as ex:
+                _l.w(f"{warn_tag} deferred paths failed target='{(job.get('target_el').get('id') if job.get('target_el') is not None else '')}': {ex}")
+        deferred_path_jobs.clear()
 
     marks_current = getattr(ctx, 'header_marks_current', None)
     if marks_current is None:
@@ -2662,6 +2920,8 @@ def render_phase(ctx):
     pending_page_req = {}       # slot_no -> list[dict]  (@page)
     pending_page_back_req = {}  # slot_no -> list[dict]  (@page @back)
     skipped_back_instances = 0
+    geom_registry = GREG.GridGeometryRegistry()
+    deferred_path_jobs = []
 
     def _parse_slot_selector(sel_raw: str):
         """Parse a @page selector cell.
@@ -2837,20 +3097,20 @@ def render_phase(ctx):
         page_wrap.append(inst)
         tmp_group.append(page_wrap)
         # Fill fields (same rules as normal templates)
-        use_jobs = []; fa_jobs = []; path_jobs = []
+        use_jobs = []; fa_jobs = []; path_jobs = []; transform_jobs = []
         row_map = _build_row_map(headers, row_inst)
 
         # Phase-1: reset per-instance keep-visible set (populated by parse_header_key on headers with '+')
         global _P1_KEEP_SET
         _P1_KEEP_SET = set()
 
-        _fill_instance_fields(inst, row_inst, row_map, use_jobs, fa_jobs, path_jobs, clone_first=False)
+        _fill_instance_fields(inst, row_inst, row_map, use_jobs, fa_jobs, path_jobs, transform_jobs, clone_first=False)
         # Execute <use> centering and deferred FA on the base instance (still in temp group)
         # DEBUG: collect rect/placeholder ids that FA will touch in this instance so we can detect early placeholder removals
         global _DBG_FA_RECT_IDS
         try:
             _DBG_FA_RECT_IDS = set()
-            for (_b, _r, _ops, _pm, _ph_rm, _rect_elem) in (fa_jobs or []):
+            for (_b, _r, _ops, _pm, _ph_rm, _rect_elem, _tr_spec) in (fa_jobs or []):
                 if _ph_rm is not None:
                     _pid = _ph_rm.get('id') or ''
                     if _pid: _DBG_FA_RECT_IDS.add(_pid)
@@ -2859,7 +3119,7 @@ def render_phase(ctx):
                     if _rid: _DBG_FA_RECT_IDS.add(_rid)
         except Exception:
             _DBG_FA_RECT_IDS = None
-        _fa_remove_later = _exec_use_fa_paths(inst, use_jobs, fa_jobs, path_jobs, warn_tag='[@page]')
+        _fa_remove_later = _exec_use_fa_paths(inst, use_jobs, fa_jobs, path_jobs, transform_jobs, warn_tag='[@page]')
         # Phase-1: never delete rect anchors. At the end of this instance, hide rect anchors unless any header uses '+'.
         try:
             _keep = _P1_KEEP_SET if isinstance(_P1_KEEP_SET, set) else set()
@@ -3188,7 +3448,23 @@ def render_phase(ctx):
         # Collect any @page requests from this row (they'll be executed when their referenced slot is reached)
         _queue_page_requests(row, row_map)
 
-        slot_x, slot_y = _get_or_advance_slot(planner)
+        target_within = None
+        if str(row.get('__dm_target_slot__', '') or '').strip():
+            try:
+                target_within = int(row.get('__dm_target_slot__')) - 1
+            except Exception:
+                target_within = None
+        if target_within is not None:
+            sg = _slot_geom_for_within(planner, target_within)
+            if sg is None:
+                _l.w(f"[slots] target slot out of range: {int(target_within)+1} (per_page={len(getattr(planner,'local_slots',[]) or [])})")
+                continue
+            slot_x, slot_y, _slot_w_target, _slot_h_target = sg
+            slot_within_for_record = int(target_within)
+        else:
+            slot_x, slot_y = _get_or_advance_slot(planner)
+            _slot_w_target = _slot_h_target = None
+            slot_within_for_record = int(planner.slot_index)
 
         # Register slot mapping (1-based global slot number)
         slot_no = len(slot_records) + 1
@@ -3200,7 +3476,7 @@ def render_phase(ctx):
         slot_records.append({
             'slot_no': int(slot_no),
             'page_index': int(planner.page_index),
-            'slot_in_page': int(planner.slot_index),
+            'slot_in_page': int(slot_within_for_record),
             'row': row,
         })
 
@@ -3258,6 +3534,7 @@ def render_phase(ctx):
             'use_jobs': [],
             'fa_jobs': [],
             'path_jobs': [],
+            'transform_jobs': [],
             'suffix': suffix_main,
             'bbox_id': (declared_bbox_id or ''),
             'overlay_ops': '',
@@ -3280,6 +3557,7 @@ def render_phase(ctx):
                 'use_jobs': [],
                 'fa_jobs': [],
                 'path_jobs': [],
+                'transform_jobs': [],
                 'suffix': suffix_ov,
                 'bbox_id': ((ot or {}).get('bbox_id') or ''),
                 'overlay_ops': ctrl_val,
@@ -3289,7 +3567,8 @@ def render_phase(ctx):
                 cnt, st = apply_field_in_clone(
                     j['node'], key, raw, row_map,
                     root_doc=root, use_jobs=j['use_jobs'], fa_jobs=j['fa_jobs'], path_jobs=j['path_jobs'],
-                    use_seq=use_seq, layout_obj=planner.current.layout, sm=SM, ss_registry=ss_registry
+                    use_seq=use_seq, layout_obj=planner.current.layout, sm=SM, ss_registry=ss_registry,
+                    transform_jobs=j['transform_jobs']
                 )
                 if st != 'miss':
                     return cnt, st
@@ -3528,10 +3807,13 @@ def render_phase(ctx):
             planner.commit_slot()
             continue
 
-        try:
-            _, _, slot_w, slot_h = planner.local_slots[planner.slot_index]
-        except Exception:
-            slot_w, slot_h = bw, bh
+        if (_slot_w_target is not None) and (_slot_h_target is not None):
+            slot_w, slot_h = _slot_w_target, _slot_h_target
+        else:
+            try:
+                _, _, slot_w, slot_h = planner.local_slots[planner.slot_index]
+            except Exception:
+                slot_w, slot_h = bw, bh
         out_layer.append(card_group)
         placed_node = card_group
         T_fit = SVG.transform_bbox_to_rect(
@@ -3547,10 +3829,11 @@ def render_phase(ctx):
         except Exception:
             curT = inkex.Transform()
         card_group.set('transform', str(T_fit @ curT))
+        geom_registry.add_group(int(planner.page_index), card_group)
         if marks_current is not None:
             try:
                 ms = marks_current
-                within = int(planner.slot_index)
+                within = int(slot_within_for_record)
                 r0, c0 = _slot_index_to_rc(within, planner.plan, planner.current.layout)
                 jobs = _marks_pending_by_page.setdefault(int(planner.page_index), [])
                 jobs.append({
@@ -3572,7 +3855,7 @@ def render_phase(ctx):
         try:
             _DBG_FA_RECT_IDS = set()
             for _jdbg in (inst_jobs or []):
-                for (_b, _r, _ops, _pm, _ph_rm, _rect_elem) in (_jdbg.get('fa_jobs') or []):
+                for (_b, _r, _ops, _pm, _ph_rm, _rect_elem, _tr_spec) in (_jdbg.get('fa_jobs') or []):
                     if _ph_rm is not None:
                         _pid = _ph_rm.get('id') or ''
                         if _pid: _DBG_FA_RECT_IDS.add(_pid)
@@ -3582,16 +3865,21 @@ def render_phase(ctx):
         except Exception:
             _DBG_FA_RECT_IDS = None
         for j in inst_jobs:
-            for placeholder, u in (j.get('use_jobs') or []):
+            for placeholder, u, _tr_spec in (j.get('use_jobs') or []):
                 try:
                     _center_use_over_placeholder(u, placeholder)
                 except Exception as ex:
                     _l.w(f"Centering <use> failed for placeholder '{placeholder.get('id')}': {ex}")
+                try:
+                    if _tr_spec is not None:
+                        TFX.apply_transform_spec(root, u, _tr_spec)
+                except Exception as ex:
+                    _l.w(f"[deckmaker.transform] EXEC FAILED target='{(u.get('id') if u is not None else '')}': {ex}")
         _l.s(f"ROW {idx}: fit-anchor")
         _fa_remove_later = []
         for j in inst_jobs:
             inst0 = j.get('node')
-            for (base_id, r_id, ops_full, place_mode, placeholder_to_remove, rect_elem) in (j.get('fa_jobs') or []):
+            for (base_id, r_id, ops_full, place_mode, placeholder_to_remove, rect_elem, _tr_spec) in (j.get('fa_jobs') or []):
                 # DEBUG: detect orphan rects (would force FA parent fallback to root)
                 try:
                     if rect_elem is not None and rect_elem.getparent() is None:
@@ -3602,28 +3890,20 @@ def render_phase(ctx):
                     pass
                 try:
                     try:
-                        FA.apply_to_by_ids(inst0, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem)
+                        _placed = FA.apply_to_by_ids(inst0, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem)
                     except Exception as ex0:
                         m0 = str(ex0 or "")
                         if "base id=" in m0 and "not found" in m0:
-                            FA.apply_to_by_ids(root, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem)
+                            _placed = FA.apply_to_by_ids(root, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem)
                         else:
                             raise
+                    if _tr_spec is not None and _placed is not None:
+                        TFX.apply_transform_spec(root, _placed, _tr_spec)
                     if placeholder_to_remove is not None:
                         _fa_remove_later.append(placeholder_to_remove)
                 except Exception as ex:
                     _l.w(f"[deckmaker.fa] EXEC FAILED base='{base_id}' rect='{r_id}' ops='{ops_full or '~'}': {ex}")
-            for (target_el, paths_spec_raw, orient_hint) in (j.get('path_jobs') or []):
-                try:
-                    PATHS.render_paths_for_target(
-                        inst0,
-                        target_el,
-                        paths_spec_raw,
-                        orient_hint=orient_hint,
-                        style_scope_node=root,
-                    )
-                except Exception as ex:
-                    _l.w(f"[deckmaker.paths] EXEC FAILED target='{(target_el.get('id') if target_el is not None else '')}': {ex}")
+            _queue_paths(int(planner.page_index), j.get('path_jobs') or [], owner_group=card_group)
         # Remove placeholders at the end so the same rect can be reused (multivalue/dup headers).
         for _ph in list(dict.fromkeys(_fa_remove_later)):
             try:
@@ -3723,10 +4003,22 @@ def render_phase(ctx):
             col1 = (within // planner.plan.rows)+1; row1 = (within % planner.plan.rows)+1
         page1 = planner.page_index+1
         new_name = f"{proto_root.get('id','card')}_{page1}_{row1}_{col1}"
-        placed_node.set('id', new_name)
+        try:
+            unique_name = root.get_unique_id(new_name)
+        except Exception:
+            unique_name = new_name
+        placed_node.set('id', unique_name)
         placed_node.set(inkex.addNS('label','inkscape'), new_name)
         placed += 1
-        planner.commit_slot()
+        if target_within is not None:
+            try:
+                cur_after = row.get('__dm_target_cursor_after__', None)
+                if str(cur_after or '').strip():
+                    planner.slot_index = max(0, int(cur_after) - 1)
+            except Exception:
+                pass
+        else:
+            planner.commit_slot()
         try:
             holes = _coerce_holes(row.get('__dm_holes__', []) or [])
             cur_copy_idx = int(row.get('_i', 0) or 0) + 1
@@ -3739,6 +4031,7 @@ def render_phase(ctx):
                 _l.d(f"[holes] extra slots={n_extra} after copy={cur_copy_idx} row={idx}")
         except Exception:
             pass
+    _flush_deferred_paths(warn_tag='[deckmaker.paths]')
     if split_boards_used:
         _l.i("[split_boards] mode active on this dataset pass")
     try:
@@ -3901,9 +4194,10 @@ def render_phase(ctx):
                     use_jobs = []
                     fa_jobs = []
                     path_jobs = []
-                    _fill_instance_fields(inst, row, row_map, use_jobs, fa_jobs, path_jobs, clone_first=False)
+                    transform_jobs = []
+                    _fill_instance_fields(inst, row, row_map, use_jobs, fa_jobs, path_jobs, transform_jobs, clone_first=False)
 
-                    _fa_remove_later = _exec_use_fa_paths(inst, use_jobs, fa_jobs, path_jobs, warn_tag='[@back]')
+                    _fa_remove_later = _exec_use_fa_paths(inst, use_jobs, fa_jobs, path_jobs, transform_jobs, warn_tag='[@back]')
                     for _ph in list(dict.fromkeys(_fa_remove_later)):
                         try:
                             par = _ph.getparent()
@@ -3939,8 +4233,10 @@ def render_phase(ctx):
 
                     # Note: we do NOT mirror artwork; we only mirrored the slot selection (sp_m).
                     card_group.set('transform', str(T_fit @ curT))
+                    geom_registry.add_group(int(planner.page_index), card_group)
                     placed_back += 1
 # Any remaining pending @page requests that referenced slots beyond the placed range are ignored.
+    _flush_deferred_paths(warn_tag='[@back]')
     if pending_page_req:
         _l.w(f"[@page] ignored {sum(len(v) for v in pending_page_req.values())} pending requests: slot ref out of range")
         pending_page_req.clear()

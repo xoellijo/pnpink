@@ -12,7 +12,7 @@ __all__ = [
     "DSLError",
     "IdRef", "AliasRef", "RangeIdx", "ListIdx", "StarIdx",
     "SourceRef", "GroupRef",
-    "FitSpec", "LayoutSpec", "PageSpec", "GridSpec", "ShapeSpec",
+    "FitSpec", "TransformSpec", "LayoutSpec", "PageSpec", "GridSpec", "ShapeSpec",
     "ModuleCall", "Chain", "Command",
     "parse", "maybe_parse",
     "tokenize_chain", "parse_chain", "maybe_parse_chain",
@@ -70,6 +70,11 @@ class FitSpec:
     mirror: Optional[str] = None     # 'h'|'v'|'none'
     clip: Optional[bool] = None
     clip_stage: Optional[str] = None # 'pre'|'post'
+
+@dataclass
+class TransformSpec:
+    opacity: Optional[str] = None
+    soft: Optional[List[str]] = None
 
 @dataclass
 class GridSpec:
@@ -132,7 +137,7 @@ class MarksSpec:
 class ModuleCall:
     name: str
     args: Dict[str, Any] = field(default_factory=dict)
-    spec: Optional[Union[FitSpec, LayoutSpec]] = None
+    spec: Optional[Union[FitSpec, TransformSpec, LayoutSpec]] = None
 
 @dataclass
 class Chain:
@@ -590,6 +595,26 @@ def _fit_from_dict(args: Dict[str, Any]) -> FitSpec:
     if args.get("clip_pre") is True:
         fs.clip = True; fs.clip_stage = "pre"
     return fs
+
+def _transform_from_dict(args: Dict[str, Any]) -> TransformSpec:
+    ts = TransformSpec()
+    if "opacity" in args:
+        ts.opacity = str(args.get("opacity") or "").strip()
+    if "o" in args and not ts.opacity:
+        ts.opacity = str(args.get("o") or "").strip()
+
+    raw_soft = None
+    if "soft" in args:
+        raw_soft = args.get("soft")
+    elif "s" in args:
+        raw_soft = args.get("s")
+    if raw_soft is not None:
+        vals = _as_list(raw_soft)
+        vals = [str(v).strip() for v in vals if str(v).strip()]
+        if len(vals) not in (1, 2, 4):
+            raise DSLError("soft requires 1, 2 or 4 values")
+        ts.soft = vals
+    return ts
 
 def _parse_fit_long(cmd: str) -> FitSpec:
     m = re.match(r"^\s*(?:[A-Za-z][\w\-.]*\s*)?\.Fit\s*(\{.*\})\s*$", cmd)
@@ -1386,10 +1411,18 @@ def tokenize_chain(s: str) -> List[Token]:
             j = _bal_find(s, i+1, '{', '}')
             if j < 0: raise DSLError("Source @{...} sin cerrar")
             out.append(Token('source', s[i:j+1], i, j+1)); i = j+1; continue
-        m = re.match(r"^[A-Za-z][\w\-.]*", s[i:])
-        if m:
-            seg = m.group(0)
-            out.append(Token('id', seg, i, i+len(seg))); i += len(seg); continue
+        if re.match(r"^[A-Za-z]", s[i:]):
+            j = i + 1
+            while j < N:
+                ch2 = s[j]
+                if re.match(r"[\w\-\.]", ch2):
+                    if ch2 == '.' and re.match(r"^\.[A-Za-z][\w\-]*\{", s[j:]):
+                        break
+                    j += 1
+                    continue
+                break
+            seg = s[i:j]
+            out.append(Token('id', seg, i, j)); i = j; continue
         if ch == '{':
             j = _bal_find(s, i, '{', '}')
             if j < 0: raise DSLError("Bloque '{' sin cerrar")
@@ -1437,6 +1470,8 @@ def _parse_suffixes(tokens: List[Token], pos: int) -> Tuple[List[ModuleCall], Op
             lname = mod_name.lower()
             if lname == 'fit':
                 mc.spec = _fit_from_dict(args)
+            elif lname in ('transform', 't'):
+                mc.spec = _transform_from_dict(args)
             elif lname in ('layout','l'):
                 mc.spec = _parse_layout_v2(f"dummy.{mod_name}{body}")
             modules.append(mc)
@@ -1474,6 +1509,9 @@ def parse_copies_page_tail(cell0):
     Return (copies, page_block, layout_block, marks_block)
     and expose holes in parse_copies_page_tail.__holes__ (1-based list)
     and iterator selectors in parse_copies_page_tail.__iter_select__.
+    Also exposes slot selectors in:
+      - parse_copies_page_tail.__slot_select_raw__
+      - parse_copies_page_tail.__slot_select_mode__ ('declarative' | 'procedural' | None)
 
     Supports:
       - {A4 b=[...]} / {A3^} / {} / {3} / {3*A4}
@@ -1489,6 +1527,8 @@ def parse_copies_page_tail(cell0):
     marks_block = None
     iter_select: List[int] = []
     iter_select_raw = None
+    slot_select_raw = None
+    slot_select_mode = None
     rest = s
 
     # { ... } block (page / breaks)
@@ -1497,6 +1537,27 @@ def parse_copies_page_tail(cell0):
     if m_page:
         page_block = m_page.group(0)
         rest = rest[:m_page.start()] + rest[m_page.end():]
+
+    def _looks_like_slot_selector_body(body: str) -> bool:
+        bb = str(body or "").strip()
+        if not bb:
+            return False
+        if ":" in bb:
+            return True
+        if re.search(r"[A-Za-z]+\d+", bb):
+            return True
+        if re.search(r"\.\.\s*\?", bb):
+            return True
+        return False
+
+    def _looks_like_slot_selector_proc(body: str) -> bool:
+        bb = str(body or "").strip()
+        if not bb:
+            return False
+        toks = [t for t in re.split(r"[\s,]+", bb) if t]
+        if len(toks) <= 1:
+            return False
+        return any(re.fullmatch(r"[A-Za-z]+[1-9]\d*", t) for t in toks)
 
     # sequence [N H- N H- ...] at the end:
     #   - plain number "N" adds cards
@@ -1511,7 +1572,10 @@ def parse_copies_page_tail(cell0):
     if m_seq:
         seq_body = m_seq.group(1).strip()
         toks = [t for t in re.split(r"[\s,]+", seq_body) if t]
-        if any(".." in t for t in toks):
+        if _looks_like_slot_selector_body(seq_body):
+            slot_select_raw = seq_body
+            slot_select_mode = "declarative"
+        elif any(".." in t for t in toks):
             iter_select_raw = seq_body
             run = 0
             for t in toks:
@@ -1560,8 +1624,12 @@ def parse_copies_page_tail(cell0):
                 copies = run
                 copies_explicit = True
         rest = rest[:m_seq.start()]
+    elif _looks_like_slot_selector_proc(rest):
+        slot_select_raw = str(rest or "").strip()
+        slot_select_mode = "procedural"
+        rest = ""
     # trailing number as copies (ignoring numbers inside [] and {})
-    if copies == 1:
+    if copies == 1 and slot_select_mode is None:
         rest_no_braces = re.sub(r"\{[^}]*\}", "", rest)
         rest_no_brackets = re.sub(r"\[[^\]]*\]", "", rest_no_braces)
         m_num = re.search(r"(?:^|\s)(\d+)\s*$", rest_no_brackets.strip())
@@ -1587,6 +1655,8 @@ def parse_copies_page_tail(cell0):
     parse_copies_page_tail.__holes__ = holes
     parse_copies_page_tail.__iter_select__ = iter_select
     parse_copies_page_tail.__iter_select_raw__ = iter_select_raw
+    parse_copies_page_tail.__slot_select_raw__ = slot_select_raw
+    parse_copies_page_tail.__slot_select_mode__ = slot_select_mode
     parse_copies_page_tail.__copies_explicit__ = bool(copies_explicit)
     return copies, page_block, layout_block, marks_block
 
@@ -1634,6 +1704,8 @@ class DLeadingCell:
     holes: List[int]
     iter_select: List[int] = field(default_factory=list)
     iter_select_raw: Optional[str] = None
+    slot_select_raw: Optional[str] = None
+    slot_select_mode: Optional[str] = None
     copies_explicit: bool = False
     page_block: Optional[str] = None   # texto "{A3 ...}" o None
     layout_block: Optional[str] = None # texto "L{ ... }" o "{ ... }" o None
@@ -1721,6 +1793,8 @@ def parse_leading_cell(cell0) -> DLeadingCell:
     holes = getattr(parse_copies_page_tail, "__holes__", [])
     iter_select = getattr(parse_copies_page_tail, "__iter_select__", [])
     iter_select_raw = getattr(parse_copies_page_tail, "__iter_select_raw__", None)
+    slot_select_raw = getattr(parse_copies_page_tail, "__slot_select_raw__", None)
+    slot_select_mode = getattr(parse_copies_page_tail, "__slot_select_mode__", None)
     copies_explicit = bool(getattr(parse_copies_page_tail, "__copies_explicit__", False))
     ps = None
     ls = None
@@ -1745,6 +1819,8 @@ def parse_leading_cell(cell0) -> DLeadingCell:
         holes=list(holes or []),
         iter_select=list(iter_select or []),
         iter_select_raw=(str(iter_select_raw).strip() if iter_select_raw else None),
+        slot_select_raw=(str(slot_select_raw).strip() if slot_select_raw else None),
+        slot_select_mode=(str(slot_select_mode).strip() if slot_select_mode else None),
         copies_explicit=copies_explicit,
         page_block=page_block,
         layout_block=layout_block,

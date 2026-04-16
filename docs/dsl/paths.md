@@ -13,6 +13,7 @@ Use `Paths` when you want lines such as:
 - a line between two vertices
 - a curved connection between two sides
 - a bridge from one hex center to the neighboring hex center through a shared side
+- a chained route that continues through several neighboring hexes
 
 This is especially useful for hex maps, hextiles, movement guides, borders, and local overlays.
 
@@ -147,6 +148,37 @@ This is useful for:
 - adjacency guides
 - movement links
 - map connectivity
+
+## Chained Neighbor References
+
+You can also build continuous routes through several neighboring hexes.
+
+Examples:
+
+```txt
+[5A9]
+[3C3]
+[5ABB3C2]
+```
+
+This means:
+
+- `5A9`: from the current center to vertex `9` of the neighboring hex on side `A`
+- `3C3`: from vertex `3` of the current hex to vertex `3` of the neighboring hex on side `C`
+- `5ABB3C2`: one continuous polyline through several steps
+
+If the chain is written without spaces, it stays as one continuous path.
+If you separate the tokens with spaces, PnPInk creates separate paths.
+
+Important: in chained references, each new step starts from the last resolved hex, not from the original hex.
+
+So:
+
+```txt
+[5ABB3C2]
+```
+
+continues from the hex reached by `ABB3`, and then applies `C2` from there.
 
 ## Style Reuse
 

@@ -226,6 +226,8 @@ def _matrix_to_datasets(matrix):
         page_preset = None
         layout_tail = None
         marks_tail = None
+        slot_select = None
+        slot_select_mode = None
         copies_explicit = False
         if lead is not None:
             copies = int(getattr(lead, "copies", 1) or 1)
@@ -234,6 +236,8 @@ def _matrix_to_datasets(matrix):
             page_preset = getattr(lead, "page_block", None)
             layout_tail = getattr(lead, "layout_block", None)
             marks_tail = getattr(lead, "marks_block", None)
+            slot_select = getattr(lead, "slot_select_raw", None)
+            slot_select_mode = getattr(lead, "slot_select_mode", None)
             copies_explicit = bool(getattr(lead, "copies_explicit", False))
             # Defensive: ignore malformed page blocks in free text (column A),
             # so render does not abort on values like "{{t=...}".
@@ -244,8 +248,11 @@ def _matrix_to_datasets(matrix):
                     _l.w(f"dataset.row_cell0: ignoring invalid page block '{page_preset}'")
                     page_preset = None
 
-        _l.d(f"dataset.row_cell0='{lead_text}' → copies={copies} explicit={copies_explicit} select={iter_select} page={page_preset} L={layout_tail} M={marks_tail}")
-        return copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail
+        _l.d(
+            f"dataset.row_cell0='{lead_text}' → copies={copies} explicit={copies_explicit} "
+            f"select={iter_select} slot={slot_select_mode}:{slot_select} page={page_preset} L={layout_tail} M={marks_tail}"
+        )
+        return copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail, slot_select, slot_select_mode
 
     # --- Pre-scan to detect any explicit marker rows {{...}} in column A ---
     has_markers = False
@@ -369,7 +376,7 @@ def _matrix_to_datasets(matrix):
                 cells[j] = _strip_cell_trailing_comment(cells[j], enable=True, marker="##")
 
             lead_text = cells[0]
-            copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail = _parse_lead_to_meta(lead_text)
+            copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail, slot_select, slot_select_mode = _parse_lead_to_meta(lead_text)
             if copies <= 0:
                 _l.i("row skipped due to copies <= 0")
                 continue
@@ -380,6 +387,9 @@ def _matrix_to_datasets(matrix):
             base["__dm_copies_explicit__"] = bool(copies_explicit)
             base["__dm_holes__"] = holes
             base["__dm_iter_select__"] = iter_select
+            if slot_select:
+                base["__dm_slot_select__"] = slot_select
+                base["__dm_slot_select_mode__"] = str(slot_select_mode or "").strip()
             if page_preset:
                 base["__dm_page__"] = page_preset
             if layout_tail:
@@ -495,7 +505,7 @@ def _matrix_to_datasets(matrix):
             cells[j] = _strip_cell_trailing_comment(cells[j], enable=True, marker="##")
 
         lead_text = cells[0]
-        copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail = _parse_lead_to_meta(lead_text)
+        copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail, slot_select, slot_select_mode = _parse_lead_to_meta(lead_text)
         if copies <= 0:
             _l.i("row skipped due to copies <= 0")
             continue
@@ -506,6 +516,9 @@ def _matrix_to_datasets(matrix):
         base["__dm_copies_explicit__"] = bool(copies_explicit)
         base["__dm_holes__"] = holes
         base["__dm_iter_select__"] = iter_select
+        if slot_select:
+            base["__dm_slot_select__"] = slot_select
+            base["__dm_slot_select_mode__"] = str(slot_select_mode or "").strip()
         if page_preset:
             base["__dm_page__"] = page_preset
         if layout_tail:

@@ -4,6 +4,8 @@ It is the placement engine that lets you position objects relative to placeholde
 
 In practice, Fit-Anchor lets you place one or many objects on a placeholder and then align, scale, rotate, mirror, shift, and clip them with compact syntax.
 
+For visual changes applied to the object itself after placement, use [Transform](/dsl/transform/).
+
 ## Dataset Mental Model
 Fit-Anchor is easier to understand if you keep this model in mind:
 
@@ -323,3 +325,8 @@ Places three objects in one placeholder flow, each with its own anchor.
 ```
 
 Builds an array object, lays it out locally, then applies Fit-Anchor as one grouped target.
+
+## Related Pages
+
+- [Transform](/dsl/transform/)
+- [Source](/dsl/source/)

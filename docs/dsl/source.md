@@ -143,6 +143,8 @@ PnPInk also supports dedicated map sources:
 
 These sources generate maps from simple URLs. See [Maps](./maps.md) for the map syntax and examples.
 
+Placed sources can also be adjusted afterwards with [Transform](./transform.md), for example to reduce opacity or soften edges.
+
 - `wkmc://` (Wikimedia Commons) supports:
  - search text: `wkmc://query/size`
  - specific file: `wkmc://File:Name.ext/size`

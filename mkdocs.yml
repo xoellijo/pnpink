@@ -22,6 +22,7 @@ nav:
       - Architecture: dsl/architecture.md
       - Iterators and Copies: dsl/iterators.md
       - Fit and Anchor: dsl/fit-anchor.md
+      - Transform: dsl/transform.md
       - Layout: dsl/layout.md
       - Hexes: dsl/hexes.md
       - Paths: dsl/paths.md
