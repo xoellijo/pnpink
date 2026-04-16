@@ -213,6 +213,15 @@ def _split_transform_suffixes(token: str):
     s = str(token or "").strip()
     if not s:
         return "", None
+    tail = ""
+    m_tail = re.match(
+        r"^(?P<core>.*?)(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*))?\s*$",
+        s,
+        re.IGNORECASE,
+    )
+    if m_tail:
+        s = (m_tail.group("core") or "").strip()
+        tail = (m_tail.group("tail") or "").strip()
     specs = []
     rx = re.compile(r"^(?P<base>.*?)(?P<mod>\.(?:Transform|T)\s*\{[^{}]*\})\s*$", re.IGNORECASE)
     while True:
@@ -231,7 +240,10 @@ def _split_transform_suffixes(token: str):
             break
         specs.insert(0, getattr(mod, "spec"))
         s = (m.group("base") or "").strip()
-    return s, TFX.merge_specs(specs)
+    out = s
+    if tail:
+        out = (out + tail).strip()
+    return out, TFX.merge_specs(specs)
 
 def _parse_array_token(token: str):
     s = (token or '').strip()
@@ -2490,6 +2502,7 @@ def render_phase(ctx):
                 m_src = re.match(
                     r"^\s*(?P<core>(?:@\{[^}]*\}|(?:Source|S)\s*\{[^}]*\}|https?://\S+?))\s*"
                     r"(?P<sel>\[[^\]]*\])?\s*"
+                    r"(?P<tmods>(?:\.(?:Transform|T)\s*\{[^{}]*\})*)\s*"
                     r"(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
                     tok,
                     re.IGNORECASE,
@@ -2497,6 +2510,7 @@ def render_phase(ctx):
                 if m_src:
                     core = (m_src.group("core") or "").strip()
                     sel = (m_src.group("sel") or "").strip()
+                    tmods = (m_src.group("tmods") or "").strip()
                     tail = (m_src.group("tail") or "").strip()
                     item_ops = ""
                     if tail:
@@ -2507,7 +2521,8 @@ def render_phase(ctx):
                         elif tail.startswith("^") or tail.startswith("!") or tail.startswith("|"):
                             item_ops = _normalize_ops_chain("~" + tail)
                     merged = _merge_fit_ops(gops, item_ops)
-                    return f"{core}{sel}{merged}" if merged else f"{core}{sel}"
+                    base_txt = f"{core}{sel}{tmods}"
+                    return f"{base_txt}{merged}" if merged else base_txt
 
                 # 2) Object-like token (id[=|+][~ops]).
                 try:
@@ -2529,14 +2544,26 @@ def render_phase(ctx):
                 # 4) Plain scalar token: append global ops.
                 return f"{tok}{gops}"
 
-            src_v, sel_v, _ops_v, _tag_v = _parse_source_token_with_selector(s)
+            s_for_src, s_tr_spec = _split_transform_suffixes(s)
+            src_v, sel_v, _ops_v, _tag_v = _parse_source_token_with_selector(s_for_src)
             if src_v:
                 v_urls = _resolve_virtual_source_urls(SM, src_v, sel_v, warn_tag=_virtual_warn_tag(src_v, "wkmc.iter"))
                 if v_urls is not None:
                     ops_norm = _normalize_ops_chain(_ops_v or "")
+                    tmods = ""
+                    if s_tr_spec is not None:
+                        if getattr(s_tr_spec, "opacity", None):
+                            tmods += f".T{{o={getattr(s_tr_spec, 'opacity')}}}"
+                        if getattr(s_tr_spec, "soft", None):
+                            _vals = [str(v).strip() for v in (getattr(s_tr_spec, "soft") or []) if str(v).strip()]
+                            if _vals:
+                                if len(_vals) == 1:
+                                    tmods += f".T{{s={_vals[0]}}}"
+                                else:
+                                    tmods += ".T{s=[" + " ".join(_vals) + "]}"
                     if ops_norm:
-                        return [f"{u}{ops_norm}" for u in v_urls]
-                    return v_urls
+                        return [f"{u}{tmods}{ops_norm}" for u in v_urls]
+                    return [f"{u}{tmods}" for u in v_urls]
 
             br_core, br_tail = _split_bracket_core_and_tail(s)
             if br_core is not None:
@@ -2551,12 +2578,13 @@ def render_phase(ctx):
             # '@{...}' filesystem glob, optionally with fit/anchor suffix.
             if s.startswith('@{'):
                 m_glob = re.match(
-                    r"^\s*(?P<core>@\{[^}]*\})\s*(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
+                    r"^\s*(?P<core>@\{[^}]*\})\s*(?P<tmods>(?:\.(?:Transform|T)\s*\{[^{}]*\})*)\s*(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
                     s,
                     re.IGNORECASE,
                 )
                 if m_glob:
                     core = (m_glob.group("core") or "").strip()
+                    tmods = (m_glob.group("tmods") or "").strip()
                     tail = (m_glob.group("tail") or "").strip()
                     seq = _expand_glob_from_at_brace(core)
                     if seq is not None:
@@ -2564,16 +2592,17 @@ def render_phase(ctx):
                         if tail and not ops_norm:
                             _l.w(f"[iter] invalid iterator suffix after glob: '{tail}'")
                         if ops_norm:
-                            return [f"{v}{ops_norm}" for v in seq]
-                        return seq
+                            return [f"{v}{tmods}{ops_norm}" for v in seq]
+                        return [f"{v}{tmods}" for v in seq]
 
             # '@alias[*]' spritesheet wildcard, optionally with fit/anchor suffix.
             m_ss = re.match(
-                r"^\s*(?P<core>@[A-Za-z0-9_\-]+\[\*\])\s*(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
+                r"^\s*(?P<core>@[A-Za-z0-9_\-]+\[\*\])\s*(?P<tmods>(?:\.(?:Transform|T)\s*\{[^{}]*\})*)\s*(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
                 s,
                 re.IGNORECASE,
             )
             ss_core = (m_ss.group("core") if m_ss else s)
+            ss_tmods = (m_ss.group("tmods") if m_ss else "")
             ss_tail = (m_ss.group("tail") if m_ss else "")
             ss = _expand_spritesheet_wildcard(ss_core)
             if ss is not None:
@@ -2581,8 +2610,8 @@ def render_phase(ctx):
                 if ss_tail and not ops_norm:
                     _l.w(f"[iter] invalid iterator suffix after spritesheet wildcard: '{ss_tail}'")
                 if ops_norm:
-                    return [f"{v}{ops_norm}" for v in ss]
-                return ss
+                    return [f"{v}{ss_tmods}{ops_norm}" for v in ss]
+                return [f"{v}{ss_tmods}" for v in ss]
             # fallback: treat as a scalar token
             return [s]
 

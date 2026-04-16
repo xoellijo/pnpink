@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import Iterable, Optional
-import re
+from typing import Iterable
 
 import inkex
 import log as LOG
@@ -103,22 +102,22 @@ def _ensure_soft_gradients(root) -> dict[str, str]:
     out["left"] = _mk_grad(
         "tf_soft_grad_left",
         {"x1": "0", "y1": "0", "x2": "1", "y2": "0"},
-        [("0%", "#000000", "1"), ("100%", "#000000", "0")],
+        [("0%", "#ffffff", "0"), ("100%", "#ffffff", "1")],
     )
     out["right"] = _mk_grad(
         "tf_soft_grad_right",
         {"x1": "0", "y1": "0", "x2": "1", "y2": "0"},
-        [("0%", "#000000", "0"), ("100%", "#000000", "1")],
+        [("0%", "#ffffff", "1"), ("100%", "#ffffff", "0")],
     )
     out["top"] = _mk_grad(
         "tf_soft_grad_top",
         {"x1": "0", "y1": "0", "x2": "0", "y2": "1"},
-        [("0%", "#000000", "1"), ("100%", "#000000", "0")],
+        [("0%", "#ffffff", "0"), ("100%", "#ffffff", "1")],
     )
     out["bottom"] = _mk_grad(
         "tf_soft_grad_bottom",
         {"x1": "0", "y1": "0", "x2": "0", "y2": "1"},
-        [("0%", "#000000", "0"), ("100%", "#000000", "1")],
+        [("0%", "#ffffff", "1"), ("100%", "#ffffff", "0")],
     )
     return out
 
@@ -137,14 +136,20 @@ def _ensure_soft_mask(root, soft_vals: tuple[float, float, float, float]) -> str
     mask.set("id", mid)
     mask.set("maskUnits", "objectBoundingBox")
     mask.set("maskContentUnits", "objectBoundingBox")
-    mask.set("mask-type", "luminance")
+    mask.set("mask-type", "alpha")
 
-    base = SVG.etree.SubElement(mask, inkex.addNS("rect", "svg"))
-    base.set("x", "0")
-    base.set("y", "0")
-    base.set("width", "1")
-    base.set("height", "1")
-    base.set("fill", "#ffffff")
+    cx = l
+    cy = t
+    cw = max(0.0, 1.0 - l - r)
+    ch = max(0.0, 1.0 - t - b)
+    if cw > 0.0 and ch > 0.0:
+        base = SVG.etree.SubElement(mask, inkex.addNS("rect", "svg"))
+        base.set("x", f"{cx:.6f}".rstrip("0").rstrip("."))
+        base.set("y", f"{cy:.6f}".rstrip("0").rstrip("."))
+        base.set("width", f"{cw:.6f}".rstrip("0").rstrip("."))
+        base.set("height", f"{ch:.6f}".rstrip("0").rstrip("."))
+        base.set("fill", "#ffffff")
+        base.set("fill-opacity", "1")
 
     def _edge_rect(x, y, w, h, gid):
         if w <= 0.0 or h <= 0.0:
@@ -156,35 +161,71 @@ def _ensure_soft_mask(root, soft_vals: tuple[float, float, float, float]) -> str
         rr.set("height", f"{h:.6f}".rstrip("0").rstrip("."))
         rr.set("fill", f"url(#{gid})")
 
-    _edge_rect(0.0, 0.0, l, 1.0, grads["left"])
-    _edge_rect(max(0.0, 1.0 - r), 0.0, r, 1.0, grads["right"])
-    _edge_rect(0.0, 0.0, 1.0, t, grads["top"])
-    _edge_rect(0.0, max(0.0, 1.0 - b), 1.0, b, grads["bottom"])
+    _edge_rect(0.0, t, l, ch, grads["left"])
+    _edge_rect(max(0.0, 1.0 - r), t, r, ch, grads["right"])
+    _edge_rect(l, 0.0, cw, t, grads["top"])
+    _edge_rect(l, max(0.0, 1.0 - b), cw, b, grads["bottom"])
     return mid
 
 
 def apply_transform_spec(root, node, spec) -> bool:
     if root is None or node is None or spec is None:
         return False
+    target = node
+    try:
+        parent = node.getparent() if hasattr(node, "getparent") else None
+        pid = (parent.get("id") or "").strip() if parent is not None else ""
+        gp = parent.getparent() if parent is not None and hasattr(parent, "getparent") else None
+        gpid = (gp.get("id") or "").strip() if gp is not None else ""
+        if parent is not None and parent.get("clip-path") and pid.endswith("_clip"):
+            # Apply transforms to the outer clip wrapper when possible.
+            # Inkscape is less reliable when a reusable mask sits directly on
+            # the same group that already carries clip-path.
+            if gp is not None and gpid.startswith("fa_clipwrap_"):
+                target = gp
+            else:
+                target = parent
+    except Exception:
+        target = node
     changed = False
 
     try:
         if getattr(spec, "opacity", None):
             op = _opacity_value(getattr(spec, "opacity"))
             if op is not None:
-                node.set("opacity", op)
+                target.set("opacity", op)
+                if target is not node:
+                    try:
+                        node.attrib.pop("opacity", None)
+                    except Exception:
+                        pass
                 changed = True
     except Exception as ex:
-        _l.w(f"[transform] opacity failed on id='{node.get('id') or ''}': {ex}")
+        _l.w(f"[transform] opacity failed on id='{target.get('id') or ''}': {ex}")
 
     try:
         soft_vals = _normalize_soft_values(getattr(spec, "soft", None))
         if soft_vals is not None:
             mid = _ensure_soft_mask(root, soft_vals)
-            node.set("mask", f"url(#{mid})")
+            target.set("mask", f"url(#{mid})")
+            if target is not node:
+                try:
+                    node.attrib.pop("mask", None)
+                except Exception:
+                    pass
             changed = True
     except Exception as ex:
-        _l.w(f"[transform] soft failed on id='{node.get('id') or ''}': {ex}")
+        _l.w(f"[transform] soft failed on id='{target.get('id') or ''}': {ex}")
+
+    try:
+        if changed:
+            _l.d(
+                f"[transform] applied target='{target.get('id') or ''}' "
+                f"node='{node.get('id') or ''}' soft={getattr(spec, 'soft', None)} "
+                f"opacity={getattr(spec, 'opacity', None)}"
+            )
+    except Exception:
+        pass
 
     return changed
 
