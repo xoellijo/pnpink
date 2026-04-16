@@ -21,6 +21,13 @@ try:
 except Exception:  # pragma: no cover
     requests = None
 
+try:
+    import urllib3
+    from urllib3.exceptions import InsecureRequestWarning
+except Exception:  # pragma: no cover
+    urllib3 = None
+    InsecureRequestWarning = None
+
 
 TRANSIENT_HTTP_STATUS = {429, 500, 502, 503, 504}
 LOAD_SHEDDING_HTTP_STATUS = {429, 503}
@@ -322,6 +329,11 @@ def requests_get(
         raise RuntimeError("requests is not available")
     s = session or requests.Session()
     tls_unverified = (not verify)
+    if tls_unverified and urllib3 is not None and InsecureRequestWarning is not None:
+        try:
+            urllib3.disable_warnings(InsecureRequestWarning)
+        except Exception:
+            pass
     req_headers = _request_headers(headers)
     last_ex: Exception | None = None
     for attempt in range(1, max(1, retries) + 1):
@@ -349,6 +361,11 @@ def requests_get(
                 last_ex = ex
                 if _is_cert_verify_error(ex) and allow_unverified_tls and (not tls_unverified):
                     _l.w(f"{log_prefix} SSL verify failed; retrying unverified TLS")
+                    if urllib3 is not None and InsecureRequestWarning is not None:
+                        try:
+                            urllib3.disable_warnings(InsecureRequestWarning)
+                        except Exception:
+                            pass
                     tls_unverified = True
                     continue
                 if _is_retryable_exception(ex) and attempt < retries:

@@ -287,9 +287,9 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
 
     # 13) Placement and clip
     #
-    # HISTORICAL ISSUE: applying clipPath directly to a <use> with translate/matrix
-    # can misalign the clip (clip in one space, node in another). The robust solution
-    # for '!' we clip inside a <g> wrapper anchored to the placeholder.
+    # For clipped placement we wrap the placed content in a local <g> anchored at the
+    # placeholder origin. This keeps the content transform and clip geometry in the same
+    # local space and avoids page/card offset drift.
     #
     # If there is NO clip ('!'), we keep the original pipeline with svg.place_node.
     if not getattr(fs, "clip", False):
@@ -333,7 +333,6 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
         return (lx, ly, max(xs) - lx, max(ys) - ly)
 
     # Parent CTM (document <- parent) and inverse (parent <- document)
-    # Full-walk: compose ancestor transforms to avoid inconsistencies.
     parent_ctm = inkex.Transform()
     try:
         cur = parent
@@ -455,36 +454,32 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
         except Exception:
             pass
 
-    def _ctm_to_root(node):
-        T = inkex.Transform()
-        chain = []
-        cur = node
-        while cur is not None:
-            tr = cur.get('transform')
-            if tr:
-                try:
-                    chain.append(inkex.Transform(tr))
-                except Exception:
-                    pass
-            cur = cur.getparent()
-        for t in reversed(chain):
-            T = T @ t
-        return T
-
     clip_use_inner = not (getattr(fs, "border", None) and getattr(fs, "clip", False))
     clip_shape = None
     clip_kind = "none"
     tag = str(getattr(rect, "tag", "") or "")
     rid = (rect.get('id') or rect_id or "").strip()
+    base_has_image = False
+    try:
+        if str(getattr(base, "tag", "")).endswith("symbol"):
+            base_has_image = bool(base.xpath(".//svg:image", namespaces=svg.NSS))
+    except Exception:
+        base_has_image = False
 
     def _shape_transform_wrap_from_rect():
-        rect_ctm = _ctm_to_root(rect)
-        T_parent_from_rect = inv_parent @ rect_ctm
+        rect_local = inkex.Transform()
+        tr = rect.get('transform')
+        if tr:
+            try:
+                rect_local = inkex.Transform(tr)
+            except Exception:
+                rect_local = inkex.Transform()
         T_wrap_from_parent = inkex.Transform(f"translate({-rx_l},{-ry_l})")
-        return T_wrap_from_parent @ T_parent_from_rect
+        return T_wrap_from_parent @ rect_local
 
-    # 1) Prefer exact-placeholder clip via <use href="#id"> when clipping to full outline.
-    # This is more robust than transformed geometry for transformed paths.
+    # 1) Prefer exact-placeholder clip via <use href="#id"> when clipping to the
+    # full outline. For bitmap-backed symbols we avoid this path and fall through to
+    # explicit geometry, which has proven more reliable under clipping.
     try:
         same_inner_as_rect = (
             abs(float(ix_l) - float(rx_l)) < 1e-6 and
@@ -496,7 +491,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
         same_inner_as_rect = False
     # Do not reuse non-shape placeholders such as <image> / <use> as clip geometry.
     # In practice that can yield an empty/invalid clip and the placed source disappears.
-    can_reuse_placeholder_shape = not any(tag.endswith(t) for t in ('image', 'use'))
+    can_reuse_placeholder_shape = (not base_has_image) and (not any(tag.endswith(t) for t in ('image', 'use')))
     if can_reuse_placeholder_shape and rid and ((not clip_use_inner) or same_inner_as_rect):
         try:
             u = etree.SubElement(cp, inkex.addNS('use', 'svg'))
@@ -507,7 +502,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
         except Exception:
             clip_shape = None
 
-    # 2) Closed SVG shapes -> clip by transformed geometry.
+    # 2) Closed SVG shapes -> clip by geometry transformed from rect-local to wrapper-local.
     if any(tag.endswith(t) for t in ('path', 'polygon', 'circle', 'ellipse')):
         try:
             if clip_shape is None:

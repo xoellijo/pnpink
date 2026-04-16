@@ -1471,7 +1471,7 @@ class SourceManager:
         im.set('y', "0")
         im.set('width', str(float(w)))
         im.set('height', str(float(h)))
-        href_val = abspath.as_uri() if os.name != "nt" else str(abspath)
+        href_val = abspath.as_uri()
         im.set(inkex.addNS('href', 'xlink'), href_val)
         im.set('href', href_val)
         im.set(SVG.SODI_ABSREF, str(abspath))
@@ -1499,7 +1499,7 @@ class SourceManager:
         im.set('height', str(H))
 
         # Prefer file URI on Linux/Mac; OS path on Windows (consistent with SVG.absolutize_all_linked_images)
-        href_val = abspath.as_uri() if os.name != "nt" else str(abspath)
+        href_val = abspath.as_uri()
         im.set(inkex.addNS('href','xlink'), href_val)
         im.set('href', href_val)
         im.set(SVG.SODI_ABSREF, str(abspath))
@@ -1907,7 +1907,7 @@ class SourceManager:
         # Preserve pixel mapping (no aspect auto-fit surprises)
         im.set('preserveAspectRatio', 'none')
 
-        href_val = ss.abspath.as_uri() if os.name != "nt" else str(ss.abspath)
+        href_val = ss.abspath.as_uri()
         im.set(inkex.addNS('href','xlink'), href_val)
         im.set('href', href_val)
         im.set(SVG.SODI_ABSREF, str(ss.abspath))

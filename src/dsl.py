@@ -652,6 +652,7 @@ def _parse_fit_shorthand(trail: str) -> FitSpec:
     i = 0
     saw_shift = False
     saw_mode_or_anchor = False
+    saw_nonclip = False
     while i < len(toks):
         t = toks[i]
 
@@ -685,6 +686,7 @@ def _parse_fit_shorthand(trail: str) -> FitSpec:
             dxv = float(dx) if _num_pure_re.match(dx) else dx
             dyv = float(dy) if _num_pure_re.match(dy) else dy
             fs.shift = [dxv, dyv]; saw_shift = True
+            saw_nonclip = True
             i += 2; continue
 
         if t.startswith('[') and t.endswith(']'):
@@ -706,10 +708,12 @@ def _parse_fit_shorthand(trail: str) -> FitSpec:
                 dxv = float(dx) if _num_pure_re.match(dx) else dx
                 dyv = float(dy) if _num_pure_re.match(dy) else dy
                 fs.shift = [dxv, dyv]; saw_shift = True
+            saw_nonclip = True
             i += 1; continue
 
         if t in ('|', '||'):
             fs.mirror = 'h' if t == '|' else 'v'
+            saw_nonclip = True
             i += 1; continue
 
         if t == 'c':
@@ -721,11 +725,12 @@ def _parse_fit_shorthand(trail: str) -> FitSpec:
                 fs.rotate = (fs.rotate or 0.0) + 90.0
             else:
                 fs.rotate = (fs.rotate or 0.0) + float(t[1:])
+            saw_nonclip = True
             i += 1; continue
 
         if t in ('!', '!!'):
             fs.clip = True
-            fs.clip_stage = "pre" if not saw_shift else "post"
+            fs.clip_stage = "pre" if not saw_nonclip else "post"
             i += 1; continue
 
         low = t.lower()
@@ -734,11 +739,13 @@ def _parse_fit_shorthand(trail: str) -> FitSpec:
             fs.mode = _FIT_MODES[m.group(1)]
             fs.anchor = int(m.group(2))
             saw_mode_or_anchor = True
+            saw_nonclip = True
             i += 1; continue
 
         if low in _FIT_MODES:
             fs.mode = _FIT_MODES[low]
             saw_mode_or_anchor = True
+            saw_nonclip = True
             i += 1; continue
 
         m_anchor_only = re.match(r"^[1-9]$", t)
@@ -798,10 +805,11 @@ def fit_spec_from_ops(ops: str) -> FitSpec:
         fs = FitSpec()
         saw_shift = False
         saw_mode_or_anchor = False
+        saw_nonclip = False
         for t in btoks:
             if t == '!':
                 fs.clip = True
-                fs.clip_stage = "pre" if not saw_shift else "post"
+                fs.clip_stage = "pre" if not saw_nonclip else "post"
                 continue
             if t.startswith('[') and t.endswith(']'):
                 lst = _parse_list(t)
@@ -821,6 +829,7 @@ def fit_spec_from_ops(ops: str) -> FitSpec:
                     dyv = float(dy) if _num_pure_re.match(dy) else dy
                     fs.shift = [dxv, dyv]
                     saw_shift = True
+                saw_nonclip = True
                 continue
             low = t.lower()
             m = re.match(r"^([imwhyxaotnbo\?])([1-9])$", low)
@@ -828,10 +837,12 @@ def fit_spec_from_ops(ops: str) -> FitSpec:
                 fs.mode = _FIT_MODES[m.group(1)]
                 fs.anchor = int(m.group(2))
                 saw_mode_or_anchor = True
+                saw_nonclip = True
                 continue
             if low in _FIT_MODES:
                 fs.mode = _FIT_MODES[low]
                 saw_mode_or_anchor = True
+                saw_nonclip = True
                 continue
 
         if fs.mode in (None,):
