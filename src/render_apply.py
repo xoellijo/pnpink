@@ -151,58 +151,20 @@ def _resolve_array_item(root_doc, inst_node, item_id: str, sm=None, ss_registry=
     s = (item_id or '').strip()
     if not s:
         return None
-    # Spritesheet alias token inside array item: @sp1[14], @sp1[2][1], @sp1[1][2][3]
-    if s.startswith('@') and (not s.startswith('@{')) and sm is not None and ss_registry is not None:
-        parsed = _parse_sprite_alias_token(s)
-        if parsed:
-            a_name, dims, _ops_tail = parsed
-            if a_name in ss_registry:
-                frame = None
-                page = 1
-                col = None
-                row_i = None
-                try:
-                    if len(dims) == 1:
-                        frame = next((x for x in dims[0] if isinstance(x, int)), None)
-                        if frame is None:
-                            frame = 1
-                    elif len(dims) == 2:
-                        col = next((x for x in dims[0] if isinstance(x, int)), None)
-                        row_i = next((x for x in dims[1] if isinstance(x, int)), None)
-                    elif len(dims) == 3:
-                        page = next((x for x in dims[0] if isinstance(x, int)), None)
-                        col = next((x for x in dims[1] if isinstance(x, int)), None)
-                        row_i = next((x for x in dims[2] if isinstance(x, int)), None)
-                except Exception:
-                    pass
-                try:
-                    sref = sm.register_spritesheet_frame(a_name, frame=frame, page=page, col=col, row=row_i)
-                    if sref is not None and getattr(sref, "symbol_id", None):
-                        s = str(sref.symbol_id)
-                except Exception:
-                    pass
-    if sm is not None:
-        src_val, sel_src, _ops, _tag = _parse_source_token_with_selector(s)
-        if src_val:
-            try:
-                v_urls = _resolve_virtual_source_urls(sm, src_val, sel_src, warn_tag=_virtual_warn_tag(src_val, "wkmc"))
-                if v_urls is not None and len(v_urls) > 0:
-                    src0, _s0, _o0, _t0 = _parse_source_token_with_selector(v_urls[0])
-                    sref = sm.register(src0 or "")
-                else:
-                    sref = sm.register(src_val)
-                s = sref.symbol_id
-            except Exception:
-                pass
-    if sm is not None:
-        low = s.lower()
-        if low.startswith('@icon://') or low.startswith('icon://'):
-            try:
-                src_val = s[1:] if low.startswith('@icon://') else s
-                sref = sm.register(src_val)
-                s = sref.symbol_id
-            except Exception:
-                pass
+    s, _normalized, _symbol_id = _normalize_source_token(s, sm=sm, ss_registry=ss_registry)
+    if s.startswith('['):
+        try:
+            arr = _parse_array_token(s)
+            items = (arr or {}).get('items') or []
+            first = next((it for it in items if isinstance(it, dict) and (it.get('id') or '').strip()), None)
+            if first is not None:
+                s = (first.get('id') or '').strip()
+        except Exception:
+            pass
+    try:
+        s, _place, _ops = _parse_object_token(s)
+    except Exception:
+        pass
     base = SVG.find_target_exact_in(inst_node, s)
     if base is None:
         base = SVG.find_target_exact_in(root_doc, s)
@@ -390,6 +352,144 @@ def expand_value(raw: Optional[str], row: Dict[str, str]) -> str:
     s = s.replace("\\n","\n").replace("\\t","\t")
     s = re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", lambda m: str(row.get(m.group(1), "")), s)
     return s
+
+
+def _orient_hint(layout_obj):
+    return getattr(layout_obj, 'smart_hex_orient', None) if layout_obj is not None else None
+
+
+def _queue_paths_for_target(tgt, raw_paths_spec: str, path_jobs, layout_obj) -> int:
+    if not raw_paths_spec:
+        return 0
+    try:
+        tgt.set('data-dm-keep-paths', '1')
+    except Exception:
+        pass
+    path_jobs.append((tgt, raw_paths_spec, _orient_hint(layout_obj)))
+    return 1
+
+
+def _has_fa_signature(raw_token: str, *, compact_ops_present: bool) -> bool:
+    s = (raw_token or "").strip()
+    return bool(
+        compact_ops_present
+        or ("~" in s)
+        or s.endswith("=")
+        or s.endswith("+")
+        or ("=~" in s)
+        or ("+~" in s)
+        or s.lstrip().startswith('[')
+    )
+
+
+def _append_inserted_use(parent, tgt, u, transform_spec, use_jobs, raw_paths_spec, path_jobs, layout_obj) -> bool:
+    if parent is None:
+        return False
+    parent.insert(parent.index(tgt) + 1, u)
+    use_jobs.append((tgt, u, transform_spec))
+    _queue_paths_for_target(tgt, raw_paths_spec, path_jobs, layout_obj)
+    return True
+
+
+def _normalize_source_token(raw_token: str, sm=None, ss_registry=None):
+    token = (raw_token or "").strip()
+    normalized = False
+    symbol_id = None
+
+    if token.startswith('@') and (not token.startswith('@{')) and sm is not None and ss_registry is not None:
+        parsed = _parse_sprite_alias_token(token)
+        if parsed:
+            a_name, dims, ops_tail = parsed
+            if a_name in ss_registry:
+                frame = None
+                page = 1
+                col = None
+                row_i = None
+                _l.i(f"[spritesheet] token seen in render: '{token}'")
+                try:
+                    if len(dims) == 1:
+                        frame = next((x for x in dims[0] if isinstance(x, int)), None)
+                        if frame is None:
+                            frame = 1
+                        if len([x for x in dims[0] if isinstance(x, int)]) > 1:
+                            _l.w(f"[spritesheets] token '{token}': multiple frame indices not supported yet; using first={frame}")
+                    elif len(dims) == 2:
+                        col = next((x for x in dims[0] if isinstance(x, int)), None)
+                        row_i = next((x for x in dims[1] if isinstance(x, int)), None)
+                    elif len(dims) == 3:
+                        page = next((x for x in dims[0] if isinstance(x, int)), None)
+                        col = next((x for x in dims[1] if isinstance(x, int)), None)
+                        row_i = next((x for x in dims[2] if isinstance(x, int)), None)
+                    else:
+                        _l.w(f"[spritesheets] token '{token}': invalid selector dims={len(dims)}")
+                except Exception as ex:
+                    _l.w(f"[spritesheets] token '{token}': parse error: {ex}")
+
+                _l.i(f"[spritesheet] parsed indices: page={page} col={col} row={row_i} idx={frame}")
+                if frame is not None or (col is not None and row_i is not None):
+                    try:
+                        _l.i(f"[spritesheet] frame symbol requested id=sp_{a_name}_? selector p={page} c={col} r={row_i} idx={frame}")
+                        sref = sm.register_spritesheet_frame(a_name, frame=frame, page=page, col=col, row=row_i)
+                        if sref is not None:
+                            _l.i(f"[spritesheet] frame symbol created id={sref.symbol_id}")
+                            symbol_id = sref.symbol_id
+                            token = f"{sref.symbol_id}" + (f"~{ops_tail}" if ops_tail else "")
+                            normalized = True
+                            _l.d(f"[spritesheets] normalized '@{a_name}[...]' ? '{token}'")
+                    except Exception as ex:
+                        _l.w(f"[spritesheets] frame resolve failed '{token}': {ex}")
+            else:
+                _l.d(f"[spritesheets] token '{token}': alias @{a_name} not registered; ignoring")
+
+    if sm is not None:
+        src_val, sel_src, ops_from_token, src_tag = _parse_source_token_with_selector(token)
+        if src_val:
+            try:
+                v_urls = _resolve_virtual_source_urls(sm, src_val, sel_src, warn_tag=_virtual_warn_tag(src_val, "wkmc"))
+                if v_urls is not None:
+                    if not v_urls:
+                        _l.w(f"[deckmaker.src] virtual source '{src_val}' produced no selected urls")
+                    else:
+                        ids = []
+                        for _u in v_urls:
+                            _src0, _sel0, _ops0, _tag0 = _parse_source_token_with_selector(_u)
+                            if not _src0:
+                                continue
+                            sref0 = sm.register(_src0)
+                            ids.append(sref0.symbol_id)
+                        if len(ids) == 1:
+                            symbol_id = ids[0]
+                            token = f"{ids[0]}{ops_from_token}"
+                        else:
+                            token = "[" + " ".join(ids) + "]" + (ops_from_token or "")
+                        normalized = True
+                        _l.d(f"[deckmaker.src] normalized virtual '{src_tag}' ? '{token}'")
+                else:
+                    sref = sm.register(src_val)
+                    symbol_id = sref.symbol_id
+                    token = f"{sref.symbol_id}{ops_from_token}"
+                    normalized = True
+                    _l.d(f"[deckmaker.src] normalized '{src_tag}' ? '{token}' (symbol in <defs>)")
+            except Exception as ex:
+                _l.w(f"[deckmaker.src] normalize failed '{token}': {ex}")
+
+    if (not normalized) and sm is not None:
+        low = token.lower().lstrip()
+        if low.startswith("@icon://") or low.startswith("icon://"):
+            main, sep, ops_tail = token.partition("~")
+            src_val = main.strip()
+            if src_val.lower().startswith("@icon://"):
+                src_val = src_val[1:]
+            try:
+                sref = sm.register(src_val)
+                token = f"{sref.symbol_id}{sep}{ops_tail}" if sep else sref.symbol_id
+                symbol_id = sref.symbol_id
+                normalized = True
+                _l.d(f"[deckmaker.src] normalized 'icon://' ? '{token}' (symbol in <defs>)")
+            except Exception as ex:
+                _l.w(f"[deckmaker.src] icon:// normalize failed '{token}': {ex}")
+
+    return token, normalized, symbol_id
 
 
 def _parse_header_default_spec(spec: str, target_id: str) -> Tuple[Optional[str], str, str, str]:
@@ -834,7 +934,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                 tgt.set('data-dm-keep-paths', '1')
             except Exception:
                 pass
-            path_jobs.append((tgt, raw_paths_spec, (getattr(layout_obj, 'smart_hex_orient', None) if layout_obj is not None else None)))
+            path_jobs.append((tgt, raw_paths_spec, _orient_hint(layout_obj)))
             _l.d(f"field '{key}': PATHS only -> id='{target_id}'")
             return 1, "paths"
         # Phase-1: NEVER delete rect anchors (duplicate headers / multivalue need a stable, unique anchor element).
@@ -845,104 +945,10 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
         # duplicates/multivalue rely on stability. Visibility is handled in the finalize step.
         _l.d(f"field '{key}': empty non-text kept id='{target_id}'")
         return 0, "skip"
-    source_was_normalized = False
-    symbol_id_for_fallback = None
+    raw_token, source_was_normalized, symbol_id_for_fallback = _normalize_source_token(
+        raw_token, sm=sm, ss_registry=ss_registry
+    )
 
-    # Spritesheet alias token: @sp1[14]~ops or @sp1[2][1]~ops
-    if raw_token.startswith('@') and (not raw_token.startswith('@{')) and sm is not None and ss_registry is not None:
-        parsed = _parse_sprite_alias_token(raw_token)
-        if parsed:
-            a_name, dims, ops_tail = parsed
-            if a_name in ss_registry:
-                frame = None
-                page = 1
-                col = None
-                row_i = None
-                _l.i(f"[spritesheet] token seen in render: '{raw_token}'")
-                try:
-                    if len(dims) == 1:
-                        frame = next((x for x in dims[0] if isinstance(x, int)), None)
-                        if frame is None:
-                            frame = 1
-                        if len([x for x in dims[0] if isinstance(x, int)]) > 1:
-                            _l.w(f"[spritesheets] token '{raw_token}': multiple frame indices not supported yet; using first={frame}")
-                    elif len(dims) == 2:
-                        col = next((x for x in dims[0] if isinstance(x, int)), None)
-                        row_i = next((x for x in dims[1] if isinstance(x, int)), None)
-                    elif len(dims) == 3:
-                        page = next((x for x in dims[0] if isinstance(x, int)), None)
-                        col = next((x for x in dims[1] if isinstance(x, int)), None)
-                        row_i = next((x for x in dims[2] if isinstance(x, int)), None)
-                    else:
-                        _l.w(f"[spritesheets] token '{raw_token}': invalid selector dims={len(dims)}")
-                except Exception as ex:
-                    _l.w(f"[spritesheets] token '{raw_token}': parse error: {ex}")
-
-                _l.i(f"[spritesheet] parsed indices: page={page} col={col} row={row_i} idx={frame}")
-                if frame is not None or (col is not None and row_i is not None):
-                    try:
-                        _l.i(f"[spritesheet] frame symbol requested id=sp_{a_name}_? selector p={page} c={col} r={row_i} idx={frame}")
-                        sref = sm.register_spritesheet_frame(a_name, frame=frame, page=page, col=col, row=row_i)
-                        if sref is not None:
-                            _l.i(f"[spritesheet] frame symbol created id={sref.symbol_id}")
-                            symbol_id_for_fallback = sref.symbol_id
-                            raw_token = f"{sref.symbol_id}" + (f"~{ops_tail}" if ops_tail else "")
-                            source_was_normalized = True
-                            _l.d(f"[spritesheets] normalized '@{a_name}[...]' â†’ '{raw_token}'")
-                    except Exception as ex:
-                        _l.w(f"[spritesheets] frame resolve failed '{raw_token}': {ex}")
-            else:
-                _l.d(f"[spritesheets] token '{raw_token}': alias @{a_name} not registered; ignoring")
-    if sm is not None:
-        src_val, sel_src, ops_from_token, src_tag = _parse_source_token_with_selector(raw_token)
-        if src_val:
-            try:
-                v_urls = _resolve_virtual_source_urls(sm, src_val, sel_src, warn_tag=_virtual_warn_tag(src_val, "wkmc"))
-                if v_urls is not None:
-                    if not v_urls:
-                        _l.w(f"[deckmaker.src] virtual source '{src_val}' produced no selected urls")
-                    else:
-                        ids = []
-                        for _u in v_urls:
-                            _src0, _sel0, _ops0, _tag0 = _parse_source_token_with_selector(_u)
-                            if not _src0:
-                                continue
-                            sref0 = sm.register(_src0)
-                            ids.append(sref0.symbol_id)
-                        if len(ids) == 1:
-                            symbol_id_for_fallback = ids[0]
-                            raw_token = f"{ids[0]}{ops_from_token}"
-                        else:
-                            raw_token = "[" + " ".join(ids) + "]" + (ops_from_token or "")
-                        source_was_normalized = True
-                        _l.d(f"[deckmaker.src] normalized virtual '{src_tag}' â†’ '{raw_token}'")
-                else:
-                    sref = sm.register(src_val)
-                    symbol_id_for_fallback = sref.symbol_id
-                    raw_token = f"{sref.symbol_id}{ops_from_token}"
-                    source_was_normalized = True
-                    _l.d(f"[deckmaker.src] normalized '{src_tag}' â†’ '{raw_token}' (symbol in <defs>)")
-            except Exception as ex:
-                _l.w(f"field '{key}': SOURCE normalize failed '{raw_token}': {ex}")
-
-
-    # Iconify pseudo-scheme: @icon://set/name or icon://set/name (optionally with ~ops)
-    # This is the lightweight path used directly in dataset cells.
-    if (not source_was_normalized) and sm is not None:
-        rt_low = raw_token.lower().lstrip()
-        if rt_low.startswith("@icon://") or rt_low.startswith("icon://"):
-            main, sep, ops_tail = raw_token.partition("~")
-            src_val = main.strip()
-            # SourceManager accepts both icon://... and @icon://..., but we normalize.
-            if src_val.lower().startswith("@icon://"):
-                src_val = src_val[1:]
-            try:
-                sref = sm.register(src_val)
-                raw_token = f"{sref.symbol_id}{sep}{ops_tail}" if sep else sref.symbol_id
-                source_was_normalized = True
-                _l.d(f"[deckmaker.src] normalized 'icon://' â†’ '{raw_token}' (symbol in <defs>)")
-            except Exception as ex:
-                _l.w(f"field '{key}': icon:// normalize failed '{raw_token}': {ex}")
     # For non-text placeholders, normalized source tokens without explicit fit ops
     # should still go through FitAnchor with default behavior (inside+center).
     force_fa_default = False
@@ -953,13 +959,13 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
     except Exception:
         compact_ops_present = False
     if source_was_normalized and symbol_id_for_fallback:
-        has_fa_sig = compact_ops_present or ("~" in raw_token) or raw_token.endswith("=") or raw_token.endswith("+") or ("=~" in raw_token) or ("+~" in raw_token) or raw_token.lstrip().startswith('[')
+        has_fa_sig = _has_fa_signature(raw_token, compact_ops_present=compact_ops_present)
         if (not header_plus) and (not has_fa_sig):
             force_fa_default = True
     else:
         # Local object ids should behave like other sources: implicit Fit/Anchor when
         # no explicit FA signature is provided (default ~i5).
-        has_fa_sig = compact_ops_present or ("~" in raw_token) or raw_token.endswith("=") or raw_token.endswith("+") or ("=~" in raw_token) or ("+~" in raw_token) or raw_token.lstrip().startswith('[')
+        has_fa_sig = _has_fa_signature(raw_token, compact_ops_present=compact_ops_present)
         if (not header_plus) and (not has_fa_sig):
             try:
                 _base_id, _place, _ops_tok = _parse_object_token(raw_token)
@@ -1055,13 +1061,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                     fa_jobs.append((g_id, rect_id_val, ops_full, 'copy', g_node, rect_elem_for_fa, transform_spec))
                     queued += 1
                     _l.d(f"[deckmaker.fa] queued '{key}' -> base='{g_id}' rect='{rect_id_val}' place=copy ops='{ops_full or '~'}'")
-                    if tok_paths_spec:
-                        try:
-                            tgt.set('data-dm-keep-paths', '1')
-                        except Exception:
-                            pass
-                        path_jobs.append((tgt, tok_paths_spec, (getattr(layout_obj, 'smart_hex_orient', None) if layout_obj is not None else None)))
-                        queued_paths += 1
+                    queued_paths += _queue_paths_for_target(tgt, tok_paths_spec, path_jobs, layout_obj)
                 continue
             try:
                 base_id, place, ops_tok = _parse_object_token(tok_core)
@@ -1073,13 +1073,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
             fa_jobs.append((base_id, rect_id_val, ops_full, place, None, rect_elem_for_fa, transform_spec))
             queued += 1
             _l.d(f"[deckmaker.fa] queued '{key}' -> base='{base_id}' rect='{rect_id_val}' place={place} ops='{ops_full or '~'}'")
-            if tok_paths_spec:
-                try:
-                    tgt.set('data-dm-keep-paths', '1')
-                except Exception:
-                    pass
-                path_jobs.append((tgt, tok_paths_spec, (getattr(layout_obj, 'smart_hex_orient', None) if layout_obj is not None else None)))
-                queued_paths += 1
+            queued_paths += _queue_paths_for_target(tgt, tok_paths_spec, path_jobs, layout_obj)
         # Remove placeholder immediately only when it is NOT serving as the rect itself.
         if (queued > 0) and (not used_placeholder_as_rect) and (queued_paths <= 0):
             par = tgt.getparent()
@@ -1100,14 +1094,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                 return 0, 'miss'
             u = SVG.etree.Element(inkex.addNS('use','svg'))
             u.set(inkex.addNS('href','xlink'), f"#{symbol_id_for_fallback}")
-            par.insert(par.index(tgt) + 1, u)
-            use_jobs.append((tgt, u, transform_spec))
-            if raw_paths_spec:
-                try:
-                    tgt.set('data-dm-keep-paths', '1')
-                except Exception:
-                    pass
-                path_jobs.append((tgt, raw_paths_spec, (getattr(layout_obj, 'smart_hex_orient', None) if layout_obj is not None else None)))
+            _append_inserted_use(par, tgt, u, transform_spec, use_jobs, raw_paths_spec, path_jobs, layout_obj)
             _l.d(f"field '{key}': SOURCE(use) id='{use_id}' symbol='{symbol_id_for_fallback}' [fallback center]")
             return 1, 'source'
         except Exception as ex:
@@ -1128,14 +1115,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
     if parent is None:
         _l.w(f"Target '{target_id}' has no parent; cannot insert <use> '{use_id}'.")
     else:
-        parent.insert(parent.index(tgt) + 1, u)
-        use_jobs.append((tgt, u, transform_spec))
-        if raw_paths_spec:
-            try:
-                tgt.set('data-dm-keep-paths', '1')
-            except Exception:
-                pass
-            path_jobs.append((tgt, raw_paths_spec, (getattr(layout_obj, 'smart_hex_orient', None) if layout_obj is not None else None)))
+        _append_inserted_use(parent, tgt, u, transform_spec, use_jobs, raw_paths_spec, path_jobs, layout_obj)
         _l.d(f"field '{key}': INSERT use id='{use_id}' wrap='{wrap_id}' (src_bbox w={bw:.2f} h={bh:.2f})")
         return 1, "clone"
     return 0, "miss"

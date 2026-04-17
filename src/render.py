@@ -956,7 +956,7 @@ def render_phase(ctx):
                     transform_jobs=transform_jobs
                 )
 
-    def _exec_use_fa_paths(inst_node, use_jobs, fa_jobs, path_jobs, transform_jobs, *, warn_tag: str):
+    def _exec_use_fa_paths(inst_node, use_jobs, fa_jobs, path_jobs, transform_jobs, *, warn_tag: str, owner_group=None):
         """Center <use> elements, execute deferred Fit/Anchor jobs, then Paths jobs."""
         def _apply_fa(scope_node, base_id, r_id, ops_full, place_mode, rect_elem):
             try:
@@ -989,7 +989,7 @@ def render_phase(ctx):
                     _fa_remove_later.append(placeholder_to_remove)
             except Exception as ex:
                 _l.w(f"{warn_tag} deferred fit-anchor failed base='{base_id}' rect='{r_id}': {ex}")
-        _queue_paths(int(planner.page_index), path_jobs, owner_group=None)
+        _queue_paths(int(planner.page_index), path_jobs, owner_group=owner_group)
         return _fa_remove_later
 
     def _absolutize_instance_linked_images(inst_node):
@@ -1986,46 +1986,18 @@ def render_phase(ctx):
                         if _rid: _DBG_FA_RECT_IDS.add(_rid)
         except Exception:
             _DBG_FA_RECT_IDS = None
-        for j in inst_jobs:
-            for placeholder, u, _tr_spec in (j.get('use_jobs') or []):
-                try:
-                    _center_use_over_placeholder(u, placeholder, dbg_fa_rect_ids=_DBG_FA_RECT_IDS)
-                except Exception as ex:
-                    _l.w(f"Centering <use> failed for placeholder '{placeholder.get('id')}': {ex}")
-                try:
-                    if _tr_spec is not None:
-                        TFX.apply_transform_spec(root, u, _tr_spec)
-                except Exception as ex:
-                    _l.w(f"[deckmaker.transform] EXEC FAILED target='{(u.get('id') if u is not None else '')}': {ex}")
         _l.s(f"ROW {idx}: fit-anchor")
         _fa_remove_later = []
         for j in inst_jobs:
-            inst0 = j.get('node')
-            for (base_id, r_id, ops_full, place_mode, placeholder_to_remove, rect_elem, _tr_spec) in (j.get('fa_jobs') or []):
-                # DEBUG: detect orphan rects (would force FA parent fallback to root)
-                try:
-                    if rect_elem is not None and rect_elem.getparent() is None:
-                        _l.w(f"[dbg.fa_orphan] BEFORE apply base='{base_id}' r_id='{r_id}' rect_elem_id='{rect_elem.get('id')}' placeholder_rm='{(placeholder_to_remove.get('id') if placeholder_to_remove is not None else None)}'")
-                    elif rect_elem is not None:
-                        _l.d(f"[dbg.fa_parent] BEFORE apply base='{base_id}' r_id='{r_id}' rect_elem_id='{rect_elem.get('id')}' rect_parent='{(rect_elem.getparent().get('id') if rect_elem.getparent() is not None else None)}'")
-                except Exception:
-                    pass
-                try:
-                    try:
-                        _placed = FA.apply_to_by_ids(inst0, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem)
-                    except Exception as ex0:
-                        m0 = str(ex0 or "")
-                        if "base id=" in m0 and "not found" in m0:
-                            _placed = FA.apply_to_by_ids(root, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem)
-                        else:
-                            raise
-                    if _tr_spec is not None and _placed is not None:
-                        TFX.apply_transform_spec(root, _placed, _tr_spec)
-                    if placeholder_to_remove is not None:
-                        _fa_remove_later.append(placeholder_to_remove)
-                except Exception as ex:
-                    _l.w(f"[deckmaker.fa] EXEC FAILED base='{base_id}' rect='{r_id}' ops='{ops_full or '~'}': {ex}")
-            _queue_paths(int(planner.page_index), j.get('path_jobs') or [], owner_group=card_group)
+            _fa_remove_later.extend(_exec_use_fa_paths(
+                j.get('node'),
+                j.get('use_jobs') or [],
+                j.get('fa_jobs') or [],
+                j.get('path_jobs') or [],
+                j.get('transform_jobs') or [],
+                warn_tag='[deckmaker]',
+                owner_group=card_group,
+            ))
         # Remove placeholders at the end so the same rect can be reused (multivalue/dup headers).
         for _ph in list(dict.fromkeys(_fa_remove_later)):
             try:
