@@ -81,25 +81,9 @@ _expand_wildcard_ids_in_value = RAP._expand_wildcard_ids_in_value
 _build_single_target_header_key = RAP._build_single_target_header_key
 parse_header_key_full = RAP.parse_header_key_full
 parse_header_key = RAP.parse_header_key
-_HEADER_RE = re.compile(r"^(?P<id>[^\[\]]+)(?:\[(?P<prop>[^\]]+)\])?$")
-
 # Phase-1: per-instance set of rect ids to keep visible (from header '+' modifier)
 _P1_KEEP_SET = None
-
-def _gaps_has_offsets(layout_obj) -> bool:
-    """True only if gaps params 3..6 are non-zero."""
-    try:
-        k = getattr(layout_obj, 'gaps', None)
-        if isinstance(k, (list, tuple)) and len(k) >= 6:
-            for t in list(k)[2:6]:
-                if t is None:
-                    continue
-                v = float(SVG.measure_to_mm(t, base_mm=None))
-                if abs(v) > 1e-9:
-                    return True
-    except Exception:
-        pass
-    return False
+_gaps_has_offsets = LYT.gaps_has_offsets
 
 
 def _center_use_over_placeholder(u, placeholder):

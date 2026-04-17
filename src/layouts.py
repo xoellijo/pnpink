@@ -122,6 +122,21 @@ class Resolved:
 
 # ----------------------------- Utils ------------------------------------------
 
+def gaps_has_offsets(layout_obj) -> bool:
+    """True only if gaps params 3..6 are non-zero."""
+    try:
+        k = getattr(layout_obj, 'gaps', None)
+        if isinstance(k, (list, tuple)) and len(k) >= 6:
+            for t in list(k)[2:6]:
+                if t is None:
+                    continue
+                v = float(SVG.measure_to_mm(t, base_mm=None))
+                if abs(v) > 1e-9:
+                    return True
+    except Exception:
+        return False
+    return False
+
 def _as_token_list(v: Any) -> List[str]:
     """
     Normaliza gaps recibido desde DSL:

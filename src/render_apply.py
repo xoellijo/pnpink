@@ -391,6 +391,39 @@ def _append_inserted_use(parent, tgt, u, transform_spec, use_jobs, raw_paths_spe
     return True
 
 
+def _insert_symbol_use(symbol_id: str, *, tgt, target_id: str, use_seq, transform_spec, use_jobs, raw_paths_spec, path_jobs, layout_obj):
+    use_seq[0] += 1
+    use_id = f"dm_srcuse_{use_seq[0]}"
+    parent = tgt.getparent()
+    if parent is None:
+        _l.w(f"Target '{target_id}' has no parent; cannot insert source <use> '{use_id}'.")
+        return 0, "miss"
+    u = SVG.etree.Element(inkex.addNS('use', 'svg'))
+    u.set(inkex.addNS('href', 'xlink'), f"#{symbol_id}")
+    _append_inserted_use(parent, tgt, u, transform_spec, use_jobs, raw_paths_spec, path_jobs, layout_obj)
+    return use_id, u
+
+
+def _insert_wrapped_source_use(root_doc, src_id: str, *, tgt, target_id: str, use_seq, transform_spec, use_jobs, raw_paths_spec, path_jobs, layout_obj):
+    src = root_doc.find(".//*[@id='%s']" % src_id)
+    if src is None:
+        _l.w(f"Clone source '{src_id}' not found for non-text target '{target_id}'.")
+        return 0, "miss"
+    wrap_id, bw, bh = _ensure_wrap_symbol_for_src(root_doc, src)
+    if bw <= 0 or bh <= 0:
+        _l.w(f"source '{src_id}' invalid bbox (w={bw} h={bh}); skip.")
+        return 0, "miss"
+    use_seq[0] += 1
+    use_id = f"dm_use_{src_id}_{use_seq[0]}"
+    u = _make_use_for_wrap(wrap_id, bw, bh, use_id=use_id)
+    parent = tgt.getparent()
+    if parent is None:
+        _l.w(f"Target '{target_id}' has no parent; cannot insert <use> '{use_id}'.")
+        return 0, "miss"
+    _append_inserted_use(parent, tgt, u, transform_spec, use_jobs, raw_paths_spec, path_jobs, layout_obj)
+    return use_id, wrap_id, bw, bh
+
+
 def _normalize_source_token(raw_token: str, sm=None, ss_registry=None):
     token = (raw_token or "").strip()
     normalized = False
@@ -485,7 +518,7 @@ def _normalize_source_token(raw_token: str, sm=None, ss_registry=None):
                 token = f"{sref.symbol_id}{sep}{ops_tail}" if sep else sref.symbol_id
                 symbol_id = sref.symbol_id
                 normalized = True
-                _l.d(f"[deckmaker.src] normalized 'icon://' ? '{token}' (symbol in <defs>)")
+                _l.d(f"[deckmaker.src] normalized 'icon://' → '{token}' (symbol in <defs>)")
             except Exception as ex:
                 _l.w(f"[deckmaker.src] icon:// normalize failed '{token}': {ex}")
 
@@ -733,9 +766,6 @@ def parse_header_key(key: str) -> Tuple[str, str, bool]:
     info = parse_header_key_full(key)
     return str(info.get('target_id') or ''), str(info.get('prop') or 'text'), bool(info.get('header_plus') or False)
 
-
-def _center_use_over_placeholder(u, placeholder):
-    return RHP.center_use_over_placeholder(u, placeholder, dbg_fa_rect_ids=_DBG_FA_RECT_IDS)
 
 def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs, path_jobs, use_seq, layout_obj=None, sm=None, ss_registry=None, transform_jobs=None):
     global _P1_KEEP_SET
@@ -1086,37 +1116,28 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
         return queued, "fa"
     if source_was_normalized and symbol_id_for_fallback and not is_fa_token:
         try:
-            use_seq[0] += 1
-            use_id = f"dm_srcuse_{use_seq[0]}"
-            par = tgt.getparent()
-            if par is None:
-                _l.w(f"Target '{target_id}' has no parent; cannot insert source <use> '{use_id}'.")
-                return 0, 'miss'
-            u = SVG.etree.Element(inkex.addNS('use','svg'))
-            u.set(inkex.addNS('href','xlink'), f"#{symbol_id_for_fallback}")
-            _append_inserted_use(par, tgt, u, transform_spec, use_jobs, raw_paths_spec, path_jobs, layout_obj)
+            use_id, _u = _insert_symbol_use(
+                symbol_id_for_fallback,
+                tgt=tgt, target_id=target_id, use_seq=use_seq,
+                transform_spec=transform_spec, use_jobs=use_jobs,
+                raw_paths_spec=raw_paths_spec, path_jobs=path_jobs, layout_obj=layout_obj,
+            )
+            if not use_id:
+                return 0, "miss"
             _l.d(f"field '{key}': SOURCE(use) id='{use_id}' symbol='{symbol_id_for_fallback}' [fallback center]")
             return 1, 'source'
         except Exception as ex:
             _l.w(f"field '{key}': SOURCE fallback <use> failed: {ex}")
     src_id = raw_token
-    src = root_doc.find(".//*[@id='%s']" % src_id)
-    if src is None:
-        _l.w(f"Clone source '{src_id}' not found for non-text target '{target_id}'.")
+    res = _insert_wrapped_source_use(
+        root_doc, src_id,
+        tgt=tgt, target_id=target_id, use_seq=use_seq,
+        transform_spec=transform_spec, use_jobs=use_jobs,
+        raw_paths_spec=raw_paths_spec, path_jobs=path_jobs, layout_obj=layout_obj,
+    )
+    if not res or not res[0]:
         return 0, "miss"
-    wrap_id, bw, bh = _ensure_wrap_symbol_for_src(root_doc, src)
-    if bw <= 0 or bh <= 0:
-        _l.w(f"source '{src_id}' invalid bbox (w={bw} h={bh}); skip.")
-        return 0, "miss"
-    use_seq[0] += 1
-    use_id = f"dm_use_{src_id}_{use_seq[0]}"
-    u = _make_use_for_wrap(wrap_id, bw, bh, use_id=use_id)
-    parent = tgt.getparent()
-    if parent is None:
-        _l.w(f"Target '{target_id}' has no parent; cannot insert <use> '{use_id}'.")
-    else:
-        _append_inserted_use(parent, tgt, u, transform_spec, use_jobs, raw_paths_spec, path_jobs, layout_obj)
-        _l.d(f"field '{key}': INSERT use id='{use_id}' wrap='{wrap_id}' (src_bbox w={bw:.2f} h={bh:.2f})")
-        return 1, "clone"
-    return 0, "miss"
+    use_id, wrap_id, bw, bh = res
+    _l.d(f"field '{key}': INSERT use id='{use_id}' wrap='{wrap_id}' (src_bbox w={bw:.2f} h={bh:.2f})")
+    return 1, "clone"
 

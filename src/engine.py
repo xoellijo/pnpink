@@ -30,17 +30,6 @@ import render as REN
 
 # --------------------- util / parsing ---------------------
 
-TEXT_LIKE = {
-    inkex.addNS('text','svg'), inkex.addNS('tspan','svg'),
-    inkex.addNS('flowRoot','svg'), inkex.addNS('flowPara','svg'),
-    inkex.addNS('textPath','svg'), 'text','tspan','flowRoot','flowPara','textPath'
-}
-_HEADER_RE      = None  # (PRUNE) legacy; no longer used
-
-# (PRUNE) No se usan ya:
-# _PRESET_WITH_TAIL_RE = re.compile(r"\{\s*[^}]*\s*\}")
-# _TAIL_RE             = re.compile(r"\.\s*L\s*\{[^}]*\}\s*$", re.IGNORECASE)
-
 
 class EngineContext(SimpleNamespace):
     """Shared mutable context across pipeline phases."""
@@ -991,21 +980,7 @@ def run(self, __version__):
                 c0 = (cols - 1) - c0
             return int(r0), int(c0)
 
-        def _gaps_has_offsets(layout_obj) -> bool:
-            """True only if gaps params 3..6 are non-zero."""
-            try:
-                k = getattr(layout_obj, 'gaps', None)
-                if isinstance(k, (list, tuple)) and len(k) >= 6:
-                    for t in list(k)[2:6]:
-                        if t is None:
-                            continue
-                        # treat as measure; any non-zero means stagger/offset
-                        v = float(SVG.measure_to_mm(t, base_mm=None))
-                        if abs(v) > 1e-9:
-                            return True
-            except Exception:
-                return False
-            return False
+        _gaps_has_offsets = LYT.gaps_has_offsets
 
         def _flush_marks_for_page(page_idx: int):
             jobs = _marks_pending_by_page.get(int(page_idx)) or []
