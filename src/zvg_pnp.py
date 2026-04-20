@@ -61,7 +61,7 @@ def _is_local_ref(v: str) -> bool:
     sl = s.lower()
     if s.startswith("#"):
         return False
-    if sl.startswith(("http://", "https://", "data:", "icon://", "@{", "wkmc://", "pxby://", "oclp://")):
+    if sl.startswith(("http://", "https://", "data:", "icon://", "@{", "wkmc://", "pxby://", "oclp://", "pnp://")):
         return False
     return True
 

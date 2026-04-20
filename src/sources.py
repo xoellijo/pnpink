@@ -248,6 +248,9 @@ def _build_key_for_oclp(expr: str) -> SourceKey:
 def _build_key_for_osm(expr: str) -> SourceKey:
     return SourceKey(scheme="osm", path=(expr or "").strip(), mtime=0.0)
 
+def _build_key_for_pnp(expr: str) -> SourceKey:
+    return SourceKey(scheme="pnp", path=(expr or "").strip(), mtime=0.0)
+
 
 def _is_missing_ref(ref: Optional[SourceRef]) -> bool:
     try:
@@ -537,6 +540,9 @@ class SourceManager:
 
     def resolve_osm_svg(self, expr: str) -> Optional[str]:
         return self.web.resolve_osm_svg(expr)
+
+    def resolve_pnp_urls(self, expr: str) -> Optional[List[str]]:
+        return self.web.resolve_pnp_urls(expr)
 
     def _register_first_valid_web_candidate(self, urls: List[str], *, hint_type: Optional[str], dpi=None,
                                             fragment: str = "", page: int = 0,
@@ -919,6 +925,28 @@ class SourceManager:
                 sid, wh = _make_placeholder_symbol(self.defs, raw, "oclp no valid candidate")
                 return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
             self._cache[key_o] = ref
+            return ref
+
+        # PnPInk assets virtual source (single-value fallback: first result).
+        if raw.lower().startswith("pnp://"):
+            key_pnp = _build_key_for_pnp(raw if not fragment else f"{raw}#{fragment}")
+            if key_pnp in self._cache:
+                self._cache_hits += 1
+                return self._cache[key_pnp]
+            self._cache_misses += 1
+            urls = self.resolve_pnp_urls(raw) or []
+            if not urls:
+                sid, wh = _make_placeholder_symbol(self.defs, raw, "pnp no results")
+                return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
+            if len(urls) > 1:
+                _l.w(f"[sources] pnp produced {len(urls)} results; trying candidates in order")
+            ref = self._register_first_valid_web_candidate(
+                urls, hint_type=hint_type, dpi=dpi, fragment=fragment, page=page, log_prefix="[sources] pnp"
+            )
+            if ref is None:
+                sid, wh = _make_placeholder_symbol(self.defs, raw, "pnp no valid candidate")
+                return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
+            self._cache[key_pnp] = ref
             return ref
 
         # OpenStreetMap virtual source (single SVG export URL).
@@ -1662,6 +1690,12 @@ class SourceManager:
                 if urls:
                     if len(urls) > 1:
                         _l.w(f"[spritesheets] alias '{alias_key}': oclp produced {len(urls)} results; using first")
+                    src_for_path = str(urls[0] or "").strip()
+            elif sl.startswith("pnp://"):
+                urls = list(self.resolve_pnp_urls(src_for_path) or [])
+                if urls:
+                    if len(urls) > 1:
+                        _l.w(f"[spritesheets] alias '{alias_key}': pnp produced {len(urls)} results; using first")
                     src_for_path = str(urls[0] or "").strip()
             elif sl.startswith("osm://"):
                 urls = list(self.resolve_osm_urls(src_for_path) or [])

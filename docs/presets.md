@@ -37,10 +37,12 @@ Use these identifiers in `Layout{shape=...}` / `L{s=...}` and related shape-awar
 | squareS | - | 50 x 50 |
 | square | - | 70 x 70 |
 | squareL | - | 100 x 100 |
+| Counter38 | counter38, inch38 | 9.525 x 9.525 |
+| Counter12 | counter12, inch12 | 12.7 x 12.7 |
+| Counter34 | counter34, inch34 | 19.05 x 19.05 |
+| Counter1 | counter1, inch1 | 25.4 x 25.4 |
 | Dixit | - | 80 x 120 |
-| CreditCard | creditcard | 54 x 85.6 |
-| CR80 | cr80 | 54 x 85.6 |
-| ID-1 | id1, id-1 | 54 x 85.6 |
+| CreditCard | creditcard, cr80, id1, id-1 | 54 x 85.6 |
 
 Also accepted (normalization rules):
 
@@ -54,3 +56,5 @@ Examples:
 - `mini usa`, `mini-usa`, `mini_usa` -> `miniUSA`
 - `id1`, `ID-1`, `id_1`, `id.1` -> `ID-1`
 - `xl-poker`, `XL_POKER`, `xl poker` -> `XL_Poker`
+- `counter_1/2`, `counter_1_2`, `COUNTER12` -> `Counter12`
+- `inch_3/8`, `inch3_8`, `INCH38` -> `Counter38`

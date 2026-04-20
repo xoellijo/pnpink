@@ -16,7 +16,7 @@ The `source_ref` can be:
 - a path to a local file,
 - an iconify reference,
 - a web URL,
-- or a virtual source (Wikimedia Commons, Pixabay, Openclipart).
+- or a virtual source (Wikimedia Commons, Pixabay, Openclipart, PnPInk Assets).
 
 ## Local File Sources
 Use local files for stable, reproducible builds where assets are versioned with the project.
@@ -130,6 +130,7 @@ PnPInk supports virtual sources that resolve to real URLs:
 @{ wkmc://query/size }
 @{ pxby://query/size }
 @{ oclp://query/size }
+@{ pnp://asset_path }
 ```
 
 PnPInk also supports dedicated map sources:
@@ -155,6 +156,11 @@ Placed sources can also be adjusted afterwards with [Transform](./transform.md),
 - `oclp://` (Openclipart) supports:
  - normal search list: `oclp://query/size`
  - specific image by id/detail: `oclp://id:12345/size` (resolved internally via `https://openclipart.org/detail/12345/...`)
+- `pnp://` (PnPInk Assets) supports:
+ - direct asset path: `pnp://birds/egg1`
+ - default `.png` extension when omitted
+ - friendly numeric fallback: `pnp://birds/egg` -> first matching numbered asset such as `egg1.png`
+ - optional global lookup when the name is unambiguous: `pnp://egg`
 
 Size accepts:
 
@@ -172,6 +178,8 @@ Examples:
 @{ pxby://castle/1200 }
 @{ oclp://wolf/large }
 @{ oclp://id:24829/largest }
+@{ pnp://birds/egg }
+@{ pnp://IA/icons/crown1 }
 ```
 
 Multiple-result virtual sources can be selected outside the source with a 1-based selector:
@@ -186,6 +194,25 @@ Selector notes:
 - indices are 1-based,
 - out-of-range indices are ignored with warning,
 - without selector, if multiple results exist, the first one is used (warning in log).
+
+### `pnp://` Notes
+
+`pnp://` resolves against the public [`pnpink-assets`](https://github.com/xoellijo/pnpink-assets) index generated on push.
+
+Resolution rules are intentionally simple:
+
+- if you provide a full asset stem, it is used directly,
+- if you omit the extension, `.png` is assumed,
+- if you omit the numeric suffix, PnPInk tries the lowest matching numbered asset,
+- if you omit the folder, PnPInk tries a global lookup and warns if the name is ambiguous.
+
+Examples:
+
+```txt
+@{ pnp://egg }            # may resolve to birds/egg1.png
+@{ pnp://birds/egg }      # resolves within the birds collection
+@{ pnp://IA/icons/crown1 }
+```
 
 ## Fit and Placement Behavior
 After resolution, a source behaves like any other placeable target in Fit/Anchor terms.

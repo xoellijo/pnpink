@@ -55,5 +55,14 @@ Aliases resolve internally to a canonical preset.
 
 - **squareL** — 100 × 100 mm
 
+### Counters
+- **Counter38** (counter38, inch38) — 9.525 × 9.525 mm
+
+- **Counter12** (counter12, inch12) — 12.7 × 12.7 mm
+
+- **Counter34** (counter34, inch34) — 19.05 × 19.05 mm
+
+- **Counter1** (counter1, inch1) — 25.4 × 25.4 mm
+
 ### Cards & IDs
-- **CreditCard** (creditcard, cr80, ID-1, id1 ) — 54 × 85.6 mm
+- **CreditCard** (creditcard, cr80, ID-1, id1) — 54 × 85.6 mm

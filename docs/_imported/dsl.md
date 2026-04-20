@@ -529,7 +529,31 @@ To force a fresh download, remove the symbol manually from the document’s symb
 
 @{ http://... }
 
-\* Current status: direct http/https loading is not implemented yet (placeholder behavior).
+\* Direct web URLs can also be wrapped by higher-level virtual sources.
+
+Supported virtual sources include:
+
+@{ wkmc://query/size }
+
+@{ pxby://query/size }
+
+@{ oclp://query/size }
+
+@{ pnp://asset_path }
+
+`pnp://` resolves against the public `pnpink-assets` index and is intended for short reusable asset paths.
+
+Examples:
+
+@{ pnp://birds/egg }
+
+@{ pnp://IA/icons/crown1 }
+
+Rules:
+
+- `.png` is assumed when no extension is provided.
+- If the numeric suffix is omitted, PnPInk tries the lowest matching numbered asset.
+- If the folder is omitted, PnPInk tries a global lookup and warns if the name is ambiguous.
 
 Fit/Placement behavior
 

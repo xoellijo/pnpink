@@ -65,6 +65,11 @@ CARD_SIZES_MM: Dict[str, Tuple[float, float]] = {
     "squareS":      (50.0, 50.0),
     "square":       (70.0, 70.0),
     "squareL":      (100.0, 100.0),
+    # Counter family (inch-based square counters)
+    "Counter12":    (12.7, 12.7),    # 1/2"
+    "Counter38":    (9.525, 9.525),  # 3/8"
+    "Counter34":    (19.05, 19.05),  # 3/4"
+    "Counter1":     (25.4, 25.4),    # 1"
     "Dixit":        (80.0, 120.0),
     # New: Credit card family (ISO/IEC 7810 ID-1, CR80)
     "CreditCard":   (54.0, 85.6),
@@ -102,6 +107,15 @@ _CARD_ALIAS_RAW: Dict[str, str] = {
     "minichimera": "miniAsia",
     "chimeramini": "miniAsia",
     "baraja": "Spanish",
+    # counter / inch aliases
+    "counter12": "Counter12",
+    "counter38": "Counter38",
+    "counter34": "Counter34",
+    "counter1": "Counter1",
+    "inch12": "Counter12",
+    "inch38": "Counter38",
+    "inch34": "Counter34",
+    "inch1": "Counter1",
     # credit card aliases
     "creditcard": "CreditCard",
     "cr80": "CR80",

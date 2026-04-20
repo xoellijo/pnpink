@@ -784,7 +784,7 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
         s = (src_uri or "").strip()
         if not s:
             return False
-        if re.match(r"^(?:https?://|data:|icon://|wkmc://|pxby://|oclp://)", s, re.IGNORECASE):
+        if re.match(r"^(?:https?://|data:|icon://|wkmc://|pxby://|oclp://|pnp://)", s, re.IGNORECASE):
             return True
         s2 = os.path.expanduser(os.path.expandvars(s))
         p = Path(s2)

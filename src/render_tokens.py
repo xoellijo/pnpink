@@ -301,7 +301,7 @@ def parse_source_like_token(raw_token: str):
         body_for_dsl = (m_all.group("body") or "").strip()
         src_val = None
         body_low = body_for_dsl.lower()
-        if body_low.startswith("osm://") or body_low.startswith("ofm://"):
+        if body_low.startswith("osm://") or body_low.startswith("ofm://") or body_low.startswith("pnp://"):
             src_val = body_for_dsl
         else:
             try:
@@ -338,7 +338,7 @@ def parse_source_like_token(raw_token: str):
         return src_val, ops, tag
 
     m_url = re.match(
-        r"^\s*(?P<url>https?://\S+?)\s*(?:(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$",
+        r"^\s*(?P<url>(?:https?://|wkmc://|pxby://|oclp://|pnp://|osm://|ofm://)\S+?)\s*(?:(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$",
         s,
         re.IGNORECASE,
     )
@@ -387,7 +387,7 @@ def parse_source_like_token(raw_token: str):
 def parse_source_token_with_selector(raw_token: str):
     s = (raw_token or "").strip()
     m = re.match(
-        r"^\s*(?P<core>(?:@\{[^}]*\}|(?:Source|S)\s*\{[^}]*\}|https?://\S+?))\s*"
+        r"^\s*(?P<core>(?:@\{[^}]*\}|(?:Source|S)\s*\{[^}]*\}|(?:https?://|wkmc://|pxby://|oclp://|pnp://|osm://|ofm://)\S+?))\s*"
         r"(?P<sel>\[[^\]]*\])?\s*"
         r"(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
         s,
@@ -415,6 +415,8 @@ def virtual_warn_tag(src_val: str, base_tag: str) -> str:
         return (base_tag or "osm").replace("wkmc", "osm")
     if s.startswith("ofm://"):
         return (base_tag or "ofm").replace("wkmc", "ofm")
+    if s.startswith("pnp://"):
+        return (base_tag or "pnp").replace("wkmc", "pnp")
     return base_tag
 
 
@@ -437,6 +439,8 @@ def resolve_virtual_source_urls(sm, src_val: str, selector: Optional[str], *, wa
         urls = list(sm.resolve_pxby_urls(s) or [])
     elif sl.startswith("oclp://"):
         urls = list(sm.resolve_oclp_urls(s) or [])
+    elif sl.startswith("pnp://"):
+        urls = list(sm.resolve_pnp_urls(s) or [])
     elif sl.startswith("osm://"):
         urls = list(sm.resolve_osm_urls(s) or [])
         if not urls:

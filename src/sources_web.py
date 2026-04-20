@@ -14,6 +14,8 @@ _l = LOG
 import net as NET
 import osm as OSM
 
+PNP_ASSETS_INDEX_URL = "https://xoellijo.github.io/pnpink-assets/assets-index.json"
+
 
 @dataclass
 class WebSources:
@@ -74,6 +76,190 @@ class WebSources:
 
         # Backward-compatible fallback for unknown labels.
         return {"kind": "preset", "preset": "medium", "label": "medium"}
+
+    # ---------------- PnPInk Assets ----------------
+    @staticmethod
+    def _parse_pnp_expr(expr: str) -> Optional[str]:
+        s = str(expr or "").strip()
+        if not s.lower().startswith("pnp://"):
+            return None
+        body = s[len("pnp://"):].strip()
+        if not body:
+            return ""
+        if body and body[0] in ("'", '"'):
+            qch = body[0]
+            i = 1
+            esc = False
+            out = []
+            while i < len(body):
+                ch = body[i]
+                if esc:
+                    out.append(ch)
+                    esc = False
+                    i += 1
+                    continue
+                if ch == "\\":
+                    esc = True
+                    i += 1
+                    continue
+                if ch == qch:
+                    break
+                out.append(ch)
+                i += 1
+            body = "".join(out).strip()
+        return body
+
+    @staticmethod
+    def _pnp_norm_path(s: str) -> str:
+        out = str(s or "").strip().replace("\\", "/")
+        out = re.sub(r"/{2,}", "/", out)
+        return out.strip("/").lower()
+
+    @staticmethod
+    def _pnp_split_name_ext(name: str) -> Tuple[str, str]:
+        raw = str(name or "").strip()
+        if not raw:
+            return "", ".png"
+        stem, ext = os.path.splitext(raw)
+        if ext:
+            return stem.strip(), ext.strip() or ".png"
+        return raw, ".png"
+
+    @staticmethod
+    def _pnp_split_numeric_suffix(name: str) -> Tuple[str, Optional[int]]:
+        m = re.match(r"^(.*?)(\d+)$", str(name or "").strip())
+        if not m:
+            return str(name or "").strip(), None
+        try:
+            return m.group(1), int(m.group(2))
+        except Exception:
+            return str(name or "").strip(), None
+
+    def _pnp_cache_file(self) -> Path:
+        return self.assets_dir / "pnp_assets_index.json"
+
+    def _pnp_load_index(self, *, force_refresh: bool = False) -> dict:
+        cfile = self._pnp_cache_file()
+        cached = None
+        if (not force_refresh) and cfile.is_file():
+            try:
+                cached = json.loads(cfile.read_text(encoding="utf-8"))
+            except Exception:
+                cached = None
+        if cached:
+            return cached
+        try:
+            data = NET.fetch_json(PNP_ASSETS_INDEX_URL, timeout=30, retries=4, log_prefix="[sources] pnp")
+            if isinstance(data, dict) and isinstance(data.get("dirs"), dict) and str(data.get("base") or "").strip():
+                try:
+                    cfile.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+                except Exception:
+                    pass
+                return data
+        except Exception as ex:
+            _l.w(f"[sources] pnp index fetch failed: {ex}")
+        if force_refresh and cfile.is_file():
+            try:
+                return json.loads(cfile.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return {}
+
+    @staticmethod
+    def _pnp_build_url(base: str, dir_path: str, stem: str, ext: str) -> str:
+        base0 = str(base or "").rstrip("/")
+        dir0 = str(dir_path or "").strip("/")
+        segs = [urllib.parse.quote(seg, safe="") for seg in dir0.split("/") if seg]
+        fname = urllib.parse.quote(f"{stem}{ext}", safe="")
+        if segs:
+            return base0 + "/" + "/".join(segs) + "/" + fname
+        return base0 + "/" + fname
+
+    def _pnp_collect_candidates(self, dirs_map: dict, dir_part: str, name_part: str, base_url: str) -> List[str]:
+        requested_dir = self._pnp_norm_path(dir_part)
+        requested_name = str(name_part or "").strip()
+        requested_stem, requested_ext = self._pnp_split_name_ext(requested_name)
+        requested_name_norm = requested_stem.lower()
+        requested_base, requested_num = self._pnp_split_numeric_suffix(requested_stem)
+        requested_base_norm = str(requested_base or "").strip().lower()
+
+        dir_hits = []
+        for dir_key, stems in (dirs_map or {}).items():
+            dnorm = self._pnp_norm_path(dir_key)
+            if requested_dir:
+                if dnorm != requested_dir and (not dnorm.endswith("/" + requested_dir)):
+                    continue
+            dir_hits.append((str(dir_key), [str(x).strip() for x in (stems or []) if str(x or "").strip()]))
+
+        exact_hits = []
+        series_hits = []
+        for dir_key, stems in dir_hits:
+            if not requested_stem:
+                for stem in stems:
+                    exact_hits.append((dir_key, stem, requested_ext))
+                continue
+            for stem in stems:
+                stem_norm = stem.lower()
+                if stem_norm == requested_name_norm:
+                    exact_hits.append((dir_key, stem, requested_ext))
+                    continue
+                if requested_num is not None:
+                    continue
+                stem_base, stem_num = self._pnp_split_numeric_suffix(stem)
+                if stem_num is None:
+                    continue
+                if str(stem_base or "").strip().lower() == requested_base_norm:
+                    series_hits.append((dir_key, stem, stem_num, requested_ext))
+
+        if exact_hits:
+            return [
+                self._pnp_build_url(base_url, d, s, ext)
+                for d, s, ext in sorted(exact_hits, key=lambda t: (self._pnp_norm_path(t[0]), t[1].lower()))
+            ]
+        if series_hits:
+            return [
+                self._pnp_build_url(base_url, d, s, ext)
+                for d, s, _n, ext in sorted(series_hits, key=lambda t: (t[2], self._pnp_norm_path(t[0]), t[1].lower()))
+            ]
+        return []
+
+    def _resolve_pnp_urls_from_index(self, body: str, index_data: dict) -> List[str]:
+        base_url = str((index_data or {}).get("base") or "").strip()
+        dirs_map = (index_data or {}).get("dirs") or {}
+        if not base_url or not isinstance(dirs_map, dict):
+            return []
+        body0 = str(body or "").strip().replace("\\", "/").strip("/")
+        if not body0:
+            return []
+        dir_part = ""
+        name_part = body0
+        if "/" in body0:
+            dir_part, name_part = body0.rsplit("/", 1)
+        urls = self._pnp_collect_candidates(dirs_map, dir_part, name_part, base_url)
+        if urls:
+            return urls
+        if dir_part:
+            return []
+        return self._pnp_collect_candidates(dirs_map, "", body0, base_url)
+
+    def resolve_pnp_urls(self, expr: str) -> Optional[List[str]]:
+        body = self._parse_pnp_expr(expr)
+        if body is None:
+            return None
+        data = self._pnp_load_index(force_refresh=False)
+        urls = self._resolve_pnp_urls_from_index(body, data)
+        if urls:
+            if len(urls) > 1:
+                _l.i(f"[sources] pnp resolved '{body}' n={len(urls)}")
+            return urls
+        data = self._pnp_load_index(force_refresh=True)
+        urls = self._resolve_pnp_urls_from_index(body, data)
+        if urls:
+            if len(urls) > 1:
+                _l.i(f"[sources] pnp refreshed '{body}' n={len(urls)}")
+            return urls
+        _l.w(f"[sources] pnp no results '{expr}'")
+        return []
 
     # ---------------- Wikimedia Commons ----------------
     @staticmethod
