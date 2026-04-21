@@ -34,6 +34,25 @@ def _fa_find_in(scope, root, elem_id):
         n = root.find(".//*[@id='%s']" % elem_id)
     return n
 
+
+def _rect_intersection(a, b):
+    if a is None:
+        return b
+    if b is None:
+        return a
+    try:
+        ax, ay, aw, ah = [float(v) for v in a]
+        bx, by, bw, bh = [float(v) for v in b]
+    except Exception:
+        return a
+    x1 = max(ax, bx)
+    y1 = max(ay, by)
+    x2 = min(ax + aw, bx + bw)
+    y2 = min(ay + ah, by + bh)
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return (x1, y1, x2 - x1, y2 - y1)
+
 def _css_box_shorthand(lst):
     if not lst:
         return 0, 0, 0, 0
@@ -410,13 +429,33 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
         anchor=(ax, ay),
     )
 
+    # Final fitted image bbox in wrapper-local coordinates. Transform soft relative
+    # to the placed image itself, not to the placeholder/clip rect.
+    try:
+        _p1 = T_local.apply_to_point((bx_w, by_w))
+        _p2 = T_local.apply_to_point((bx_w + bw_w, by_w))
+        _p3 = T_local.apply_to_point((bx_w, by_w + bh_w))
+        _p4 = T_local.apply_to_point((bx_w + bw_w, by_w + bh_w))
+        _xs = [_p1[0], _p2[0], _p3[0], _p4[0]]
+        _ys = [_p1[1], _p2[1], _p3[1], _p4[1]]
+        image_soft_rect_local = (
+            float(min(_xs)),
+            float(min(_ys)),
+            float(max(_xs) - min(_xs)),
+            float(max(_ys) - min(_ys)),
+        )
+    except Exception:
+        image_soft_rect_local = None
+
     # Create wrapper in parent, anchored to the placeholder ORIGIN (parent-local coords)
     wrapper = etree.Element(inkex.addNS('g', 'svg'))
     wrapper_id = f"fa_clipwrap_{rect_id}_{base_id}".replace('.', '_').replace(':', '_')
     wrapper.set('id', wrapper_id)
     wrapper.set('transform', f"translate({rx_l},{ry_l})")
 
-    # Inner group to which we apply the clip.
+    # Inner groups:
+    # - soft_g hosts the future mask target in a stable local wrapper
+    # - clip_g hosts the clip-path and actual placed content
     # For pre-clip stage, apply shift at a parent group so it happens AFTER clip.
     clip_parent = wrapper
     if clip_pre and (abs(shift_lx) > 1e-9 or abs(shift_ly) > 1e-9):
@@ -424,7 +463,10 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
         post_shift_g.set('id', f"{wrapper_id}_postshift")
         post_shift_g.set('transform', f"translate({shift_lx},{shift_ly})")
         clip_parent = post_shift_g
-    clip_g = etree.SubElement(clip_parent, inkex.addNS('g', 'svg'))
+    soft_g = etree.SubElement(clip_parent, inkex.addNS('g', 'svg'))
+    soft_g_id = f"{wrapper_id}_soft"
+    soft_g.set('id', soft_g_id)
+    clip_g = etree.SubElement(soft_g, inkex.addNS('g', 'svg'))
     clip_g_id = f"{wrapper_id}_clip"
     clip_g.set('id', clip_g_id)
 
@@ -457,6 +499,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
     clip_use_inner = not (getattr(fs, "border", None) and getattr(fs, "clip", False))
     clip_shape = None
     clip_kind = "none"
+    clip_rect_local = None
     tag = str(getattr(rect, "tag", "") or "")
     rid = (rect.get('id') or rect_id or "").strip()
     base_has_image = False
@@ -571,6 +614,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
             s.set('y', f"{cy}")
             s.set('width', f"{cw}")
             s.set('height', f"{ch}")
+            clip_rect_local = (float(cx), float(cy), float(cw), float(ch))
 
             # Preserve corner radii from placeholder rect.
             rx_attr = (rect.get('rx') or '').strip()
@@ -604,17 +648,38 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
     if clip_shape is None:
         r = etree.SubElement(cp, inkex.addNS('rect', 'svg'))
         if clip_use_inner:
-            r.set('x', f"{ix_l - rx_l}")
-            r.set('y', f"{iy_l - ry_l}")
-            r.set('width', f"{iw_l}")
-            r.set('height', f"{ih_l}")
+            fx = float(ix_l - rx_l)
+            fy = float(iy_l - ry_l)
+            fw = float(iw_l)
+            fh = float(ih_l)
+            r.set('x', f"{fx}")
+            r.set('y', f"{fy}")
+            r.set('width', f"{fw}")
+            r.set('height', f"{fh}")
         else:
+            fx = 0.0
+            fy = 0.0
+            fw = float(rw_l)
+            fh = float(rh_l)
             r.set('x', "0")
             r.set('y', "0")
-            r.set('width', f"{rw_l}")
-            r.set('height', f"{rh_l}")
+            r.set('width', f"{fw}")
+            r.set('height', f"{fh}")
+        clip_rect_local = (fx, fy, fw, fh)
         clip_kind = "rect-fallback"
     clip_g.set('clip-path', f"url(#{clip_id})")
+    effective_soft_rect_local = image_soft_rect_local
+    if image_soft_rect_local is not None and clip_rect_local is not None:
+        inter = _rect_intersection(image_soft_rect_local, clip_rect_local)
+        if inter is not None:
+            effective_soft_rect_local = inter
+
+    if effective_soft_rect_local is not None:
+        sx0, sy0, sw0, sh0 = effective_soft_rect_local
+        soft_g.set('data-fx-rect', f"{sx0} {sy0} {sw0} {sh0}")
+    elif clip_rect_local is not None:
+        sx0, sy0, sw0, sh0 = clip_rect_local
+        soft_g.set('data-fx-rect', f"{sx0} {sy0} {sw0} {sh0}")
 
     # Place base inside the clipped group, applying the local transform
     if place == "use":
