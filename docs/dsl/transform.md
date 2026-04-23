@@ -32,6 +32,8 @@ Examples of `Transform` concerns:
 ```txt
 object_id.T{opacity=50% soft=12%}
 object_id.T{o=50% s=12%}
+object_id.T{f=myFilter}
+object_id.T{f=image1-9-1 s=8%}
 @{source}.T{o=70%}
 ```
 
@@ -46,6 +48,7 @@ Current parameters are:
 
 - `opacity` or `o`
 - `soft` or `s`
+- `filter` or `f`
 
 ## Opacity
 
@@ -74,11 +77,31 @@ Accepted forms:
 
 Values are percentages.
 
+## Filter Copy
+
+```txt
+.T{f=myFilter}
+.T{filter=myFilter}
+.T{f=image1-9-1}
+```
+
+`filter` applies an existing SVG filter to the final placed object.
+
+Accepted references:
+
+- the id of a `<filter>` element, for example `f=myFilter`
+- the id of another element that already has a filter applied, for example `f=image1-9-1`
+
+When an element id is used, PnPInk copies that element's current `filter` reference.
+This is useful for reusing Inkscape-made effects such as color shifts, brightness tweaks or glows without rewriting the filter in the DSL.
+
 ## Typical Use
 
 ```txt
 photo.T{o=85%}
 photo.T{s=10%}
+photo.T{f=myWarmTint}
+photo.T{f=image1-9-1 s=7%}
 photo.T{o=75% s=[8% 3%]}
 ```
 

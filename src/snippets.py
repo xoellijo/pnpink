@@ -28,7 +28,7 @@ Features:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional
 import re
 import shlex
 
@@ -232,7 +232,45 @@ def _apply_args_to_def(defn: SnippetDef, pos: List[str], named: Dict[str, str]) 
 
 # --------------- Substitution (includes conditionals) ----------------
 
-def _apply_conditionals(tpl: str, mapping: Dict[str, str]) -> str:
+def _resolve_mapping_expr(expr: str, mapping: Dict[str, Any]) -> Any:
+    """Resolve a small safe expression: name, name[0], name[0].attr."""
+    s = str(expr or "").strip()
+    m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)", s)
+    if not m:
+        return ""
+    cur = mapping.get(m.group(1), "")
+    i = m.end()
+    n = len(s)
+    while i < n:
+        if s[i] == ".":
+            i += 1
+            m_attr = re.match(r"[A-Za-z_][A-Za-z0-9_]*", s[i:])
+            if not m_attr:
+                return ""
+            attr = m_attr.group(0)
+            if isinstance(cur, dict):
+                cur = cur.get(attr, "")
+            else:
+                cur = getattr(cur, attr, "")
+            i += len(attr)
+            continue
+        if s[i] == "[":
+            j = s.find("]", i + 1)
+            if j < 0:
+                return ""
+            idx_s = s[i + 1:j].strip()
+            try:
+                idx = int(idx_s)
+                cur = cur[idx]
+            except Exception:
+                return ""
+            i = j + 1
+            continue
+        return ""
+    return cur
+
+
+def _apply_conditionals(tpl: str, mapping: Dict[str, Any]) -> str:
     """
     Aplica inclusiones condicionales del tipo:
       ${var? ...}
@@ -309,7 +347,7 @@ def _apply_conditionals(tpl: str, mapping: Dict[str, str]) -> str:
 
         body = tpl[body_start:j]  # sin la llave de cierre
         # include body if the variable has a value
-        val = mapping.get(var, "")
+        val = _resolve_mapping_expr(var, mapping)
         if val:
             out_chunks.append(body)
         # if empty, add nothing
@@ -319,7 +357,7 @@ def _apply_conditionals(tpl: str, mapping: Dict[str, str]) -> str:
     return "".join(out_chunks)
 
 
-def _substitute_template(tpl: str, mapping: Dict[str, str]) -> str:
+def _substitute_template(tpl: str, mapping: Dict[str, Any]) -> str:
     """
     1) Resuelve inclusiones condicionales ${var? ...}
     2) Sustituye ${var} por mapping[var] (vacío si falta)
@@ -327,11 +365,17 @@ def _substitute_template(tpl: str, mapping: Dict[str, str]) -> str:
     # 1) Conditionals
     tpl = _apply_conditionals(tpl, mapping)
 
-    # 2) Simple ${var} substitution
+    # 2) ${var} / ${var[0].attr} substitution
     def repl(m):
         key = m.group(1)
-        return str(mapping.get(key, ""))
-    return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", repl, tpl)
+        return str(_resolve_mapping_expr(key, mapping))
+    return re.sub(r"\$\{([^{}]*)\}", repl, tpl)
+
+
+def expand_variables_in_text(text: str, variables: Optional[Dict[str, Any]] = None) -> str:
+    if not text or not variables:
+        return text
+    return _substitute_template(text, variables)
 
 
 # --------------- Text expansion ----------------
@@ -339,13 +383,16 @@ def _substitute_template(tpl: str, mapping: Dict[str, str]) -> str:
 def expand_snippets_in_text(text: str,
                             registry: Dict[str, SnippetDef],
                             *,
+                            variables: Optional[Dict[str, Any]] = None,
                             max_depth: int = 32,
                             max_expansions: int = 10000) -> str:
     """
     Expande todas las llamadas :Nombre(...) en 'text'.
     """
-    if not text or not registry:
+    if not text:
         return text
+    if not registry:
+        return expand_variables_in_text(text, variables)
 
     ESC_MARK = "\uE000"
     text = text.replace(r"\:", ESC_MARK)
@@ -397,7 +444,11 @@ def expand_snippets_in_text(text: str,
                 argmap = _apply_args_to_def(defn, pos, named)
 
             # 4) substitute template (with conditionals)
-            result = _substitute_template(defn.template, argmap)
+            tpl_mapping: Dict[str, Any] = {}
+            if variables:
+                tpl_mapping.update(variables)
+            tpl_mapping.update(argmap)
+            result = _substitute_template(defn.template, tpl_mapping)
             chunks.append(result)
             i = i1
             expansions += 1
@@ -415,4 +466,4 @@ def expand_snippets_in_text(text: str,
             break
 
     cur = cur.replace(ESC_MARK, ":")
-    return cur
+    return expand_variables_in_text(cur, variables)

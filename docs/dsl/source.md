@@ -194,10 +194,30 @@ Selector notes:
 - indices are 1-based,
 - out-of-range indices are ignored with warning,
 - without selector, if multiple results exist, the first one is used (warning in log).
+- for `wkmc://`, category/search results keep the API order after size filtering; PnPInk does not reorder them by image dimensions.
 
-### `pnp://` Notes
+Wikimedia Commons category catalogs:
+
+- each `wkmc://Category:...` source found in the dataset creates an internal 0-based catalog variable:
+  - first category: `_wkmcc1`
+  - second category: `_wkmcc2`
+- each item exposes the useful fields returned by Commons:
+  - `title`
+  - `url`
+  - `thumburl`
+
+```txt
+${_wkmcc1[0].title}
+${_wkmcc1[0].url}
+${_wkmcc1[0].thumburl}
+@{ wkmc://${_wkmcc1[0].title}/1000 }
+@{ ${_wkmcc1[0].thumburl} }
+```
+
+### `pnp://` PnPInk Assets
 
 `pnp://` resolves against the public [`pnpink-assets`](https://github.com/xoellijo/pnpink-assets) index generated on push.
+It is meant for small reusable art pieces that can be placed automatically from a dataset without downloading them into every project.
 
 Resolution rules are intentionally simple:
 
@@ -212,6 +232,13 @@ Examples:
 @{ pnp://egg }            # may resolve to birds/egg1.png
 @{ pnp://birds/egg }      # resolves within the birds collection
 @{ pnp://IA/icons/crown1 }
+```
+
+The source behaves like any other image source, so it can be combined with Fit-Anchor and Transform:
+
+```txt
+@{ pnp://egg }~i7
+@{ pnp://birds/egg3 }.T{o=80%}~[110%]8!
 ```
 
 ## Fit and Placement Behavior

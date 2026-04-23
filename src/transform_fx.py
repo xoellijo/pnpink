@@ -27,6 +27,8 @@ def merge_specs(specs: Iterable[object]) -> object | None:
             out.opacity = str(getattr(sp, "opacity") or "").strip()
         if getattr(sp, "soft", None):
             out.soft = [str(v).strip() for v in (getattr(sp, "soft") or []) if str(v).strip()]
+        if getattr(sp, "filter_ref", None):
+            out.filter_ref = str(getattr(sp, "filter_ref") or "").strip()
     return out
 
 
@@ -80,6 +82,41 @@ def _num_sig(v: float) -> str:
 
 def _fmt_num(v: float) -> str:
     return f"{float(v):.6f}".rstrip("0").rstrip(".")
+
+
+def _resolve_filter_value(root, raw_ref) -> str | None:
+    ref = str(raw_ref or "").strip()
+    if not ref or root is None:
+        return None
+    if ref.startswith("url(#") and ref.endswith(")"):
+        return ref
+
+    try:
+        node = SVG.find_target_exact_in(root, ref)
+    except Exception:
+        node = root.find(f".//*[@id='{ref}']")
+    if node is None:
+        return f"url(#{ref})"
+
+    try:
+        if str(getattr(node, "tag", "")).endswith("filter"):
+            return f"url(#{ref})"
+    except Exception:
+        pass
+
+    direct = str(node.get("filter") or "").strip()
+    if direct:
+        return direct
+
+    style = str(node.get("style") or "").strip()
+    if style:
+        for part in style.split(";"):
+            k, sep, v = part.partition(":")
+            if sep and k.strip().lower() == "filter":
+                vv = v.strip()
+                if vv:
+                    return vv
+    return None
 
 
 def _resolve_fx_rect(target) -> tuple[float, float, float, float] | None:
@@ -208,6 +245,7 @@ def apply_transform_spec(root, node, spec) -> bool:
         return False
     opacity_target = node
     soft_target = node
+    filter_target = node
     try:
         parent = node.getparent() if hasattr(node, "getparent") else None
         pid = (parent.get("id") or "").strip() if parent is not None else ""
@@ -218,19 +256,23 @@ def apply_transform_spec(root, node, spec) -> bool:
         if parent is not None and parent.get("clip-path") and pid.endswith("_clip"):
             if gp is not None and gpid.endswith("_soft"):
                 soft_target = gp
+                filter_target = gp
                 if ggp is not None and (ggpid.startswith("fa_clipwrap_") or ggpid.endswith("_postshift")):
                     opacity_target = ggp
                 else:
                     opacity_target = gp
             elif gp is not None and gpid.startswith("fa_clipwrap_"):
                 soft_target = parent
+                filter_target = parent
                 opacity_target = gp
             else:
                 soft_target = parent
+                filter_target = parent
                 opacity_target = parent
     except Exception:
         opacity_target = node
         soft_target = node
+        filter_target = node
     changed = False
 
     try:
@@ -246,6 +288,21 @@ def apply_transform_spec(root, node, spec) -> bool:
                 changed = True
     except Exception as ex:
         _l.w(f"[transform] opacity failed on id='{opacity_target.get('id') or ''}': {ex}")
+
+    try:
+        raw_filter = getattr(spec, "filter_ref", None)
+        if raw_filter:
+            filt = _resolve_filter_value(root, raw_filter)
+            if filt:
+                filter_target.set("filter", filt)
+                if filter_target is not node:
+                    try:
+                        node.attrib.pop("filter", None)
+                    except Exception:
+                        pass
+                changed = True
+    except Exception as ex:
+        _l.w(f"[transform] filter failed on id='{filter_target.get('id') or ''}': {ex}")
 
     try:
         soft_vals = _normalize_soft_values(getattr(spec, "soft", None))
@@ -266,8 +323,10 @@ def apply_transform_spec(root, node, spec) -> bool:
         if changed:
             _l.d(
                 f"[transform] applied opacity_target='{opacity_target.get('id') or ''}' "
+                f"filter_target='{filter_target.get('id') or ''}' "
                 f"soft_target='{soft_target.get('id') or ''}' "
                 f"node='{node.get('id') or ''}' soft={getattr(spec, 'soft', None)} "
+                f"filter={getattr(spec, 'filter_ref', None)} "
                 f"opacity={getattr(spec, 'opacity', None)}"
             )
     except Exception:

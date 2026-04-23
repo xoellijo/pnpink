@@ -910,14 +910,12 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
             if op_key:
                 smap[op_key] = op_val
             SVG.style_set(tgt, smap)
-            # If a rect anchor receives an explicit style update, keep it visible.
-            # Otherwise Phase-1 finalize may hide rect anchors that don't use '+'.
-            if _is_rect_elem(tgt):
-                try:
-                    if isinstance(_P1_KEEP_SET, set):
-                        _P1_KEEP_SET.add(target_id)
-                except Exception:
-                    pass
+            # Explicit style columns are meant to affect visible artwork, not act as placeholders.
+            try:
+                if isinstance(_P1_KEEP_SET, set):
+                    _P1_KEEP_SET.add(target_id)
+            except Exception:
+                pass
             _l.d(f"field '{key}': STYLE[{prop}] -> id='{target_id}'")
             return 1, "style"
         except Exception as ex:

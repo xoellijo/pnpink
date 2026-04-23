@@ -89,6 +89,8 @@ Headers can include modifiers:
 title
 art+
 price[xml]
+card_bg[fill]
+line[stroke]
 bg=default_bg
 art=art_placeholder~i5
 ```
@@ -96,7 +98,7 @@ art=art_placeholder~i5
 Rules:
 
 - `id+` keeps the original anchor rect visible (otherwise anchors are hidden).
-- `id[prop]` sets the property (`text` or `xml`). Default is `text`.
+- `id[prop]` sets a property. Default is `text`.
 - `id=...` declares a **default value** or default Fit ops for that column.
 - `id-*` in headers expands to all matching IDs by prefix.
 - `id1 id2 id3` in a single header applies the same cell value to all listed IDs.
@@ -108,6 +110,63 @@ id=default_id
 id=~i5
 id=default_id~i5
 ```
+
+### Style Property Columns
+Use `id[property]` to change SVG style properties from the dataset.
+
+```txt
+card_bg[fill]
+card_bg[stroke]
+card_bg[stroke-width]
+title[fill]
+title[font-size]
+line[stroke]
+```
+
+Examples:
+
+```csv
+card_bg[fill],title[fill],line[stroke],line[stroke-width]
+#f4ead2,#12110f,b8a300ff,2
+```
+
+Style columns update the target element's `style` attribute.
+When a style property is changed, PnPInk keeps that element visible automatically; you do not need to add `+`.
+
+Use `fill` for closed shapes and text color.
+Use `stroke` for lines, open paths, outlines, and most visible path strokes.
+
+Color values can be written as normal SVG values or compact hex:
+
+```txt
+#ff0000
+ff0000
+#ff000080
+ff000080
+red
+url(#myGradient)
+```
+
+For `fill` and `stroke`, 8-digit hex colors are split into color plus opacity for SVG compatibility.
+For example, `ff000080` becomes red with partial `fill-opacity` or `stroke-opacity`.
+
+Property-only shorthand inherits the previous target id:
+
+```csv
+card_bg[fill],[stroke],[stroke-width]
+#f4ead2,#222222,0.4
+```
+
+This is equivalent to:
+
+```csv
+card_bg[fill],card_bg[stroke],card_bg[stroke-width]
+```
+
+Special properties:
+
+- `id[text]` or just `id` replaces text.
+- `id[xml]` replaces rich XML content inside text-like objects.
 
 ### Header Fan-Out and Wildcards
 Use this when one dataset column must feed several placeholders.

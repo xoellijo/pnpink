@@ -529,6 +529,9 @@ class SourceManager:
     def resolve_wkmc_urls(self, expr: str) -> Optional[List[str]]:
         return self.web.resolve_wkmc_urls(expr)
 
+    def resolve_wkmc_items(self, expr: str):
+        return self.web.resolve_wkmc_items(expr)
+
     def resolve_pxby_urls(self, expr: str) -> Optional[List[str]]:
         return self.web.resolve_pxby_urls(expr)
 

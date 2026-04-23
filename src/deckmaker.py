@@ -54,7 +54,7 @@ class DeckMaker(inkex.EffectExtension):
 
     def effect(self):
         # Core pipeline lives in engine.py; keep entrypoint compatible with current .inx.
-        ENG.run(self, __version__)
+        ret = ENG.run(self, __version__)
         # Persist last valid dataset source externally (not in SVG, so Undo won't lose it).
         try:
             sid = str(
@@ -78,6 +78,7 @@ class DeckMaker(inkex.EffectExtension):
                 _l.i("[dataset_state] skip: empty sheet_id")
         except Exception:
             _l.w("[dataset_state] save failed", exc_info=True)
+        return ret
 
 
 if __name__ == "__main__":

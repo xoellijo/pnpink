@@ -4,7 +4,7 @@ sources_web.py — Web source resolvers (Wikimedia Commons, Pixabay, Openclipart
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Optional, Tuple, List
 import json, hashlib, urllib.parse, os, re, sys, math
 from pathlib import Path
@@ -15,6 +15,13 @@ import net as NET
 import osm as OSM
 
 PNP_ASSETS_INDEX_URL = "https://xoellijo.github.io/pnpink-assets/assets-index.json"
+
+
+@dataclass(frozen=True, slots=True)
+class WkmcItem:
+    title: str = ""
+    url: str = ""
+    thumburl: str = ""
 
 
 @dataclass
@@ -337,7 +344,7 @@ class WebSources:
         return self.assets_dir / f"wkmc_{k}.json"
 
     @staticmethod
-    def _wkmc_sort_candidates(cands: List[Tuple[str, int, int, int]], size: str) -> List[str]:
+    def _wkmc_sort_candidates(self, cands: List[Tuple[WkmcItem, int, int, int]], size: str) -> List[WkmcItem]:
         spec = WebSources._parse_size_spec(size)
         if not cands:
             return []
@@ -380,10 +387,16 @@ class WebSources:
 
         good = [c for c in cands if _meets(c)]
         if good:
-            good = sorted(good, key=lambda t: ((max(t[1], t[2]) if (t[1] or t[2]) else 10**9), t[3]))
             return [c[0] for c in good]
-        # Fallback: keep largest-first when nothing satisfies the requested minimum.
-        return [c[0] for c in sorted(cands, key=lambda t: (max(t[1], t[2]), t[3]), reverse=True)]
+        # Fallback: preserve the original API order when nothing satisfies the requested minimum.
+        return [c[0] for c in cands]
+
+    @staticmethod
+    def _wkmc_item_to_url(item: WkmcItem, size: str) -> str:
+        spec = WebSources._parse_size_spec(size)
+        if spec.get("kind") == "vector":
+            return str(item.url or item.thumburl or "").strip()
+        return str(item.thumburl or item.url or "").strip()
 
     def resolve_osm_urls(self, expr: str) -> Optional[List[str]]:
         # Tile-backed maps are rendered inline; keep the old hook as an empty compatibility shim.
@@ -394,9 +407,8 @@ class WebSources:
     def resolve_osm_svg(self, expr: str) -> Optional[str]:
         return OSM.OSMMapSource(self.assets_dir).render_svg_text(expr)
 
-    def _wkmc_fetch_urls(self, query: str, size: str) -> List[str]:
-        out: List[str] = []
-        cands: List[Tuple[str, int, int, int]] = []
+    def _wkmc_fetch_items(self, query: str, size: str) -> List[WkmcItem]:
+        cands: List[Tuple[WkmcItem, int, int, int]] = []
         spec = WebSources._parse_size_spec(size)
         want_vector = (spec.get("kind") == "vector")
         req_w, req_h = self._wkmc_thumb_constraints(size)
@@ -457,7 +469,12 @@ class WebSources:
                 seen.add(url0)
                 w = self._parse_int(ii0.get("width"))
                 h = self._parse_int(ii0.get("height"))
-                cands.append((url0, w, h, rank))
+                item = WkmcItem(
+                    title=str((pg or {}).get("title") or "").strip(),
+                    url=str(ii0.get("url") or "").strip(),
+                    thumburl=str(ii0.get("thumburl") or "").strip(),
+                )
+                cands.append((item, w, h, rank))
                 rank += 1
             cobj = (data or {}).get("continue") or {}
             cont = cobj.get("gcmcontinue") if mode == "category" else cobj.get("gsroffset")
@@ -465,8 +482,56 @@ class WebSources:
                 cont = None
             if not cont:
                 break
-        out = self._wkmc_sort_candidates(cands, size)
+        return self._wkmc_sort_candidates(cands, size)
+
+    def _wkmc_items_to_urls(self, items: List[WkmcItem], size: str) -> List[str]:
+        out = []
+        for item in items or []:
+            u = self._wkmc_item_to_url(item, size)
+            if u:
+                out.append(u)
         return out
+
+    @staticmethod
+    def _wkmc_items_from_json(raw_items) -> List[WkmcItem]:
+        out = []
+        for it in (raw_items or []):
+            if not isinstance(it, dict):
+                continue
+            out.append(WkmcItem(
+                title=str(it.get("title") or "").strip(),
+                url=str(it.get("url") or "").strip(),
+                thumburl=str(it.get("thumburl") or "").strip(),
+            ))
+        return out
+
+    def resolve_wkmc_items(self, expr: str) -> Optional[List[WkmcItem]]:
+        p = self._parse_wkmc_expr(expr)
+        if p is None:
+            return None
+        query, size = p
+        cfile = self._wkmc_cache_file(query, size)
+        try:
+            if cfile.is_file():
+                raw = json.loads(cfile.read_text(encoding="utf-8"))
+                items = self._wkmc_items_from_json((raw or {}).get("items"))
+                if items:
+                    _l.i(f"[sources] wkmc cache hit query='{query}' size='{size}' n={len(items)}")
+                    return items
+        except Exception:
+            pass
+        try:
+            items = self._wkmc_fetch_items(query, size)
+            urls = self._wkmc_items_to_urls(items, size)
+            cfile.write_text(
+                json.dumps({"query": query, "size": size, "items": [asdict(i) for i in items], "urls": urls}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            _l.i(f"[sources] wkmc fetched query='{query}' size='{size}' n={len(items)}")
+            return items
+        except Exception as ex:
+            _l.w(f"[sources] wkmc fetch failed '{expr}': {ex}")
+            return []
 
     def resolve_wkmc_urls(self, expr: str) -> Optional[List[str]]:
         p = self._parse_wkmc_expr(expr)
@@ -477,6 +542,12 @@ class WebSources:
         try:
             if cfile.is_file():
                 raw = json.loads(cfile.read_text(encoding="utf-8"))
+                items = self._wkmc_items_from_json((raw or {}).get("items"))
+                if items:
+                    urls = self._wkmc_items_to_urls(items, size)
+                    if urls:
+                        _l.i(f"[sources] wkmc cache hit query='{query}' size='{size}' n={len(urls)}")
+                        return urls
                 urls = list((raw or {}).get("urls") or [])
                 urls = [str(u).strip() for u in urls if str(u or "").strip()]
                 if urls:
@@ -485,8 +556,12 @@ class WebSources:
         except Exception:
             pass
         try:
-            urls = self._wkmc_fetch_urls(query, size)
-            cfile.write_text(json.dumps({"query": query, "size": size, "urls": urls}, ensure_ascii=False), encoding="utf-8")
+            items = self._wkmc_fetch_items(query, size)
+            urls = self._wkmc_items_to_urls(items, size)
+            cfile.write_text(
+                json.dumps({"query": query, "size": size, "items": [asdict(i) for i in items], "urls": urls}, ensure_ascii=False),
+                encoding="utf-8",
+            )
             _l.i(f"[sources] wkmc fetched query='{query}' size='{size}' n={len(urls)}")
             return urls
         except Exception as ex:

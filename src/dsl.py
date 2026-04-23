@@ -75,6 +75,7 @@ class FitSpec:
 class TransformSpec:
     opacity: Optional[str] = None
     soft: Optional[List[str]] = None
+    filter_ref: Optional[str] = None
 
 @dataclass
 class GridSpec:
@@ -602,6 +603,10 @@ def _transform_from_dict(args: Dict[str, Any]) -> TransformSpec:
         ts.opacity = str(args.get("opacity") or "").strip()
     if "o" in args and not ts.opacity:
         ts.opacity = str(args.get("o") or "").strip()
+    if "filter" in args:
+        ts.filter_ref = str(args.get("filter") or "").strip()
+    if "f" in args and not ts.filter_ref:
+        ts.filter_ref = str(args.get("f") or "").strip()
 
     raw_soft = None
     if "soft" in args:

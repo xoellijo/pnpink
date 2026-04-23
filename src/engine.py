@@ -5,7 +5,7 @@
 # -*- coding: utf-8 -*-
 import log as LOG
 _l = LOG
-import os, sys, re
+import os, sys, re, subprocess, shutil
 from copy import deepcopy
 from types import SimpleNamespace
 from typing import List
@@ -34,6 +34,119 @@ import render as REN
 class EngineContext(SimpleNamespace):
     """Shared mutable context across pipeline phases."""
     pass
+
+
+def _resolve_dm_output_path(dm_output_raw: str, doc_path: str | None) -> str | None:
+    out = str(dm_output_raw or "").strip()
+    if not out:
+        if not doc_path:
+            return None
+        try:
+            abs_doc = os.path.abspath(doc_path)
+            base_dir = os.path.dirname(abs_doc)
+            stem, ext = os.path.splitext(os.path.basename(abs_doc))
+            ext = ext or ".svg"
+            return os.path.normpath(os.path.join(base_dir, f"{stem}_output{ext}"))
+        except Exception:
+            return None
+    if os.path.isabs(out):
+        return os.path.normpath(out)
+    if doc_path:
+        try:
+            base = os.path.dirname(os.path.abspath(doc_path))
+            return os.path.normpath(os.path.join(base, out))
+        except Exception:
+            pass
+    return os.path.normpath(out)
+
+
+def _find_inkscape_executable() -> str | None:
+    names = ["inkscape.exe", "inkscape"] if os.name == "nt" else ["inkscape"]
+    for name in names:
+        exe = shutil.which(name)
+        if exe:
+            return exe
+    pyexe = os.path.abspath(sys.executable)
+    bin_dir = os.path.dirname(pyexe)
+    candidates = [
+        os.path.join(bin_dir, "inkscape.exe"),
+        os.path.join(os.path.dirname(bin_dir), "inkscape.exe"),
+        os.path.join(os.path.dirname(bin_dir), "bin", "inkscape.exe"),
+        os.path.join(bin_dir, "inkscape"),
+        os.path.join(os.path.dirname(bin_dir), "inkscape"),
+        os.path.join(os.path.dirname(bin_dir), "bin", "inkscape"),
+    ]
+    for c in candidates:
+        if c and os.path.isfile(c):
+            return c
+    return None
+
+
+def _clean_inkscape_launch_env() -> dict[str, str]:
+    env = dict(os.environ)
+    exact_keys = {
+        "SELF_CALL",
+        "DOCUMENT_PATH",
+        "PYTHONHOME",
+        "PYTHONPATH",
+        "PYTHONIOENCODING",
+    }
+    prefix_keys = (
+        "INKEX_",
+        "INKSCAPE_",
+        "GDK_",
+        "GTK_",
+        "XDG_",
+    )
+    for key in list(env.keys()):
+        sk = str(key or "")
+        if not sk or sk.startswith("="):
+            continue
+        if sk in exact_keys or any(sk.startswith(prefix) for prefix in prefix_keys):
+            env.pop(sk, None)
+    return env
+
+
+def _launch_inkscape(svg_path: str) -> bool:
+    if not svg_path or not os.path.isfile(svg_path):
+        return False
+    exe = _find_inkscape_executable()
+    if not exe:
+        _l.w(f"[dm_output] inkscape executable not found; output saved at '{svg_path}'")
+        return False
+    try:
+        env = _clean_inkscape_launch_env()
+        argv = [exe, svg_path]
+        kwargs = {
+            "args": argv,
+            "cwd": os.path.dirname(exe) or None,
+            "env": env,
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "close_fds": True,
+        }
+        if os.name == "nt":
+            creationflags = 0
+            for flag_name in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP", "CREATE_NO_WINDOW"):
+                creationflags |= int(getattr(subprocess, flag_name, 0))
+            kwargs["creationflags"] = creationflags
+        else:
+            kwargs["start_new_session"] = True
+        proc = subprocess.Popen(**kwargs)
+        # Detached launch: we intentionally do not wait on this child.
+        # Mark the local Popen object as finalized so Python does not emit
+        # ResourceWarning when it gets garbage-collected while the process
+        # is still running.
+        try:
+            proc.returncode = 0
+        except Exception:
+            pass
+        _l.i(f"[dm_output] launched Inkscape: '{svg_path}'")
+        return True
+    except Exception as ex:
+        _l.w(f"[dm_output] failed launching Inkscape for '{svg_path}': {ex}")
+        return False
 
 def run(self, __version__):
     """Run the refactored DeckMaker pipeline (entrypoint called from deckmaker.py)."""
@@ -146,6 +259,7 @@ def run(self, __version__):
         except Exception:
             pass
     dm_reset_to_raw = str(dm_directives.get("_DM_reset_to", "") or "").strip()
+    dm_output_raw = str(dm_directives.get("_DM_output", "") or "").strip()
     dm_reset_to = None
     if dm_reset_to_raw != "":
         try:
@@ -153,6 +267,44 @@ def run(self, __version__):
         except Exception:
             dm_reset_to = None
             _l.w(f"[dm] invalid _DM_reset_to='{dm_reset_to_raw}' (ignored)")
+
+    if not bool(getattr(self, "_dm_output_disabled", False)):
+        out_path = _resolve_dm_output_path(dm_output_raw, _doc_path)
+        if not out_path:
+            _l.w(f"[dm_output] could not resolve output path (directive={dm_output_raw!r}, doc_path={_doc_path!r})")
+        else:
+            try:
+                if dm_output_raw:
+                    _l.i(f"[dm_output] using explicit output: '{out_path}'")
+                else:
+                    _l.i(f"[dm_output] using default output: '{out_path}'")
+                out_dir = os.path.dirname(out_path)
+                if out_dir:
+                    os.makedirs(out_dir, exist_ok=True)
+                raw_svg = inkex.etree.tostring(self.document)
+                clone_doc = inkex.load_svg(raw_svg)
+                old_doc = self.document
+                old_svg = self.svg
+                self.document = clone_doc
+                self.svg = clone_doc.getroot()
+                self._dm_output_disabled = True
+                try:
+                    run(self, __version__)
+                finally:
+                    self._dm_output_disabled = False
+                    self.document = old_doc
+                    self.svg = old_svg
+                try:
+                    clone_root = clone_doc.getroot()
+                    clone_root.set(inkex.addNS("docname", "sodipodi"), os.path.basename(out_path))
+                except Exception:
+                    pass
+                clone_doc.write(out_path, encoding="UTF-8", xml_declaration=True)
+                _l.i(f"[dm_output] wrote external render: '{out_path}'")
+                _launch_inkscape(out_path)
+                return False
+            except Exception as ex:
+                _l.w(f"[dm_output] external render failed for '{out_path}': {ex}", exc_info=True)
 
     existing_dm = _dm_scan_existing(root)
     if dm_reset_to is not None:
@@ -201,11 +353,82 @@ def run(self, __version__):
                 return True
         return False
 
-    def _expand_comment_lines_with_snips(c_lines, snip_reg):
+    def _iter_dataset_texts(dss):
+        for ds in (dss or []):
+            for rr in (ds.get("comments", []) or []):
+                if isinstance(rr, (list, tuple)):
+                    for c in rr:
+                        if c is not None:
+                            yield str(c)
+                elif rr is not None:
+                    yield str(rr)
+            for h in (ds.get("headers", []) or []):
+                if h is not None:
+                    yield str(h)
+            for row in (ds.get("rows", []) or []):
+                if isinstance(row, dict):
+                    for c in (row.get("cells") or []):
+                        if c is not None:
+                            yield str(c)
+                    for k in ("__dm_layout__", "__dm_marks__"):
+                        if row.get(k) is not None:
+                            yield str(row.get(k))
+
+    def _iter_source_bodies(text):
+        s = str(text or "")
+        i = 0
+        while True:
+            a = s.find("@{", i)
+            if a < 0:
+                break
+            b = s.find("}", a + 2)
+            if b < 0:
+                break
+            yield s[a + 2:b].strip()
+            i = b + 1
+
+    def _build_wkmcc_vars(sm, dss):
+        out = {}
+        seen = set()
+        for txt in _iter_dataset_texts(dss):
+            for body in _iter_source_bodies(txt):
+                if "${" in body:
+                    continue
+                if not body.lower().startswith("wkmc://"):
+                    continue
+                try:
+                    parsed = sm.web._parse_wkmc_expr(body)
+                    if not parsed:
+                        continue
+                    query, _size = parsed
+                    mode, _qv = sm.web._wkmc_query_mode(query)
+                    if mode != "category":
+                        continue
+                except Exception:
+                    continue
+                key = body.strip()
+                if key in seen:
+                    continue
+                seen.add(key)
+                try:
+                    items = list(sm.resolve_wkmc_items(key) or [])
+                except Exception as ex:
+                    _l.w(f"[wkmcc] failed resolving '{key}': {ex}")
+                    items = []
+                if not items:
+                    continue
+                name = f"_wkmcc{len(out) + 1}"
+                out[name] = items
+                _l.i(f"[wkmcc] {name} query='{key}' n={len(items)}")
+        return out
+
+    wkmcc_vars = _build_wkmcc_vars(SM, datasets)
+
+    def _expand_comment_lines_with_snips(c_lines, snip_reg, variables=None):
         """Expand snippets inside comment lines, but never touch snippet definition lines."""
         if not c_lines:
             return []
-        if not snip_reg:
+        if not snip_reg and not variables:
             return list(c_lines)
         out = []
         for rr in (c_lines or []):
@@ -221,7 +444,7 @@ def run(self, __version__):
                     out.append(list(rr))
                     continue
                 rr2 = list(rr)
-                rr2[0] = SNP.expand_snippets_in_text(c0, snip_reg)
+                rr2[0] = SNP.expand_snippets_in_text(c0, snip_reg, variables=variables)
                 out.append(rr2)
             else:
                 s0 = str(rr)
@@ -229,7 +452,7 @@ def run(self, __version__):
                 if s0s.startswith("#") and s0s[1:].lstrip().startswith(":"):
                     out.append(s0)
                     continue
-                out.append(SNP.expand_snippets_in_text(s0, snip_reg))
+                out.append(SNP.expand_snippets_in_text(s0, snip_reg, variables=variables))
         return out
 
     global_section_idx = None
@@ -251,7 +474,7 @@ def run(self, __version__):
 
     # Register global spritesheets once.
     try:
-        global_comment_lines_exp = _expand_comment_lines_with_snips(global_comment_lines or [], global_snip_reg)
+        global_comment_lines_exp = _expand_comment_lines_with_snips(global_comment_lines or [], global_snip_reg, wkmcc_vars)
         global_spritesheets = SM.register_spritesheets_from_comments(global_comment_lines_exp or [], px_per_mm=float(root.unittouu("1mm"))) or {}
     except Exception as ex:
         _l.w(f"[spritesheets.global] scan/register failed: {ex}")
@@ -336,14 +559,14 @@ def run(self, __version__):
 
         # Expand snippets in headers too (for default expressions like:
         #   back_art-5=:backpattern(7)~a! ).
-        if snip_reg and isinstance(headers, list):
+        if (snip_reg or wkmcc_vars) and isinstance(headers, list):
             for hi, hv in enumerate(list(headers)):
                 try:
-                    headers[hi] = SNP.expand_snippets_in_text(str(hv or ""), snip_reg)
+                    headers[hi] = SNP.expand_snippets_in_text(str(hv or ""), snip_reg, variables=wkmcc_vars)
                 except Exception as ex:
                     _l.w(f"[snippets] header expand failed idx={hi}: {ex}")
 
-        if snip_reg:
+        if snip_reg or wkmcc_vars:
             for ridx, row in enumerate(rows_data, start=1):
                 # Expand snippets in positional cells (and only in known string meta fields).
                 try:
@@ -355,14 +578,14 @@ def run(self, __version__):
                         if v is None:
                             continue
                         try:
-                            cells[ci] = SNP.expand_snippets_in_text(str(v), snip_reg)
+                            cells[ci] = SNP.expand_snippets_in_text(str(v), snip_reg, variables=wkmcc_vars)
                         except Exception as ex:
                             _l.w(f"[snippets] fallo expand row#{ridx} cell[{ci}]: {ex}")
                 # Meta fields (keep behavior conservative)
                 for k in ('__dm_layout__','__dm_marks__'):
                     if isinstance(row, dict) and k in row and row.get(k) is not None:
                         try:
-                            row[k] = SNP.expand_snippets_in_text(str(row.get(k)), snip_reg)
+                            row[k] = SNP.expand_snippets_in_text(str(row.get(k)), snip_reg, variables=wkmcc_vars)
                         except Exception as ex:
                             _l.w(f"[snippets] fallo expand row#{ridx} meta '{k}': {ex}")
         else:
@@ -377,7 +600,7 @@ def run(self, __version__):
 
         # ---- SPRITESHEETS (global + local) ----
         # Expand snippets inside local comment directives (but not snippet-definition lines).
-        local_comment_lines_exp = _expand_comment_lines_with_snips(comment_lines or [], snip_reg)
+        local_comment_lines_exp = _expand_comment_lines_with_snips(comment_lines or [], snip_reg, wkmcc_vars)
 
         local_spritesheets = {}
         if ds_idx == (global_section_idx or -1):

@@ -627,6 +627,8 @@ def render_phase(ctx):
                     if s_tr_spec is not None:
                         if getattr(s_tr_spec, "opacity", None):
                             tmods += f".T{{o={getattr(s_tr_spec, 'opacity')}}}"
+                        if getattr(s_tr_spec, "filter_ref", None):
+                            tmods += f".T{{f={getattr(s_tr_spec, 'filter_ref')}}}"
                         if getattr(s_tr_spec, "soft", None):
                             _vals = [str(v).strip() for v in (getattr(s_tr_spec, "soft") or []) if str(v).strip()]
                             if _vals:

@@ -111,6 +111,28 @@ For each dataset cell:
 2. `${var}` replacements are applied.
 3. DSL placement and rendering run.
 
+## Variable Expressions
+`${...}` placeholders are resolved after snippets.
+The expression may contain any text except nested braces, so the syntax remains open for future extensions.
+
+Currently supported forms are intentionally small and predictable:
+
+```txt
+${name}
+${name[0]}
+${name[0].field}
+```
+
+This is mostly useful with internal variables created by sources, such as Wikimedia Commons category catalogs:
+
+```txt
+${_wkmcc1[0].title}
+${_wkmcc1[0].url}
+${_wkmcc1[0].thumburl}
+```
+
+Unsupported expressions resolve to an empty string instead of stopping the render.
+
 ## Summary Table
 | Concept | Syntax | Example | Result |
 |----|----|----|----|
