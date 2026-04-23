@@ -12,6 +12,7 @@ import inkex
 
 import engine as ENG
 import dataset_state as DSTATE
+import deckmaker_app as DMAPP
 class DeckMaker(inkex.EffectExtension):
     def add_arguments(self, pars):
         pars.add_argument("--tab")
@@ -53,6 +54,25 @@ class DeckMaker(inkex.EffectExtension):
         return layer
 
     def effect(self):
+        if os.environ.get(DMAPP.ENV_DIRECT_RUN) != "1":
+            try:
+                doc_path = self._document_path_or_abort()
+                sid = str(
+                    getattr(self.options, "sheet_id", "")
+                    or getattr(self.options, "gsheet_id", "")
+                    or ""
+                ).strip()
+                srg = str(
+                    getattr(self.options, "sheet_range", "")
+                    or getattr(self.options, "gsheet_range", "")
+                    or ""
+                ).strip()
+                log_level = str(getattr(self.options, "log_level", "global") or "global").strip()
+                if DMAPP.notify_or_launch(doc_path, sid, srg, log_level):
+                    return False
+            except Exception:
+                _l.w("[deckmaker_app] bridge failed; falling back to direct DeckMaker run", exc_info=True)
+
         # Core pipeline lives in engine.py; keep entrypoint compatible with current .inx.
         ret = ENG.run(self, __version__)
         # Persist last valid dataset source externally (not in SVG, so Undo won't lose it).

@@ -84,6 +84,7 @@ def _legacy_app_dir() -> str:
         return os.path.join(os.path.expanduser("~/.pnpink"), "gsheets")
 
 TOKENS_FILE = os.path.join(_legacy_app_dir(), "tokens.json")  # como el original
+_MEM_ENTRY: Optional[Dict[str, Any]] = None
 
 def _load_store() -> Dict[str, Any]:
     try:
@@ -101,9 +102,14 @@ def _save_store(store: Dict[str, Any]) -> None:
     os.replace(tmp, TOKENS_FILE)
 
 def _get_entry() -> Dict[str, Any]:
+    global _MEM_ENTRY
+    if _MEM_ENTRY:
+        return dict(_MEM_ENTRY)
     return _load_store().get("google_sheets_pkce", {})
 
 def _set_entry(entry: Dict[str, Any]) -> None:
+    global _MEM_ENTRY
+    _MEM_ENTRY = dict(entry or {})
     store = _load_store()
     store["google_sheets_pkce"] = entry
     _save_store(store)
@@ -322,23 +328,36 @@ def _ensure_tokens(client_id: Optional[str] = None) -> Dict[str, Any]:
 
     # If we have a valid access token, use it
     if access and _now() < expiry - 30:
+        _l.d("[gsheets] auth: using cached access token")
         return entry
 
     # If refresh_token exists, try refresh; if it fails, reauthorize PKCE and overwrite
     if refresh:
         try:
+            _l.i("[gsheets] auth: refreshing access token")
             entry = _refresh_with_pkce(cid, refresh)
             _set_entry(entry)
             return entry
         except Exception:
+            _l.w("[gsheets] auth: refresh failed; starting OAuth", exc_info=True)
             entry = _authorize_with_pkce(cid)
             _set_entry(entry)
             return entry
 
     # Primera vez → iniciar flujo PKCE
+    _l.i("[gsheets] auth: no token found; starting OAuth")
     entry = _authorize_with_pkce(cid)
     _set_entry(entry)
     return entry
+
+def warm_session(client_id: Optional[str] = None) -> bool:
+    """Preload/refresh Google Sheets auth once for resident apps."""
+    try:
+        _ensure_tokens(client_id)
+        return True
+    except Exception:
+        _l.w("[gsheets] auth warmup failed", exc_info=True)
+        return False
 
 def _auth_header(client_id: Optional[str] = None) -> Dict[str, str]:
     tok = _ensure_tokens(client_id)

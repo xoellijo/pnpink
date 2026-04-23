@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+
+  <_name>DeckMaker v0.47</_name>
+  <id>pnpink.deckmaker_app</id>
+
+  <effect needs-live-preview="false" implements-custom-gui="true">
+    <object-type>all</object-type>
+    <effects-menu>
+      <submenu _name="PnPInk"/>
+    </effects-menu>
+    <menu-tip>Open the resident DeckMaker app for the current SVG template.</menu-tip>
+  </effect>
+
+  <script>
+    <command reldir="extensions" interpreter="python">pnpink/deckmaker_launcher.py</command>
+  </script>
+
+</inkscape-extension>

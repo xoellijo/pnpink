@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
 
-  <_name>DeckMaker v0.44</_name>
+  <_name>DeckMaker [old]</_name>
   <id>pnpink.deckmaker</id>
 
   <param name="tab" type="notebook">

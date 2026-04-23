@@ -740,9 +740,12 @@ def parse_header_key_full(key: str) -> Dict[str, object]:
     target_ids = [(x or "").strip() for x in (target_ids or []) if (x or "").strip()]
     target_id = target_ids[0] if target_ids else ""
 
-    # Phase-1 keep-visible set from '+'
+    # Phase-1 keep-visible set:
+    # - '+' keeps explicit anchors visible.
+    # - property columns (id[fill], id[stroke], etc.) are also explicit visual
+    #   edits; an empty cell means "leave template value", not "hide target".
     global _P1_KEEP_SET
-    if header_plus and target_ids:
+    if (header_plus or prop != "text") and target_ids:
         try:
             if isinstance(_P1_KEEP_SET, set):
                 for _tid in target_ids:
@@ -897,12 +900,11 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                     value = expand_value(str(_default_raw), row)
             v, op_key, op_val = _normalize_style_value(prop, value)
             if v == "":
-                if _is_rect_elem(tgt):
-                    try:
-                        if isinstance(_P1_KEEP_SET, set):
-                            _P1_KEEP_SET.add(target_id)
-                    except Exception:
-                        pass
+                try:
+                    if isinstance(_P1_KEEP_SET, set):
+                        _P1_KEEP_SET.add(target_id)
+                except Exception:
+                    pass
                 _l.d(f"field '{key}': STYLE[{prop}] empty -> keep current style id='{target_id}'")
                 return 0, "skip"
             smap = SVG.style_map(tgt)

@@ -582,6 +582,10 @@ def _process_text_fragment(
                     _l.w(f"[inline_icons] token invalido (se deja literal): {s[t0:t1]!r}")
                     pos = t1
                     continue
+                if callable(source_exists) and (not source_exists(inner)):
+                    acc += s[t0:t1]
+                    pos = t1
+                    continue
                 src_uri = inner
                 suffix = None
                 is_doc_id = True
@@ -784,6 +788,11 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
         s = (src_uri or "").strip()
         if not s:
             return False
+        if _INLINE_ID_RX.fullmatch(s or ""):
+            try:
+                return bool(doc_root.xpath(f".//*[@id='{s}']"))
+            except Exception:
+                return False
         if re.match(r"^(?:https?://|data:|icon://|wkmc://|pxby://|oclp://|pnp://)", s, re.IGNORECASE):
             return True
         s2 = os.path.expanduser(os.path.expandvars(s))

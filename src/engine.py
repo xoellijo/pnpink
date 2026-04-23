@@ -60,6 +60,15 @@ def _resolve_dm_output_path(dm_output_raw: str, doc_path: str | None) -> str | N
     return os.path.normpath(out)
 
 
+def _write_svg_atomic(doc, out_path: str) -> None:
+    out_dir = os.path.dirname(os.path.abspath(out_path)) or "."
+    os.makedirs(out_dir, exist_ok=True)
+    base = os.path.basename(out_path)
+    tmp = os.path.join(out_dir, f".{base}.tmp")
+    doc.write(tmp, encoding="UTF-8", xml_declaration=True)
+    os.replace(tmp, out_path)
+
+
 def _find_inkscape_executable() -> str | None:
     names = ["inkscape.exe", "inkscape"] if os.name == "nt" else ["inkscape"]
     for name in names:
@@ -174,7 +183,12 @@ def run(self, __version__):
     SM = None
 
     _l.s("DATASET: load")
-    datasets = DS.load_datasets(self, _doc_path)
+    preloaded_datasets = getattr(self, "_dm_preloaded_datasets", None)
+    if preloaded_datasets is not None:
+        datasets = preloaded_datasets
+        _l.i("[datasets] using preloaded dataset for output render")
+    else:
+        datasets = DS.load_datasets(self, _doc_path)
     if not datasets:
         raise inkex.AbortExtension("Dataset sin cabecera válida.")
     _l.s("DATASET: loaded")
@@ -285,12 +299,22 @@ def run(self, __version__):
                 clone_doc = inkex.load_svg(raw_svg)
                 old_doc = self.document
                 old_svg = self.svg
+                _missing = object()
+                old_preloaded = getattr(self, "_dm_preloaded_datasets", _missing)
                 self.document = clone_doc
                 self.svg = clone_doc.getroot()
                 self._dm_output_disabled = True
+                self._dm_preloaded_datasets = datasets
                 try:
                     run(self, __version__)
                 finally:
+                    if old_preloaded is _missing:
+                        try:
+                            delattr(self, "_dm_preloaded_datasets")
+                        except Exception:
+                            pass
+                    else:
+                        self._dm_preloaded_datasets = old_preloaded
                     self._dm_output_disabled = False
                     self.document = old_doc
                     self.svg = old_svg
@@ -299,7 +323,7 @@ def run(self, __version__):
                     clone_root.set(inkex.addNS("docname", "sodipodi"), os.path.basename(out_path))
                 except Exception:
                     pass
-                clone_doc.write(out_path, encoding="UTF-8", xml_declaration=True)
+                _write_svg_atomic(clone_doc, out_path)
                 _l.i(f"[dm_output] wrote external render: '{out_path}'")
                 _launch_inkscape(out_path)
                 return False

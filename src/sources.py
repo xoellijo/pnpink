@@ -948,7 +948,9 @@ class SourceManager:
             )
             if ref is None:
                 sid, wh = _make_placeholder_symbol(self.defs, raw, "pnp no valid candidate")
-                return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
+                ref = SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=key_pnp)
+                self._cache[key_pnp] = ref
+                return ref
             self._cache[key_pnp] = ref
             return ref
 
@@ -1037,7 +1039,9 @@ class SourceManager:
             cached_file = self._resolve_http_cached_file(raw, wait=True)
             if cached_file is None:
                 sid, wh = _make_placeholder_symbol(self.defs, raw, "web download failed")
-                return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
+                ref = SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=key_url)
+                self._cache[key_url] = ref
+                return ref
             key = _build_key_for_path(cached_file, fragment or "", int(page or 0))
             if key in self._cache:
                 ref = self._cache[key]
