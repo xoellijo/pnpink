@@ -172,7 +172,7 @@ def run(self, __version__):
     except Exception:
         _doc_path = None
 
-    fixed_imgs = SVG.absolutize_all_linked_images(root, _doc_path)
+    fixed_imgs = SVG.absolutize_all_linked_images(root, _doc_path, prefer="fileuri")
     if fixed_imgs:
         _l.i(f"[images] absolutized linked images: {fixed_imgs}")
 
@@ -1001,6 +1001,44 @@ def run(self, __version__):
                     f"en el template principal: {absorbed_list}. "
                     "Consejo: agrupa con Ctrl+G para evitar este warning."
                 )
+
+        # Externalize embedded data: images once into <defs> so repeated template instances
+        # reuse shared symbols instead of duplicating the bitmap payload in every deepcopy.
+        try:
+            _tpl_roots = []
+            if proto_root is not None:
+                _tpl_roots.append(proto_root)
+            if declared_template_root is not None:
+                _tpl_roots.append(declared_template_root)
+            for _te in (overlay_templates or []):
+                _tr = (_te or {}).get('template_root')
+                if _tr is not None:
+                    _tpl_roots.append(_tr)
+            for _te in (back_templates or []):
+                _tr = (_te or {}).get('template_root')
+                if _tr is not None:
+                    _tpl_roots.append(_tr)
+            for _te in (page_templates or []):
+                _tr = (_te or {}).get('template_root')
+                if _tr is not None:
+                    _tpl_roots.append(_tr)
+            for _te in (page_back_templates or []):
+                _tr = (_te or {}).get('template_root')
+                if _tr is not None:
+                    _tpl_roots.append(_tr)
+
+            _seen_tpl_roots = set()
+            _ext_total = 0
+            for _tr in _tpl_roots:
+                _oid = id(_tr)
+                if _oid in _seen_tpl_roots:
+                    continue
+                _seen_tpl_roots.add(_oid)
+                _ext_total += int(SVG.externalize_embedded_images_in_subtree(root, _tr) or 0)
+            if _ext_total:
+                _l.i(f"[templates] externalized {_ext_total} embedded template image(s) into shared defs symbols")
+        except Exception as _ex:
+            _l.w(f"[templates] embedded image externalization failed: {_ex}")
         # medir carta base
         template_anchor_x = None
         template_anchor_y = None
@@ -1705,7 +1743,7 @@ def run(self, __version__):
         _l.w(f"[deckmaker.text] inline_icons ONE-PASS failed: {ex}")
         _l.w("[deckmaker.text] traceback:\n" + _tb.format_exc())
 
-    fixed_imgs_end = SVG.absolutize_all_linked_images(root, _doc_path)
+    fixed_imgs_end = SVG.absolutize_all_linked_images(root, _doc_path, prefer="fileuri")
     if fixed_imgs_end:
         _l.i(f"[images] final absolutize linked images: {fixed_imgs_end}")
 

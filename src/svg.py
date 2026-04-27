@@ -31,7 +31,7 @@ def coerce_margins_mm(mg):
 # ------------------------------------------------------
 __version__ = "v_7.3.0"
 
-import os, sys, re, math, tempfile, subprocess
+import os, sys, re, math, tempfile, subprocess, hashlib
 from copy import deepcopy
 from pathlib import Path
 from urllib.parse import urlparse, unquote
@@ -397,6 +397,96 @@ def ensure_defs(root: inkex.SvgDocumentElement) -> etree._Element:
     if defs is None:
         defs = etree.SubElement(root, inkex.addNS('defs','svg'))
     return defs
+
+
+def _embedded_image_symbol_key(data_uri: str) -> str:
+    return hashlib.sha1((data_uri or "").encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _ensure_embedded_image_symbol(root, data_uri: str, *, base_w: float, base_h: float) -> str:
+    defs = ensure_defs(root)
+    key = _embedded_image_symbol_key(data_uri)
+    try:
+        existing = defs.find(f".//svg:symbol[@data-pnpink-embed-key='{key}']", namespaces=NSS)
+    except Exception:
+        existing = None
+    if existing is not None:
+        sid = (existing.get('id') or '').strip()
+        if sid:
+            return sid
+
+    sid = f"pnp_emb_{key[:12]}"
+    try:
+        if root.find(f".//*[@id='{sid}']") is not None:
+            sid = root.get_unique_id("pnp_emb_") if hasattr(root, "get_unique_id") else f"{sid}_1"
+    except Exception:
+        pass
+
+    sym = etree.SubElement(defs, inkex.addNS('symbol', 'svg'))
+    sym.set('id', sid)
+    sym.set('data-pnpink-embed-key', key)
+    bw = float(base_w) if float(base_w) > 0.0 else 100.0
+    bh = float(base_h) if float(base_h) > 0.0 else 100.0
+    sym.set('viewBox', f"0 0 {bw:.6f} {bh:.6f}")
+
+    im = etree.SubElement(sym, inkex.addNS('image', 'svg'))
+    im.set('x', "0")
+    im.set('y', "0")
+    im.set('width', f"{bw:.6f}")
+    im.set('height', f"{bh:.6f}")
+    set_href(im, data_uri, touch_plain=True)
+    return sid
+
+
+def externalize_embedded_images_in_subtree(svg_root, subtree_root) -> int:
+    """Replace embedded data: images in `subtree_root` with <use> nodes referencing shared symbols in <defs>."""
+    if svg_root is None or subtree_root is None:
+        return 0
+    try:
+        images = list(subtree_root.xpath(".//svg:image", namespaces=NSS))
+    except Exception:
+        images = []
+
+    changed = 0
+    for im in images:
+        href = (get_href(im) or "").strip()
+        if not href.lower().startswith("data:"):
+            continue
+        parent = im.getparent()
+        if parent is None:
+            continue
+        try:
+            base_w = parse_len_px(svg_root, im.get('width') or "0")
+        except Exception:
+            base_w = 0.0
+        try:
+            base_h = parse_len_px(svg_root, im.get('height') or "0")
+        except Exception:
+            base_h = 0.0
+        sid = _ensure_embedded_image_symbol(svg_root, href, base_w=base_w, base_h=base_h)
+
+        use = etree.Element(inkex.addNS('use', 'svg'))
+        for k, v in list(im.attrib.items()):
+            if k in (XLINK_HREF, 'href', SODI_ABSREF):
+                continue
+            try:
+                use.set(k, v)
+            except Exception:
+                pass
+        set_href(use, f"#{sid}", touch_plain=True)
+
+        idx = parent.index(im)
+        parent.remove(im)
+        parent.insert(idx, use)
+        changed += 1
+
+    if changed:
+        try:
+            sid = subtree_root.get('id') or '<noid>'
+        except Exception:
+            sid = '<noid>'
+        _l.i(f"[svg] externalized {changed} embedded image(s) in subtree '{sid}'")
+    return changed
 
 
 def apply_clip_from_rect(svgdoc, node, rect_or_bbox, *, stage: str = "post", clip_id: str | None = None):

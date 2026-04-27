@@ -35,6 +35,15 @@ _DEFAULTS = {
     "marks_linejoin":     "miter",
     "marks_dasharray":    "",
 
+    # PDF output profile preset.
+    "pdf_settings":       "default",
+    "auto_create":        "1",
+    "auto_open":          "0",
+    "auto_export":        "0",
+    "export_pdf":         "1",
+    "export_png":         "0",
+    "pdf_raster_filters": "0",
+
 }
 
 
@@ -117,6 +126,89 @@ def set_file_level(level: str) -> None:
 
 def set_log_json(flag: bool) -> None:
     set("log_json", "1" if flag else "0", save=True)
+
+
+def get_pdf_settings(default: str = "default") -> str:
+    valid = {"default", "prepress"}
+    value = str(get("pdf_settings", default) or default).strip().lower()
+    return value if value in valid else default
+
+
+def set_pdf_settings(value: str) -> None:
+    set("pdf_settings", get_pdf_settings(str(value or "default")), save=True)
+
+
+def get_pdf_profiles(default: str = "default") -> list[str]:
+    valid = {"default", "prepress"}
+    raw = str(get("pdf_profiles", default) or default).strip().lower()
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    if not parts:
+        parts = [default]
+    out: list[str] = []
+    for part in parts:
+        if part in valid and part not in out:
+            out.append(part)
+    return out or [default]
+
+
+def set_pdf_profiles(values: list[str] | tuple[str, ...]) -> None:
+    valid = {"default", "prepress"}
+    out: list[str] = []
+    for value in (values or []):
+        item = str(value or "").strip().lower()
+        if item in valid and item not in out:
+            out.append(item)
+    if not out:
+        out = ["default"]
+    set("pdf_profiles", ",".join(out), save=True)
+
+
+def get_auto_create(default: bool = True) -> bool:
+    return str(get("auto_create", "1" if default else "0")).strip() == "1"
+
+
+def set_auto_create(flag: bool) -> None:
+    set("auto_create", "1" if flag else "0", save=True)
+
+
+def get_auto_open(default: bool = False) -> bool:
+    return str(get("auto_open", "1" if default else "0")).strip() == "1"
+
+
+def set_auto_open(flag: bool) -> None:
+    set("auto_open", "1" if flag else "0", save=True)
+
+
+def get_auto_export(default: bool = False) -> bool:
+    return str(get("auto_export", "1" if default else "0")).strip() == "1"
+
+
+def set_auto_export(flag: bool) -> None:
+    set("auto_export", "1" if flag else "0", save=True)
+
+
+def get_export_pdf(default: bool = True) -> bool:
+    return str(get("export_pdf", "1" if default else "0")).strip() == "1"
+
+
+def set_export_pdf(flag: bool) -> None:
+    set("export_pdf", "1" if flag else "0", save=True)
+
+
+def get_export_png(default: bool = False) -> bool:
+    return str(get("export_png", "1" if default else "0")).strip() == "1"
+
+
+def set_export_png(flag: bool) -> None:
+    set("export_png", "1" if flag else "0", save=True)
+
+
+def get_pdf_raster_filters(default: bool = False) -> bool:
+    return str(get("pdf_raster_filters", "1" if default else "0")).strip() == "1"
+
+
+def set_pdf_raster_filters(flag: bool) -> None:
+    set("pdf_raster_filters", "1" if flag else "0", save=True)
 
 # ---------------- Saver extension (UI -> INI) ----------------
 class PrefsSave(inkex.EffectExtension):

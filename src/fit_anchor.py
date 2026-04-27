@@ -10,6 +10,7 @@ There is NO legacy parsing here. dsl.py handles everything.
 # Changelog: clip to original rect when border expands inner fit area.
 
 import re
+import hashlib
 import inkex
 import svg
 import dsl as DSL
@@ -63,6 +64,27 @@ def _css_box_shorthand(lst):
     if len(lst) == 3:
         return lst[0], lst[1], lst[2], lst[1]
     return lst[0], lst[1], lst[2], lst[3]
+
+
+def _clip_def_id_from_shape(kind: str, shape_el) -> str:
+    """Build a stable defs id from the effective clip geometry.
+
+    We only dedupe clips whose geometry is self-contained inside the clipPath
+    (rect/path/polygon/circle/ellipse in wrapper-local coords). Reference-based
+    clips such as <use href="#..."> stay per-instance because the referenced id
+    may differ across clones even if the visible outline looks the same.
+    """
+    if shape_el is None or kind == "use-shape":
+        return ""
+    try:
+        payload = svg.etree.tostring(shape_el, encoding="unicode")
+    except Exception:
+        try:
+            payload = repr(sorted((shape_el.attrib or {}).items()))
+        except Exception:
+            payload = kind
+    digest = hashlib.sha1(f"{kind}|{payload}".encode("utf-8")).hexdigest()[:16]
+    return f"clip_fa_{digest}"
 
 # ================================================================
 # Entry point used by DeckMaker / sources
@@ -480,22 +502,6 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
     except Exception:
         parent.append(wrapper)
 
-    # Create LOCAL clipPath: rect inside wrapper
-    root2 = svgdoc.getroot() if hasattr(svgdoc, "getroot") else svgdoc
-    defs = svg.ensure_defs(root2)
-    clip_id = f"clip_{clip_g_id}"
-    cp = root2.find(f".//svg:clipPath[@id='{clip_id}']", namespaces=svg.NSS)
-    if cp is None:
-        cp = etree.SubElement(defs, inkex.addNS('clipPath', 'svg'))
-        cp.set('id', clip_id)
-        cp.set('clipPathUnits', 'userSpaceOnUse')
-    # Rebuild clipPath content per run (single shape)
-    for ch in list(cp):
-        try:
-            cp.remove(ch)
-        except Exception:
-            pass
-
     clip_use_inner = not (getattr(fs, "border", None) and getattr(fs, "clip", False))
     clip_shape = None
     clip_kind = "none"
@@ -537,7 +543,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
     can_reuse_placeholder_shape = (not base_has_image) and (not any(tag.endswith(t) for t in ('image', 'use')))
     if can_reuse_placeholder_shape and rid and ((not clip_use_inner) or same_inner_as_rect):
         try:
-            u = etree.SubElement(cp, inkex.addNS('use', 'svg'))
+            u = etree.Element(inkex.addNS('use', 'svg'))
             svg.set_href(u, f"#{rid}")
             u.set('transform', f"translate({-rx_l},{-ry_l})")
             clip_shape = u
@@ -553,7 +559,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
                 if tag.endswith('path'):
                     d = (rect.get('d') or "").strip()
                     if d:
-                        s = etree.SubElement(cp, inkex.addNS('path', 'svg'))
+                        s = etree.Element(inkex.addNS('path', 'svg'))
                         s.set('d', d)
                         s.set('transform', str(T_wrap_from_rect))
                         clip_shape = s
@@ -561,7 +567,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
                 elif tag.endswith('polygon'):
                     pts = (rect.get('points') or "").strip()
                     if pts:
-                        s = etree.SubElement(cp, inkex.addNS('polygon', 'svg'))
+                        s = etree.Element(inkex.addNS('polygon', 'svg'))
                         s.set('points', pts)
                         s.set('transform', str(T_wrap_from_rect))
                         clip_shape = s
@@ -571,7 +577,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
                     cy = (rect.get('cy') or "").strip()
                     r0 = (rect.get('r') or "").strip()
                     if cx != "" and cy != "" and r0 != "":
-                        s = etree.SubElement(cp, inkex.addNS('circle', 'svg'))
+                        s = etree.Element(inkex.addNS('circle', 'svg'))
                         s.set('cx', cx)
                         s.set('cy', cy)
                         s.set('r', r0)
@@ -584,7 +590,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
                     rx0 = (rect.get('rx') or "").strip()
                     ry0 = (rect.get('ry') or "").strip()
                     if cx != "" and cy != "" and rx0 != "" and ry0 != "":
-                        s = etree.SubElement(cp, inkex.addNS('ellipse', 'svg'))
+                        s = etree.Element(inkex.addNS('ellipse', 'svg'))
                         s.set('cx', cx)
                         s.set('cy', cy)
                         s.set('rx', rx0)
@@ -609,7 +615,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
                 cw = float(rw_l)
                 ch = float(rh_l)
 
-            s = etree.SubElement(cp, inkex.addNS('rect', 'svg'))
+            s = etree.Element(inkex.addNS('rect', 'svg'))
             s.set('x', f"{cx}")
             s.set('y', f"{cy}")
             s.set('width', f"{cw}")
@@ -646,7 +652,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
 
     # 4) Final fallback: rectangular clip in wrapper coords.
     if clip_shape is None:
-        r = etree.SubElement(cp, inkex.addNS('rect', 'svg'))
+        r = etree.Element(inkex.addNS('rect', 'svg'))
         if clip_use_inner:
             fx = float(ix_l - rx_l)
             fy = float(iy_l - ry_l)
@@ -666,7 +672,20 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
             r.set('width', f"{fw}")
             r.set('height', f"{fh}")
         clip_rect_local = (fx, fy, fw, fh)
+        clip_shape = r
         clip_kind = "rect-fallback"
+
+    # Create/reuse LOCAL clipPath in defs after the final geometry is known.
+    root2 = svgdoc.getroot() if hasattr(svgdoc, "getroot") else svgdoc
+    defs = svg.ensure_defs(root2)
+    clip_id = _clip_def_id_from_shape(clip_kind, clip_shape) or f"clip_{clip_g_id}"
+    cp = root2.find(f".//svg:clipPath[@id='{clip_id}']", namespaces=svg.NSS)
+    if cp is None:
+        cp = etree.SubElement(defs, inkex.addNS('clipPath', 'svg'))
+        cp.set('id', clip_id)
+        cp.set('clipPathUnits', 'userSpaceOnUse')
+        if clip_shape is not None:
+            cp.append(clip_shape)
     clip_g.set('clip-path', f"url(#{clip_id})")
     effective_soft_rect_local = image_soft_rect_local
     if image_soft_rect_local is not None and clip_rect_local is not None:
