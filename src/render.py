@@ -110,6 +110,7 @@ def render_phase(ctx):
     pages = planner.pages  # list[dict] with {id,x,y,w,h,el}
     proto_root = ctx.proto_root
     out_layer = ctx.out_layer
+    dm_tag = str(getattr(planner.current, "_dm_tag", "") or "")
     _marks_pending_by_page = ctx.marks_pending_by_page
     _flush_marks_for_page = ctx.flush_marks_for_page
     page = getattr(ctx, 'page', None)
@@ -125,6 +126,76 @@ def render_phase(ctx):
     page_templates = getattr(ctx, 'page_templates', None)
     page_back_templates = getattr(ctx, 'page_back_templates', None)
     declared_bbox_node = getattr(ctx, 'declared_bbox_node', None)
+
+    def _mark_generated(node):
+        if node is not None and dm_tag:
+            try:
+                node.set("pnpink_dm_gen", dm_tag)
+            except Exception:
+                pass
+        return node
+
+    def _page_group_for(page_index: int):
+        pinfo = pages[int(page_index)]
+        page_id = str(pinfo.get('id') or f"page_{int(page_index)+1}")
+        gid = page_id
+        group = out_layer.find(f".//*[@id='{gid}']")
+        if group is None:
+            group = inkex.Group()
+            group.set('id', gid)
+            group.set(inkex.addNS('label', 'inkscape'), page_id)
+            group.set('data-pnpink-page-id', page_id)
+            group.set('data-pnpink-page-index', str(int(page_index) + 1))
+            _mark_generated(group)
+            out_layer.append(group)
+        return group
+
+    def _append_output(node, *, page_index: int | None = None):
+        _mark_generated(node)
+        parent = out_layer if page_index is None else _page_group_for(int(page_index))
+        parent.append(node)
+        return node
+
+    def _set_card_group_identity(card_group, proto_id: str, page_index: int, row_index: int):
+        page1 = int(page_index) + 1
+        dataset1 = int(ds_idx)
+        row1 = int(row_index)
+        gid = f"{proto_id}_{page1}_{dataset1}_{row1}"
+        card_group.set('id', gid)
+        card_group.set(inkex.addNS('label', 'inkscape'), gid)
+        card_group.set('data-pnpink-page-index', str(page1))
+        card_group.set('data-pnpink-dataset-index', str(dataset1))
+        card_group.set('data-pnpink-row-index', str(row1))
+        return gid
+
+    def _flatten_card_group(card_group, main_group):
+        if card_group is None or main_group is None:
+            return
+        try:
+            parent = main_group.getparent()
+            if parent is not card_group:
+                return
+        except Exception:
+            return
+        try:
+            for attr_name, attr_value in list(getattr(main_group, 'attrib', {}).items()):
+                if attr_name in ('id', inkex.addNS('label', 'inkscape')):
+                    continue
+                if attr_name not in card_group.attrib and attr_value not in (None, ''):
+                    card_group.set(attr_name, attr_value)
+        except Exception:
+            pass
+        for child in list(main_group):
+            try:
+                main_group.remove(child)
+            except Exception:
+                pass
+            card_group.append(child)
+        try:
+            card_group.remove(main_group)
+        except Exception:
+            pass
+
     def _apply_page_cursor_from_page(planner_obj, ps_obj):
         """Apply Page{at=} / Page{a=} / Page{@...} to the global page cursor.
         Semantics (0-based internal):
@@ -1191,7 +1262,7 @@ def render_phase(ctx):
             # inkex.bounding_box() can return None for nodes not rendered.
             # We keep it invisible but renderable so Fit/Anchor can measure.
             tmp_group.set('style', 'opacity:0;fill:none;stroke:none')
-            out_layer.append(tmp_group)
+            _append_output(tmp_group)
             ctx._pnpink_tmp_group = tmp_group
         inst = tmpl_root.copy()
         _flatten_group_transform(inst)
@@ -1339,13 +1410,14 @@ def render_phase(ctx):
                 ops_full=ops,
                 place="copy",
                 rect_elem=rect,
-                parent_elem=out_layer,
+                parent_elem=_page_group_for(int(page_index)),
                 insert_after_elem=(insert_after_elem if insert_after_elem is not None else None),
                 bbox_elem=bbox_elem,
             )
         except Exception as ex:
             _l.w(f"[@page] fit_anchor failed for '{bid}' page={int(page_index)+1} ops='{ops}': {ex}")
             placed_node = None
+        _mark_generated(placed_node)
 
         # For duplex alignment, the back pass is mirrored horizontally at the PAGE level.
         # This mirrors both placement AND artwork (so the physical paper flip cancels it).
@@ -1770,7 +1842,6 @@ def render_phase(ctx):
             an = SVG.pick_anchor_in(inst_main)
             bb = an.bounding_box()
             bx, by, bw, bh = float(bb.left), float(bb.top), float(bb.width), float(bb.height)
-
         # Split boards when template bbox exceeds page inner frame.
         inner_rect_now = _page_inner_rect_elem_for(int(planner.page_index))
         split_boards = False
@@ -1869,7 +1940,7 @@ def render_phase(ctx):
                     part = deepcopy(card_group)
                     suffix_part = f"_pnp{next_n}_sb{part_idx}"; next_n += 1
                     SVG.uniquify_all_ids_in_scope(part, suffix_part, root.get_unique_id)
-                    out_layer.append(part)
+                    _append_output(part, page_index=int(planner.page_index))
                     SVG.apply_clip_from_rect(
                         root,
                         part,
@@ -1922,7 +1993,7 @@ def render_phase(ctx):
                 _, _, slot_w, slot_h = planner.local_slots[planner.slot_index]
             except Exception:
                 slot_w, slot_h = bw, bh
-        out_layer.append(card_group)
+        _append_output(card_group, page_index=int(planner.page_index))
         placed_node = card_group
         T_fit = SVG.transform_bbox_to_rect(
             bx=bx, by=by, bw=bw, bh=bh,
@@ -2068,6 +2139,8 @@ def render_phase(ctx):
         except Exception:
             pass
 
+        _flatten_card_group(card_group, inst_main)
+
         # Clear per-row keep-visible set to avoid leaking across rows.
         try:
             _P1_KEEP_SET = None
@@ -2083,7 +2156,7 @@ def render_phase(ctx):
         else:
             col1 = (within // planner.plan.rows)+1; row1 = (within % planner.plan.rows)+1
         page1 = planner.page_index+1
-        new_name = f"{proto_root.get('id','card')}_{page1}_{row1}_{col1}"
+        new_name = _set_card_group_identity(card_group, str(proto_root.get('id') or 'card'), int(planner.page_index), int(idx))
         try:
             unique_name = root.get_unique_id(new_name)
         except Exception:
@@ -2290,7 +2363,7 @@ def render_phase(ctx):
                             pass
 
                     card_group.append(inst)
-                    out_layer.append(card_group)
+                    _append_output(card_group, page_index=int(planner.page_index))
 
                     # Fit to slot rect using the declared bbox of that back template (same as front).
                     bbid = (bt or {}).get('bbox_id') or ''
@@ -2313,6 +2386,8 @@ def render_phase(ctx):
                         T_fit = inkex.Transform(); curT = inkex.Transform()
 
                     # Note: we do NOT mirror artwork; we only mirrored the slot selection (sp_m).
+                    _flatten_card_group(card_group, inst)
+                    _set_card_group_identity(card_group, str(tmpl_root.get('id') or 'card'), int(planner.page_index), int(idx))
                     card_group.set('transform', str(T_fit @ curT))
                     geom_registry.add_group(int(planner.page_index), card_group)
                     placed_back += 1
@@ -2324,6 +2399,14 @@ def render_phase(ctx):
     if pending_page_back_req:
         _l.w(f"[@page @back] ignored {sum(len(v) for v in pending_page_back_req.values())} pending requests: slot ref out of range")
         pending_page_back_req.clear()
+
+    try:
+        tmp_group = getattr(ctx, '_pnpink_tmp_group', None)
+        if tmp_group is not None and tmp_group.getparent() is not None:
+            tmp_group.getparent().remove(tmp_group)
+            ctx._pnpink_tmp_group = None
+    except Exception:
+        pass
 
     if placed_back > 0:
         try:

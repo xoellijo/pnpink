@@ -5,7 +5,7 @@ sources_web.py — Web source resolvers (Wikimedia Commons, Pixabay, Openclipart
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict
 import json, hashlib, urllib.parse, os, re, sys, math
 from pathlib import Path
 
@@ -303,6 +303,20 @@ class WebSources:
             rest = rest[1:].strip()
         if rest:
             size = rest.strip()
+            try:
+                import render_tokens as RTK
+                size0, _tr = RTK.split_transform_suffixes(size)
+                size = (size0 or "").strip()
+            except Exception:
+                pass
+            # Defensive cleanup: malformed callers may leak token suffixes
+            # into the size segment (e.g. '1000}.T{s=10%}~...').
+            size = re.sub(r"\.(?:Transform|T)\s*\{[^{}]*\}\s*$", "", size, flags=re.I).strip()
+            size = re.sub(r"(?:~.*|[\^!\|].*)$", "", size, flags=re.S).strip()
+            while size.endswith("}"):
+                size = size[:-1].rstrip()
+            if not size:
+                size = "medium"
         return (query, size)
 
     @staticmethod
@@ -344,7 +358,136 @@ class WebSources:
         return self.assets_dir / f"wkmc_{k}.json"
 
     @staticmethod
-    def _wkmc_sort_candidates(self, cands: List[Tuple[WkmcItem, int, int, int]], size: str) -> List[WkmcItem]:
+    def _wkmc_cache_payload(query: str, size: str, items: List[WkmcItem], urls: List[str]) -> dict:
+        return {
+            "query": query,
+            "size": size,
+            "fetched": True,
+            "items": [asdict(i) for i in (items or [])],
+            "urls": list(urls or []),
+        }
+
+    def _wkmc_read_cache(self, query: str, size: str) -> Optional[dict]:
+        cfile = self._wkmc_cache_file(query, size)
+        try:
+            if cfile.is_file():
+                raw = json.loads(cfile.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    return raw
+        except Exception:
+            pass
+        return None
+
+    def _wkmc_write_cache(self, query: str, size: str, items: List[WkmcItem], urls: List[str]) -> None:
+        cfile = self._wkmc_cache_file(query, size)
+        try:
+            cfile.write_text(
+                json.dumps(self._wkmc_cache_payload(query, size, items, urls), ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+    @staticmethod
+    def _wkmc_norm_file_title(query: str) -> Optional[str]:
+        q = str(query or "").strip()
+        if not q:
+            return None
+        return q if q.lower().startswith("file:") else f"File:{q}"
+
+    def _wkmc_fetch_file_items_batch(self, titles: List[str], size: str) -> Dict[str, List[WkmcItem]]:
+        out: Dict[str, List[WkmcItem]] = {}
+        if not titles:
+            return out
+        spec = WebSources._parse_size_spec(size)
+        want_vector = (spec.get("kind") == "vector")
+        req_w, req_h = self._wkmc_thumb_constraints(size)
+        # MediaWiki API supports multiple titles in one request; keep batches small enough
+        # for anonymous clients and URL size limits.
+        batch_size = 50
+        for i in range(0, len(titles), batch_size):
+            batch = [str(t).strip() for t in titles[i:i + batch_size] if str(t or "").strip()]
+            if not batch:
+                continue
+            params = {
+                "action": "query",
+                "format": "json",
+                "prop": "imageinfo",
+                "iiprop": "url|size",
+                "iiurlwidth": str(req_w) if req_w else None,
+                "iiurlheight": str(req_h) if req_h else None,
+                "titles": "|".join(batch),
+            }
+            params = {k: v for k, v in params.items() if v is not None}
+            url = "https://commons.wikimedia.org/w/api.php?" + urllib.parse.urlencode(params)
+            data = NET.fetch_json(url, timeout=1.5, retries=3, log_prefix="[sources] wkmc")
+            pages = ((data or {}).get("query") or {}).get("pages") or {}
+            seen_batch = set()
+            for _pid, pg in pages.items():
+                title = str((pg or {}).get("title") or "").strip()
+                if not title:
+                    continue
+                ii = (pg or {}).get("imageinfo") or []
+                items: List[WkmcItem] = []
+                for rank, ii0 in enumerate(ii):
+                    ii0 = ii0 or {}
+                    url0 = (ii0.get("url") or ii0.get("thumburl")) if want_vector else (ii0.get("thumburl") or ii0.get("url"))
+                    if not url0:
+                        continue
+                    key0 = str(url0).strip()
+                    if key0 in seen_batch:
+                        continue
+                    seen_batch.add(key0)
+                    items.append(WkmcItem(
+                        title=title,
+                        url=str(ii0.get("url") or "").strip(),
+                        thumburl=str(ii0.get("thumburl") or "").strip(),
+                    ))
+                if items:
+                    out[title] = items
+            for title in batch:
+                out.setdefault(title, [])
+        return out
+
+    def prefetch_wkmc_file_exprs(self, exprs: List[str]) -> int:
+        grouped: Dict[str, Dict[str, List[str]]] = {}
+        skipped = 0
+        for expr in (exprs or []):
+            p = self._parse_wkmc_expr(expr)
+            if p is None:
+                continue
+            query, size = p
+            mode, qv = self._wkmc_query_mode(query)
+            if mode != "file":
+                continue
+            raw = self._wkmc_read_cache(query, size)
+            if raw is not None and bool((raw or {}).get("fetched")):
+                skipped += 1
+                continue
+            title = self._wkmc_norm_file_title(qv)
+            if not title:
+                continue
+            grouped.setdefault(size, {}).setdefault(title, []).append(query)
+        batch_count = 0
+        title_count = 0
+        for size, title_map in grouped.items():
+            titles = sorted(title_map.keys())
+            if not titles:
+                continue
+            fetched = self._wkmc_fetch_file_items_batch(titles, size)
+            for title, queries in title_map.items():
+                items = list(fetched.get(title) or [])
+                urls = self._wkmc_items_to_urls(items, size)
+                for query in queries:
+                    self._wkmc_write_cache(query, size, items, urls)
+            batch_count += int(math.ceil(len(titles) / 50.0))
+            title_count += len(titles)
+        if title_count:
+            _l.i(f"[sources] wkmc batch prefetched titles={title_count} batches={batch_count} skipped_cached={skipped}")
+        return title_count
+
+    @staticmethod
+    def _wkmc_sort_candidates(cands: List[Tuple[WkmcItem, int, int, int]], size: str) -> List[WkmcItem]:
         spec = WebSources._parse_size_spec(size)
         if not cands:
             return []
@@ -453,7 +596,7 @@ class WebSources:
             # remove None
             params = {k: v for k, v in params.items() if v is not None}
             url = "https://commons.wikimedia.org/w/api.php?" + urllib.parse.urlencode(params)
-            data = NET.fetch_json(url, timeout=30, retries=4, log_prefix="[sources] wkmc")
+            data = NET.fetch_json(url, timeout=1.5, retries=3, log_prefix="[sources] wkmc")
             pages = ((data or {}).get("query") or {}).get("pages") or {}
             for _pid, pg in pages.items():
                 ii = (pg or {}).get("imageinfo") or []
@@ -510,10 +653,13 @@ class WebSources:
         if p is None:
             return None
         query, size = p
-        cfile = self._wkmc_cache_file(query, size)
         try:
-            if cfile.is_file():
-                raw = json.loads(cfile.read_text(encoding="utf-8"))
+            raw = self._wkmc_read_cache(query, size)
+            if raw is not None:
+                if bool((raw or {}).get("fetched")):
+                    items = self._wkmc_items_from_json((raw or {}).get("items"))
+                    _l.i(f"[sources] wkmc cache hit query='{query}' size='{size}' n={len(items)}")
+                    return items
                 items = self._wkmc_items_from_json((raw or {}).get("items"))
                 if items:
                     _l.i(f"[sources] wkmc cache hit query='{query}' size='{size}' n={len(items)}")
@@ -523,10 +669,7 @@ class WebSources:
         try:
             items = self._wkmc_fetch_items(query, size)
             urls = self._wkmc_items_to_urls(items, size)
-            cfile.write_text(
-                json.dumps({"query": query, "size": size, "items": [asdict(i) for i in items], "urls": urls}, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            self._wkmc_write_cache(query, size, items, urls)
             _l.i(f"[sources] wkmc fetched query='{query}' size='{size}' n={len(items)}")
             return items
         except Exception as ex:
@@ -538,10 +681,16 @@ class WebSources:
         if p is None:
             return None
         query, size = p
-        cfile = self._wkmc_cache_file(query, size)
         try:
-            if cfile.is_file():
-                raw = json.loads(cfile.read_text(encoding="utf-8"))
+            raw = self._wkmc_read_cache(query, size)
+            if raw is not None:
+                if bool((raw or {}).get("fetched")):
+                    items = self._wkmc_items_from_json((raw or {}).get("items"))
+                    urls = self._wkmc_items_to_urls(items, size)
+                    if not urls:
+                        urls = [str(u).strip() for u in list((raw or {}).get("urls") or []) if str(u or "").strip()]
+                    _l.i(f"[sources] wkmc cache hit query='{query}' size='{size}' n={len(urls)}")
+                    return urls
                 items = self._wkmc_items_from_json((raw or {}).get("items"))
                 if items:
                     urls = self._wkmc_items_to_urls(items, size)
@@ -558,10 +707,7 @@ class WebSources:
         try:
             items = self._wkmc_fetch_items(query, size)
             urls = self._wkmc_items_to_urls(items, size)
-            cfile.write_text(
-                json.dumps({"query": query, "size": size, "items": [asdict(i) for i in items], "urls": urls}, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            self._wkmc_write_cache(query, size, items, urls)
             _l.i(f"[sources] wkmc fetched query='{query}' size='{size}' n={len(urls)}")
             return urls
         except Exception as ex:

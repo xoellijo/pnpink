@@ -34,14 +34,15 @@ LOAD_SHEDDING_HTTP_STATUS = {429, 503}
 DEFAULT_HEADERS = {"User-Agent": "PnPInk"}
 DEFAULT_HOST_WORKERS = 8
 WIKIMEDIA_HOST_WORKERS = 8
-HOST_429_DELAY_BASE_S = 1.0
-HOST_429_DELAY_MAX_S = 12.0
+HOST_429_DELAY_BASE_S = 0.5
+HOST_429_DELAY_MAX_S = 3.0
 HOST_LOAD_EVENTS_PER_WORKER_DROP = 4
 
 _HOST_LOCK = threading.RLock()
 _HOST_429_DELAY_S: Dict[str, float] = {}
 _HOST_429_COUNT: Dict[str, int] = {}
 _HOST_SUCCESS_COUNT: Dict[str, int] = {}
+_HOST_TLS_UNVERIFIED: Dict[str, bool] = {}
 
 
 class _HostGate:
@@ -109,6 +110,24 @@ def _url_host(url: str) -> str:
         return str(urllib.parse.urlparse(url).netloc or "").strip().lower()
     except Exception:
         return ""
+
+
+def _host_prefers_unverified_tls(url: str) -> bool:
+    host = _url_host(url)
+    if not host:
+        return False
+    with _HOST_LOCK:
+        return bool(_HOST_TLS_UNVERIFIED.get(host, False))
+
+
+def _host_mark_unverified_tls(url: str) -> bool:
+    host = _url_host(url)
+    if not host:
+        return False
+    with _HOST_LOCK:
+        was = bool(_HOST_TLS_UNVERIFIED.get(host, False))
+        _HOST_TLS_UNVERIFIED[host] = True
+        return (not was)
 
 
 def max_workers_for_url(url: str, *, default: int = DEFAULT_HOST_WORKERS) -> int:
@@ -208,7 +227,7 @@ def fetch_bytes(
     log_prefix: str = "[net]",
 ) -> Tuple[bytes, Dict[str, str], int]:
     req = urllib.request.Request(url, headers=_request_headers(headers))
-    tls_unverified = False
+    tls_unverified = _host_prefers_unverified_tls(url)
     last_ex: Exception | None = None
     for attempt in range(1, max(1, retries) + 1):
         gate = _host_gate(url)
@@ -245,7 +264,8 @@ def fetch_bytes(
                     continue
                 if _is_cert_verify_error(ex) and allow_unverified_tls and (not tls_unverified):
                     _close_exc_response(ex)
-                    _l.w(f"{log_prefix} SSL verify failed; retrying unverified TLS")
+                    first = _host_mark_unverified_tls(url)
+                    _l.w(f"{log_prefix} SSL verify failed; retrying unverified TLS" if first else f"{log_prefix} SSL verify failed; host already downgraded to unverified TLS")
                     tls_unverified = True
                     continue
                 _close_exc_response(ex)
@@ -254,7 +274,8 @@ def fetch_bytes(
                 last_ex = ex
                 _close_exc_response(ex)
                 if _is_cert_verify_error(ex) and allow_unverified_tls and (not tls_unverified):
-                    _l.w(f"{log_prefix} SSL verify failed; retrying unverified TLS")
+                    first = _host_mark_unverified_tls(url)
+                    _l.w(f"{log_prefix} SSL verify failed; retrying unverified TLS" if first else f"{log_prefix} SSL verify failed; host already downgraded to unverified TLS")
                     tls_unverified = True
                     continue
                 if _is_retryable_exception(ex) and attempt < retries:
@@ -328,7 +349,7 @@ def requests_get(
     if requests is None:
         raise RuntimeError("requests is not available")
     s = session or requests.Session()
-    tls_unverified = (not verify)
+    tls_unverified = (not verify) or _host_prefers_unverified_tls(url)
     if tls_unverified and urllib3 is not None and InsecureRequestWarning is not None:
         try:
             urllib3.disable_warnings(InsecureRequestWarning)
@@ -360,7 +381,8 @@ def requests_get(
             except Exception as ex:
                 last_ex = ex
                 if _is_cert_verify_error(ex) and allow_unverified_tls and (not tls_unverified):
-                    _l.w(f"{log_prefix} SSL verify failed; retrying unverified TLS")
+                    first = _host_mark_unverified_tls(url)
+                    _l.w(f"{log_prefix} SSL verify failed; retrying unverified TLS" if first else f"{log_prefix} SSL verify failed; host already downgraded to unverified TLS")
                     if urllib3 is not None and InsecureRequestWarning is not None:
                         try:
                             urllib3.disable_warnings(InsecureRequestWarning)

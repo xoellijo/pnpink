@@ -71,7 +71,8 @@ class DeckMaker(inkex.EffectExtension):
                 if DMAPP.notify_or_launch(doc_path, sid, srg, log_level):
                     return False
             except Exception:
-                _l.w("[deckmaker_app] bridge failed; falling back to direct DeckMaker run", exc_info=True)
+                import traceback
+                _l.w("[deckmaker_app] bridge failed; falling back to direct DeckMaker run\n" + traceback.format_exc())
 
         # Core pipeline lives in engine.py; keep entrypoint compatible with current .inx.
         ret = ENG.run(self, __version__)
@@ -97,7 +98,8 @@ class DeckMaker(inkex.EffectExtension):
             else:
                 _l.i("[dataset_state] skip: empty sheet_id")
         except Exception:
-            _l.w("[dataset_state] save failed", exc_info=True)
+            import traceback
+            _l.w("[dataset_state] save failed\n" + traceback.format_exc())
         return ret
 
 

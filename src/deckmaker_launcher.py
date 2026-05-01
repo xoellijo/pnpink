@@ -40,7 +40,8 @@ class DeckMakerLauncher(inkex.EffectExtension):
                 sheet_id = str(rec.get("sheet_id") or "").strip()
                 sheet_range = str(rec.get("sheet_range") or "").strip()
         except Exception:
-            _l.w("[deckmaker_launcher] dataset state load failed", exc_info=True)
+            import traceback
+            _l.w("[deckmaker_launcher] dataset state load failed\n" + traceback.format_exc())
 
         if not DMAPP.notify_or_launch(doc_path, sheet_id, sheet_range, "global"):
             raise inkex.AbortExtension("Could not launch DeckMaker App.")

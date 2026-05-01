@@ -43,6 +43,9 @@ _DEFAULTS = {
     "export_pdf":         "1",
     "export_png":         "0",
     "pdf_raster_filters": "0",
+    "split_svg_output":   "0",
+    "split_svg_chunk_mb": "64",
+    "inkscape_shell_workers": "6",
 
 }
 
@@ -209,6 +212,46 @@ def get_pdf_raster_filters(default: bool = False) -> bool:
 
 def set_pdf_raster_filters(flag: bool) -> None:
     set("pdf_raster_filters", "1" if flag else "0", save=True)
+
+
+def get_split_svg_output(default: bool = False) -> bool:
+    return str(get("split_svg_output", "1" if default else "0")).strip() == "1"
+
+
+def set_split_svg_output(flag: bool) -> None:
+    set("split_svg_output", "1" if flag else "0", save=True)
+
+
+def get_split_svg_chunk_mb(default: int = 64) -> int:
+    try:
+        value = int(str(get("split_svg_chunk_mb", default) or default).strip())
+    except Exception:
+        value = int(default)
+    return max(1, min(value, 2048))
+
+
+def set_split_svg_chunk_mb(value: int) -> None:
+    try:
+        out = int(value)
+    except Exception:
+        out = 64
+    set("split_svg_chunk_mb", str(max(1, min(out, 2048))), save=True)
+
+
+def get_inkscape_shell_workers(default: int = 6) -> int:
+    try:
+        value = int(str(get("inkscape_shell_workers", default) or default).strip())
+    except Exception:
+        value = int(default)
+    return max(1, min(value, 32))
+
+
+def set_inkscape_shell_workers(value: int) -> None:
+    try:
+        out = int(value)
+    except Exception:
+        out = 6
+    set("inkscape_shell_workers", str(max(1, min(out, 32))), save=True)
 
 # ---------------- Saver extension (UI -> INI) ----------------
 class PrefsSave(inkex.EffectExtension):

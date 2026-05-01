@@ -85,6 +85,7 @@ def _legacy_app_dir() -> str:
 
 TOKENS_FILE = os.path.join(_legacy_app_dir(), "tokens.json")  # como el original
 _MEM_ENTRY: Optional[Dict[str, Any]] = None
+_AUTH_LOCK = threading.RLock()
 
 def _load_store() -> Dict[str, Any]:
     try:
@@ -113,6 +114,23 @@ def _set_entry(entry: Dict[str, Any]) -> None:
     store = _load_store()
     store["google_sheets_pkce"] = entry
     _save_store(store)
+
+
+def _clear_entry() -> None:
+    global _MEM_ENTRY
+    _MEM_ENTRY = None
+    try:
+        store = _load_store()
+        if "google_sheets_pkce" in store:
+            del store["google_sheets_pkce"]
+            _save_store(store)
+    except Exception:
+        pass
+    try:
+        if os.path.isfile(TOKENS_FILE):
+            os.remove(TOKENS_FILE)
+    except Exception:
+        pass
 
 # ------------------------------------------------------------------
 # Utils
@@ -265,7 +283,8 @@ def _authorize_with_pkce(client_id: str) -> Dict[str, Any]:
 
         headers = {"User-Agent": USER_AGENT}
         r = requests.post(TOKEN_URL, data=data, headers=headers, timeout=30)
-        r.raise_for_status()
+        if r.status_code >= 400:
+            raise RuntimeError(f"authorization_code exchange failed: {r.text}")
         tok = r.json()
         if not tok.get("refresh_token"):
             # Google may omit refresh_token if consent was not forced;
@@ -320,43 +339,43 @@ def _refresh_with_pkce(client_id: str, refresh_token: str) -> Dict[str, Any]:
     }
 
 def _ensure_tokens(client_id: Optional[str] = None) -> Dict[str, Any]:
-    cid = client_id or CLIENT_ID
-    entry = _get_entry()
-    access = entry.get("access_token")
-    refresh = entry.get("refresh_token")
-    expiry  = int(entry.get("expiry") or 0)
+    with _AUTH_LOCK:
+        cid = client_id or CLIENT_ID
+        entry = _get_entry()
+        access = entry.get("access_token")
+        refresh = entry.get("refresh_token")
+        expiry  = int(entry.get("expiry") or 0)
 
-    # If we have a valid access token, use it
-    if access and _now() < expiry - 30:
-        _l.d("[gsheets] auth: using cached access token")
+        if access and _now() < expiry - 30:
+            _l.d("[gsheets] auth: using cached access token")
+            return entry
+
+        if refresh:
+            try:
+                _l.i("[gsheets] auth: refreshing access token")
+                entry = _refresh_with_pkce(cid, refresh)
+                _set_entry(entry)
+                return entry
+            except Exception:
+                import traceback
+                _l.w("[gsheets] auth: refresh failed; starting OAuth\n" + traceback.format_exc())
+                _clear_entry()
+                entry = _authorize_with_pkce(cid)
+                _set_entry(entry)
+                return entry
+
+        _l.i("[gsheets] auth: no token found; starting OAuth")
+        entry = _authorize_with_pkce(cid)
+        _set_entry(entry)
         return entry
-
-    # If refresh_token exists, try refresh; if it fails, reauthorize PKCE and overwrite
-    if refresh:
-        try:
-            _l.i("[gsheets] auth: refreshing access token")
-            entry = _refresh_with_pkce(cid, refresh)
-            _set_entry(entry)
-            return entry
-        except Exception:
-            _l.w("[gsheets] auth: refresh failed; starting OAuth", exc_info=True)
-            entry = _authorize_with_pkce(cid)
-            _set_entry(entry)
-            return entry
-
-    # Primera vez → iniciar flujo PKCE
-    _l.i("[gsheets] auth: no token found; starting OAuth")
-    entry = _authorize_with_pkce(cid)
-    _set_entry(entry)
-    return entry
-
 def warm_session(client_id: Optional[str] = None) -> bool:
     """Preload/refresh Google Sheets auth once for resident apps."""
     try:
         _ensure_tokens(client_id)
         return True
     except Exception:
-        _l.w("[gsheets] auth warmup failed", exc_info=True)
+        import traceback
+        _l.w("[gsheets] auth warmup failed\n" + traceback.format_exc())
         return False
 
 def _auth_header(client_id: Optional[str] = None) -> Dict[str, str]:

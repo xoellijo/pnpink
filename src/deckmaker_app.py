@@ -30,12 +30,15 @@ import log as LOG
 import inkscape_cli as INKSCAPE
 import prefs
 import raster as RASTER
+import svg_chunks as SVGCHUNKS
 
 _l = LOG
 
 HOST = "127.0.0.1"
 PORT = 48751
 ENV_DIRECT_RUN = "PNPINK_DECKMAKER_DIRECT"
+DEFAULT_SVG_CHUNK_TARGET_BYTES = 64 * 1024 * 1024
+MAX_INKSCAPE_SHELL_WORKERS = 6
 
 
 @dataclass
@@ -78,6 +81,10 @@ def _resolve_output_png_path(template: str) -> str:
     svg_path = _resolve_output_svg_path(template)
     stem, _ext = os.path.splitext(svg_path)
     return os.path.normpath(stem + ".png")
+
+
+def _app_log_path() -> str:
+    return os.path.join(os.path.dirname(__file__), "pnpink.log")
 
 
 def _resolve_profile_output_pdf_path(pdf_path: str, profile: str) -> str:
@@ -166,59 +173,71 @@ def _effective_image_dpi_report(svg_path: str) -> dict:
         import inkex
         import svg as SVG
 
-        with open(svg_path, "rb") as fh:
-            doc = inkex.load_svg(fh.read())
-        root = doc.getroot()
-        images = root.xpath(".//svg:image", namespaces=inkex.NSS)
+        source_info = _resolve_chunked_output_source(svg_path)
+        svg_inputs = []
+        if source_info.get("svg_path"):
+            svg_inputs = [str(source_info.get("svg_path") or "")]
+        else:
+            svg_inputs = [str(p) for p in (source_info.get("chunk_paths") or []) if str(p or "").strip()]
+        if not svg_inputs:
+            raise FileNotFoundError(svg_path)
+
         rows = []
         unresolved = 0
         unreadable = 0
-        for idx, im in enumerate(images, start=1):
-            href = SVG.get_href(im)
-            absref = im.get(SVG.SODI_ABSREF) or ""
-            path = SVG._resolve_image_path(href, absref, svg_path)
-            if not path:
-                unresolved += 1
-                continue
-            bitmap = _bitmap_size_px(path)
-            if not bitmap:
-                unreadable += 1
-                continue
-            w_px, h_px = bitmap
-            placed_w = SVG.parse_len_px(root, im.get("width") or "0")
-            placed_h = SVG.parse_len_px(root, im.get("height") or "0")
-            if placed_w <= 0 or placed_h <= 0:
-                continue
-            try:
-                t = SVG.composed_transform(im)
-                pts = [
-                    t.apply_to_point((0, 0)),
-                    t.apply_to_point((placed_w, 0)),
-                    t.apply_to_point((0, placed_h)),
-                    t.apply_to_point((placed_w, placed_h)),
-                ]
-                xs = [float(p[0]) for p in pts]
-                ys = [float(p[1]) for p in pts]
-                placed_w = max(xs) - min(xs)
-                placed_h = max(ys) - min(ys)
-            except Exception:
-                pass
-            if placed_w <= 0 or placed_h <= 0:
-                continue
-            dpi_x = w_px / (placed_w / 96.0)
-            dpi_y = h_px / (placed_h / 96.0)
-            dpi = min(dpi_x, dpi_y)
-            rows.append({
-                "index": idx,
-                "id": im.get("id") or f"image-{idx}",
-                "path": str(path),
-                "file": Path(path).name,
-                "dpi": float(dpi),
-                "dpi_x": float(dpi_x),
-                "dpi_y": float(dpi_y),
-                "px": (w_px, h_px),
-                "placed_mm": (placed_w * 25.4 / 96.0, placed_h * 25.4 / 96.0),
-            })
+        idx = 0
+        for svg_input in svg_inputs:
+            with open(svg_input, "rb") as fh:
+                doc = inkex.load_svg(fh.read())
+            root = doc.getroot()
+            images = root.xpath(".//svg:image", namespaces=inkex.NSS)
+            for im in images:
+                idx += 1
+                href = SVG.get_href(im)
+                absref = im.get(SVG.SODI_ABSREF) or ""
+                path = SVG._resolve_image_path(href, absref, svg_input)
+                if not path:
+                    unresolved += 1
+                    continue
+                bitmap = _bitmap_size_px(path)
+                if not bitmap:
+                    unreadable += 1
+                    continue
+                w_px, h_px = bitmap
+                placed_w = SVG.parse_len_px(root, im.get("width") or "0")
+                placed_h = SVG.parse_len_px(root, im.get("height") or "0")
+                if placed_w <= 0 or placed_h <= 0:
+                    continue
+                try:
+                    t = SVG.composed_transform(im)
+                    pts = [
+                        t.apply_to_point((0, 0)),
+                        t.apply_to_point((placed_w, 0)),
+                        t.apply_to_point((0, placed_h)),
+                        t.apply_to_point((placed_w, placed_h)),
+                    ]
+                    xs = [float(p[0]) for p in pts]
+                    ys = [float(p[1]) for p in pts]
+                    placed_w = max(xs) - min(xs)
+                    placed_h = max(ys) - min(ys)
+                except Exception:
+                    pass
+                if placed_w <= 0 or placed_h <= 0:
+                    continue
+                dpi_x = w_px / (placed_w / 96.0)
+                dpi_y = h_px / (placed_h / 96.0)
+                dpi = min(dpi_x, dpi_y)
+                rows.append({
+                    "index": idx,
+                    "id": im.get("id") or f"image-{idx}",
+                    "path": str(path),
+                    "file": Path(path).name,
+                    "dpi": float(dpi),
+                    "dpi_x": float(dpi_x),
+                    "dpi_y": float(dpi_y),
+                    "px": (w_px, h_px),
+                    "placed_mm": (placed_w * 25.4 / 96.0, placed_h * 25.4 / 96.0),
+                })
         rows.sort(key=lambda item: item["dpi"])
         return {
             "ok": True,
@@ -339,15 +358,84 @@ def _chunk_page_groups(page_count: int, max_chunks: int = 3) -> list[list[int]]:
     return groups
 
 
+def _resolve_chunked_output_source(svg_path: str) -> dict:
+    src = _normalize_path(svg_path)
+    if not src:
+        return {"svg_path": "", "chunk_paths": [], "manifest_path": "", "chunk_dir": ""}
+    if os.path.isfile(src):
+        return {"svg_path": src, "chunk_paths": [], "manifest_path": "", "chunk_dir": ""}
+    out_dir = os.path.dirname(os.path.abspath(src)) or "."
+    stem = Path(src).stem
+    chunk_dir = os.path.join(out_dir, f"{stem}_chunks")
+    manifest_path = os.path.join(chunk_dir, f"{stem}.chunks.txt")
+    chunk_paths: list[str] = []
+    if os.path.isfile(manifest_path):
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as fh:
+                chunk_paths = [os.path.normpath(line.strip()) for line in fh if line.strip()]
+        except Exception:
+            chunk_paths = []
+    if not chunk_paths and os.path.isdir(chunk_dir):
+        try:
+            chunk_paths = sorted(
+                os.path.normpath(os.path.join(chunk_dir, name))
+                for name in os.listdir(chunk_dir)
+                if re.fullmatch(rf"{re.escape(stem)}\.chunk\d+\.svg", name, re.IGNORECASE)
+            )
+        except Exception:
+            chunk_paths = []
+    chunk_paths = [path for path in chunk_paths if os.path.isfile(path)]
+    return {
+        "svg_path": src if os.path.isfile(src) else "",
+        "chunk_paths": chunk_paths,
+        "manifest_path": manifest_path if os.path.isfile(manifest_path) else "",
+        "chunk_dir": chunk_dir if os.path.isdir(chunk_dir) else "",
+    }
+
+
+def _chunk_plan_from_existing_output(svg_path: str, pdf_path: str) -> dict | None:
+    src_info = _resolve_chunked_output_source(svg_path)
+    chunk_paths = list(src_info.get("chunk_paths") or [])
+    if not chunk_paths:
+        return None
+    import svg_chunks as SVGCHUNKS
+    chunks = []
+    stem = Path(pdf_path).stem
+    chunk_dir = str(src_info.get("chunk_dir") or (os.path.dirname(chunk_paths[0]) if chunk_paths else ""))
+    for idx, chunk_svg_path in enumerate(chunk_paths, start=1):
+        page_count = max(1, _svg_page_count(chunk_svg_path))
+        pdf_chunk_path = os.path.join(chunk_dir, f"{stem}.chunk{idx:02d}.pdf")
+        png_chunk_prefix = os.path.join(chunk_dir, f"{stem}.chunk{idx:02d}.png")
+        chunks.append(
+            SVGCHUNKS.SvgChunk(
+                index=idx,
+                pages=tuple(range(1, page_count + 1)),
+                est_bytes=0,
+                svg_path=os.path.normpath(chunk_svg_path),
+                pdf_path=os.path.normpath(pdf_chunk_path),
+                png_prefix=os.path.normpath(png_chunk_prefix),
+            )
+        )
+    return {
+        "chunks": tuple(chunks),
+        "chunk_dir": os.path.normpath(chunk_dir) if chunk_dir else "",
+        "fixed_images": 0,
+        "source_svg": svg_path,
+        "from_existing_chunks": True,
+        "manifest_path": str(src_info.get("manifest_path") or ""),
+    }
+
+
 def _prepare_export_svg(svg_path: str, *, inkscape_exe: str | None = None, rasterize_filters: bool = False) -> tuple[str, dict]:
     try:
         import inkex
-        import svg as SVG
+        import svg_chunks as SVGCHUNKS
 
         with open(svg_path, "rb") as fh:
             raw = fh.read()
         doc = inkex.load_svg(raw)
-        fixed = int(SVG.absolutize_all_linked_images(doc, svg_path, prefer="fileuri") or 0)
+        normalize_info = SVGCHUNKS.normalize_output_doc(doc, source_svg_path=svg_path, inkscape_exe=inkscape_exe)
+        fixed = int(normalize_info.get("fixed_images") or 0)
 
         fd, tmp_path = tempfile.mkstemp(prefix="pnpink_export_", suffix=".svg")
         os.close(fd)
@@ -375,6 +463,7 @@ def _prepare_export_svg(svg_path: str, *, inkscape_exe: str | None = None, raste
                     doc.write(tmp_path)
 
         info = {"fixed_images": fixed, "source_svg": svg_path}
+        info.update(normalize_info)
         info.update(raster_info)
         return tmp_path, info
     except Exception as ex:
@@ -390,148 +479,209 @@ def _export_pdf_via_inkscape(
     chunk_count: int = 3,
     on_page_pdf_created=None,
 ) -> tuple[bool, dict]:
+    _l.i(
+        "[export.pdf] start svg='%s' pdf='%s' profiles=%s rasterize_filters=%s",
+        svg_path,
+        pdf_path,
+        ",".join(pdf_profiles or ["default"]),
+        "yes" if rasterize_filters else "no",
+    )
+    existing_chunk_plan = None
     if not svg_path or not os.path.isfile(svg_path):
-        return False, {"error": f"SVG output not found: {svg_path}"}
+        existing_chunk_plan = _chunk_plan_from_existing_output(svg_path, pdf_path) if svg_path else None
+        if existing_chunk_plan is None:
+            return False, {"error": f"SVG output not found: {svg_path}"}
     exe = INKSCAPE.find_executable()
     if not exe:
         return False, {"error": "Inkscape executable not found"}
-    export_svg_path, prep_info = _prepare_export_svg(svg_path, inkscape_exe=exe, rasterize_filters=rasterize_filters)
-    if not export_svg_path:
-        return False, prep_info
     selected_profiles = list(pdf_profiles or ["default"])
-    page_count = _svg_page_count(svg_path)
-    use_parallel = int(page_count or 1) >= 6
-    used_chunks = 3 if use_parallel else 1
-    page_groups = _chunk_page_groups(page_count, used_chunks)
-    _cleanup_pdf_outputs(pdf_path, page_count)
+    page_count = _svg_page_count(svg_path) if (svg_path and os.path.isfile(svg_path)) else 0
     _cleanup_profile_pdf_outputs(pdf_path, selected_profiles)
+    try:
+        if os.path.isfile(pdf_path):
+            os.remove(pdf_path)
+    except Exception:
+        pass
     started = time.perf_counter()
     try:
-        gs_futures: list[tuple[str, object]] = []
-        watch_stop = threading.Event()
+        import inkex
         env = INKSCAPE.clean_launch_env()
         exe_dir = os.path.dirname(exe) or None
         from concurrent.futures import ThreadPoolExecutor
         import gs as GS
+        import raster as RASTER
+
+        chunk_plan = existing_chunk_plan or SVGCHUNKS.write_svg_chunks(
+            svg_path,
+            pdf_path,
+            inkscape_exe=exe,
+            target_chunk_bytes=DEFAULT_SVG_CHUNK_TARGET_BYTES,
+        )
+        chunks = list(chunk_plan.get("chunks") or [])
+        if page_count <= 0:
+            page_count = sum(len(getattr(chunk, "pages", ()) or ()) for chunk in chunks)
+        fixed_images = int(chunk_plan.get("fixed_images") or 0)
+        _l.i(
+            "[export.pdf] chunks_ready count=%d fixed_images=%d chunk_dir='%s' existing=%s",
+            len(chunks),
+            fixed_images,
+            str(chunk_plan.get("chunk_dir") or ""),
+            "yes" if bool(chunk_plan.get("from_existing_chunks")) else "no",
+        )
+        if not chunks:
+            return False, {"error": "No SVG chunks were generated", "fixed_images": fixed_images}
+
+        if rasterize_filters:
+            max_shell_workers = max(1, int(prefs.get_inkscape_shell_workers(MAX_INKSCAPE_SHELL_WORKERS)))
+            raster_chunk_workers = max(1, min(len(chunks), max_shell_workers))
+            raster_per_chunk_workers = max(1, max_shell_workers // raster_chunk_workers)
+
+            def _rasterize_chunk(chunk):
+                with open(chunk.svg_path, "rb") as fh:
+                    doc = inkex.load_svg(fh.read())
+                raster_info = RASTER.rasterize_filtered_nodes_for_export(
+                    doc,
+                    chunk.svg_path,
+                    exe,
+                    env,
+                    target_dpi=600,
+                    max_raster_dpi=600,
+                    max_workers=raster_per_chunk_workers,
+                )
+                rasterized = int(raster_info.get("rasterized_filters") or 0)
+                if rasterized > 0:
+                    try:
+                        doc.write(chunk.svg_path, encoding="utf-8", xml_declaration=True)
+                    except TypeError:
+                        doc.write(chunk.svg_path)
+                return chunk, rasterized, raster_info
+
+            rasterized_total = 0
+            with ThreadPoolExecutor(max_workers=raster_chunk_workers) as pool:
+                futs = [(chunk, pool.submit(_rasterize_chunk, chunk)) for chunk in chunks]
+                for chunk, fut in futs:
+                    chunk0, rasterized, raster_info = fut.result()
+                    rasterized_total += rasterized
+                    _l.i(
+                        "[export.pdf] chunk_raster idx=%d pages=%s rasterized_filters=%d raster_dir='%s'",
+                        int(chunk0.index),
+                        ",".join(str(p) for p in chunk0.pages),
+                        rasterized,
+                        str(raster_info.get("raster_dir") or ""),
+                    )
 
         jobs = []
-        for idx, pages in enumerate(page_groups, start=1):
-            part_pdf = pdf_path
-            selector = _page_selector(pages) if use_parallel else None
-            expected_pdfs = [_resolve_output_page_pdf_path(pdf_path, page_no) for page_no in pages] if use_parallel else [pdf_path]
-            argv = INKSCAPE.build_pdf_export_argv(
-                exe,
-                export_svg_path,
-                part_pdf,
-                page_selector=selector,
+        for chunk in chunks:
+            commands = INKSCAPE.build_shell_pdf_commands(
+                chunk.svg_path,
+                chunk.pdf_path,
+                dpi=300,
                 ignore_filters=True,
             )
             jobs.append({
-                "index": idx,
-                "pages": pages,
-                "selector": selector,
-                "pdf_path": part_pdf,
-                "expected_pdfs": expected_pdfs,
-                "argv": argv,
+                "index": int(chunk.index),
+                "pages": list(chunk.pages),
+                "est_bytes": int(chunk.est_bytes or 0),
+                "svg_path": chunk.svg_path,
+                "pdf_path": chunk.pdf_path,
+                "commands": commands,
             })
 
-        def _gs_merge_worker(profile: str) -> object | None:
-            expected_pages = _all_output_page_pdf_paths(pdf_path, page_count)
-            if use_parallel:
-                threshold = max(1, (2 * page_count + 2) // 3)
-                deadline = time.perf_counter() + 600.0
-                while True:
-                    if time.perf_counter() > deadline:
-                        return None
-                    ready_count = 0
-                    for path in expected_pages:
-                        try:
-                            if os.path.isfile(path) and os.path.getsize(path) > 0:
-                                ready_count += 1
-                        except Exception:
-                            pass
-                    if ready_count >= threshold:
-                        break
-                    time.sleep(0.35)
-                if not _wait_for_stable_outputs(expected_pages, stable_checks=2, interval_s=0.45):
-                    return None
-                input_pdfs = expected_pages
-            else:
-                input_pdfs = [pdf_path]
-                if not _wait_for_stable_outputs(input_pdfs, stable_checks=2, interval_s=0.35):
-                    return None
-                if profile == "default":
-                    return SimpleNamespace(ok=True, output_pdf=pdf_path)
-            return GS.merge_pdfs(
-                input_pdfs,
-                _resolve_profile_output_pdf_path(pdf_path, profile),
-                detect_duplicate_images=True,
-                pdf_settings=None if profile == "default" else profile,
-            )
-
-        all_page_pdfs = _all_output_page_pdf_paths(pdf_path, page_count) if use_parallel else [pdf_path]
-
         results = []
-        with ThreadPoolExecutor(max_workers=len(jobs) + max(1, len(selected_profiles))) as pool:
-            watcher_future = pool.submit(
-                _watch_created_pdfs,
-                all_page_pdfs,
-                (on_page_pdf_created or (lambda _path: None)),
-                stop_event=watch_stop,
-            )
-            if use_parallel:
-                for profile in selected_profiles:
-                    gs_futures.append((profile, pool.submit(_gs_merge_worker, profile)))
+        max_shell_workers = max(1, int(prefs.get_inkscape_shell_workers(MAX_INKSCAPE_SHELL_WORKERS)))
+        max_workers = max(1, min(max_shell_workers, len(jobs)))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futs = []
             for job in jobs:
                 job_started = time.perf_counter()
-                fut = pool.submit(INKSCAPE.run, job["argv"], exe_dir=exe_dir, env=env)
+                fut = pool.submit(
+                    INKSCAPE.run_shell_commands,
+                    exe,
+                    job["commands"],
+                    exe_dir=exe_dir,
+                    env=env,
+                )
                 futs.append((job, job_started, fut))
             for job, job_started, fut in futs:
                 rc, msg = fut.result()
                 elapsed = time.perf_counter() - job_started
+                ok = _paths_exist_with_size([job["pdf_path"]])
+                _l.i(
+                    "[export.pdf] chunk_done idx=%d pages=%s rc=%d ok=%s elapsed=%.2fs pdf='%s'",
+                    int(job["index"]),
+                    ",".join(str(p) for p in job["pages"]),
+                    int(rc),
+                    "yes" if ok else "no",
+                    float(elapsed),
+                    job["pdf_path"],
+                )
+                if msg:
+                    _l.i("[export.pdf] chunk_msg idx=%d %s", int(job["index"]), str(msg)[:1200])
                 results.append({
                     "index": job["index"],
                     "pages": list(job["pages"]),
-                    "selector": job["selector"],
                     "pdf_path": job["pdf_path"],
-                    "expected_pdfs": list(job["expected_pdfs"]),
+                    "svg_path": job["svg_path"],
+                    "est_bytes": int(job["est_bytes"]),
                     "returncode": rc,
+                    "message": msg,
                     "elapsed_s": elapsed,
-                    "ok": _paths_exist_with_size(job["expected_pdfs"]),
-                    "soft_ok": rc != 0 and _paths_exist_with_size(job["expected_pdfs"]),
+                    "ok": ok,
+                    "soft_ok": rc != 0 and ok,
                 })
-            watch_stop.set()
-            try:
-                watcher_future.result(timeout=1.0)
-            except Exception:
-                pass
+                if ok and on_page_pdf_created is not None:
+                    try:
+                        on_page_pdf_created(job["pdf_path"])
+                    except Exception:
+                        pass
 
         total_elapsed = time.perf_counter() - started
         failed = [r for r in results if not r["ok"]]
         if failed:
             first = failed[0]
-            err = f"Inkscape PDF export failed for worker {first['index']}"
+            err = f"Inkscape PDF export failed for SVG chunk {first['index']}"
+            _l.w("[export.pdf] failed %s", err)
             return False, {
                 "error": err,
                 "elapsed_s": total_elapsed,
                 "results": results,
                 "page_count": page_count,
-                "chunk_count": used_chunks,
-                "fixed_images": int((prep_info or {}).get("fixed_images") or 0),
-                "export_svg_path": export_svg_path,
+                "chunk_count": len(chunks),
+                "fixed_images": fixed_images,
+                "chunk_dir": str(chunk_plan.get("chunk_dir") or ""),
+                "target_chunk_bytes": int(chunk_plan.get("target_chunk_bytes") or DEFAULT_SVG_CHUNK_TARGET_BYTES),
             }
+
+        ordered_chunk_pdfs = [
+            item["pdf_path"]
+            for item in sorted(results, key=lambda row: (min(row["pages"] or [10**9]), row["index"]))
+        ]
+        def _merge_profile(profile: str):
+            target_pdf = _resolve_profile_output_pdf_path(pdf_path, profile)
+            _l.i(
+                "[export.pdf] merge profile='%s' inputs=%d target='%s'",
+                profile,
+                len(ordered_chunk_pdfs),
+                target_pdf,
+            )
+            res = GS.merge_pdfs(
+                ordered_chunk_pdfs,
+                target_pdf,
+                detect_duplicate_images=True,
+                pdf_settings=None if profile == "default" else profile,
+            )
+            return profile, res
+
         gs_results = []
-        if use_parallel:
-            for profile, fut in gs_futures:
-                res = fut.result()
-                gs_results.append((profile, res))
-        else:
-            for profile in selected_profiles:
-                gs_results.append((profile, _gs_merge_worker(profile)))
+        with ThreadPoolExecutor(max_workers=max(1, len(selected_profiles))) as pool:
+            futs = [pool.submit(_merge_profile, profile) for profile in selected_profiles]
+            for fut in futs:
+                gs_results.append(fut.result())
+
         total_elapsed = time.perf_counter() - started
         failed_profiles = [profile for profile, res in gs_results if not res or not getattr(res, "ok", False)]
         if failed_profiles:
+            _l.w("[export.pdf] profile_failures=%s", ",".join(failed_profiles))
             details = []
             for profile, res in gs_results:
                 if profile not in failed_profiles:
@@ -559,50 +709,32 @@ def _export_pdf_via_inkscape(
                     for profile, res in gs_results
                 ],
                 "page_count": page_count,
-                "chunk_count": used_chunks,
-                "fixed_images": int((prep_info or {}).get("fixed_images") or 0),
-                "export_svg_path": export_svg_path,
+                "chunk_count": len(chunks),
+                "fixed_images": fixed_images,
+                "chunk_dir": str(chunk_plan.get("chunk_dir") or ""),
+                "target_chunk_bytes": int(chunk_plan.get("target_chunk_bytes") or DEFAULT_SVG_CHUNK_TARGET_BYTES),
             }
-        if use_parallel:
-            for tmp_pdf in _all_output_page_pdf_paths(pdf_path, page_count):
-                try:
-                    if os.path.isfile(tmp_pdf):
-                        os.remove(tmp_pdf)
-                except Exception:
-                    pass
         return True, {
             "elapsed_s": total_elapsed,
             "results": results,
             "page_count": page_count,
-            "chunk_count": used_chunks,
+            "chunk_count": len(chunks),
             "pdf_path": pdf_path,
-            "fixed_images": int((prep_info or {}).get("fixed_images") or 0),
-            "export_svg_path": export_svg_path,
-            "used_parallel": use_parallel,
+            "fixed_images": fixed_images,
+            "chunk_dir": str(chunk_plan.get("chunk_dir") or ""),
+            "used_parallel": len(chunks) > 1,
+            "target_chunk_bytes": int(chunk_plan.get("target_chunk_bytes") or DEFAULT_SVG_CHUNK_TARGET_BYTES),
             "gs_outputs": [
                 {"profile": profile, "output_pdf": getattr(res, "output_pdf", ""), "ok": bool(getattr(res, "ok", False))}
                 for profile, res in gs_results
             ],
         }
     except Exception as ex:
+        _l.w("[export.pdf] exception %s", str(ex))
         return False, {
             "error": str(ex),
-            "fixed_images": int((prep_info or {}).get("fixed_images") or 0),
+            "fixed_images": 0,
         }
-    finally:
-        keep_temp = bool(rasterize_filters)
-        if not keep_temp:
-            try:
-                if export_svg_path and os.path.isfile(export_svg_path):
-                    os.remove(export_svg_path)
-            except Exception:
-                pass
-            try:
-                raster_dir = str((prep_info or {}).get("raster_dir") or "")
-                if raster_dir and os.path.isdir(raster_dir):
-                    shutil.rmtree(raster_dir, ignore_errors=True)
-            except Exception:
-                pass
 
 
 def _export_png_pages_via_inkscape(
@@ -612,65 +744,107 @@ def _export_png_pages_via_inkscape(
     chunk_count: int = 3,
     on_page_png_created=None,
 ) -> tuple[bool, dict]:
+    _l.i("[export.png] start svg='%s' png='%s'", svg_path, png_path)
+    existing_chunk_plan = None
     if not svg_path or not os.path.isfile(svg_path):
-        return False, {"error": f"SVG output not found: {svg_path}"}
+        existing_chunk_plan = _chunk_plan_from_existing_output(svg_path, os.path.splitext(png_path)[0] + ".pdf") if svg_path else None
+        if existing_chunk_plan is None:
+            return False, {"error": f"SVG output not found: {svg_path}"}
     exe = INKSCAPE.find_executable()
     if not exe:
         return False, {"error": "Inkscape executable not found"}
-    export_svg_path, prep_info = _prepare_export_svg(svg_path, inkscape_exe=exe, rasterize_filters=False)
-    if not export_svg_path:
-        return False, prep_info
-
-    page_count = _svg_page_count(svg_path)
-    use_parallel = int(page_count or 1) >= 6
-    used_chunks = max(1, min(int(chunk_count or 1), 3)) if use_parallel else 1
-    page_groups = _chunk_page_groups(page_count, used_chunks)
+    page_count = _svg_page_count(svg_path) if (svg_path and os.path.isfile(svg_path)) else 0
     expected_pngs = _all_output_page_png_paths(png_path, page_count)
     _cleanup_png_outputs(png_path, page_count)
     started = time.perf_counter()
 
     try:
-        watch_stop = threading.Event()
         env = INKSCAPE.clean_launch_env()
         exe_dir = os.path.dirname(exe) or None
         from concurrent.futures import ThreadPoolExecutor
 
+        chunk_plan = existing_chunk_plan or SVGCHUNKS.write_svg_chunks(
+            svg_path,
+            os.path.splitext(png_path)[0] + ".pdf",
+            inkscape_exe=exe,
+            target_chunk_bytes=DEFAULT_SVG_CHUNK_TARGET_BYTES,
+        )
+        chunks = list(chunk_plan.get("chunks") or [])
+        if page_count <= 0:
+            page_count = sum(len(getattr(chunk, "pages", ()) or ()) for chunk in chunks)
+            expected_pngs = _all_output_page_png_paths(png_path, page_count)
+        fixed_images = int(chunk_plan.get("fixed_images") or 0)
+        _l.i(
+            "[export.png] chunks_ready count=%d fixed_images=%d chunk_dir='%s' existing=%s",
+            len(chunks),
+            fixed_images,
+            str(chunk_plan.get("chunk_dir") or ""),
+            "yes" if bool(chunk_plan.get("from_existing_chunks")) else "no",
+        )
         jobs = []
-        for idx, pages in enumerate(page_groups, start=1):
-            selector = _page_selector(pages) if page_count > 1 else None
-            expected = [_resolve_output_page_png_path(png_path, page_no) for page_no in pages] if page_count > 1 else [png_path]
-            argv = INKSCAPE.build_png_export_argv(exe, export_svg_path, png_path, page_selector=selector)
+        for chunk in chunks:
+            local_expected = _all_output_page_png_paths(chunk.png_prefix, len(chunk.pages))
+            local_page_exports = [(idx, path) for idx, path in enumerate(local_expected, start=1)]
+            commands = INKSCAPE.build_shell_png_page_commands(chunk.svg_path, local_page_exports, dpi=300)
             jobs.append({
-                "index": idx,
-                "pages": pages,
-                "selector": selector,
-                "png_path": png_path,
-                "expected_pngs": expected,
-                "argv": argv,
+                "index": int(chunk.index),
+                "pages": list(chunk.pages),
+                "chunk_png_prefix": chunk.png_prefix,
+                "expected_pngs": local_expected,
+                "commands": commands,
             })
 
         results = []
-        with ThreadPoolExecutor(max_workers=len(jobs) + 1) as pool:
-            watcher_future = pool.submit(
-                _watch_created_pdfs,
-                expected_pngs,
-                (on_page_png_created or (lambda _path: None)),
-                stop_event=watch_stop,
-            )
+        max_shell_workers = max(1, int(prefs.get_inkscape_shell_workers(MAX_INKSCAPE_SHELL_WORKERS)))
+        with ThreadPoolExecutor(max_workers=max(1, min(max_shell_workers, len(jobs)))) as pool:
             futs = []
             for job in jobs:
                 job_started = time.perf_counter()
-                fut = pool.submit(INKSCAPE.run, job["argv"], exe_dir=exe_dir, env=env)
+                fut = pool.submit(
+                    INKSCAPE.run_shell_commands,
+                    exe,
+                    job["commands"],
+                    exe_dir=exe_dir,
+                    env=env,
+                )
                 futs.append((job, job_started, fut))
             for job, job_started, fut in futs:
                 rc, msg = fut.result()
                 elapsed = time.perf_counter() - job_started
                 ok = _paths_exist_with_size(job["expected_pngs"])
+                _l.i(
+                    "[export.png] chunk_done idx=%d pages=%s rc=%d ok=%s elapsed=%.2fs prefix='%s'",
+                    int(job["index"]),
+                    ",".join(str(p) for p in job["pages"]),
+                    int(rc),
+                    "yes" if ok else "no",
+                    float(elapsed),
+                    job["chunk_png_prefix"],
+                )
+                if msg:
+                    _l.i("[export.png] chunk_msg idx=%d %s", int(job["index"]), str(msg)[:1200])
+                if ok:
+                    ordered_local = list(job["expected_pngs"])
+                    for page_no, src in zip(job["pages"], ordered_local):
+                        final_path = _resolve_output_page_png_path(png_path, page_no) if page_count > 1 else _normalize_path(png_path)
+                        try:
+                            if os.path.isfile(final_path):
+                                os.remove(final_path)
+                        except Exception:
+                            pass
+                        try:
+                            shutil.move(src, final_path)
+                        except Exception:
+                            pass
+                        if on_page_png_created is not None and os.path.isfile(final_path):
+                            try:
+                                on_page_png_created(final_path)
+                            except Exception:
+                                pass
                 results.append({
                     "index": job["index"],
                     "pages": list(job["pages"]),
-                    "selector": job["selector"],
-                    "png_path": job["png_path"],
+                    "png_path": job["chunk_png_prefix"],
                     "expected_pngs": list(job["expected_pngs"]),
                     "returncode": rc,
                     "message": msg,
@@ -678,45 +852,36 @@ def _export_png_pages_via_inkscape(
                     "ok": ok,
                     "soft_ok": rc != 0 and ok,
                 })
-            watch_stop.set()
-            try:
-                watcher_future.result(timeout=1.0)
-            except Exception:
-                pass
 
         total_elapsed = time.perf_counter() - started
         failed = [r for r in results if not r["ok"]]
         if failed:
             first = failed[0]
+            _l.w("[export.png] failed worker=%d", int(first["index"]))
             return False, {
                 "error": f"Inkscape PNG export failed for worker {first['index']}",
                 "elapsed_s": total_elapsed,
                 "results": results,
                 "page_count": page_count,
-                "chunk_count": used_chunks,
-                "fixed_images": int((prep_info or {}).get("fixed_images") or 0),
+                "chunk_count": len(chunks),
+                "fixed_images": fixed_images,
             }
         return True, {
             "elapsed_s": total_elapsed,
             "results": results,
             "page_count": page_count,
-            "chunk_count": used_chunks,
+            "chunk_count": len(chunks),
             "png_path": png_path,
             "png_outputs": expected_pngs,
-            "fixed_images": int((prep_info or {}).get("fixed_images") or 0),
-            "used_parallel": use_parallel,
+            "fixed_images": fixed_images,
+            "used_parallel": len(chunks) > 1,
         }
     except Exception as ex:
+        _l.w("[export.png] exception %s", str(ex))
         return False, {
             "error": str(ex),
-            "fixed_images": int((prep_info or {}).get("fixed_images") or 0),
+            "fixed_images": 0,
         }
-    finally:
-        try:
-            if export_svg_path and os.path.isfile(export_svg_path):
-                os.remove(export_svg_path)
-        except Exception:
-            pass
 
 
 def _send_request(req: AppRequest, timeout: float = 0.35) -> bool:
@@ -890,6 +1055,8 @@ class DeckMakerApp:
         self._queue: "queue.Queue[AppRequest]" = queue.Queue()
         self._server_stop = threading.Event()
         self._render_thread: Optional[threading.Thread] = None
+        self._activity_stop = threading.Event()
+        self._activity_thread: Optional[threading.Thread] = None
 
         self.template_var = tk.StringVar(value=(initial.template if initial else ""))
         self.sheet_id_var = tk.StringVar(value=(initial.sheet_id if initial else ""))
@@ -901,6 +1068,8 @@ class DeckMakerApp:
         self.export_pdf_var = tk.BooleanVar(value=prefs.get_export_pdf())
         self.export_png_var = tk.BooleanVar(value=prefs.get_export_png())
         self.pdf_raster_filters_var = tk.BooleanVar(value=prefs.get_pdf_raster_filters())
+        self.split_svg_output_var = tk.BooleanVar(value=prefs.get_split_svg_output())
+        self.split_svg_chunk_mb_var = tk.StringVar(value=str(prefs.get_split_svg_chunk_mb()))
         self.pdf_profile_vars = {
             "default": tk.BooleanVar(value=False),
             "prepress": tk.BooleanVar(value=False),
@@ -910,6 +1079,13 @@ class DeckMakerApp:
         self._autorun_serial = 0
         self._run_started_at: float | None = None
         self._post_create_busy = False
+        self._web_activity_stats = {
+            "wkmc_fetched": 0,
+            "web_cached": 0,
+            "wkmc_failed": 0,
+            "raster_jobs": 0,
+            "raster_chunks": 0,
+        }
 
         self._build_ui()
         self._load_pdf_profile_prefs()
@@ -1010,15 +1186,38 @@ class DeckMakerApp:
             command=self._on_pdf_export_prefs_changed,
         ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
+        split_box = ttk.LabelFrame(prefs_tab, text="SVG Output", padding=8)
+        split_box.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        split_box.columnconfigure(1, weight=1)
+        ttk.Checkbutton(
+            split_box,
+            text="Split SVG",
+            variable=self.split_svg_output_var,
+            command=self._on_svg_chunk_prefs_changed,
+        ).grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(split_box, text="Chunk MB").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
+        chunk_spin = ttk.Spinbox(
+            split_box,
+            from_=1,
+            to=2048,
+            increment=1,
+            textvariable=self.split_svg_chunk_mb_var,
+            width=8,
+            command=self._on_svg_chunk_prefs_changed,
+        )
+        chunk_spin.grid(row=1, column=1, sticky="w", pady=(8, 0))
+        chunk_spin.bind("<FocusOut>", lambda _e: self._on_svg_chunk_prefs_changed())
+        chunk_spin.bind("<Return>", lambda _e: self._on_svg_chunk_prefs_changed())
+
         ttk.Label(
             prefs_tab,
             text="All selected PDF profiles are generated after the page PDFs are ready.",
             wraplength=420,
             justify="left",
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         auto_box = ttk.LabelFrame(prefs_tab, text="Automation", padding=8)
-        auto_box.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        auto_box.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         ttk.Checkbutton(auto_box, text="Auto Create", variable=self.auto_create_var, command=self._on_auto_prefs_changed).grid(row=0, column=0, sticky="w")
         ttk.Checkbutton(auto_box, text="Auto Open", variable=self.auto_open_var, command=self._on_auto_prefs_changed).grid(row=1, column=0, sticky="w")
         ttk.Checkbutton(auto_box, text="Auto Export", variable=self.auto_export_var, command=self._on_auto_prefs_changed).grid(row=2, column=0, sticky="w")
@@ -1061,6 +1260,118 @@ class DeckMakerApp:
         except Exception:
             pass
 
+    def _start_web_activity_monitor(self):
+        self._stop_web_activity_monitor()
+        self._activity_stop = threading.Event()
+        self._web_activity_stats = {
+            "wkmc_fetched": 0,
+            "web_cached": 0,
+            "wkmc_failed": 0,
+            "raster_jobs": 0,
+            "raster_chunks": 0,
+        }
+        log_path = _app_log_path()
+
+        def _emit(msg: str):
+            try:
+                self.root.after(0, lambda msg=msg: self._log(msg))
+            except Exception:
+                pass
+
+        def worker():
+            try:
+                pos = 0
+                try:
+                    if os.path.isfile(log_path):
+                        pos = os.path.getsize(log_path)
+                except Exception:
+                    pos = 0
+                while not self._activity_stop.is_set():
+                    if not os.path.isfile(log_path):
+                        time.sleep(0.25)
+                        continue
+                    try:
+                        with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
+                            fh.seek(pos)
+                            chunk = fh.read()
+                            pos = fh.tell()
+                    except Exception:
+                        time.sleep(0.25)
+                        continue
+                    if not chunk:
+                        time.sleep(0.25)
+                        continue
+                    for raw_line in chunk.splitlines():
+                        line = str(raw_line or "").strip()
+                        if not line:
+                            continue
+                        if "[sources] wkmc batch prefetched" in line:
+                            msg = line.split("[sources] wkmc batch prefetched", 1)[-1].strip()
+                            _emit(f"Wikimedia batch prefetch {msg}")
+                            continue
+                        if "[sources] virtual prefetch scheduled:" in line:
+                            m = re.search(r"virtual prefetch scheduled:\s*(\d+)\s*expr", line)
+                            if m:
+                                _emit(f"Preparing {m.group(1)} web source expression(s)...")
+                            continue
+                        if "[sources] web prefetch scheduled:" in line:
+                            m = re.search(r"web prefetch scheduled:\s*(\d+)\s*url", line)
+                            if m:
+                                _emit(f"Preparing {m.group(1)} direct web download(s)...")
+                            continue
+                        if "[sources] wkmc fetched query=" in line:
+                            self._web_activity_stats["wkmc_fetched"] += 1
+                            n = int(self._web_activity_stats["wkmc_fetched"])
+                            if n <= 3 or (n % 10) == 0:
+                                _emit(f"Wikimedia resolved {n} item(s)...")
+                            continue
+                        if "[sources] web cached ->" in line:
+                            self._web_activity_stats["web_cached"] += 1
+                            n = int(self._web_activity_stats["web_cached"])
+                            if n <= 3 or (n % 5) == 0:
+                                _emit(f"Downloaded {n} web asset(s)...")
+                            continue
+                        if "[sources] wkmc fetch failed" in line:
+                            self._web_activity_stats["wkmc_failed"] += 1
+                            n = int(self._web_activity_stats["wkmc_failed"])
+                            if n <= 3 or (n % 5) == 0:
+                                _emit(f"Wikimedia retries/failures: {n}")
+                            continue
+                        if "[raster] export-id png jobs=" in line:
+                            m = re.search(r"export-id png jobs=%d ids=%s\s+(\d+)", line)
+                            if not m:
+                                m = re.search(r"export-id png jobs=\s*(\d+)", line)
+                            if m:
+                                jobs = int(m.group(1))
+                                self._web_activity_stats["raster_jobs"] += jobs
+                                if jobs > 0:
+                                    _emit(f"Rasterizing filtered nodes: {jobs} PNG job(s)...")
+                            continue
+                        if "[export.pdf] chunk_raster" in line:
+                            self._web_activity_stats["raster_chunks"] += 1
+                            m = re.search(r"rasterized_filters=%d.*?\s(\d+)\s", line)
+                            if not m:
+                                m = re.search(r"rasterized_filters=\s*(\d+)", line)
+                            if m:
+                                _emit(
+                                    f"Raster chunk {self._web_activity_stats['raster_chunks']} done: "
+                                    f"{int(m.group(1))} filter node(s)"
+                                )
+                            else:
+                                _emit(f"Raster chunk {self._web_activity_stats['raster_chunks']} done")
+                            continue
+            except Exception:
+                pass
+
+        self._activity_thread = threading.Thread(target=worker, name="pnpink-web-activity", daemon=True)
+        self._activity_thread.start()
+
+    def _stop_web_activity_monitor(self):
+        try:
+            self._activity_stop.set()
+        except Exception:
+            pass
+
     def _load_pdf_profile_prefs(self):
         selected = set(prefs.get_pdf_profiles())
         prefs.set_pdf_profiles([key for key in ("default", "prepress") if key in selected])
@@ -1083,6 +1394,21 @@ class DeckMakerApp:
         self._log(
             "Preference saved: PDF raster filters = "
             f"{'on' if self.pdf_raster_filters_var.get() else 'off'}"
+        )
+
+    def _on_svg_chunk_prefs_changed(self):
+        prefs.set_split_svg_output(bool(self.split_svg_output_var.get()))
+        try:
+            chunk_mb = int(str(self.split_svg_chunk_mb_var.get() or "").strip())
+        except Exception:
+            chunk_mb = prefs.get_split_svg_chunk_mb()
+        chunk_mb = max(1, min(chunk_mb, 2048))
+        self.split_svg_chunk_mb_var.set(str(chunk_mb))
+        prefs.set_split_svg_chunk_mb(chunk_mb)
+        self._log(
+            "Preference saved: split SVG = "
+            f"{'on' if self.split_svg_output_var.get() else 'off'}, "
+            f"chunk_mb={chunk_mb}"
         )
 
     def _selected_export_formats(self) -> list[str]:
@@ -1330,6 +1656,7 @@ class DeckMakerApp:
             import engine as ENG
             from deckmaker import __version__ as deckmaker_version
 
+            self._start_web_activity_monitor()
             self.root.after(0, lambda: self._log("Loading template and dataset..."))
             effect = _EngineEffect(req.template, req.sheet_id, req.sheet_range, req.log_level)
             self.root.after(0, lambda: self._log("Rendering output SVG..."))
@@ -1339,7 +1666,7 @@ class DeckMakerApp:
                 if req.sheet_id:
                     DSTATE.set_gsheet_for_svg(req.template, req.sheet_id, req.sheet_range, access_mode)
             except Exception:
-                _l.w("[deckmaker_app] dataset state save failed", exc_info=True)
+                _l.w("[deckmaker_app] dataset state save failed\n" + traceback.format_exc())
             dpi_report = _effective_image_dpi_report(_resolve_output_svg_path(req.template))
             self.root.after(0, lambda dpi_report=dpi_report: self._log_image_dpi_preflight(dpi_report))
             elapsed = (time.perf_counter() - self._run_started_at) if self._run_started_at else 0.0
@@ -1348,6 +1675,8 @@ class DeckMakerApp:
         except Exception as ex:
             _l.w("[deckmaker_app] render failed:\n" + traceback.format_exc())
             self.root.after(0, lambda: self._render_done(f"Error: {ex}"))
+        finally:
+            self._stop_web_activity_monitor()
 
     def _render_done(self, status: str):
         self.progress.stop()
@@ -1392,10 +1721,15 @@ class DeckMakerApp:
         label = ", ".join(fmt.upper() if fmt == "pdf" else "PNG" for fmt in formats)
         self.status_var.set(f"Exporting {label}...")
         self._log(("Auto export" if auto else "Export") + f" started: {label}")
+        _l.i(
+            "[export.ui] start auto=%s formats=%s profiles=%s",
+            "yes" if auto else "no",
+            ",".join(formats),
+            ",".join(options.pdf_profiles or ("default",)),
+        )
         self._log(
             "Export options: "
-            f"profiles={','.join(options.pdf_profiles or ('default',))}; "
-            f"raster_filters={'on' if options.pdf_raster_filters else 'off'}"
+            f"profiles={','.join(options.pdf_profiles or ('default',))}"
         )
 
     def _export_clicked(self):
@@ -1412,128 +1746,142 @@ class DeckMakerApp:
         threading.Thread(target=self._export_worker, args=(template, options), daemon=True).start()
 
     def _export_worker(self, template: str, options: ExportOptions):
-        svg_path = _resolve_output_svg_path(template)
-        formats = list(options.formats)
-        started = time.perf_counter()
-        self.root.after(0, lambda: self._log(f"Export source: {os.path.basename(svg_path)}"))
-
-        failures: list[str] = []
-
-        if "pdf" in formats:
-            pdf_path = _resolve_output_pdf_path(template)
-            selected_profiles = list(options.pdf_profiles or ("default",))
-            self.root.after(0, lambda: self._log(f"PDF profiles: {', '.join(selected_profiles)}"))
-            raster_filters_enabled = bool(options.pdf_raster_filters)
-            self.root.after(0, lambda raster_filters_enabled=raster_filters_enabled: self._log(
-                f"PDF raster filters: {'on' if raster_filters_enabled else 'off'}"
-            ))
-
-            def _page_pdf_created(path: str):
-                self.root.after(0, lambda path=path: self._log(f"Created page PDF: {os.path.basename(path)}"))
-
-            ok, info = _export_pdf_via_inkscape(
+        try:
+            self._start_web_activity_monitor()
+            svg_path = _resolve_output_svg_path(template)
+            formats = list(options.formats)
+            started = time.perf_counter()
+            _l.i(
+                "[export.worker] start template='%s' svg='%s' formats=%s",
+                template,
                 svg_path,
-                pdf_path,
-                pdf_profiles=selected_profiles,
-                rasterize_filters=raster_filters_enabled,
-                on_page_pdf_created=_page_pdf_created,
+                ",".join(formats),
             )
-            fixed_images = int((info or {}).get("fixed_images") or 0) if isinstance(info, dict) else 0
-            if fixed_images > 0:
-                self.root.after(0, lambda fixed_images=fixed_images: self._log(
-                    f"PDF temp SVG rewrote {fixed_images} linked image(s) to file://"
+            self.root.after(0, lambda: self._log(f"Export source: {os.path.basename(svg_path)}"))
+            source_info = _resolve_chunked_output_source(svg_path)
+            prepared_svg_path = svg_path
+            prepared_info = {}
+            if source_info.get("svg_path"):
+                try:
+                    prepared_svg_path, prepared_info = _prepare_export_svg(svg_path)
+                    if not prepared_svg_path:
+                        prepared_svg_path = svg_path
+                        prepared_info = {}
+                except Exception:
+                    prepared_info = {}
+            elif source_info.get("chunk_paths"):
+                prepared_info = {"chunk_dir": str(source_info.get("chunk_dir") or ""), "chunk_count": len(source_info.get("chunk_paths") or [])}
+            fixed_images_prepared = int((prepared_info or {}).get("fixed_images") or 0) if isinstance(prepared_info, dict) else 0
+            if fixed_images_prepared > 0:
+                self.root.after(0, lambda fixed_images_prepared=fixed_images_prepared: self._log(
+                    f"Export temp SVG rewrote {fixed_images_prepared} linked image(s) to file://"
                 ))
-            temp_svg = str((info or {}).get("export_svg_path") or "") if isinstance(info, dict) else ""
-            if temp_svg and raster_filters_enabled:
-                self.root.after(0, lambda temp_svg=temp_svg: self._log(f"PDF temp SVG kept: {temp_svg}"))
-            raster_dir = str((info or {}).get("raster_dir") or "") if isinstance(info, dict) else ""
-            if raster_dir and raster_filters_enabled:
-                self.root.after(0, lambda raster_dir=raster_dir: self._log(f"PDF raster temp dir kept: {raster_dir}"))
-            raster_candidates = int((info or {}).get("raster_filter_candidates") or 0) if isinstance(info, dict) else 0
-            if raster_filters_enabled:
-                self.root.after(0, lambda raster_candidates=raster_candidates: self._log(
-                    f"PDF raster filter candidates: {raster_candidates}"
+            elif source_info.get("chunk_paths"):
+                self.root.after(0, lambda count=len(source_info.get("chunk_paths") or []): self._log(
+                    f"Using existing chunked SVG output ({count} chunk(s))"
                 ))
-            rasterized_filters = int((info or {}).get("rasterized_filters") or 0) if isinstance(info, dict) else 0
-            if rasterized_filters > 0:
-                raster_dpis = [int(v) for v in list((info or {}).get("raster_dpis") or []) if int(v) > 0]
-                if raster_dpis:
-                    dpi_label = f", dpi {min(raster_dpis)}-{max(raster_dpis)}"
-                else:
-                    dpi_label = ""
-                self.root.after(0, lambda rasterized_filters=rasterized_filters, dpi_label=dpi_label: self._log(
-                    f"PDF temp SVG rasterized {rasterized_filters} filtered node(s){dpi_label}"
-                ))
-                raster_ids = [str(v) for v in list((info or {}).get("raster_ids") or []) if str(v).strip()]
-                if raster_ids:
-                    shown = ", ".join(raster_ids[:8])
-                    more = "" if len(raster_ids) <= 8 else f", +{len(raster_ids) - 8} more"
-                    self.root.after(0, lambda shown=shown, more=more: self._log(
-                        f"PDF raster filters nodes: {shown}{more}"
-                    ))
-            if ok:
-                elapsed = float((info or {}).get("elapsed_s") or 0.0)
-                page_count = int((info or {}).get("page_count") or 0)
-                used_chunks = int((info or {}).get("chunk_count") or 1)
-                mode_label = "x3" if used_chunks >= 3 else "x1"
-                self.root.after(0, lambda elapsed=elapsed, page_count=page_count, mode_label=mode_label: self._log(
-                    f"PDF export done in {elapsed:.2f}s across {page_count} page(s) using {mode_label}"
-                ))
-                for item in list((info or {}).get("gs_outputs") or []):
-                    profile = str(item.get("profile") or "default")
-                    output_pdf = str(item.get("output_pdf") or "")
-                    if output_pdf:
-                        self.root.after(0, lambda profile=profile, output_pdf=output_pdf: self._log(
-                            f"PDF profile {profile} -> {os.path.basename(output_pdf)}"
+
+            failures: list[str] = []
+            try:
+                if "pdf" in formats:
+                    pdf_path = _resolve_output_pdf_path(template)
+                    selected_profiles = list(options.pdf_profiles or ("default",))
+                    self.root.after(0, lambda: self._log(f"PDF profiles: {', '.join(selected_profiles)}"))
+                    self.root.after(
+                        0,
+                        lambda enabled=bool(options.pdf_raster_filters): self._log(
+                            "PDF filter mode: raster chunk filters" if enabled else "PDF filter mode: ignore filters"
+                        ),
+                    )
+
+                    def _page_pdf_created(path: str):
+                        self.root.after(0, lambda path=path: self._log(f"Created chunk PDF: {os.path.basename(path)}"))
+
+                    ok, info = _export_pdf_via_inkscape(
+                        prepared_svg_path,
+                        pdf_path,
+                        pdf_profiles=selected_profiles,
+                        rasterize_filters=bool(options.pdf_raster_filters),
+                        on_page_pdf_created=_page_pdf_created,
+                    )
+                    chunk_dir = str((info or {}).get("chunk_dir") or "") if isinstance(info, dict) else ""
+                    if chunk_dir:
+                        self.root.after(0, lambda chunk_dir=chunk_dir: self._log(f"PDF chunk dir: {chunk_dir}"))
+                    if ok:
+                        elapsed = float((info or {}).get("elapsed_s") or 0.0)
+                        page_count = int((info or {}).get("page_count") or 0)
+                        used_chunks = int((info or {}).get("chunk_count") or 1)
+                        self.root.after(0, lambda elapsed=elapsed, page_count=page_count, used_chunks=used_chunks: self._log(
+                            f"PDF export done in {elapsed:.2f}s across {page_count} page(s) using {used_chunks} SVG chunk(s)"
                         ))
-            else:
-                failures.append("PDF")
-                err = str((info or {}).get("error") or "PDF export failed")
-                elapsed = float((info or {}).get("elapsed_s") or 0.0) if isinstance(info, dict) else 0.0
-                if elapsed > 0:
-                    self.root.after(0, lambda elapsed=elapsed: self._log(f"PDF export failed after {elapsed:.2f}s"))
-                self.root.after(0, lambda err=err: self._log(err))
+                        for item in list((info or {}).get("gs_outputs") or []):
+                            profile = str(item.get("profile") or "default")
+                            output_pdf = str(item.get("output_pdf") or "")
+                            if output_pdf:
+                                self.root.after(0, lambda profile=profile, output_pdf=output_pdf: self._log(
+                                    f"PDF profile {profile} -> {os.path.basename(output_pdf)}"
+                                ))
+                    else:
+                        failures.append("PDF")
+                        err = str((info or {}).get("error") or "PDF export failed")
+                        elapsed = float((info or {}).get("elapsed_s") or 0.0) if isinstance(info, dict) else 0.0
+                        if elapsed > 0:
+                            self.root.after(0, lambda elapsed=elapsed: self._log(f"PDF export failed after {elapsed:.2f}s"))
+                        self.root.after(0, lambda err=err: self._log(err))
 
-        if "png" in formats:
-            png_path = _resolve_output_png_path(template)
+                if "png" in formats:
+                    png_path = _resolve_output_png_path(template)
 
-            def _page_png_created(path: str):
-                self.root.after(0, lambda path=path: self._log(f"Created page PNG: {os.path.basename(path)}"))
+                    def _page_png_created(path: str):
+                        self.root.after(0, lambda path=path: self._log(f"Created page PNG: {os.path.basename(path)}"))
 
-            ok, info = _export_png_pages_via_inkscape(
-                svg_path,
-                png_path,
-                on_page_png_created=_page_png_created,
-            )
-            fixed_images = int((info or {}).get("fixed_images") or 0) if isinstance(info, dict) else 0
-            if fixed_images > 0:
-                self.root.after(0, lambda fixed_images=fixed_images: self._log(
-                    f"PNG temp SVG rewrote {fixed_images} linked image(s) to file://"
-                ))
-            if ok:
-                elapsed = float((info or {}).get("elapsed_s") or 0.0)
-                page_count = int((info or {}).get("page_count") or 0)
-                used_chunks = int((info or {}).get("chunk_count") or 1)
-                mode_label = "x3" if used_chunks >= 3 else "x1"
-                self.root.after(0, lambda elapsed=elapsed, page_count=page_count, mode_label=mode_label: self._log(
-                    f"PNG export done in {elapsed:.2f}s across {page_count} page(s) using {mode_label}"
-                ))
-            else:
-                failures.append("PNG")
-                err = str((info or {}).get("error") or "PNG export failed")
-                elapsed = float((info or {}).get("elapsed_s") or 0.0) if isinstance(info, dict) else 0.0
-                if elapsed > 0:
-                    self.root.after(0, lambda elapsed=elapsed: self._log(f"PNG export failed after {elapsed:.2f}s"))
-                self.root.after(0, lambda err=err: self._log(err))
+                    ok, info = _export_png_pages_via_inkscape(
+                        prepared_svg_path,
+                        png_path,
+                        on_page_png_created=_page_png_created,
+                    )
+                    if ok:
+                        elapsed = float((info or {}).get("elapsed_s") or 0.0)
+                        page_count = int((info or {}).get("page_count") or 0)
+                        used_chunks = int((info or {}).get("chunk_count") or 1)
+                        mode_label = "x3" if used_chunks >= 3 else "x1"
+                        self.root.after(0, lambda elapsed=elapsed, page_count=page_count, mode_label=mode_label: self._log(
+                            f"PNG export done in {elapsed:.2f}s across {page_count} page(s) using {mode_label}"
+                        ))
+                    else:
+                        failures.append("PNG")
+                        err = str((info or {}).get("error") or "PNG export failed")
+                        elapsed = float((info or {}).get("elapsed_s") or 0.0) if isinstance(info, dict) else 0.0
+                        if elapsed > 0:
+                            self.root.after(0, lambda elapsed=elapsed: self._log(f"PNG export failed after {elapsed:.2f}s"))
+                        self.root.after(0, lambda err=err: self._log(err))
+            finally:
+                try:
+                    if prepared_svg_path and prepared_svg_path != svg_path and os.path.isfile(prepared_svg_path):
+                        os.remove(prepared_svg_path)
+                except Exception:
+                    pass
 
-        total_elapsed = time.perf_counter() - started
-        if failures:
-            self.root.after(0, lambda failures=failures: self._render_done(f"Export failed: {', '.join(failures)}"))
-            return
-        self.root.after(0, lambda total_elapsed=total_elapsed: self._render_done(f"Export ({total_elapsed:.2f}s)"))
+            total_elapsed = time.perf_counter() - started
+            if failures:
+                _l.w(
+                    "[export.worker] failed failures=%s elapsed=%.2fs",
+                    ",".join(failures),
+                    float(total_elapsed),
+                )
+                self.root.after(0, lambda failures=failures: self._render_done(f"Export failed: {', '.join(failures)}"))
+                return
+            _l.i("[export.worker] ok elapsed=%.2fs", float(total_elapsed))
+            self.root.after(0, lambda total_elapsed=total_elapsed: self._render_done(f"Export ({total_elapsed:.2f}s)"))
+        except Exception as ex:
+            _l.w("[export.worker] exception %s\n%s", str(ex), traceback.format_exc())
+            self.root.after(0, lambda ex=ex: self._render_done(f"Export failed: {ex}"))
+        finally:
+            self._stop_web_activity_monitor()
 
     def _on_close(self):
         self._server_stop.set()
+        self._stop_web_activity_monitor()
         self.root.destroy()
 
     def run(self):

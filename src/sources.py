@@ -496,6 +496,8 @@ class SourceManager:
         self._dl_pool = ThreadPoolExecutor(max_workers=NET.DEFAULT_HOST_WORKERS, thread_name_prefix="pnpink-src")
         self._dl_futures: Dict[str, Future] = {}
         self._dl_done: Dict[str, Optional[Path]] = {}
+        self._virtual_futures: Dict[str, Future] = {}
+        self._virtual_done: Set[str] = set()
 
         # doc unit conversion helpers
         try:
@@ -714,6 +716,33 @@ class SourceManager:
             pass
         return None
 
+    def _extract_virtual_from_token(self, token: str) -> Optional[str]:
+        s = str(token or "").strip()
+        if not s:
+            return None
+        try:
+            import render_tokens as RTK
+            s_core, _tr_spec = RTK.split_transform_suffixes(s)
+            src_val, _sel, _ops, _tag = RTK.parse_source_token_with_selector(s_core)
+            src = str(src_val or "").strip()
+        except Exception:
+            src = ""
+        if not src:
+            src = s
+        sl = src.lower()
+        if sl.startswith(("wkmc://", "pxby://", "oclp://", "pnp://")):
+            return src
+        return None
+
+    def _extract_virtual_from_source_body(self, body: str) -> Optional[str]:
+        b = (body or "").strip()
+        if not b:
+            return None
+        expr = self._extract_virtual_from_token(f"@{{{b}}}")
+        if expr:
+            return expr
+        return self._extract_virtual_from_token(b)
+
     def extract_web_urls_from_text(self, text: str) -> Set[str]:
         s = str(text or "")
         out: Set[str] = set()
@@ -732,21 +761,110 @@ class SourceManager:
                 out.add(u)
         return out
 
+    def extract_virtual_web_sources_from_text(self, text: str) -> Set[str]:
+        s = str(text or "")
+        out: Set[str] = set()
+        s_trim = s.strip()
+        expr0 = self._extract_virtual_from_token(s_trim)
+        if expr0:
+            out.add(expr0)
+
+        for m in re.finditer(r"@\{\s*([^}]*)\s*\}", s):
+            expr = self._extract_virtual_from_source_body(m.group(1))
+            if expr:
+                out.add(expr)
+
+        for m in re.finditer(r"(?:^|[\s])(?:Source|S)\s*\{\s*([^}]*)\s*\}", s, re.I):
+            expr = self._extract_virtual_from_source_body(m.group(1))
+            if expr:
+                out.add(expr)
+        return out
+
+    def _resolve_virtual_prefetch(self, expr: str) -> None:
+        raw = str(expr or "").strip()
+        if not raw:
+            return
+        rl = raw.lower()
+        if rl.startswith("wkmc://"):
+            self.resolve_wkmc_urls(raw)
+            return
+        if rl.startswith("pxby://"):
+            self.resolve_pxby_urls(raw)
+            return
+        if rl.startswith("oclp://"):
+            self.resolve_oclp_urls(raw)
+            return
+        if rl.startswith("pnp://"):
+            self.resolve_pnp_urls(raw)
+            return
+
+    def _ensure_virtual_future(self, expr: str) -> Future:
+        raw = str(expr or "").strip()
+        with self._dl_lock:
+            if raw in self._virtual_done:
+                f = Future()
+                f.set_result(True)
+                return f
+            f0 = self._virtual_futures.get(raw)
+            if f0 is not None:
+                return f0
+
+            def _job():
+                try:
+                    self._resolve_virtual_prefetch(raw)
+                finally:
+                    with self._dl_lock:
+                        self._virtual_done.add(raw)
+                        self._virtual_futures.pop(raw, None)
+                return True
+
+            f = self._dl_pool.submit(_job)
+            self._virtual_futures[raw] = f
+            return f
+
     def prefetch_dataset_rows(self, rows: List[dict]) -> int:
         urls: Set[str] = set()
+        virtuals: Set[str] = set()
         for row in (rows or []):
             if not isinstance(row, dict):
                 continue
             cells = row.get("cells")
             if isinstance(cells, list):
                 for v in cells:
-                    urls.update(self.extract_web_urls_from_text("" if v is None else str(v)))
+                    sv = "" if v is None else str(v)
+                    urls.update(self.extract_web_urls_from_text(sv))
+                    virtuals.update(self.extract_virtual_web_sources_from_text(sv))
             for k, v in row.items():
                 if k == "cells" or v is None:
                     continue
                 if isinstance(v, str):
                     urls.update(self.extract_web_urls_from_text(v))
-        return self.prefetch_urls(sorted(urls))
+                    virtuals.update(self.extract_virtual_web_sources_from_text(v))
+        n = self.prefetch_urls(sorted(urls))
+        wkmc_exprs = sorted(expr for expr in virtuals if str(expr or "").strip().lower().startswith("wkmc://"))
+        batch_prefetched = 0
+        if wkmc_exprs:
+            try:
+                batch_prefetched = int(self.web.prefetch_wkmc_file_exprs(wkmc_exprs) or 0)
+            except Exception as ex:
+                _l.w(f"[sources] wkmc batch prefetch failed: {ex}")
+        vcount = 0
+        for expr in sorted(virtuals):
+            if str(expr or "").strip().lower().startswith("wkmc://"):
+                try:
+                    p = self.web._parse_wkmc_expr(expr)
+                    if p is not None:
+                        q0, s0 = p
+                        raw0 = self.web._wkmc_read_cache(q0, s0)
+                        if raw0 is not None and bool((raw0 or {}).get("fetched")):
+                            continue
+                except Exception:
+                    pass
+            self._ensure_virtual_future(expr)
+            vcount += 1
+        if vcount:
+            _l.i(f"[sources] virtual prefetch scheduled: {vcount} expr(s)")
+        return n + vcount + batch_prefetched
 
     # ---------------- high-level resolution ----------------
 
