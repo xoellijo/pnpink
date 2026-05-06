@@ -358,6 +358,18 @@ def set_href(node, href_value: str, *, touch_plain: bool = True):
         node.set('href', href_value)
 
 
+def set_file_href(node, file_path, *, touch_plain: bool = True, touch_absref: bool = True):
+    """Canonical way to write file-backed image/resource links.
+
+    Always writes a standard file URI to href/xlink:href and, optionally,
+    keeps sodipodi:absref with the resolved OS path for Inkscape compatibility.
+    """
+    abs_path = Path(file_path).resolve()
+    set_href(node, abs_path.as_uri(), touch_plain=touch_plain)
+    if touch_absref:
+        node.set(SODI_ABSREF, str(abs_path))
+
+
 # ========= Units / Document Sizes ============================================
 
 def parse_len_px(svg_root, s: str) -> float:
@@ -1310,7 +1322,10 @@ def absolutize_all_linked_images(svgdoc, svg_real_path: str|None, *,
                                  prefer: str|None = None,
                                  touch_href: bool = True,
                                  clear_xml_base: bool = True) -> int:
-    if prefer is None: prefer = 'ospath' if os.name=='nt' else 'fileuri'
+    # Always normalize to standard file URI to keep links portable and
+    # avoid platform-specific raw paths in xlink:href.
+    if prefer is None:
+        prefer = 'fileuri'
     root = svgdoc.getroot() if hasattr(svgdoc,"getroot") else svgdoc
     if clear_xml_base and root.get(CONST.XML_BASE) is not None: del root.attrib[CONST.XML_BASE]
     images = root.xpath(".//svg:image", namespaces=inkex.NSS)
@@ -1320,11 +1335,10 @@ def absolutize_all_linked_images(svgdoc, svg_real_path: str|None, *,
         absref0 = im.get(SODI_ABSREF) or ""
         abs_path = _resolve_image_path(href0, absref0, svg_real_path)
         if not abs_path: continue
-        new_href = abs_path.as_uri() if prefer=="fileuri" else str(abs_path)
-        if href0 == new_href and absref0 == str(abs_path): continue
-        set_href(im, new_href, touch_plain=touch_href)
-
-        im.set(SODI_ABSREF, str(abs_path))
+        new_href = abs_path.as_uri()
+        if href0 == new_href and absref0 == str(abs_path):
+            continue
+        set_file_href(im, abs_path, touch_plain=touch_href, touch_absref=True)
         fixed += 1
     return fixed
 

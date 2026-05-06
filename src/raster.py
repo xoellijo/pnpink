@@ -484,9 +484,8 @@ def _replace_node_with_raster_image(node, raster_path: str, bbox: dict, *, dpi: 
     image.set("height", f"{h:.6f}")
     image.set("preserveAspectRatio", "none")
     image.set("data-pnpink-rasterized-filter", "1")
-    SVG.set_href(image, Path(raster_path).resolve().as_uri(), touch_plain=True)
     try:
-        image.set(SVG.SODI_ABSREF, str(Path(raster_path).resolve()))
+        SVG.set_file_href(image, raster_path, touch_plain=True, touch_absref=True)
     except Exception:
         pass
 

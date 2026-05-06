@@ -1624,10 +1624,7 @@ class SourceManager:
         im.set('y', "0")
         im.set('width', str(float(w)))
         im.set('height', str(float(h)))
-        href_val = abspath.as_uri()
-        im.set(inkex.addNS('href', 'xlink'), href_val)
-        im.set('href', href_val)
-        im.set(SVG.SODI_ABSREF, str(abspath))
+        SVG.set_file_href(im, abspath, touch_plain=True, touch_absref=True)
         return SourceRef(
             symbol_id=sid,
             content_type="svg",
@@ -1652,10 +1649,7 @@ class SourceManager:
         im.set('height', str(H))
 
         # Prefer file URI on Linux/Mac; OS path on Windows (consistent with SVG.absolutize_all_linked_images)
-        href_val = abspath.as_uri()
-        im.set(inkex.addNS('href','xlink'), href_val)
-        im.set('href', href_val)
-        im.set(SVG.SODI_ABSREF, str(abspath))
+        SVG.set_file_href(im, abspath, touch_plain=True, touch_absref=True)
 
         return SourceRef(
             symbol_id=sid,
@@ -1674,8 +1668,7 @@ class SourceManager:
         im.set('x', "0"); im.set('y', "0")
         im.set('width',  str(DEFAULT_W))
         im.set('height', str(DEFAULT_H))
-        im.set(inkex.addNS('href','xlink'), data_uri)
-        im.set('href', data_uri)
+        SVG.set_href(im, data_uri, touch_plain=True)
         return sid, (DEFAULT_W, DEFAULT_H)
 
     # ---------------- helpers de clon ----------------
@@ -1686,8 +1679,7 @@ class SourceManager:
         Leave it without transform so the Fit (FA) pipeline positions/scales it.
         """
         u = SVG.etree.Element(inkex.addNS('use','svg'))
-        u.set(inkex.addNS('href','xlink'), f"#{source_ref.symbol_id}")
-        u.set('href', f"#{source_ref.symbol_id}")
+        SVG.set_href(u, f"#{source_ref.symbol_id}", touch_plain=True)
         u.set('preserveAspectRatio', source_ref.preserve_aspect or "xMidYMid meet")
         if set_id:
             u.set('id', set_id)
@@ -2066,10 +2058,7 @@ class SourceManager:
         # Preserve pixel mapping (no aspect auto-fit surprises)
         im.set('preserveAspectRatio', 'none')
 
-        href_val = ss.abspath.as_uri()
-        im.set(inkex.addNS('href','xlink'), href_val)
-        im.set('href', href_val)
-        im.set(SVG.SODI_ABSREF, str(ss.abspath))
+        SVG.set_file_href(im, ss.abspath, touch_plain=True, touch_absref=True)
 
         ss.base_image_id = base_id
         _l.i(f"[spritesheet] base image created id={base_id} for @{ss.alias} size_u={ss.sheet_w_px:.2f}x{ss.sheet_h_px:.2f}")
@@ -2169,8 +2158,7 @@ class SourceManager:
         grp.set('clip-path', f"url(#{clip_id})")
 
         u = SVG.etree.SubElement(grp, inkex.addNS('use','svg'))
-        u.set(inkex.addNS('href','xlink'), f"#{base_img_id}")
-        u.set('href', f"#{base_img_id}")
+        SVG.set_href(u, f"#{base_img_id}", touch_plain=True)
         u.set('transform', f"translate({-x0},{-y0})")
 
         ref = SourceRef(symbol_id=sid, content_type="bitmap", intrinsic_box=(tw, th), preserve_aspect="xMidYMid meet", canonical_key=None)
