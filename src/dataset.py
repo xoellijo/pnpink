@@ -768,9 +768,12 @@ def load_datasets(effect, doc_path: Optional[str] = None):
     # 1) Read matrix
     used_access_mode = ""
     if sheet_id:
-        access_hint = ""
+        mode_hint = str(getattr(options, 'dataset_source_mode', '') or '').strip().lower()
+        access_hint = "oauth" if mode_hint in {"oauth", "google_sheet_oauth"} else ""
+        if mode_hint in {"public", "google_sheet_public"}:
+            access_hint = "public"
         try:
-            if doc_path:
+            if not access_hint and doc_path:
                 rec = DSTATE.get_gsheet_for_svg(doc_path) or {}
                 sid0 = str(rec.get("sheet_id") or "").strip()
                 if sid0 and sid0 == sheet_id:

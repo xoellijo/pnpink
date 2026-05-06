@@ -31,6 +31,7 @@ import geometry_registry as GREG
 import paths as PATHS
 import transform_fx as TFX
 import render_apply as RAP
+import gui as PROGRESS
 import render_helpers as RHP
 import render_planner as RPL
 import render_tokens as RTK
@@ -1524,6 +1525,7 @@ def render_phase(ctx):
         ctx._iconify_preloaded = True
     for idx, row in enumerate(_iter_instances(rows_data), start=1):
         _l.s(f"ROW {idx}: begin")
+        PROGRESS.emit("render_row", current=int(idx))
         row_map = _build_row_map(headers, row)
         row_page   = (row.get("__dm_page__")   or "").strip()
         row_layout = (row.get("__dm_layout__") or "").strip()

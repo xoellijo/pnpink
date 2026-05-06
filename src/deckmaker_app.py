@@ -9,1029 +9,60 @@ template to this process, and the process runs the existing engine on demand.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import queue
-import socket
 import subprocess
 import sys
 import threading
 import traceback
-import shutil
-import tempfile
 import time
-from dataclasses import dataclass
-from pathlib import Path
-from types import SimpleNamespace
+import webbrowser
 from typing import Optional
-from xml.etree import ElementTree as ET
 
 import log as LOG
+import icc_profiles as ICC
+import image_preflight as PREFLIGHT
+import deckmaker_paths as DMPATHS
+import deckmaker_ipc as IPC
+import export as EXPORT
+import export_pdf as EXPORTPDF
 import inkscape_cli as INKSCAPE
 import prefs
-import raster as RASTER
-import svg_chunks as SVGCHUNKS
+import gui as GUI
+import deckmaker_runner as RUNNER
+from deckmaker_types import AppRequest, ExportOptions
+import temp_paths as TEMPPATHS
 
 _l = LOG
 
-HOST = "127.0.0.1"
-PORT = 48751
-ENV_DIRECT_RUN = "PNPINK_DECKMAKER_DIRECT"
-DEFAULT_SVG_CHUNK_TARGET_BYTES = 64 * 1024 * 1024
-MAX_INKSCAPE_SHELL_WORKERS = 6
+_normalize_path = DMPATHS.normalize
+
+APP_VERSION = "deckmaker_app"
+DOCS_INTRO_URL = "https://xoellijo.github.io/pnpink/intro/"
+DOCS_GUIDE_URL = "https://xoellijo.github.io/pnpink/quickstart/"
+OTHER_EXPORT_FORMATS = ("png", "jpeg", "jpeg2000", "pdf", "svg", "tiff", "webp", "ps", "eps", "emf", "wmf")
+SOURCE_MODE_LABELS = ("(empty)", "local CSV", "google sheet oauth", "google sheet public")
+SOURCE_MODE_LABEL_TO_VALUE = {
+    "(empty)": "",
+    "local CSV": "local_csv",
+    "google sheet oauth": "oauth",
+    "google sheet public": "public",
+}
+SOURCE_MODE_VALUE_TO_LABEL = {value: label for label, value in SOURCE_MODE_LABEL_TO_VALUE.items()}
 
 
-@dataclass
-class AppRequest:
-    template: str
-    sheet_id: str = ""
-    sheet_range: str = ""
-    log_level: str = "global"
-
-
-@dataclass(frozen=True)
-class ExportOptions:
-    formats: tuple[str, ...]
-    pdf_profiles: tuple[str, ...]
-    pdf_raster_filters: bool
-
-
-def _normalize_path(path: str) -> str:
-    return os.path.normpath(os.path.abspath(str(path or "").strip()))
-
-
-def _app_icon_path() -> str:
-    return os.path.join(os.path.dirname(__file__), "examples", "assets", "deckmaker_icon.png")
-
-
-def _resolve_output_svg_path(template: str) -> str:
-    p = _normalize_path(template)
-    base_dir = os.path.dirname(p)
-    stem, _ext = os.path.splitext(os.path.basename(p))
-    return os.path.normpath(os.path.join(base_dir, f"{stem}_output.svg"))
-
-
-def _resolve_output_pdf_path(template: str) -> str:
-    svg_path = _resolve_output_svg_path(template)
-    stem, _ext = os.path.splitext(svg_path)
-    return os.path.normpath(stem + ".pdf")
-
-
-def _resolve_output_png_path(template: str) -> str:
-    svg_path = _resolve_output_svg_path(template)
-    stem, _ext = os.path.splitext(svg_path)
-    return os.path.normpath(stem + ".png")
-
-
-def _app_log_path() -> str:
-    return os.path.join(os.path.dirname(__file__), "pnpink.log")
-
-
-def _resolve_profile_output_pdf_path(pdf_path: str, profile: str) -> str:
-    base_pdf = _normalize_path(pdf_path)
-    prof = str(profile or "default").strip().lower()
-    if prof == "default":
-        return base_pdf
-    stem, ext = os.path.splitext(base_pdf)
-    return os.path.normpath(f"{stem}_{prof}{ext or '.pdf'}")
-
-
-def _resolve_output_page_pdf_path(pdf_path: str, page_number: int) -> str:
-    stem, ext = os.path.splitext(_normalize_path(pdf_path))
-    return os.path.normpath(f"{stem}_p{int(page_number)}{ext or '.pdf'}")
-
-
-def _all_output_page_pdf_paths(pdf_path: str, page_count: int) -> list[str]:
-    total = max(1, int(page_count or 1))
-    return [_resolve_output_page_pdf_path(pdf_path, page_no) for page_no in range(1, total + 1)]
-
-
-def _resolve_output_page_png_path(png_path: str, page_number: int) -> str:
-    stem, ext = os.path.splitext(_normalize_path(png_path))
-    return os.path.normpath(f"{stem}_p{int(page_number)}{ext or '.png'}")
-
-
-def _all_output_page_png_paths(png_path: str, page_count: int) -> list[str]:
-    total = max(1, int(page_count or 1))
-    if total == 1:
-        return [_normalize_path(png_path)]
-    return [_resolve_output_page_png_path(png_path, page_no) for page_no in range(1, total + 1)]
-
-
-def _cleanup_pdf_outputs(pdf_path: str, page_count: int) -> None:
-    targets = [_normalize_path(pdf_path)] + _all_output_page_pdf_paths(pdf_path, page_count)
-    for target in targets:
-        try:
-            if os.path.isfile(target):
-                os.remove(target)
-        except Exception:
-            pass
-
-
-def _cleanup_png_outputs(png_path: str, page_count: int) -> None:
-    targets = [_normalize_path(png_path)] + _all_output_page_png_paths(png_path, page_count)
-    for target in targets:
-        try:
-            if os.path.isfile(target):
-                os.remove(target)
-        except Exception:
-            pass
-
-
-def _cleanup_profile_pdf_outputs(pdf_path: str, profiles: list[str]) -> None:
-    for profile in profiles or []:
-        target = _resolve_profile_output_pdf_path(pdf_path, profile)
-        try:
-            if os.path.isfile(target):
-                os.remove(target)
-        except Exception:
-            pass
-
-
-def _paths_exist_with_size(paths: list[str]) -> bool:
-    for path in paths:
-        try:
-            if not os.path.isfile(path) or os.path.getsize(path) <= 0:
-                return False
-        except Exception:
-            return False
-    return True
-
-
-def _bitmap_size_px(path: Path) -> tuple[int, int] | None:
-    try:
-        from PIL import Image
-
-        with Image.open(str(path)) as im:
-            return int(im.width), int(im.height)
-    except Exception:
-        return None
-
-
-def _effective_image_dpi_report(svg_path: str) -> dict:
-    try:
-        import inkex
-        import svg as SVG
-
-        source_info = _resolve_chunked_output_source(svg_path)
-        svg_inputs = []
-        if source_info.get("svg_path"):
-            svg_inputs = [str(source_info.get("svg_path") or "")]
-        else:
-            svg_inputs = [str(p) for p in (source_info.get("chunk_paths") or []) if str(p or "").strip()]
-        if not svg_inputs:
-            raise FileNotFoundError(svg_path)
-
-        rows = []
-        unresolved = 0
-        unreadable = 0
-        idx = 0
-        for svg_input in svg_inputs:
-            with open(svg_input, "rb") as fh:
-                doc = inkex.load_svg(fh.read())
-            root = doc.getroot()
-            images = root.xpath(".//svg:image", namespaces=inkex.NSS)
-            for im in images:
-                idx += 1
-                href = SVG.get_href(im)
-                absref = im.get(SVG.SODI_ABSREF) or ""
-                path = SVG._resolve_image_path(href, absref, svg_input)
-                if not path:
-                    unresolved += 1
-                    continue
-                bitmap = _bitmap_size_px(path)
-                if not bitmap:
-                    unreadable += 1
-                    continue
-                w_px, h_px = bitmap
-                placed_w = SVG.parse_len_px(root, im.get("width") or "0")
-                placed_h = SVG.parse_len_px(root, im.get("height") or "0")
-                if placed_w <= 0 or placed_h <= 0:
-                    continue
-                try:
-                    t = SVG.composed_transform(im)
-                    pts = [
-                        t.apply_to_point((0, 0)),
-                        t.apply_to_point((placed_w, 0)),
-                        t.apply_to_point((0, placed_h)),
-                        t.apply_to_point((placed_w, placed_h)),
-                    ]
-                    xs = [float(p[0]) for p in pts]
-                    ys = [float(p[1]) for p in pts]
-                    placed_w = max(xs) - min(xs)
-                    placed_h = max(ys) - min(ys)
-                except Exception:
-                    pass
-                if placed_w <= 0 or placed_h <= 0:
-                    continue
-                dpi_x = w_px / (placed_w / 96.0)
-                dpi_y = h_px / (placed_h / 96.0)
-                dpi = min(dpi_x, dpi_y)
-                rows.append({
-                    "index": idx,
-                    "id": im.get("id") or f"image-{idx}",
-                    "path": str(path),
-                    "file": Path(path).name,
-                    "dpi": float(dpi),
-                    "dpi_x": float(dpi_x),
-                    "dpi_y": float(dpi_y),
-                    "px": (w_px, h_px),
-                    "placed_mm": (placed_w * 25.4 / 96.0, placed_h * 25.4 / 96.0),
-                })
-        rows.sort(key=lambda item: item["dpi"])
-        return {
-            "ok": True,
-            "count": len(rows),
-            "unresolved": unresolved,
-            "unreadable": unreadable,
-            "rows": rows,
-            "low": [r for r in rows if r["dpi"] < 150.0],
-            "high": [r for r in rows if r["dpi"] > 900.0],
-        }
-    except Exception as ex:
-        return {"ok": False, "error": str(ex), "count": 0, "rows": []}
-
-
-def _wait_for_stable_outputs(
-    paths: list[str],
-    *,
-    stable_checks: int = 2,
-    interval_s: float = 0.5,
-    timeout_s: float = 600.0,
+def notify_or_launch(
+    template: str,
+    sheet_id: str = "",
+    sheet_range: str = "",
+    log_level: str = "global",
+    dataset_source_mode: str = "",
 ) -> bool:
-    pending = list(paths or [])
-    if not pending:
-        return False
-    stable = 0
-    last_sizes: dict[str, int] = {}
-    started = time.perf_counter()
-    while True:
-        if (time.perf_counter() - started) > max(1.0, float(timeout_s or 600.0)):
-            return False
-        current: dict[str, int] = {}
-        ready = True
-        for path in pending:
-            try:
-                if not os.path.isfile(path):
-                    ready = False
-                    break
-                size = int(os.path.getsize(path))
-                if size <= 0:
-                    ready = False
-                    break
-                current[path] = size
-            except Exception:
-                ready = False
-                break
-        if ready:
-            if current == last_sizes:
-                stable += 1
-            else:
-                stable = 1
-                last_sizes = current
-            if stable >= max(1, int(stable_checks or 1)):
-                return True
-        else:
-            stable = 0
-            last_sizes = {}
-        time.sleep(max(0.1, float(interval_s or 0.5)))
-
-
-def _watch_created_pdfs(
-    paths: list[str],
-    on_created,
-    *,
-    stop_event: threading.Event | None = None,
-    interval_s: float = 0.25,
-) -> None:
-    pending = {_normalize_path(p) for p in (paths or []) if str(p or "").strip()}
-    seen: set[str] = set()
-    while pending:
-        if stop_event is not None and stop_event.is_set():
-            return
-        ready_now = []
-        for path in list(pending):
-            try:
-                if os.path.isfile(path) and os.path.getsize(path) > 0:
-                    ready_now.append(path)
-            except Exception:
-                continue
-        for path in ready_now:
-            pending.discard(path)
-            if path in seen:
-                continue
-            seen.add(path)
-            try:
-                on_created(path)
-            except Exception:
-                pass
-        time.sleep(max(0.1, float(interval_s or 0.25)))
-
-
-def _svg_page_count(svg_path: str) -> int:
     try:
-        tree = ET.parse(svg_path)
-        root = tree.getroot()
-        count = 0
-        for _el in root.findall(".//{http://www.inkscape.org/namespaces/inkscape}page"):
-            count += 1
-        return count if count > 0 else 1
-    except Exception:
-        return 1
-
-
-def _page_selector(pages: list[int]) -> str:
-    vals = [int(p) for p in (pages or []) if int(p) > 0]
-    if not vals:
-        return "1"
-    return ",".join(str(p) for p in vals)
-
-
-def _chunk_page_groups(page_count: int, max_chunks: int = 3) -> list[list[int]]:
-    total = max(1, int(page_count or 1))
-    chunks = max(1, min(int(max_chunks or 1), total))
-    if chunks == 1:
-        return [list(range(1, total + 1))]
-    groups: list[list[int]] = []
-    for offset in range(chunks):
-        groups.append(list(range(1 + offset, total + 1, chunks)))
-    return groups
-
-
-def _resolve_chunked_output_source(svg_path: str) -> dict:
-    src = _normalize_path(svg_path)
-    if not src:
-        return {"svg_path": "", "chunk_paths": [], "manifest_path": "", "chunk_dir": ""}
-    if os.path.isfile(src):
-        return {"svg_path": src, "chunk_paths": [], "manifest_path": "", "chunk_dir": ""}
-    out_dir = os.path.dirname(os.path.abspath(src)) or "."
-    stem = Path(src).stem
-    chunk_dir = os.path.join(out_dir, f"{stem}_chunks")
-    manifest_path = os.path.join(chunk_dir, f"{stem}.chunks.txt")
-    chunk_paths: list[str] = []
-    if os.path.isfile(manifest_path):
-        try:
-            with open(manifest_path, "r", encoding="utf-8") as fh:
-                chunk_paths = [os.path.normpath(line.strip()) for line in fh if line.strip()]
-        except Exception:
-            chunk_paths = []
-    if not chunk_paths and os.path.isdir(chunk_dir):
-        try:
-            chunk_paths = sorted(
-                os.path.normpath(os.path.join(chunk_dir, name))
-                for name in os.listdir(chunk_dir)
-                if re.fullmatch(rf"{re.escape(stem)}\.chunk\d+\.svg", name, re.IGNORECASE)
-            )
-        except Exception:
-            chunk_paths = []
-    chunk_paths = [path for path in chunk_paths if os.path.isfile(path)]
-    return {
-        "svg_path": src if os.path.isfile(src) else "",
-        "chunk_paths": chunk_paths,
-        "manifest_path": manifest_path if os.path.isfile(manifest_path) else "",
-        "chunk_dir": chunk_dir if os.path.isdir(chunk_dir) else "",
-    }
-
-
-def _chunk_plan_from_existing_output(svg_path: str, pdf_path: str) -> dict | None:
-    src_info = _resolve_chunked_output_source(svg_path)
-    chunk_paths = list(src_info.get("chunk_paths") or [])
-    if not chunk_paths:
-        return None
-    import svg_chunks as SVGCHUNKS
-    chunks = []
-    stem = Path(pdf_path).stem
-    chunk_dir = str(src_info.get("chunk_dir") or (os.path.dirname(chunk_paths[0]) if chunk_paths else ""))
-    for idx, chunk_svg_path in enumerate(chunk_paths, start=1):
-        page_count = max(1, _svg_page_count(chunk_svg_path))
-        pdf_chunk_path = os.path.join(chunk_dir, f"{stem}.chunk{idx:02d}.pdf")
-        png_chunk_prefix = os.path.join(chunk_dir, f"{stem}.chunk{idx:02d}.png")
-        chunks.append(
-            SVGCHUNKS.SvgChunk(
-                index=idx,
-                pages=tuple(range(1, page_count + 1)),
-                est_bytes=0,
-                svg_path=os.path.normpath(chunk_svg_path),
-                pdf_path=os.path.normpath(pdf_chunk_path),
-                png_prefix=os.path.normpath(png_chunk_prefix),
-            )
-        )
-    return {
-        "chunks": tuple(chunks),
-        "chunk_dir": os.path.normpath(chunk_dir) if chunk_dir else "",
-        "fixed_images": 0,
-        "source_svg": svg_path,
-        "from_existing_chunks": True,
-        "manifest_path": str(src_info.get("manifest_path") or ""),
-    }
-
-
-def _prepare_export_svg(svg_path: str, *, inkscape_exe: str | None = None, rasterize_filters: bool = False) -> tuple[str, dict]:
-    try:
-        import inkex
-        import svg_chunks as SVGCHUNKS
-
-        with open(svg_path, "rb") as fh:
-            raw = fh.read()
-        doc = inkex.load_svg(raw)
-        normalize_info = SVGCHUNKS.normalize_output_doc(doc, source_svg_path=svg_path, inkscape_exe=inkscape_exe)
-        fixed = int(normalize_info.get("fixed_images") or 0)
-
-        fd, tmp_path = tempfile.mkstemp(prefix="pnpink_export_", suffix=".svg")
-        os.close(fd)
-        try:
-            doc.write(tmp_path, encoding="utf-8", xml_declaration=True)
-        except TypeError:
-            doc.write(tmp_path)
-
-        raster_info = {}
-        if rasterize_filters and inkscape_exe:
-            env = INKSCAPE.clean_launch_env()
-            raster_info = RASTER.rasterize_filtered_nodes_for_export(
-                doc,
-                tmp_path,
-                inkscape_exe,
-                env,
-                target_dpi=300,
-                max_raster_dpi=600,
-                max_workers=3,
-            )
-            if int(raster_info.get("rasterized_filters") or 0) > 0:
-                try:
-                    doc.write(tmp_path, encoding="utf-8", xml_declaration=True)
-                except TypeError:
-                    doc.write(tmp_path)
-
-        info = {"fixed_images": fixed, "source_svg": svg_path}
-        info.update(normalize_info)
-        info.update(raster_info)
-        return tmp_path, info
-    except Exception as ex:
-        return "", {"error": f"Failed to prepare export SVG: {ex}", "source_svg": svg_path}
-
-
-def _export_pdf_via_inkscape(
-    svg_path: str,
-    pdf_path: str,
-    *,
-    pdf_profiles: list[str] | None = None,
-    rasterize_filters: bool = False,
-    chunk_count: int = 3,
-    on_page_pdf_created=None,
-) -> tuple[bool, dict]:
-    _l.i(
-        "[export.pdf] start svg='%s' pdf='%s' profiles=%s rasterize_filters=%s",
-        svg_path,
-        pdf_path,
-        ",".join(pdf_profiles or ["default"]),
-        "yes" if rasterize_filters else "no",
-    )
-    existing_chunk_plan = None
-    if not svg_path or not os.path.isfile(svg_path):
-        existing_chunk_plan = _chunk_plan_from_existing_output(svg_path, pdf_path) if svg_path else None
-        if existing_chunk_plan is None:
-            return False, {"error": f"SVG output not found: {svg_path}"}
-    exe = INKSCAPE.find_executable()
-    if not exe:
-        return False, {"error": "Inkscape executable not found"}
-    selected_profiles = list(pdf_profiles or ["default"])
-    page_count = _svg_page_count(svg_path) if (svg_path and os.path.isfile(svg_path)) else 0
-    _cleanup_profile_pdf_outputs(pdf_path, selected_profiles)
-    try:
-        if os.path.isfile(pdf_path):
-            os.remove(pdf_path)
+        TEMPPATHS.cleanup_runs_now()
     except Exception:
         pass
-    started = time.perf_counter()
-    try:
-        import inkex
-        env = INKSCAPE.clean_launch_env()
-        exe_dir = os.path.dirname(exe) or None
-        from concurrent.futures import ThreadPoolExecutor
-        import gs as GS
-        import raster as RASTER
-
-        chunk_plan = existing_chunk_plan or SVGCHUNKS.write_svg_chunks(
-            svg_path,
-            pdf_path,
-            inkscape_exe=exe,
-            target_chunk_bytes=DEFAULT_SVG_CHUNK_TARGET_BYTES,
-        )
-        chunks = list(chunk_plan.get("chunks") or [])
-        if page_count <= 0:
-            page_count = sum(len(getattr(chunk, "pages", ()) or ()) for chunk in chunks)
-        fixed_images = int(chunk_plan.get("fixed_images") or 0)
-        _l.i(
-            "[export.pdf] chunks_ready count=%d fixed_images=%d chunk_dir='%s' existing=%s",
-            len(chunks),
-            fixed_images,
-            str(chunk_plan.get("chunk_dir") or ""),
-            "yes" if bool(chunk_plan.get("from_existing_chunks")) else "no",
-        )
-        if not chunks:
-            return False, {"error": "No SVG chunks were generated", "fixed_images": fixed_images}
-
-        if rasterize_filters:
-            max_shell_workers = max(1, int(prefs.get_inkscape_shell_workers(MAX_INKSCAPE_SHELL_WORKERS)))
-            raster_chunk_workers = max(1, min(len(chunks), max_shell_workers))
-            raster_per_chunk_workers = max(1, max_shell_workers // raster_chunk_workers)
-
-            def _rasterize_chunk(chunk):
-                with open(chunk.svg_path, "rb") as fh:
-                    doc = inkex.load_svg(fh.read())
-                raster_info = RASTER.rasterize_filtered_nodes_for_export(
-                    doc,
-                    chunk.svg_path,
-                    exe,
-                    env,
-                    target_dpi=600,
-                    max_raster_dpi=600,
-                    max_workers=raster_per_chunk_workers,
-                )
-                rasterized = int(raster_info.get("rasterized_filters") or 0)
-                if rasterized > 0:
-                    try:
-                        doc.write(chunk.svg_path, encoding="utf-8", xml_declaration=True)
-                    except TypeError:
-                        doc.write(chunk.svg_path)
-                return chunk, rasterized, raster_info
-
-            rasterized_total = 0
-            with ThreadPoolExecutor(max_workers=raster_chunk_workers) as pool:
-                futs = [(chunk, pool.submit(_rasterize_chunk, chunk)) for chunk in chunks]
-                for chunk, fut in futs:
-                    chunk0, rasterized, raster_info = fut.result()
-                    rasterized_total += rasterized
-                    _l.i(
-                        "[export.pdf] chunk_raster idx=%d pages=%s rasterized_filters=%d raster_dir='%s'",
-                        int(chunk0.index),
-                        ",".join(str(p) for p in chunk0.pages),
-                        rasterized,
-                        str(raster_info.get("raster_dir") or ""),
-                    )
-
-        jobs = []
-        for chunk in chunks:
-            commands = INKSCAPE.build_shell_pdf_commands(
-                chunk.svg_path,
-                chunk.pdf_path,
-                dpi=300,
-                ignore_filters=True,
-            )
-            jobs.append({
-                "index": int(chunk.index),
-                "pages": list(chunk.pages),
-                "est_bytes": int(chunk.est_bytes or 0),
-                "svg_path": chunk.svg_path,
-                "pdf_path": chunk.pdf_path,
-                "commands": commands,
-            })
-
-        results = []
-        max_shell_workers = max(1, int(prefs.get_inkscape_shell_workers(MAX_INKSCAPE_SHELL_WORKERS)))
-        max_workers = max(1, min(max_shell_workers, len(jobs)))
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futs = []
-            for job in jobs:
-                job_started = time.perf_counter()
-                fut = pool.submit(
-                    INKSCAPE.run_shell_commands,
-                    exe,
-                    job["commands"],
-                    exe_dir=exe_dir,
-                    env=env,
-                )
-                futs.append((job, job_started, fut))
-            for job, job_started, fut in futs:
-                rc, msg = fut.result()
-                elapsed = time.perf_counter() - job_started
-                ok = _paths_exist_with_size([job["pdf_path"]])
-                _l.i(
-                    "[export.pdf] chunk_done idx=%d pages=%s rc=%d ok=%s elapsed=%.2fs pdf='%s'",
-                    int(job["index"]),
-                    ",".join(str(p) for p in job["pages"]),
-                    int(rc),
-                    "yes" if ok else "no",
-                    float(elapsed),
-                    job["pdf_path"],
-                )
-                if msg:
-                    _l.i("[export.pdf] chunk_msg idx=%d %s", int(job["index"]), str(msg)[:1200])
-                results.append({
-                    "index": job["index"],
-                    "pages": list(job["pages"]),
-                    "pdf_path": job["pdf_path"],
-                    "svg_path": job["svg_path"],
-                    "est_bytes": int(job["est_bytes"]),
-                    "returncode": rc,
-                    "message": msg,
-                    "elapsed_s": elapsed,
-                    "ok": ok,
-                    "soft_ok": rc != 0 and ok,
-                })
-                if ok and on_page_pdf_created is not None:
-                    try:
-                        on_page_pdf_created(job["pdf_path"])
-                    except Exception:
-                        pass
-
-        total_elapsed = time.perf_counter() - started
-        failed = [r for r in results if not r["ok"]]
-        if failed:
-            first = failed[0]
-            err = f"Inkscape PDF export failed for SVG chunk {first['index']}"
-            _l.w("[export.pdf] failed %s", err)
-            return False, {
-                "error": err,
-                "elapsed_s": total_elapsed,
-                "results": results,
-                "page_count": page_count,
-                "chunk_count": len(chunks),
-                "fixed_images": fixed_images,
-                "chunk_dir": str(chunk_plan.get("chunk_dir") or ""),
-                "target_chunk_bytes": int(chunk_plan.get("target_chunk_bytes") or DEFAULT_SVG_CHUNK_TARGET_BYTES),
-            }
-
-        ordered_chunk_pdfs = [
-            item["pdf_path"]
-            for item in sorted(results, key=lambda row: (min(row["pages"] or [10**9]), row["index"]))
-        ]
-        def _merge_profile(profile: str):
-            target_pdf = _resolve_profile_output_pdf_path(pdf_path, profile)
-            _l.i(
-                "[export.pdf] merge profile='%s' inputs=%d target='%s'",
-                profile,
-                len(ordered_chunk_pdfs),
-                target_pdf,
-            )
-            res = GS.merge_pdfs(
-                ordered_chunk_pdfs,
-                target_pdf,
-                detect_duplicate_images=True,
-                pdf_settings=None if profile == "default" else profile,
-            )
-            return profile, res
-
-        gs_results = []
-        with ThreadPoolExecutor(max_workers=max(1, len(selected_profiles))) as pool:
-            futs = [pool.submit(_merge_profile, profile) for profile in selected_profiles]
-            for fut in futs:
-                gs_results.append(fut.result())
-
-        total_elapsed = time.perf_counter() - started
-        failed_profiles = [profile for profile, res in gs_results if not res or not getattr(res, "ok", False)]
-        if failed_profiles:
-            _l.w("[export.pdf] profile_failures=%s", ",".join(failed_profiles))
-            details = []
-            for profile, res in gs_results:
-                if profile not in failed_profiles:
-                    continue
-                if not res:
-                    details.append(f"{profile}: no output result")
-                    continue
-                rc = getattr(res, "returncode", "")
-                msg = str(getattr(res, "message", "") or "").strip()
-                if len(msg) > 700:
-                    msg = msg[:700] + "..."
-                details.append(f"{profile}: rc={rc} {msg}".strip())
-            return False, {
-                "error": f"PDF profile failed: {', '.join(failed_profiles)}" + (f" ({' | '.join(details)})" if details else ""),
-                "elapsed_s": total_elapsed,
-                "results": results,
-                "profile_results": [
-                    {
-                        "profile": profile,
-                        "ok": bool(getattr(res, "ok", False)) if res else False,
-                        "returncode": getattr(res, "returncode", None) if res else None,
-                        "message": getattr(res, "message", "") if res else "",
-                        "output_pdf": getattr(res, "output_pdf", "") if res else "",
-                    }
-                    for profile, res in gs_results
-                ],
-                "page_count": page_count,
-                "chunk_count": len(chunks),
-                "fixed_images": fixed_images,
-                "chunk_dir": str(chunk_plan.get("chunk_dir") or ""),
-                "target_chunk_bytes": int(chunk_plan.get("target_chunk_bytes") or DEFAULT_SVG_CHUNK_TARGET_BYTES),
-            }
-        return True, {
-            "elapsed_s": total_elapsed,
-            "results": results,
-            "page_count": page_count,
-            "chunk_count": len(chunks),
-            "pdf_path": pdf_path,
-            "fixed_images": fixed_images,
-            "chunk_dir": str(chunk_plan.get("chunk_dir") or ""),
-            "used_parallel": len(chunks) > 1,
-            "target_chunk_bytes": int(chunk_plan.get("target_chunk_bytes") or DEFAULT_SVG_CHUNK_TARGET_BYTES),
-            "gs_outputs": [
-                {"profile": profile, "output_pdf": getattr(res, "output_pdf", ""), "ok": bool(getattr(res, "ok", False))}
-                for profile, res in gs_results
-            ],
-        }
-    except Exception as ex:
-        _l.w("[export.pdf] exception %s", str(ex))
-        return False, {
-            "error": str(ex),
-            "fixed_images": 0,
-        }
-
-
-def _export_png_pages_via_inkscape(
-    svg_path: str,
-    png_path: str,
-    *,
-    chunk_count: int = 3,
-    on_page_png_created=None,
-) -> tuple[bool, dict]:
-    _l.i("[export.png] start svg='%s' png='%s'", svg_path, png_path)
-    existing_chunk_plan = None
-    if not svg_path or not os.path.isfile(svg_path):
-        existing_chunk_plan = _chunk_plan_from_existing_output(svg_path, os.path.splitext(png_path)[0] + ".pdf") if svg_path else None
-        if existing_chunk_plan is None:
-            return False, {"error": f"SVG output not found: {svg_path}"}
-    exe = INKSCAPE.find_executable()
-    if not exe:
-        return False, {"error": "Inkscape executable not found"}
-    page_count = _svg_page_count(svg_path) if (svg_path and os.path.isfile(svg_path)) else 0
-    expected_pngs = _all_output_page_png_paths(png_path, page_count)
-    _cleanup_png_outputs(png_path, page_count)
-    started = time.perf_counter()
-
-    try:
-        env = INKSCAPE.clean_launch_env()
-        exe_dir = os.path.dirname(exe) or None
-        from concurrent.futures import ThreadPoolExecutor
-
-        chunk_plan = existing_chunk_plan or SVGCHUNKS.write_svg_chunks(
-            svg_path,
-            os.path.splitext(png_path)[0] + ".pdf",
-            inkscape_exe=exe,
-            target_chunk_bytes=DEFAULT_SVG_CHUNK_TARGET_BYTES,
-        )
-        chunks = list(chunk_plan.get("chunks") or [])
-        if page_count <= 0:
-            page_count = sum(len(getattr(chunk, "pages", ()) or ()) for chunk in chunks)
-            expected_pngs = _all_output_page_png_paths(png_path, page_count)
-        fixed_images = int(chunk_plan.get("fixed_images") or 0)
-        _l.i(
-            "[export.png] chunks_ready count=%d fixed_images=%d chunk_dir='%s' existing=%s",
-            len(chunks),
-            fixed_images,
-            str(chunk_plan.get("chunk_dir") or ""),
-            "yes" if bool(chunk_plan.get("from_existing_chunks")) else "no",
-        )
-        jobs = []
-        for chunk in chunks:
-            local_expected = _all_output_page_png_paths(chunk.png_prefix, len(chunk.pages))
-            local_page_exports = [(idx, path) for idx, path in enumerate(local_expected, start=1)]
-            commands = INKSCAPE.build_shell_png_page_commands(chunk.svg_path, local_page_exports, dpi=300)
-            jobs.append({
-                "index": int(chunk.index),
-                "pages": list(chunk.pages),
-                "chunk_png_prefix": chunk.png_prefix,
-                "expected_pngs": local_expected,
-                "commands": commands,
-            })
-
-        results = []
-        max_shell_workers = max(1, int(prefs.get_inkscape_shell_workers(MAX_INKSCAPE_SHELL_WORKERS)))
-        with ThreadPoolExecutor(max_workers=max(1, min(max_shell_workers, len(jobs)))) as pool:
-            futs = []
-            for job in jobs:
-                job_started = time.perf_counter()
-                fut = pool.submit(
-                    INKSCAPE.run_shell_commands,
-                    exe,
-                    job["commands"],
-                    exe_dir=exe_dir,
-                    env=env,
-                )
-                futs.append((job, job_started, fut))
-            for job, job_started, fut in futs:
-                rc, msg = fut.result()
-                elapsed = time.perf_counter() - job_started
-                ok = _paths_exist_with_size(job["expected_pngs"])
-                _l.i(
-                    "[export.png] chunk_done idx=%d pages=%s rc=%d ok=%s elapsed=%.2fs prefix='%s'",
-                    int(job["index"]),
-                    ",".join(str(p) for p in job["pages"]),
-                    int(rc),
-                    "yes" if ok else "no",
-                    float(elapsed),
-                    job["chunk_png_prefix"],
-                )
-                if msg:
-                    _l.i("[export.png] chunk_msg idx=%d %s", int(job["index"]), str(msg)[:1200])
-                if ok:
-                    ordered_local = list(job["expected_pngs"])
-                    for page_no, src in zip(job["pages"], ordered_local):
-                        final_path = _resolve_output_page_png_path(png_path, page_no) if page_count > 1 else _normalize_path(png_path)
-                        try:
-                            if os.path.isfile(final_path):
-                                os.remove(final_path)
-                        except Exception:
-                            pass
-                        try:
-                            shutil.move(src, final_path)
-                        except Exception:
-                            pass
-                        if on_page_png_created is not None and os.path.isfile(final_path):
-                            try:
-                                on_page_png_created(final_path)
-                            except Exception:
-                                pass
-                results.append({
-                    "index": job["index"],
-                    "pages": list(job["pages"]),
-                    "png_path": job["chunk_png_prefix"],
-                    "expected_pngs": list(job["expected_pngs"]),
-                    "returncode": rc,
-                    "message": msg,
-                    "elapsed_s": elapsed,
-                    "ok": ok,
-                    "soft_ok": rc != 0 and ok,
-                })
-
-        total_elapsed = time.perf_counter() - started
-        failed = [r for r in results if not r["ok"]]
-        if failed:
-            first = failed[0]
-            _l.w("[export.png] failed worker=%d", int(first["index"]))
-            return False, {
-                "error": f"Inkscape PNG export failed for worker {first['index']}",
-                "elapsed_s": total_elapsed,
-                "results": results,
-                "page_count": page_count,
-                "chunk_count": len(chunks),
-                "fixed_images": fixed_images,
-            }
-        return True, {
-            "elapsed_s": total_elapsed,
-            "results": results,
-            "page_count": page_count,
-            "chunk_count": len(chunks),
-            "png_path": png_path,
-            "png_outputs": expected_pngs,
-            "fixed_images": fixed_images,
-            "used_parallel": len(chunks) > 1,
-        }
-    except Exception as ex:
-        _l.w("[export.png] exception %s", str(ex))
-        return False, {
-            "error": str(ex),
-            "fixed_images": 0,
-        }
-
-
-def _send_request(req: AppRequest, timeout: float = 0.35) -> bool:
-    payload = {
-        "cmd": "open",
-        "template": req.template,
-        "sheet_id": req.sheet_id,
-        "sheet_range": req.sheet_range,
-        "log_level": req.log_level,
-    }
-    try:
-        with socket.create_connection((HOST, PORT), timeout=timeout) as s:
-            s.sendall((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
-            s.settimeout(timeout)
-            data = s.recv(32)
-        return data.strip() == b"OK"
-    except Exception:
-        return False
-
-
-def _candidate_python_launchers() -> list[str]:
-    out: list[str] = []
-    exe = str(sys.executable or "").strip()
-    if exe:
-        out.append(exe)
-        base = os.path.dirname(exe)
-        if base:
-            out.append(os.path.join(base, "pythonw.exe"))
-            out.append(os.path.join(base, "python.exe"))
-    # Common Inkscape portable layout used by this project.
-    out.append(os.path.expandvars(r"%USERPROFILE%\inkscape\bin\pythonw.exe"))
-    out.append(os.path.expandvars(r"%USERPROFILE%\inkscape\bin\python.exe"))
-
-    seen = set()
-    good = []
-    for p in out:
-        pp = os.path.normpath(p)
-        key = pp.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        try:
-            if os.path.isfile(pp) and os.path.getsize(pp) > 0:
-                good.append(pp)
-        except Exception:
-            continue
-    return good
-
-
-def notify_or_launch(template: str, sheet_id: str = "", sheet_range: str = "", log_level: str = "global") -> bool:
-    req = AppRequest(
-        template=_normalize_path(template),
-        sheet_id=str(sheet_id or "").strip(),
-        sheet_range=str(sheet_range or "").strip(),
-        log_level=str(log_level or "global").strip() or "global",
-    )
-    if _send_request(req):
-        _l.i(f"[deckmaker_app] notified resident app template='{req.template}'")
-        return True
-
-    script = os.path.abspath(__file__)
-    args_tail = [
-        script,
-        "--template", req.template,
-        "--sheet-id", req.sheet_id,
-        "--sheet-range", req.sheet_range,
-        "--log-level", req.log_level,
-    ]
-    env = os.environ.copy()
-    env[ENV_DIRECT_RUN] = "1"
-
-    flags = 0
-    if os.name == "nt":
-        flags = (
-            getattr(subprocess, "DETACHED_PROCESS", 0)
-            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            | getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        )
-
-    last_error = None
-    for py in _candidate_python_launchers():
-        try:
-            proc = subprocess.Popen(
-                [py] + args_tail,
-                cwd=os.path.dirname(script),
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                close_fds=True,
-                creationflags=flags,
-            )
-            # Avoid ResourceWarning in Inkscape's extension runner; we intentionally detach.
-            proc.returncode = 0
-            _l.i(f"[deckmaker_app] launched resident app python='{py}' template='{req.template}'")
-            return True
-        except Exception as ex:
-            last_error = ex
-            continue
-    _l.w(f"[deckmaker_app] launch failed: {last_error}")
-    return False
-
-
-class _EngineEffect:
-    def __init__(self, template: str, sheet_id: str, sheet_range: str, log_level: str):
-        import inkex
-
-        self._template = _normalize_path(template)
-        with open(self._template, "rb") as fh:
-            raw = fh.read()
-        self.document = inkex.load_svg(raw)
-        self.svg = self.document.getroot()
-        self.options = SimpleNamespace(
-            tab="data",
-            csv_path="",
-            sheet_id=str(sheet_id or "").strip(),
-            sheet_range=str(sheet_range or "").strip(),
-            prototypes_layer="Prototypes",
-            preset="{A4}",
-            stop_on_error=False,
-            log_level=str(log_level or "global").strip() or "global",
-        )
-
-    def document_path(self) -> str:
-        return self._template
-
-    def _document_path_or_abort(self) -> str:
-        import inkex
-
-        if not self._template or not os.path.isfile(self._template):
-            raise inkex.AbortExtension("Save the SVG template before running DeckMaker.")
-        return self._template
-
-    def _find_or_create_layer(self, root, label: str):
-        import inkex
-
-        for child in list(root):
-            try:
-                if not (hasattr(child, "tag") and isinstance(child.tag, str) and child.tag.endswith("g")):
-                    continue
-                if child.get(inkex.addNS("groupmode", "inkscape")) == "layer":
-                    if (child.get(inkex.addNS("label", "inkscape")) or "") == label:
-                        return child
-            except Exception:
-                continue
-        layer = inkex.Group()
-        layer.set(inkex.addNS("groupmode", "inkscape"), "layer")
-        layer.set(inkex.addNS("label", "inkscape"), label)
-        root.append(layer)
-        return layer
+    return IPC.notify_or_launch(__file__, template, sheet_id, sheet_range, log_level, dataset_source_mode)
 
 
 class DeckMakerApp:
@@ -1047,52 +78,65 @@ class DeckMakerApp:
         self.ttk = ttk
         self.root = tk.Tk()
         self.root.title("PnPInk DeckMaker")
-        self.root.geometry("720x430")
-        self.root.minsize(600, 360)
+        self.root.geometry("860x500")
+        self.root.minsize(720, 430)
         self._icon_image = None
         self._apply_window_icon()
 
         self._queue: "queue.Queue[AppRequest]" = queue.Queue()
+        self._ui_queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
         self._server_stop = threading.Event()
         self._render_thread: Optional[threading.Thread] = None
-        self._activity_stop = threading.Event()
-        self._activity_thread: Optional[threading.Thread] = None
+        self._activity_listener = None
+        self._progress_listener = None
+        self._live_activity_text = ""
+        self._last_log_stamp = ""
+        self._active_progress_label = ""
 
         self.template_var = tk.StringVar(value=(initial.template if initial else ""))
         self.sheet_id_var = tk.StringVar(value=(initial.sheet_id if initial else ""))
         self.sheet_range_var = tk.StringVar(value=(initial.sheet_range if initial else ""))
+        self.source_mode_var = tk.StringVar(value=SOURCE_MODE_VALUE_TO_LABEL.get(initial.dataset_source_mode if initial else "", "(empty)"))
         self.status_var = tk.StringVar(value="Ready")
         self.auto_create_var = tk.BooleanVar(value=prefs.get_auto_create())
         self.auto_open_var = tk.BooleanVar(value=prefs.get_auto_open())
         self.auto_export_var = tk.BooleanVar(value=prefs.get_auto_export())
         self.export_pdf_var = tk.BooleanVar(value=prefs.get_export_pdf())
+        self.export_pdfx_var = tk.BooleanVar(value=prefs.get_export_pdfx())
         self.export_png_var = tk.BooleanVar(value=prefs.get_export_png())
-        self.pdf_raster_filters_var = tk.BooleanVar(value=prefs.get_pdf_raster_filters())
+        self.other_export_format_var = tk.StringVar(value=prefs.get_export_other_format())
+        self.other_export_pages_var = tk.StringVar(value=prefs.get_export_other_pages())
+        self.pdf_raster_mode_var = tk.StringVar(value=prefs.get_pdf_raster_mode())
+        self.export_dpi_var = tk.StringVar(value=str(prefs.get_export_dpi()))
+        self.export_jpeg_quality_var = tk.StringVar(value=str(prefs.get_export_jpeg_quality()))
         self.split_svg_output_var = tk.BooleanVar(value=prefs.get_split_svg_output())
         self.split_svg_chunk_mb_var = tk.StringVar(value=str(prefs.get_split_svg_chunk_mb()))
-        self.pdf_profile_vars = {
-            "default": tk.BooleanVar(value=False),
-            "prepress": tk.BooleanVar(value=False),
-        }
+        self._pdf_profile_names = ("default", "screen", "ebook", "printer", "prepress")
+        self.pdf_profile_vars = {key: tk.BooleanVar(value=False) for key in self._pdf_profile_names}
+        self._icc_profiles = ICC.display_choices()
+        self.pdf_cmyk_icc_var = tk.StringVar(value=ICC.display_value(prefs.get_pdf_cmyk_icc()))
+        self.pdf_cmyk_pure_black_text_var = tk.BooleanVar(value=prefs.get_pdf_cmyk_pure_black_text())
+        self.pdfx_version_var = tk.StringVar(value=self._pdfx_label_from_value(prefs.get_pdfx_version()))
         self._warm_sheet_id = ""
         self._request_serial = 0
         self._autorun_serial = 0
         self._run_started_at: float | None = None
         self._post_create_busy = False
-        self._web_activity_stats = {
-            "wkmc_fetched": 0,
-            "web_cached": 0,
-            "wkmc_failed": 0,
-            "raster_jobs": 0,
-            "raster_chunks": 0,
-        }
+        self._render_rows_total = 0
+        self._web_activity_stats = self._reset_web_activity_stats()
+        try:
+            TEMPPATHS.cleanup_runs_now()
+        except Exception:
+            pass
 
         self._build_ui()
         self._load_pdf_profile_prefs()
+        self._refresh_export_button_state()
         if initial:
             self._set_request(initial)
-        self._start_server()
+        IPC.start_server(self._queue, self._server_stop)
         self.root.after(150, self._drain_queue)
+        self.root.after(80, self._drain_ui_queue)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.sheet_id_var.trace_add("write", lambda *_: self._schedule_auth_warmup())
 
@@ -1116,38 +160,69 @@ class DeckMakerApp:
         notebook = ttk.Notebook(frame)
         notebook.grid(row=0, column=0, sticky="nsew")
 
-        deck_tab = ttk.Frame(notebook, padding=10)
+        deck_tab = ttk.Frame(notebook, padding=12)
         deck_tab.columnconfigure(1, weight=1)
-        deck_tab.rowconfigure(4, weight=1)
+        deck_tab.rowconfigure(2, weight=1)
         notebook.add(deck_tab, text="Deck")
 
-        prefs_tab = ttk.Frame(notebook, padding=10)
-        prefs_tab.columnconfigure(1, weight=1)
-        notebook.add(prefs_tab, text="Preferences")
+        pdf_tab = ttk.Frame(notebook, padding=12)
+        pdf_tab.columnconfigure(0, weight=1)
+        notebook.add(pdf_tab, text="Export")
 
-        about_tab = ttk.Frame(notebook, padding=10)
+        other_tab = ttk.Frame(notebook, padding=12)
+        other_tab.columnconfigure(0, weight=1)
+        notebook.add(other_tab, text="Preferences")
+
+        about_tab = ttk.Frame(notebook, padding=12)
         about_tab.columnconfigure(0, weight=1)
         notebook.add(about_tab, text="About")
 
         ttk.Label(deck_tab, text="Template SVG").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
         ttk.Entry(deck_tab, textvariable=self.template_var, state="readonly").grid(row=0, column=1, sticky="ew", pady=4)
 
-        ttk.Label(deck_tab, text="GSheet ID").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
-        ttk.Entry(deck_tab, textvariable=self.sheet_id_var).grid(row=1, column=1, sticky="ew", pady=4)
-
-        ttk.Label(deck_tab, text="Range / gid").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
-        ttk.Entry(deck_tab, textvariable=self.sheet_range_var).grid(row=2, column=1, sticky="ew", pady=4)
-
-        buttons = ttk.Frame(deck_tab)
-        buttons.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 4))
-        buttons.columnconfigure(3, weight=1)
-        self.run_btn = ttk.Button(buttons, text="Create", command=self._run_clicked)
-        self.run_btn.grid(row=0, column=0, sticky="w")
-        self.open_btn = ttk.Button(buttons, text="Open", command=self._open_output_clicked)
-        self.open_btn.grid(row=0, column=1, sticky="w", padx=(8, 0))
-        self.pdf_btn = ttk.Button(buttons, text="Export", command=self._export_clicked)
-        self.pdf_btn.grid(row=0, column=2, sticky="w", padx=(8, 0))
-        ttk.Label(buttons, textvariable=self.status_var).grid(row=0, column=3, sticky="w", padx=(12, 0))
+        source_row = ttk.Frame(deck_tab)
+        source_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=4)
+        source_row.columnconfigure(1, weight=3)
+        source_row.columnconfigure(3, weight=2)
+        source_row.columnconfigure(5, weight=1)
+        gsheet_label = ttk.Label(source_row, text="GSheet ID")
+        gsheet_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        gsheet_entry = ttk.Entry(source_row, textvariable=self.sheet_id_var)
+        gsheet_entry.grid(row=0, column=1, sticky="ew")
+        range_label = ttk.Label(source_row, text="Range / gid")
+        range_label.grid(row=0, column=2, sticky="w", padx=(12, 8))
+        range_entry = ttk.Entry(source_row, textvariable=self.sheet_range_var)
+        range_entry.grid(row=0, column=3, sticky="ew")
+        ttk.Label(source_row, text="Source").grid(row=0, column=4, sticky="w", padx=(12, 8))
+        source_combo = ttk.Combobox(
+            source_row,
+            textvariable=self.source_mode_var,
+            values=SOURCE_MODE_LABELS,
+            state="readonly",
+            width=20,
+        )
+        source_combo.grid(row=0, column=5, sticky="ew")
+        source_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_source_mode_changed())
+        GUI.attach_tooltip(
+            gsheet_label,
+            "Google Sheets spreadsheet ID from the sheet URL. Leave empty to use a CSV next to the SVG.",
+        )
+        GUI.attach_tooltip(
+            gsheet_entry,
+            "Google Sheets spreadsheet ID from the sheet URL. Leave empty to use a CSV next to the SVG.",
+        )
+        GUI.attach_tooltip(
+            range_label,
+            "A1 range, sheet title, or gid. Leave empty for OAuth/default sheet discovery.",
+        )
+        GUI.attach_tooltip(
+            range_entry,
+            "A1 range, sheet title, or gid. Leave empty for OAuth/default sheet discovery.",
+        )
+        GUI.attach_tooltip(
+            source_combo,
+            "Dataset source detected at startup. Choose local CSV, OAuth, or public Google Sheet to force a mode.",
+        )
 
         log_font = tkfont.nametofont("TkFixedFont").copy()
         try:
@@ -1155,39 +230,165 @@ class DeckMakerApp:
         except Exception:
             pass
 
-        self.log_text = scrolledtext.ScrolledText(deck_tab, height=9, wrap="word", state="disabled", font=log_font)
-        self.log_text.grid(row=4, column=0, columnspan=2, sticky="nsew", pady=(10, 0))
+        buttons = ttk.LabelFrame(frame, text="Actions:", padding=8)
+        buttons.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        buttons.columnconfigure(6, weight=1)
+        auto_create_cb = ttk.Checkbutton(buttons, text="", variable=self.auto_create_var, command=self._on_auto_prefs_changed)
+        auto_create_cb.grid(row=0, column=0, sticky="w", padx=(0, 2))
+        self.run_btn = ttk.Button(buttons, text="Generate", command=self._run_clicked)
+        self.run_btn.grid(row=0, column=1, sticky="w", padx=(0, 12))
+        auto_open_cb = ttk.Checkbutton(buttons, text="", variable=self.auto_open_var, command=self._on_auto_prefs_changed)
+        auto_open_cb.grid(row=0, column=2, sticky="w", padx=(0, 2))
+        self.open_btn = ttk.Button(buttons, text="Open SVG", command=self._open_output_clicked)
+        self.open_btn.grid(row=0, column=3, sticky="w", padx=(0, 12))
+        auto_export_cb = ttk.Checkbutton(buttons, text="", variable=self.auto_export_var, command=self._on_auto_prefs_changed)
+        auto_export_cb.grid(row=0, column=4, sticky="w", padx=(0, 2))
+        self.pdf_btn = ttk.Button(buttons, text="Export", command=self._export_clicked)
+        self.pdf_btn.grid(row=0, column=5, sticky="w")
+        ttk.Label(buttons, textvariable=self.status_var).grid(row=0, column=6, sticky="w", padx=(12, 0))
+        GUI.attach_tooltip(auto_create_cb, "Auto-start generate")
+        GUI.attach_tooltip(auto_open_cb, "Auto-start Open SVG")
+        GUI.attach_tooltip(auto_export_cb, "Auto-start export")
+        self.log_text = scrolledtext.ScrolledText(deck_tab, height=13, wrap="word", state="disabled", font=log_font)
+        self.log_text.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(12, 0))
+        try:
+            self.log_text.tag_configure("live_activity", foreground="#555555")
+        except Exception:
+            pass
 
-        format_box = ttk.LabelFrame(prefs_tab, text="Output Formats", padding=8)
-        format_box.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
-        ttk.Checkbutton(format_box, text="PDF", variable=self.export_pdf_var, command=self._on_export_format_prefs_changed).grid(row=0, column=0, sticky="w", padx=(0, 14))
-        ttk.Checkbutton(format_box, text="PNG pages", variable=self.export_png_var, command=self._on_export_format_prefs_changed).grid(row=0, column=1, sticky="w")
-
-        ttk.Label(prefs_tab, text="PDF Output Profiles").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=(0, 6))
-        checks = ttk.Frame(prefs_tab)
-        checks.grid(row=2, column=0, columnspan=2, sticky="w")
-        profile_labels = [
-            ("default", "High Quality"),
-            ("prepress", "Compact"),
-        ]
-        for idx, (key, label) in enumerate(profile_labels):
+        pdf_export_toggle = ttk.Checkbutton(
+            pdf_tab,
+            text="PDF export",
+            variable=self.export_pdf_var,
+            command=self._on_export_format_prefs_changed,
+        )
+        pdf_profiles_box = ttk.LabelFrame(pdf_tab, labelwidget=pdf_export_toggle, padding=8)
+        pdf_profiles_box.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        profiles_row = ttk.Frame(pdf_profiles_box)
+        profiles_row.grid(row=0, column=0, sticky="w")
+        ttk.Label(profiles_row, text="PDF output profiles:").grid(row=0, column=0, sticky="w", padx=(0, 10))
+        for idx, key in enumerate(self._pdf_profile_names, start=1):
             cb = ttk.Checkbutton(
-                checks,
-                text=label,
+                profiles_row,
+                text=key,
                 variable=self.pdf_profile_vars[key],
                 command=self._on_pdf_profiles_changed,
             )
-            cb.grid(row=idx // 3, column=idx % 3, sticky="w", padx=(0, 12), pady=(0, 4))
+            cb.grid(row=0, column=idx, sticky="w", padx=(0, 10))
 
+        pdfx_toggle = ttk.Checkbutton(
+            pdf_tab,
+            text="PDF/X export (CMYK)",
+            variable=self.export_pdfx_var,
+            command=self._on_export_format_prefs_changed,
+        )
+        cmyk_box = ttk.LabelFrame(pdf_tab, labelwidget=pdfx_toggle, padding=8)
+        cmyk_box.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        cmyk_box.columnconfigure(1, weight=1)
+        ttk.Label(cmyk_box, text="ICC").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.pdf_cmyk_icc_combo = ttk.Combobox(
+            cmyk_box,
+            textvariable=self.pdf_cmyk_icc_var,
+            values=self._icc_profiles,
+            state="readonly",
+        )
+        self.pdf_cmyk_icc_combo.grid(row=0, column=1, sticky="ew")
+        self.pdf_cmyk_icc_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_pdf_profiles_changed())
+        ttk.Label(cmyk_box, text="PDF/X").grid(row=0, column=2, sticky="w", padx=(12, 6))
+        self.pdfx_version_combo = ttk.Combobox(
+            cmyk_box,
+            textvariable=self.pdfx_version_var,
+            values=("PDF/X-1a", "PDF/X-3", "PDF/X-4 (supports transparencies)"),
+            state="readonly",
+            width=28,
+        )
+        self.pdfx_version_combo.grid(row=0, column=3, sticky="w")
+        self.pdfx_version_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_pdf_profiles_changed())
         ttk.Checkbutton(
-            prefs_tab,
-            text="Raster filters",
-            variable=self.pdf_raster_filters_var,
-            command=self._on_pdf_export_prefs_changed,
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+            cmyk_box,
+            text="Text in pure black",
+            variable=self.pdf_cmyk_pure_black_text_var,
+            command=self._on_pdf_profiles_changed,
+        ).grid(row=0, column=4, sticky="w", padx=(12, 0))
 
-        split_box = ttk.LabelFrame(prefs_tab, text="SVG Output", padding=8)
-        split_box.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        options_box = ttk.LabelFrame(pdf_tab, text="PDF options", padding=8)
+        options_box.grid(row=2, column=0, sticky="ew", padx=(18, 0), pady=(0, 12))
+        options_row = ttk.Frame(options_box)
+        options_row.grid(row=0, column=0, sticky="w")
+        ttk.Label(options_row, text="Raster filters:").grid(row=0, column=0, sticky="w", padx=(0, 10))
+        raster_modes = (
+            ("png", "png"),
+            ("jpeg", "jpeg"),
+            ("png_alpha", "png_alfa"),
+            ("inkscape", "inkscape"),
+            ("none", "none"),
+        )
+        for idx, (value, label) in enumerate(raster_modes, start=1):
+            ttk.Radiobutton(
+                options_row,
+                text=label,
+                value=value,
+                variable=self.pdf_raster_mode_var,
+                command=self._on_pdf_export_prefs_changed,
+            ).grid(row=0, column=idx, sticky="w", padx=(0, 10))
+
+        other_toggle = ttk.Checkbutton(
+            pdf_tab,
+            text="Other formats",
+            variable=self.export_png_var,
+            command=self._on_export_format_prefs_changed,
+        )
+        format_box = ttk.LabelFrame(pdf_tab, labelwidget=other_toggle, padding=8)
+        format_box.grid(row=3, column=0, sticky="ew", pady=(0, 12))
+        format_box.columnconfigure(3, weight=1)
+        ttk.Label(format_box, text="Format").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        other_format_combo = ttk.Combobox(
+            format_box,
+            textvariable=self.other_export_format_var,
+            values=list(OTHER_EXPORT_FORMATS),
+            state="readonly",
+            width=12,
+        )
+        other_format_combo.grid(row=0, column=1, sticky="w")
+        other_format_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_export_format_prefs_changed())
+        ttk.Label(format_box, text="Pages").grid(row=0, column=2, sticky="w", padx=(12, 8))
+        pages_entry = ttk.Entry(format_box, textvariable=self.other_export_pages_var, width=18)
+        pages_entry.grid(row=0, column=3, sticky="w")
+        ttk.Label(format_box, text="e.g. 1,3-5,8 (empty = all)").grid(row=0, column=4, sticky="w", padx=(8, 0))
+        pages_entry.bind("<FocusOut>", lambda _e: self._on_export_format_prefs_changed())
+        pages_entry.bind("<Return>", lambda _e: self._on_export_format_prefs_changed())
+
+        export_options_box = ttk.LabelFrame(pdf_tab, text="Export Options", padding=8)
+        export_options_box.grid(row=4, column=0, sticky="ew", pady=(0, 12))
+        ttk.Label(export_options_box, text="DPI").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        dpi_spin = ttk.Spinbox(
+            export_options_box,
+            from_=1,
+            to=2400,
+            increment=50,
+            textvariable=self.export_dpi_var,
+            width=8,
+            command=self._on_export_dpi_changed,
+        )
+        dpi_spin.grid(row=0, column=1, sticky="w")
+        dpi_spin.bind("<FocusOut>", lambda _e: self._on_export_dpi_changed())
+        dpi_spin.bind("<Return>", lambda _e: self._on_export_dpi_changed())
+        ttk.Label(export_options_box, text="JPEG quality").grid(row=0, column=2, sticky="w", padx=(14, 8))
+        jpeg_quality_spin = ttk.Spinbox(
+            export_options_box,
+            from_=70,
+            to=95,
+            increment=1,
+            textvariable=self.export_jpeg_quality_var,
+            width=8,
+            command=self._on_export_jpeg_quality_changed,
+        )
+        jpeg_quality_spin.grid(row=0, column=3, sticky="w")
+        jpeg_quality_spin.bind("<FocusOut>", lambda _e: self._on_export_jpeg_quality_changed())
+        jpeg_quality_spin.bind("<Return>", lambda _e: self._on_export_jpeg_quality_changed())
+
+        split_box = ttk.LabelFrame(other_tab, text="SVG Parts", padding=8)
+        split_box.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         split_box.columnconfigure(1, weight=1)
         ttk.Checkbutton(
             split_box,
@@ -1195,7 +396,7 @@ class DeckMakerApp:
             variable=self.split_svg_output_var,
             command=self._on_svg_chunk_prefs_changed,
         ).grid(row=0, column=0, columnspan=2, sticky="w")
-        ttk.Label(split_box, text="Chunk MB").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
+        ttk.Label(split_box, text="Part target MB").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
         chunk_spin = ttk.Spinbox(
             split_box,
             from_=1,
@@ -1209,36 +410,41 @@ class DeckMakerApp:
         chunk_spin.bind("<FocusOut>", lambda _e: self._on_svg_chunk_prefs_changed())
         chunk_spin.bind("<Return>", lambda _e: self._on_svg_chunk_prefs_changed())
 
-        ttk.Label(
-            prefs_tab,
-            text="All selected PDF profiles are generated after the page PDFs are ready.",
-            wraplength=420,
-            justify="left",
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
-
-        auto_box = ttk.LabelFrame(prefs_tab, text="Automation", padding=8)
-        auto_box.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(12, 0))
-        ttk.Checkbutton(auto_box, text="Auto Create", variable=self.auto_create_var, command=self._on_auto_prefs_changed).grid(row=0, column=0, sticky="w")
-        ttk.Checkbutton(auto_box, text="Auto Open", variable=self.auto_open_var, command=self._on_auto_prefs_changed).grid(row=1, column=0, sticky="w")
-        ttk.Checkbutton(auto_box, text="Auto Export", variable=self.auto_export_var, command=self._on_auto_prefs_changed).grid(row=2, column=0, sticky="w")
-
         about_text = (
             "PnPInk DeckMaker\n\n"
-            "Resident app for rendering SVG output and exporting final files.\n"
-            "Preferences in this window are stored locally for future runs.\n"
-            "Output options will continue to grow here."
+            "PnPInk is an open-source extension suite for Inkscape that turns it into a practical "
+            "production environment for print-and-play components: cards, tiles, counters, boards, "
+            "and player aids.\n\n"
+            "You design with normal SVG objects, and PnPInk handles replication, data filling, "
+            "placement, and pagination automatically. The output remains editable SVG, and you can "
+            "export using Inkscape formats such as PDF, PNG, JPG, and SVG."
         )
-        ttk.Label(about_tab, text=about_text, justify="left", anchor="nw").grid(row=0, column=0, sticky="nw")
+        ttk.Label(about_tab, text=about_text, justify="left", anchor="nw", wraplength=700).grid(row=0, column=0, sticky="nw")
+
+        help_box = ttk.LabelFrame(about_tab, text="Help", padding=8)
+        help_box.grid(row=1, column=0, sticky="ew", pady=(12, 12))
+        ttk.Button(help_box, text="Open Intro", command=lambda: self._open_url_in_system(DOCS_INTRO_URL)).grid(row=0, column=0, sticky="w")
+        ttk.Button(help_box, text="Open Guide", command=lambda: self._open_url_in_system(DOCS_GUIDE_URL)).grid(row=0, column=1, sticky="w", padx=(8, 0))
+
+        examples_box = ttk.LabelFrame(about_tab, text="Examples", padding=8)
+        examples_box.grid(row=2, column=0, sticky="ew")
+        ttk.Label(
+            examples_box,
+            text="The examples folder contains ready-to-open templates, sample datasets, and generated outputs for testing the full workflow.",
+            justify="left",
+            wraplength=700,
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Button(examples_box, text="Open Examples Folder", command=self._open_examples_folder).grid(row=1, column=0, sticky="w", pady=(8, 0))
 
         progress_wrap = tk.Frame(frame, height=6, bd=0, highlightthickness=0)
-        progress_wrap.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        progress_wrap.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         progress_wrap.grid_propagate(False)
         progress_wrap.columnconfigure(0, weight=1)
         self.progress = ttk.Progressbar(progress_wrap, mode="indeterminate", style="Thin.Horizontal.TProgressbar")
         self.progress.grid(row=0, column=0, sticky="ew")
 
     def _apply_window_icon(self):
-        icon_path = _app_icon_path()
+        icon_path = DMPATHS.app_icon(os.path.dirname(__file__))
         if not os.path.isfile(icon_path):
             return
         try:
@@ -1254,147 +460,455 @@ class DeckMakerApp:
         stamp = time.strftime("%H:%M:%S")
         try:
             self.log_text.configure(state="normal")
-            self.log_text.insert("end", f"[{stamp}] {text}\n")
+            self._clear_live_activity_locked()
+            prefix = f"[{stamp}] " if stamp != self._last_log_stamp else " " * 11
+            self.log_text.insert("end-1c", f"{prefix}{text}\n")
+            self._last_log_stamp = stamp
+            self._apply_live_activity_locked()
             self.log_text.see("end")
             self.log_text.configure(state="disabled")
         except Exception:
             pass
 
-    def _start_web_activity_monitor(self):
-        self._stop_web_activity_monitor()
-        self._activity_stop = threading.Event()
-        self._web_activity_stats = {
+    def _set_activity(self, message: str):
+        text = str(message or "").strip()
+        try:
+            self.log_text.configure(state="normal")
+            self._live_activity_text = text
+            self._clear_live_activity_locked()
+            self._apply_live_activity_locked()
+            self.log_text.see("end")
+            self.log_text.configure(state="disabled")
+        except Exception:
+            pass
+
+    def _clear_live_activity_locked(self):
+        try:
+            ranges = self.log_text.tag_ranges("live_activity")
+            if len(ranges) >= 2:
+                self.log_text.delete(ranges[0], ranges[1])
+            self.log_text.tag_remove("live_activity", "1.0", "end")
+        except Exception:
+            pass
+
+    def _apply_live_activity_locked(self):
+        text = str(self._live_activity_text or "").strip()
+        if not text:
+            return
+        try:
+            start = self.log_text.index("end-1c")
+            self.log_text.insert("end-1c", f"> {text}")
+            end = self.log_text.index("end-1c")
+            self.log_text.tag_add("live_activity", start, end)
+        except Exception:
+            pass
+
+    def _queue_ui_log(self, message: str):
+        try:
+            self._ui_queue.put(("log", str(message or "")))
+        except Exception:
+            pass
+
+    def _queue_ui_activity(self, message: str):
+        try:
+            self._ui_queue.put(("activity", str(message or "")))
+        except Exception:
+            pass
+
+    def _set_activity_progress(self, label: str, current: int, total: int):
+        try:
+            self._ui_queue.put(("progress", (str(label or "").strip(), int(current or 0), int(total or 0))))
+        except Exception:
+            pass
+
+    def _make_process_output_activity(self, label: str):
+        prefix = str(label or "Process").strip() or "Process"
+        buffer = {"text": ""}
+
+        def on_output(chunk: str):
+            text = str(chunk or "")
+            if not text:
+                return
+            buffer["text"] += text
+            while "\n" in buffer["text"] or "\r" in buffer["text"]:
+                line, sep, rest = buffer["text"].partition("\n")
+                if not sep:
+                    line, _sep, rest = buffer["text"].partition("\r")
+                buffer["text"] = rest
+                item = line.strip()
+                if item:
+                    self._queue_ui_activity(f"{prefix}: {item}")
+
+        return on_output
+
+    def _handle_progress_update(self, label: str, current: int, total: int):
+        text_label = str(label or "").strip()
+        if not text_label:
+            return
+        if text_label != self._active_progress_label:
+            if self._active_progress_label:
+                self._commit_activity_to_log()
+            self._active_progress_label = text_label
+            self._log(text_label)
+        self._set_activity(GUI.progress_text("", current, total, width=50))
+        if int(total or 0) > 0 and int(current or 0) >= int(total or 0):
+            self._commit_activity_to_log()
+            self._active_progress_label = ""
+
+    def _commit_activity_to_log(self):
+        text = str(self._live_activity_text or "").strip()
+        if not text:
+            return
+        try:
+            self.log_text.configure(state="normal")
+            self._clear_live_activity_locked()
+            self._live_activity_text = ""
+            self.log_text.configure(state="disabled")
+        except Exception:
+            pass
+        self._log(text)
+
+    def _reset_web_activity_stats(self) -> dict[str, int]:
+        return {
             "wkmc_fetched": 0,
             "web_cached": 0,
             "wkmc_failed": 0,
             "raster_jobs": 0,
             "raster_chunks": 0,
+            "raster_job_total": 0,
+            "raster_job_done": 0,
+            "svg_parts_total": 0,
+            "svg_parts_done": 0,
+            "pdf_parts_total": 0,
+            "pdf_parts_done": 0,
+            "png_parts_total": 0,
+            "png_parts_done": 0,
+            "pdf_merge_total": 0,
+            "pdf_merge_done": 0,
+            "last_pdf_logged": 0,
+            "last_png_logged": 0,
+            "last_raster_logged": 0,
         }
-        log_path = _app_log_path()
 
-        def _emit(msg: str):
-            try:
-                self.root.after(0, lambda msg=msg: self._log(msg))
-            except Exception:
-                pass
+    def _start_web_activity_monitor(self):
+        self._stop_web_activity_monitor()
+        self._web_activity_stats = self._reset_web_activity_stats()
 
-        def worker():
-            try:
-                pos = 0
-                try:
-                    if os.path.isfile(log_path):
-                        pos = os.path.getsize(log_path)
-                except Exception:
-                    pos = 0
-                while not self._activity_stop.is_set():
-                    if not os.path.isfile(log_path):
-                        time.sleep(0.25)
-                        continue
-                    try:
-                        with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
-                            fh.seek(pos)
-                            chunk = fh.read()
-                            pos = fh.tell()
-                    except Exception:
-                        time.sleep(0.25)
-                        continue
-                    if not chunk:
-                        time.sleep(0.25)
-                        continue
-                    for raw_line in chunk.splitlines():
-                        line = str(raw_line or "").strip()
-                        if not line:
-                            continue
-                        if "[sources] wkmc batch prefetched" in line:
-                            msg = line.split("[sources] wkmc batch prefetched", 1)[-1].strip()
-                            _emit(f"Wikimedia batch prefetch {msg}")
-                            continue
-                        if "[sources] virtual prefetch scheduled:" in line:
-                            m = re.search(r"virtual prefetch scheduled:\s*(\d+)\s*expr", line)
-                            if m:
-                                _emit(f"Preparing {m.group(1)} web source expression(s)...")
-                            continue
-                        if "[sources] web prefetch scheduled:" in line:
-                            m = re.search(r"web prefetch scheduled:\s*(\d+)\s*url", line)
-                            if m:
-                                _emit(f"Preparing {m.group(1)} direct web download(s)...")
-                            continue
-                        if "[sources] wkmc fetched query=" in line:
-                            self._web_activity_stats["wkmc_fetched"] += 1
-                            n = int(self._web_activity_stats["wkmc_fetched"])
-                            if n <= 3 or (n % 10) == 0:
-                                _emit(f"Wikimedia resolved {n} item(s)...")
-                            continue
-                        if "[sources] web cached ->" in line:
-                            self._web_activity_stats["web_cached"] += 1
-                            n = int(self._web_activity_stats["web_cached"])
-                            if n <= 3 or (n % 5) == 0:
-                                _emit(f"Downloaded {n} web asset(s)...")
-                            continue
-                        if "[sources] wkmc fetch failed" in line:
-                            self._web_activity_stats["wkmc_failed"] += 1
-                            n = int(self._web_activity_stats["wkmc_failed"])
-                            if n <= 3 or (n % 5) == 0:
-                                _emit(f"Wikimedia retries/failures: {n}")
-                            continue
-                        if "[raster] export-id png jobs=" in line:
-                            m = re.search(r"export-id png jobs=%d ids=%s\s+(\d+)", line)
-                            if not m:
-                                m = re.search(r"export-id png jobs=\s*(\d+)", line)
-                            if m:
-                                jobs = int(m.group(1))
-                                self._web_activity_stats["raster_jobs"] += jobs
-                                if jobs > 0:
-                                    _emit(f"Rasterizing filtered nodes: {jobs} PNG job(s)...")
-                            continue
-                        if "[export.pdf] chunk_raster" in line:
-                            self._web_activity_stats["raster_chunks"] += 1
-                            m = re.search(r"rasterized_filters=%d.*?\s(\d+)\s", line)
-                            if not m:
-                                m = re.search(r"rasterized_filters=\s*(\d+)", line)
-                            if m:
-                                _emit(
-                                    f"Raster chunk {self._web_activity_stats['raster_chunks']} done: "
-                                    f"{int(m.group(1))} filter node(s)"
-                                )
-                            else:
-                                _emit(f"Raster chunk {self._web_activity_stats['raster_chunks']} done")
-                            continue
-            except Exception:
-                pass
+        def _set_activity(msg: str):
+            self._queue_ui_activity(msg)
 
-        self._activity_thread = threading.Thread(target=worker, name="pnpink-web-activity", daemon=True)
-        self._activity_thread.start()
+        def _set_progress(label: str, current: int, total: int):
+            self._set_activity_progress(label, current, total)
+
+        def process_line(raw_line: str):
+            line = str(raw_line or "").strip()
+            if not line:
+                return
+            m = re.search(r"\[datasets\].*placed=(\d+)\s+cards; end_page=(\d+)", line)
+            if m:
+                _set_activity(f"Generated {int(m.group(1))} cards across {int(m.group(2))} page(s)")
+                return
+            if "[svg_chunks] plan total=" in line:
+                m = re.search(r"plan total=\s*(\d+)", line)
+                if m:
+                    self._web_activity_stats["svg_parts_total"] = int(m.group(1))
+                    self._web_activity_stats["svg_parts_done"] = 0
+                    _set_progress("Creating SVG parts", 0, int(m.group(1)))
+                return
+            if "[svg_chunks] wrote chunk=" in line:
+                total = int(self._web_activity_stats.get("svg_parts_total") or 0)
+                if total > 0:
+                    self._web_activity_stats["svg_parts_done"] += 1
+                    done = int(self._web_activity_stats.get("svg_parts_done") or 0)
+                    _set_progress("Creating SVG parts", min(done, total), total)
+                else:
+                    _set_activity("Creating SVG parts...")
+                return
+            if "[export.pdf] chunks_ready" in line:
+                m = re.search(r"count=\s*(\d+)", line)
+                if m:
+                    self._web_activity_stats["pdf_parts_total"] = int(m.group(1))
+                    self._web_activity_stats["pdf_parts_done"] = 0
+                    _set_progress("Preparing PDF parts", 0, int(m.group(1)))
+                return
+            if "[export.png] chunks_ready" in line:
+                m = re.search(r"count=\s*(\d+)", line)
+                if m:
+                    self._web_activity_stats["png_parts_total"] = int(m.group(1))
+                    self._web_activity_stats["png_parts_done"] = 0
+                    _set_progress("Preparing PNG parts", 0, int(m.group(1)))
+                return
+            if "[sources] wkmc batch prefetched" in line:
+                msg = line.split("[sources] wkmc batch prefetched", 1)[-1].strip()
+                _set_activity(f"Wikimedia batch prefetch {msg}")
+                return
+            if "[sources] virtual prefetch scheduled:" in line:
+                m = re.search(r"virtual prefetch scheduled:\s*(\d+)\s*expr", line)
+                if m:
+                    _set_activity(f"Preparing {m.group(1)} web source expression(s)...")
+                return
+            if "[sources] web prefetch scheduled:" in line:
+                m = re.search(r"web prefetch scheduled:\s*(\d+)\s*url", line)
+                if m:
+                    _set_activity(f"Preparing {m.group(1)} direct web download(s)...")
+                return
+            if "[sources] wkmc fetched query=" in line:
+                self._web_activity_stats["wkmc_fetched"] += 1
+                n = int(self._web_activity_stats["wkmc_fetched"])
+                if n <= 3 or (n % 10) == 0:
+                    _set_activity(f"Wikimedia resolved {n} item(s)...")
+                return
+            if "[sources] web cached ->" in line:
+                self._web_activity_stats["web_cached"] += 1
+                n = int(self._web_activity_stats["web_cached"])
+                if n <= 3 or (n % 5) == 0:
+                    _set_activity(f"Downloaded {n} web asset(s)...")
+                return
+            if "[sources] wkmc fetch failed" in line:
+                self._web_activity_stats["wkmc_failed"] += 1
+                n = int(self._web_activity_stats["wkmc_failed"])
+                if n <= 3 or (n % 5) == 0:
+                    _set_activity(f"Wikimedia retries/failures: {n}")
+                return
+            if "[raster] export-id png jobs=" in line:
+                m = re.search(r"export-id png jobs=%d ids=%s\s+(\d+)", line)
+                if not m:
+                    m = re.search(r"export-id png jobs=\s*(\d+)", line)
+                if m:
+                    jobs = int(m.group(1))
+                    self._web_activity_stats["raster_jobs"] += jobs
+                    self._web_activity_stats["raster_job_total"] = jobs
+                    self._web_activity_stats["raster_job_done"] = 0
+                    if jobs > 0:
+                        _set_progress("Creating rasters for complex filters", 0, jobs)
+                return
+            if "[export.pdf] chunk_raster" in line:
+                self._web_activity_stats["raster_chunks"] += 1
+                m = re.search(r"rasterized_filters=%d.*?\s(\d+)\s", line)
+                if not m:
+                    m = re.search(r"rasterized_filters=\s*(\d+)", line)
+                total = int(self._web_activity_stats.get("pdf_parts_total") or 0)
+                done = int(self._web_activity_stats.get("raster_chunks") or 0)
+                if total > 0:
+                    _set_progress("Rasterizing PDF parts", min(done, total), total)
+                    self._web_activity_stats["last_raster_logged"] = done
+                elif m:
+                    _set_activity(
+                        f"Raster part {self._web_activity_stats['raster_chunks']} done: {int(m.group(1))} filter node(s)"
+                    )
+                else:
+                    _set_activity(f"Raster part {self._web_activity_stats['raster_chunks']} done")
+                return
+            if "[export.pdf] chunk_done" in line:
+                self._web_activity_stats["pdf_parts_done"] += 1
+                total = int(self._web_activity_stats.get("pdf_parts_total") or 0)
+                done = int(self._web_activity_stats.get("pdf_parts_done") or 0)
+                if total > 0:
+                    _set_progress("Exporting PDF parts", min(done, total), total)
+                    self._web_activity_stats["last_pdf_logged"] = done
+                return
+            if "[export.png] chunk_done" in line:
+                self._web_activity_stats["png_parts_done"] += 1
+                total = int(self._web_activity_stats.get("png_parts_total") or 0)
+                done = int(self._web_activity_stats.get("png_parts_done") or 0)
+                if total > 0:
+                    _set_progress("Exporting PNG parts", min(done, total), total)
+                    self._web_activity_stats["last_png_logged"] = done
+                return
+            if "[export.pdf] merge_profiles total=" in line:
+                m = re.search(r"merge_profiles total=\s*(\d+)", line)
+                if m:
+                    self._web_activity_stats["pdf_merge_total"] = int(m.group(1))
+                    self._web_activity_stats["pdf_merge_done"] = 0
+                    _set_progress("Merging PDF profiles", 0, int(m.group(1)))
+                return
+            if "[export.pdf] merge profile=" in line:
+                total = int(self._web_activity_stats.get("pdf_merge_total") or 0)
+                if total > 0:
+                    self._web_activity_stats["pdf_merge_done"] += 1
+                    done = int(self._web_activity_stats.get("pdf_merge_done") or 0)
+                    _set_progress("Merging PDF profiles", min(done, total), total)
+                else:
+                    _set_activity("Merging PDF profiles...")
+                return
+
+        self._activity_listener = process_line
+        try:
+            LOG.add_listener(self._activity_listener)
+        except Exception:
+            self._activity_listener = None
 
     def _stop_web_activity_monitor(self):
-        try:
-            self._activity_stop.set()
-        except Exception:
-            pass
+        if self._activity_listener is not None:
+            try:
+                LOG.remove_listener(self._activity_listener)
+            except Exception:
+                pass
+            self._activity_listener = None
+
+    def _start_progress_listener(self):
+        self._stop_progress_listener()
+        self._render_rows_total = 0
+
+        def on_progress(kind: str, payload: dict):
+            if kind == "render_rows_total":
+                try:
+                    self._render_rows_total = int(payload.get("total") or 0)
+                except Exception:
+                    self._render_rows_total = 0
+                if self._render_rows_total > 0:
+                    self._set_activity_progress("Generating rows", 0, self._render_rows_total)
+                return
+            if kind == "render_row":
+                try:
+                    current = int(payload.get("current") or 0)
+                except Exception:
+                    current = 0
+                if current <= 0:
+                    return
+                total = int(self._render_rows_total or 0)
+                if total > 0:
+                    self._set_activity_progress("Generating rows", current, total)
+                else:
+                    self._queue_ui_activity(f"Generating row {current}...")
+
+        self._progress_listener = on_progress
+        GUI.set_listener(self._progress_listener)
+
+    def _stop_progress_listener(self):
+        if self._progress_listener is not None:
+            GUI.clear_listener(self._progress_listener)
+            self._progress_listener = None
 
     def _load_pdf_profile_prefs(self):
         selected = set(prefs.get_pdf_profiles())
-        prefs.set_pdf_profiles([key for key in ("default", "prepress") if key in selected])
+        prefs.set_pdf_profiles([key for key in self._pdf_profile_names if key in selected])
         for key, var in self.pdf_profile_vars.items():
             var.set(key in selected)
-        if not any(var.get() for var in self.pdf_profile_vars.values()):
-            self.pdf_profile_vars["default"].set(True)
+        if not self.pdf_cmyk_icc_var.get().strip():
+            try:
+                self.pdf_cmyk_icc_var.set(ICC.display_value(""))
+            except Exception:
+                pass
+
+    @staticmethod
+    def _pdfx_label_from_value(value: str) -> str:
+        item = str(value or "3").strip().lower()
+        if item in {"1", "1a", "pdf/x-1a"}:
+            return "PDF/X-1a"
+        if item in {"4", "pdf/x-4"}:
+            return "PDF/X-4 (supports transparencies)"
+        return "PDF/X-3"
+
+    @staticmethod
+    def _pdfx_value_from_label(value: str) -> str:
+        item = str(value or "PDF/X-3").strip().lower()
+        if "1a" in item:
+            return "1a"
+        if "4" in item:
+            return "4"
+        return "3"
+
+    @staticmethod
+    def _source_mode_label(value: str) -> str:
+        return SOURCE_MODE_VALUE_TO_LABEL.get(str(value or "").strip().lower(), "(empty)")
+
+    def _source_mode_value(self) -> str:
+        return SOURCE_MODE_LABEL_TO_VALUE.get(str(self.source_mode_var.get() or "").strip(), "")
+
+    def _detect_source_mode(self, template: str, sheet_id: str, explicit: str = "") -> str:
+        mode = str(explicit or "").strip().lower()
+        if mode and mode in SOURCE_MODE_VALUE_TO_LABEL:
+            return mode
+        template = _normalize_path(template)
+        sheet_id = str(sheet_id or "").strip()
+        if sheet_id:
+            try:
+                import dataset_state as DSTATE
+
+                rec = DSTATE.get_gsheet_for_svg(template) or {}
+                if str(rec.get("sheet_id") or "").strip() == sheet_id:
+                    access_mode = str(rec.get("access_mode") or "").strip().lower()
+                    if access_mode in {"oauth", "public"}:
+                        return access_mode
+            except Exception:
+                pass
+            return ""
+        if template:
+            csv_path = os.path.splitext(template)[0] + ".csv"
+            if os.path.isfile(csv_path):
+                return "local_csv"
+        return ""
+
+    def _refresh_source_mode(self, template: str = "", explicit: str = "") -> None:
+        detected = self._detect_source_mode(
+            template or self.template_var.get(),
+            self.sheet_id_var.get().strip(),
+            explicit,
+        )
+        self.source_mode_var.set(self._source_mode_label(detected))
+
+    def _on_source_mode_changed(self) -> None:
+        self._log(f"Dataset source mode = {self.source_mode_var.get()}")
+
+    def _refresh_icc_profile_choices(self):
+        current = ICC.preference_value(self.pdf_cmyk_icc_var.get())
+        self._icc_profiles = ICC.display_choices()
+        try:
+            self.pdf_cmyk_icc_combo.configure(values=self._icc_profiles)
+        except Exception:
+            pass
+        self.pdf_cmyk_icc_var.set(ICC.display_value(current))
 
     def _selected_pdf_profiles(self) -> list[str]:
-        out = [key for key, var in self.pdf_profile_vars.items() if bool(var.get())]
+        return [key for key, var in self.pdf_profile_vars.items() if bool(var.get())]
+
+    def _selected_pdf_profiles_for_export(self, options: ExportOptions | None = None) -> list[str]:
+        export_standard = bool(options.export_pdf_standard) if options is not None else bool(self.export_pdf_var.get())
+        export_pdfx = bool(options.export_pdfx) if options is not None else bool(self.export_pdfx_var.get())
+        selected = list(options.pdf_profiles) if options is not None else self._selected_pdf_profiles()
+        out: list[str] = []
+        if export_standard:
+            standard = [key for key in self._pdf_profile_names if key in selected]
+            out.extend(standard or ["default"])
+        if export_pdfx and "cmyk" not in out:
+            out.append("cmyk")
         return out or ["default"]
 
     def _on_pdf_profiles_changed(self):
         selected = self._selected_pdf_profiles()
         prefs.set_pdf_profiles(selected)
-        self._log(f"Preference saved: PDF profiles = {', '.join(selected)}")
+        prefs.set_pdf_cmyk_icc(ICC.preference_value(self.pdf_cmyk_icc_var.get()))
+        prefs.set_pdf_cmyk_pure_black_text(bool(self.pdf_cmyk_pure_black_text_var.get()))
+        prefs.set_pdfx_version(self._pdfx_value_from_label(self.pdfx_version_var.get()))
+        self._log(f"Preference saved: PDF profiles = {', '.join(selected or ['none'])}")
 
     def _on_pdf_export_prefs_changed(self):
-        prefs.set_pdf_raster_filters(bool(self.pdf_raster_filters_var.get()))
+        prefs.set_pdf_raster_mode(self.pdf_raster_mode_var.get())
         self._log(
-            "Preference saved: PDF raster filters = "
-            f"{'on' if self.pdf_raster_filters_var.get() else 'off'}"
+            "Preference saved: PDF raster mode = "
+            f"{self.pdf_raster_mode_var.get()}"
         )
+
+    def _on_export_dpi_changed(self):
+        try:
+            export_dpi = int(float(str(self.export_dpi_var.get() or "").strip()))
+        except Exception:
+            export_dpi = prefs.get_export_dpi()
+        export_dpi = max(1, min(export_dpi, 2400))
+        self.export_dpi_var.set(str(export_dpi))
+        prefs.set_export_dpi(export_dpi)
+        self._log(f"Preference saved: export DPI = {export_dpi}")
+
+    def _on_export_jpeg_quality_changed(self):
+        try:
+            quality = int(float(str(self.export_jpeg_quality_var.get() or "").strip()))
+        except Exception:
+            quality = prefs.get_export_jpeg_quality()
+        quality = max(70, min(quality, 95))
+        self.export_jpeg_quality_var.set(str(quality))
+        prefs.set_export_jpeg_quality(quality)
+        self._log(f"Preference saved: JPEG quality = {quality}")
 
     def _on_svg_chunk_prefs_changed(self):
         prefs.set_split_svg_output(bool(self.split_svg_output_var.get()))
@@ -1406,37 +920,72 @@ class DeckMakerApp:
         self.split_svg_chunk_mb_var.set(str(chunk_mb))
         prefs.set_split_svg_chunk_mb(chunk_mb)
         self._log(
-            "Preference saved: split SVG = "
+            "Preference saved: split SVG into parts = "
             f"{'on' if self.split_svg_output_var.get() else 'off'}, "
-            f"chunk_mb={chunk_mb}"
+            f"part_mb={chunk_mb}"
         )
 
     def _selected_export_formats(self) -> list[str]:
         out: list[str] = []
-        if bool(self.export_pdf_var.get()):
+        if bool(self.export_pdf_var.get()) or bool(self.export_pdfx_var.get()):
             out.append("pdf")
         if bool(self.export_png_var.get()):
-            out.append("png")
-        return out or ["pdf"]
+            out.append(str(self.other_export_format_var.get() or "png").strip().lower() or "png")
+        return out
+
+    def _refresh_export_button_state(self):
+        try:
+            enabled = bool(self._selected_export_formats())
+            self.pdf_btn.configure(state="normal" if enabled else "disabled")
+        except Exception:
+            pass
+
+    def _export_dpi_value(self) -> int:
+        try:
+            value = int(float(str(self.export_dpi_var.get() or prefs.get_export_dpi()).strip()))
+        except Exception:
+            value = prefs.get_export_dpi()
+        return max(1, min(value, 2400))
+
+    def _export_jpeg_quality_value(self) -> int:
+        try:
+            value = int(float(str(self.export_jpeg_quality_var.get() or prefs.get_export_jpeg_quality()).strip()))
+        except Exception:
+            value = prefs.get_export_jpeg_quality()
+        return max(70, min(value, 95))
 
     def _export_options_snapshot(self) -> ExportOptions:
         return ExportOptions(
             formats=tuple(self._selected_export_formats()),
             pdf_profiles=tuple(self._selected_pdf_profiles()),
-            pdf_raster_filters=bool(self.pdf_raster_filters_var.get()),
+            export_pdf_standard=bool(self.export_pdf_var.get()),
+            export_pdfx=bool(self.export_pdfx_var.get()),
+            pdf_raster_mode=str(self.pdf_raster_mode_var.get() or "png").strip().lower(),
+            pdf_cmyk_icc=ICC.preference_value(self.pdf_cmyk_icc_var.get()),
+            pdf_cmyk_pure_black_text=bool(self.pdf_cmyk_pure_black_text_var.get()),
+            pdfx_version=self._pdfx_value_from_label(self.pdfx_version_var.get()),
+            export_dpi=self._export_dpi_value(),
+            jpeg_quality=self._export_jpeg_quality_value(),
+            other_format=str(self.other_export_format_var.get() or "png").strip().lower(),
+            other_pages=str(self.other_export_pages_var.get() or "").strip(),
         )
 
     def _on_export_format_prefs_changed(self):
-        if not bool(self.export_pdf_var.get()) and not bool(self.export_png_var.get()):
-            self.export_pdf_var.set(True)
         prefs.set_export_pdf(bool(self.export_pdf_var.get()))
+        prefs.set_export_pdfx(bool(self.export_pdfx_var.get()))
         prefs.set_export_png(bool(self.export_png_var.get()))
+        prefs.set_pdfx_version(self._pdfx_value_from_label(self.pdfx_version_var.get()))
+        prefs.set_export_other_format(self.other_export_format_var.get())
+        prefs.set_export_other_pages(self.other_export_pages_var.get())
         labels = []
         if self.export_pdf_var.get():
             labels.append("PDF")
+        if self.export_pdfx_var.get():
+            labels.append("PDF/X")
         if self.export_png_var.get():
-            labels.append("PNG pages")
-        self._log(f"Preference saved: output formats = {', '.join(labels)}")
+            labels.append(str(self.other_export_format_var.get() or "png").upper())
+        self._refresh_export_button_state()
+        self._log(f"Preference saved: output formats = {', '.join(labels) if labels else 'none'}")
 
     def _on_auto_prefs_changed(self):
         prefs.set_auto_create(bool(self.auto_create_var.get()))
@@ -1444,13 +993,13 @@ class DeckMakerApp:
         prefs.set_auto_export(bool(self.auto_export_var.get()))
         self._log(
             "Preference saved: automation = "
-            f"create={'on' if self.auto_create_var.get() else 'off'}, "
+            f"generate={'on' if self.auto_create_var.get() else 'off'}, "
             f"open={'on' if self.auto_open_var.get() else 'off'}, "
             f"export={'on' if self.auto_export_var.get() else 'off'}"
         )
 
     def _log_image_dpi_preflight(self, svg_path_or_report):
-        report = svg_path_or_report if isinstance(svg_path_or_report, dict) else _effective_image_dpi_report(str(svg_path_or_report))
+        report = svg_path_or_report if isinstance(svg_path_or_report, dict) else PREFLIGHT.effective_image_dpi_report(str(svg_path_or_report))
         if not report.get("ok"):
             self._log(f"Image preflight failed: {report.get('error')}")
             return
@@ -1489,10 +1038,10 @@ class DeckMakerApp:
             self._log(f"Image preflight skipped: unresolved={unresolved}, unreadable={unreadable}")
 
     def _output_svg_path(self) -> str:
-        return _resolve_output_svg_path(self.template_var.get())
+        return DMPATHS.output_svg(self.template_var.get())
 
     def _output_pdf_path(self) -> str:
-        return _resolve_output_pdf_path(self.template_var.get())
+        return DMPATHS.output_pdf(self.template_var.get())
 
     def _open_path_in_system(self, path: str) -> None:
         target = _normalize_path(path)
@@ -1507,28 +1056,54 @@ class DeckMakerApp:
             kwargs["creationflags"] = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
         subprocess.Popen(**kwargs)
 
+    def _open_url_in_system(self, url: str) -> None:
+        if not str(url or "").strip():
+            raise FileNotFoundError("missing url")
+        webbrowser.open(str(url), new=2)
+
+    def _open_examples_folder(self) -> None:
+        self._open_path_in_system(DMPATHS.examples_dir(os.path.dirname(__file__)))
+
     def _open_output_clicked(self) -> None:
         svg_path = self._output_svg_path()
-        if not svg_path or not os.path.isfile(svg_path):
-            self.status_var.set("Create output first")
-            self._log("Create output first")
+        open_target = svg_path if os.path.isfile(svg_path) else ""
+        if not open_target or not os.path.isfile(open_target):
+            self.status_var.set("Generate output first")
+            self._log("Generate output first")
             return
         try:
-            self._open_path_in_system(svg_path)
+            self._open_svg_in_inkscape(open_target)
             self.status_var.set("Opened output")
-            self._log(f"Opened output: {os.path.basename(svg_path)}")
+            self._log(f"Opened output: {os.path.basename(open_target)}")
         except Exception as ex:
             self.status_var.set("Open failed")
             self._log(f"Open failed: {ex}")
+
+    def _open_svg_in_inkscape(self, svg_path: str) -> None:
+        target = _normalize_path(svg_path)
+        if not target or not os.path.isfile(target):
+            raise FileNotFoundError(target or "missing svg")
+        exe = INKSCAPE.find_executable()
+        if not exe:
+            self._open_path_in_system(target)
+            return
+        kwargs = {
+            "args": [exe, target],
+            "cwd": os.path.dirname(target) or None,
+            "env": INKSCAPE.clean_launch_env(isolated_profile=False),
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+        subprocess.Popen(**kwargs)
 
     def _set_request(self, req: AppRequest):
         self._request_serial += 1
         serial = self._request_serial
         self.template_var.set(_normalize_path(req.template))
-        if req.sheet_id:
-            self.sheet_id_var.set(req.sheet_id)
-        if req.sheet_range:
-            self.sheet_range_var.set(req.sheet_range)
+        self.sheet_id_var.set(req.sheet_id or "")
+        self.sheet_range_var.set(req.sheet_range or "")
+        self._refresh_source_mode(req.template, req.dataset_source_mode)
         self.status_var.set("Template received")
         self._log(f"Template: {os.path.basename(_normalize_path(req.template))}")
         if req.sheet_id:
@@ -1543,6 +1118,8 @@ class DeckMakerApp:
         self.root.after(120, lambda: self._autorun(serial))
 
     def _schedule_auth_warmup(self):
+        if self._source_mode_value() == "local_csv":
+            return
         sheet_id = self.sheet_id_var.get().strip()
         if not sheet_id or sheet_id == self._warm_sheet_id:
             return
@@ -1558,54 +1135,17 @@ class DeckMakerApp:
             try:
                 import gsheets_client_pkce as GS
 
-                self.root.after(0, lambda: self._log("Checking Google Sheets session..."))
+                self._queue_ui_activity("Checking Google Sheets session...")
+                self._queue_ui_log("Checking Google Sheets session...")
                 ok = GS.warm_session()
                 if ok:
                     self.root.after(0, lambda: self.status_var.set("Google Sheets session ready"))
-                    self.root.after(0, lambda: self._log("Google Sheets session ready"))
+                    self._queue_ui_activity("Google Sheets session ready")
+                    self._queue_ui_log("Google Sheets session ready")
             except Exception:
                 pass
 
         threading.Thread(target=worker, name="pnpink-gsheets-auth-warmup", daemon=True).start()
-
-    def _start_server(self):
-        def serve():
-            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            srv.bind((HOST, PORT))
-            srv.listen(5)
-            srv.settimeout(0.4)
-            try:
-                while not self._server_stop.is_set():
-                    try:
-                        conn, _addr = srv.accept()
-                    except socket.timeout:
-                        continue
-                    with conn:
-                        data = b""
-                        while b"\n" not in data:
-                            chunk = conn.recv(8192)
-                            if not chunk:
-                                break
-                            data += chunk
-                        try:
-                            msg = json.loads(data.decode("utf-8").strip() or "{}")
-                            if msg.get("cmd") == "open":
-                                self._queue.put(AppRequest(
-                                    template=_normalize_path(msg.get("template") or ""),
-                                    sheet_id=str(msg.get("sheet_id") or "").strip(),
-                                    sheet_range=str(msg.get("sheet_range") or "").strip(),
-                                    log_level=str(msg.get("log_level") or "global").strip() or "global",
-                                ))
-                                conn.sendall(b"OK\n")
-                            else:
-                                conn.sendall(b"ERR\n")
-                        except Exception:
-                            conn.sendall(b"ERR\n")
-            finally:
-                srv.close()
-
-        threading.Thread(target=serve, name="pnpink-deckmaker-app-server", daemon=True).start()
 
     def _drain_queue(self):
         try:
@@ -1614,6 +1154,21 @@ class DeckMakerApp:
         except queue.Empty:
             pass
         self.root.after(150, self._drain_queue)
+
+    def _drain_ui_queue(self):
+        try:
+            while True:
+                kind, payload = self._ui_queue.get_nowait()
+                if kind == "log":
+                    self._log(payload)
+                elif kind == "activity":
+                    self._set_activity(payload)
+                elif kind == "progress":
+                    label, current, total = payload
+                    self._handle_progress_update(label, current, total)
+        except queue.Empty:
+            pass
+        self.root.after(80, self._drain_ui_queue)
 
     def _autorun(self, serial: int):
         if serial <= self._autorun_serial:
@@ -1635,18 +1190,22 @@ class DeckMakerApp:
             self.status_var.set("Save/open a template SVG first")
             self._log("Save/open a template SVG first")
             return
+        source_mode = self._detect_source_mode(template, self.sheet_id_var.get().strip(), self._source_mode_value())
+        sheet_id = "" if source_mode == "local_csv" else self.sheet_id_var.get().strip()
         req = AppRequest(
             template=template,
-            sheet_id=self.sheet_id_var.get().strip(),
+            sheet_id=sheet_id,
             sheet_range=self.sheet_range_var.get().strip(),
+            dataset_source_mode=source_mode,
         )
         _l.i(f"[deckmaker_app] run clicked template='{req.template}' sheet_id={'yes' if req.sheet_id else 'no'} range='{req.sheet_range}'")
         self._run_started_at = time.perf_counter()
         self.run_btn.configure(state="disabled")
         self.open_btn.configure(state="disabled")
         self.progress.start(10)
-        self.status_var.set("Creating...")
-        self._log(("Auto create" if autorun else "Create") + " started")
+        self.status_var.set("Generating...")
+        self._set_activity("Generating output...")
+        self._log(("Auto generate" if autorun else "Generate") + " started")
         self._render_thread = threading.Thread(target=self._render_worker, args=(req,), daemon=True)
         self._render_thread.start()
 
@@ -1654,20 +1213,24 @@ class DeckMakerApp:
         try:
             import dataset_state as DSTATE
             import engine as ENG
-            from deckmaker import __version__ as deckmaker_version
 
+            TEMPPATHS.cleanup_old_runs()
+            self._start_progress_listener()
             self._start_web_activity_monitor()
-            self.root.after(0, lambda: self._log("Loading template and dataset..."))
-            effect = _EngineEffect(req.template, req.sheet_id, req.sheet_range, req.log_level)
-            self.root.after(0, lambda: self._log("Rendering output SVG..."))
-            ENG.run(effect, deckmaker_version)
+            self._queue_ui_activity("Loading template and dataset...")
+            self._queue_ui_log("Loading template and dataset...")
+            effect = RUNNER.EngineEffect(req.template, req.sheet_id, req.sheet_range, req.log_level, req.dataset_source_mode)
+            self._queue_ui_activity("Rendering output SVG...")
+            self._queue_ui_log("Rendering output SVG...")
+            ENG.run(effect, APP_VERSION)
             try:
                 access_mode = str(getattr(effect.options, "_dataset_access_mode", "") or "").strip().lower()
                 if req.sheet_id:
                     DSTATE.set_gsheet_for_svg(req.template, req.sheet_id, req.sheet_range, access_mode)
             except Exception:
                 _l.w("[deckmaker_app] dataset state save failed\n" + traceback.format_exc())
-            dpi_report = _effective_image_dpi_report(_resolve_output_svg_path(req.template))
+            self._queue_ui_activity("Analyzing generated images...")
+            dpi_report = PREFLIGHT.effective_image_dpi_report(DMPATHS.output_svg(req.template))
             self.root.after(0, lambda dpi_report=dpi_report: self._log_image_dpi_preflight(dpi_report))
             elapsed = (time.perf_counter() - self._run_started_at) if self._run_started_at else 0.0
             self.root.after(0, lambda: self._render_done(f"Done ({elapsed:.2f}s)"))
@@ -1676,14 +1239,17 @@ class DeckMakerApp:
             _l.w("[deckmaker_app] render failed:\n" + traceback.format_exc())
             self.root.after(0, lambda: self._render_done(f"Error: {ex}"))
         finally:
+            self._stop_progress_listener()
             self._stop_web_activity_monitor()
 
     def _render_done(self, status: str):
         self.progress.stop()
         self.run_btn.configure(state="normal")
         self.open_btn.configure(state="normal")
-        self.pdf_btn.configure(state="normal")
+        self._refresh_export_button_state()
         self.status_var.set(status)
+        self._commit_activity_to_log()
+        self._set_activity("")
         self._log(status)
 
     def _after_create_success(self):
@@ -1691,7 +1257,7 @@ class DeckMakerApp:
             return
         self._post_create_busy = True
         auto_open = bool(self.auto_open_var.get())
-        auto_export = bool(self.auto_export_var.get())
+        auto_export = bool(self.auto_export_var.get()) and bool(self._selected_export_formats())
         output_svg_path = self._output_svg_path()
         template = self.template_var.get()
         export_options = self._export_options_snapshot()
@@ -1700,7 +1266,8 @@ class DeckMakerApp:
             try:
                 if auto_open:
                     try:
-                        self._open_path_in_system(output_svg_path)
+                        open_target = output_svg_path
+                        self._open_path_in_system(open_target)
                         self.root.after(0, lambda: self._log("Opened output automatically"))
                     except Exception as ex:
                         self.root.after(0, lambda ex=ex: self._log(f"Auto open failed: {ex}"))
@@ -1718,21 +1285,30 @@ class DeckMakerApp:
         self.pdf_btn.configure(state="disabled")
         self.progress.start(10)
         formats = list(options.formats)
-        label = ", ".join(fmt.upper() if fmt == "pdf" else "PNG" for fmt in formats)
+        label = ", ".join(fmt.upper() for fmt in formats)
         self.status_var.set(f"Exporting {label}...")
+        self._set_activity("Preparing export...")
         self._log(("Auto export" if auto else "Export") + f" started: {label}")
         _l.i(
             "[export.ui] start auto=%s formats=%s profiles=%s",
             "yes" if auto else "no",
             ",".join(formats),
-            ",".join(options.pdf_profiles or ("default",)),
+            ",".join(self._selected_pdf_profiles_for_export(options)),
         )
         self._log(
             "Export options: "
-            f"profiles={','.join(options.pdf_profiles or ('default',))}"
+            f"profiles={','.join(self._selected_pdf_profiles_for_export(options))}, "
+            f"pdf_raster_mode={options.pdf_raster_mode}, "
+            f"dpi={int(options.export_dpi)}, "
+            f"jpeg_quality={int(options.jpeg_quality)}, "
+            f"other_format={options.other_format}, pages={options.other_pages or 'all'}"
         )
 
     def _export_clicked(self):
+        if not self._selected_export_formats():
+            self.status_var.set("No export outputs selected")
+            self._log("No export outputs selected")
+            return
         if self._render_thread and self._render_thread.is_alive():
             self._log("Wait for render to finish before exporting")
             return
@@ -1747,8 +1323,9 @@ class DeckMakerApp:
 
     def _export_worker(self, template: str, options: ExportOptions):
         try:
+            TEMPPATHS.cleanup_old_runs()
             self._start_web_activity_monitor()
-            svg_path = _resolve_output_svg_path(template)
+            svg_path = DMPATHS.output_svg(template)
             formats = list(options.formats)
             started = time.perf_counter()
             _l.i(
@@ -1757,110 +1334,125 @@ class DeckMakerApp:
                 svg_path,
                 ",".join(formats),
             )
+            self._queue_ui_activity("Resolving generated SVG output...")
             self.root.after(0, lambda: self._log(f"Export source: {os.path.basename(svg_path)}"))
-            source_info = _resolve_chunked_output_source(svg_path)
-            prepared_svg_path = svg_path
-            prepared_info = {}
-            if source_info.get("svg_path"):
-                try:
-                    prepared_svg_path, prepared_info = _prepare_export_svg(svg_path)
-                    if not prepared_svg_path:
-                        prepared_svg_path = svg_path
-                        prepared_info = {}
-                except Exception:
-                    prepared_info = {}
-            elif source_info.get("chunk_paths"):
-                prepared_info = {"chunk_dir": str(source_info.get("chunk_dir") or ""), "chunk_count": len(source_info.get("chunk_paths") or [])}
-            fixed_images_prepared = int((prepared_info or {}).get("fixed_images") or 0) if isinstance(prepared_info, dict) else 0
-            if fixed_images_prepared > 0:
-                self.root.after(0, lambda fixed_images_prepared=fixed_images_prepared: self._log(
-                    f"Export temp SVG rewrote {fixed_images_prepared} linked image(s) to file://"
-                ))
-            elif source_info.get("chunk_paths"):
+            source_info = EXPORT.resolve_chunked_output_source(svg_path)
+            if source_info.get("chunk_paths"):
                 self.root.after(0, lambda count=len(source_info.get("chunk_paths") or []): self._log(
-                    f"Using existing chunked SVG output ({count} chunk(s))"
+                    f"Using existing parted SVG output ({count} part(s))"
                 ))
 
             failures: list[str] = []
-            try:
-                if "pdf" in formats:
-                    pdf_path = _resolve_output_pdf_path(template)
-                    selected_profiles = list(options.pdf_profiles or ("default",))
-                    self.root.after(0, lambda: self._log(f"PDF profiles: {', '.join(selected_profiles)}"))
-                    self.root.after(
-                        0,
-                        lambda enabled=bool(options.pdf_raster_filters): self._log(
-                            "PDF filter mode: raster chunk filters" if enabled else "PDF filter mode: ignore filters"
-                        ),
+            failure_details: list[str] = []
+            if "pdf" in formats:
+                pdf_path = DMPATHS.output_pdf(template)
+                selected_profiles = self._selected_pdf_profiles_for_export(options)
+                self._queue_ui_activity("Preparing PDF export...")
+                self.root.after(0, lambda: self._log(f"PDF profiles: {', '.join(selected_profiles)}"))
+                self.root.after(
+                    0,
+                    lambda mode=str(options.pdf_raster_mode or "png"): self._log(
+                        f"PDF filter mode: {mode}"
+                    ),
+                )
+
+                def _page_pdf_created(path: str):
+                    self.root.after(0, lambda path=path: self._log(f"Created temp part PDF: {os.path.basename(path)}"))
+
+                def _raster_progress(done: int, total: int):
+                    try:
+                        d = int(done or 0)
+                        t = int(total or 0)
+                    except Exception:
+                        return
+                    mode_label = str(options.pdf_raster_mode or "png").strip().lower()
+                    if mode_label == "png_alpha":
+                        mode_label = "png_alfa"
+                    self._set_activity_progress(
+                        f"Creating {mode_label} rasters for complex filters",
+                        min(d, t),
+                        t,
                     )
 
-                    def _page_pdf_created(path: str):
-                        self.root.after(0, lambda path=path: self._log(f"Created chunk PDF: {os.path.basename(path)}"))
+                ok, info = EXPORTPDF.export_pdf_via_inkscape(
+                    svg_path,
+                    pdf_path,
+                    pdf_profiles=selected_profiles,
+                    raster_filter_mode=str(options.pdf_raster_mode or "png"),
+                    cmyk_icc=options.pdf_cmyk_icc,
+                    cmyk_pure_black_text=bool(options.pdf_cmyk_pure_black_text),
+                    pdfx_version=options.pdfx_version,
+                    export_dpi=int(options.export_dpi or 300),
+                    on_page_pdf_created=_page_pdf_created,
+                    on_raster_progress=_raster_progress,
+                    on_ghostscript_output=self._make_process_output_activity("Ghostscript"),
+                )
+                chunk_dir = str((info or {}).get("chunk_dir") or "") if isinstance(info, dict) else ""
+                work_dir = str((info or {}).get("work_dir") or "") if isinstance(info, dict) else ""
+                if chunk_dir:
+                    self.root.after(0, lambda chunk_dir=chunk_dir: self._log(f"SVG parts dir: {chunk_dir}"))
+                if work_dir:
+                    self.root.after(0, lambda work_dir=work_dir: self._log(f"PDF temp dir: {work_dir}"))
+                for raster_dir in list((info or {}).get("raster_dirs") or []):
+                    if raster_dir:
+                        self.root.after(0, lambda raster_dir=raster_dir: self._log(f"Raster cache dir: {raster_dir}"))
+                if ok:
+                    elapsed = float((info or {}).get("elapsed_s") or 0.0)
+                    page_count = int((info or {}).get("page_count") or 0)
+                    used_chunks = int((info or {}).get("chunk_count") or 1)
+                    self.root.after(0, lambda elapsed=elapsed, page_count=page_count, used_chunks=used_chunks: self._log(
+                        f"PDF export done in {elapsed:.2f}s across {page_count} page(s) using {used_chunks} SVG part(s)"
+                    ))
+                    for item in list((info or {}).get("gs_outputs") or []):
+                        profile = str(item.get("profile") or "default")
+                        output_pdf = str(item.get("output_pdf") or "")
+                        if output_pdf:
+                            self.root.after(0, lambda profile=profile, output_pdf=output_pdf: self._log(
+                                f"PDF profile {profile} -> {os.path.basename(output_pdf)}"
+                            ))
+                else:
+                    failures.append("PDF")
+                    err = str((info or {}).get("error") or "PDF export failed")
+                    failure_details.append(f"PDF: {err}")
+                    elapsed = float((info or {}).get("elapsed_s") or 0.0) if isinstance(info, dict) else 0.0
+                    if elapsed > 0:
+                        self._queue_ui_log(f"PDF export failed after {elapsed:.2f}s")
+                    self._queue_ui_log(err)
+                    _l.w("[export.worker] detail PDF: %s", err)
 
-                    ok, info = _export_pdf_via_inkscape(
-                        prepared_svg_path,
-                        pdf_path,
-                        pdf_profiles=selected_profiles,
-                        rasterize_filters=bool(options.pdf_raster_filters),
-                        on_page_pdf_created=_page_pdf_created,
-                    )
-                    chunk_dir = str((info or {}).get("chunk_dir") or "") if isinstance(info, dict) else ""
-                    if chunk_dir:
-                        self.root.after(0, lambda chunk_dir=chunk_dir: self._log(f"PDF chunk dir: {chunk_dir}"))
-                    if ok:
-                        elapsed = float((info or {}).get("elapsed_s") or 0.0)
-                        page_count = int((info or {}).get("page_count") or 0)
-                        used_chunks = int((info or {}).get("chunk_count") or 1)
-                        self.root.after(0, lambda elapsed=elapsed, page_count=page_count, used_chunks=used_chunks: self._log(
-                            f"PDF export done in {elapsed:.2f}s across {page_count} page(s) using {used_chunks} SVG chunk(s)"
-                        ))
-                        for item in list((info or {}).get("gs_outputs") or []):
-                            profile = str(item.get("profile") or "default")
-                            output_pdf = str(item.get("output_pdf") or "")
-                            if output_pdf:
-                                self.root.after(0, lambda profile=profile, output_pdf=output_pdf: self._log(
-                                    f"PDF profile {profile} -> {os.path.basename(output_pdf)}"
-                                ))
-                    else:
-                        failures.append("PDF")
-                        err = str((info or {}).get("error") or "PDF export failed")
-                        elapsed = float((info or {}).get("elapsed_s") or 0.0) if isinstance(info, dict) else 0.0
-                        if elapsed > 0:
-                            self.root.after(0, lambda elapsed=elapsed: self._log(f"PDF export failed after {elapsed:.2f}s"))
-                        self.root.after(0, lambda err=err: self._log(err))
+            other_formats = [fmt for fmt in formats if fmt != "pdf"]
+            for export_type in other_formats:
+                out_path = DMPATHS.output_other(template, export_type)
+                self._queue_ui_activity(f"Preparing {export_type.upper()} export...")
 
-                if "png" in formats:
-                    png_path = _resolve_output_png_path(template)
+                def _page_other_created(path: str, label: str = export_type.upper()):
+                    self.root.after(0, lambda path=path, label=label: self._log(f"Created page {label}: {os.path.basename(path)}"))
 
-                    def _page_png_created(path: str):
-                        self.root.after(0, lambda path=path: self._log(f"Created page PNG: {os.path.basename(path)}"))
-
-                    ok, info = _export_png_pages_via_inkscape(
-                        prepared_svg_path,
-                        png_path,
-                        on_page_png_created=_page_png_created,
-                    )
-                    if ok:
-                        elapsed = float((info or {}).get("elapsed_s") or 0.0)
-                        page_count = int((info or {}).get("page_count") or 0)
-                        used_chunks = int((info or {}).get("chunk_count") or 1)
-                        mode_label = "x3" if used_chunks >= 3 else "x1"
-                        self.root.after(0, lambda elapsed=elapsed, page_count=page_count, mode_label=mode_label: self._log(
-                            f"PNG export done in {elapsed:.2f}s across {page_count} page(s) using {mode_label}"
-                        ))
-                    else:
-                        failures.append("PNG")
-                        err = str((info or {}).get("error") or "PNG export failed")
-                        elapsed = float((info or {}).get("elapsed_s") or 0.0) if isinstance(info, dict) else 0.0
-                        if elapsed > 0:
-                            self.root.after(0, lambda elapsed=elapsed: self._log(f"PNG export failed after {elapsed:.2f}s"))
-                        self.root.after(0, lambda err=err: self._log(err))
-            finally:
-                try:
-                    if prepared_svg_path and prepared_svg_path != svg_path and os.path.isfile(prepared_svg_path):
-                        os.remove(prepared_svg_path)
-                except Exception:
-                    pass
+                ok, info = EXPORT.export_other_pages_via_inkscape(
+                    svg_path,
+                    out_path,
+                    export_type=export_type,
+                    page_spec=options.other_pages,
+                    export_dpi=int(options.export_dpi or 300),
+                    jpeg_quality=int(options.jpeg_quality or 90),
+                    on_page_created=_page_other_created,
+                )
+                if ok:
+                    elapsed = float((info or {}).get("elapsed_s") or 0.0)
+                    page_count = int((info or {}).get("page_count") or 0)
+                    used_chunks = int((info or {}).get("chunk_count") or 1)
+                    self.root.after(0, lambda elapsed=elapsed, page_count=page_count, used_chunks=used_chunks, export_type=export_type: self._log(
+                        f"{export_type.upper()} export done in {elapsed:.2f}s across {page_count} page(s) using {used_chunks} SVG part(s)"
+                    ))
+                else:
+                    failures.append(export_type.upper())
+                    err = str((info or {}).get("error") or f"{export_type.upper()} export failed")
+                    failure_details.append(f"{export_type.upper()}: {err}")
+                    elapsed = float((info or {}).get("elapsed_s") or 0.0) if isinstance(info, dict) else 0.0
+                    if elapsed > 0:
+                        self._queue_ui_log(f"{export_type.upper()} export failed after {elapsed:.2f}s")
+                    self._queue_ui_log(err)
+                    _l.w("[export.worker] detail %s: %s", export_type.upper(), err)
 
             total_elapsed = time.perf_counter() - started
             if failures:
@@ -1869,6 +1461,8 @@ class DeckMakerApp:
                     ",".join(failures),
                     float(total_elapsed),
                 )
+                if failure_details:
+                    self._queue_ui_log("Export details: " + " | ".join(failure_details))
                 self.root.after(0, lambda failures=failures: self._render_done(f"Export failed: {', '.join(failures)}"))
                 return
             _l.i("[export.worker] ok elapsed=%.2fs", float(total_elapsed))
@@ -1878,8 +1472,26 @@ class DeckMakerApp:
             self.root.after(0, lambda ex=ex: self._render_done(f"Export failed: {ex}"))
         finally:
             self._stop_web_activity_monitor()
+            self.root.after(0, self._refresh_icc_profile_choices)
 
     def _on_close(self):
+        try:
+            prefs.set_export_pdf(bool(self.export_pdf_var.get()))
+            prefs.set_export_pdfx(bool(self.export_pdfx_var.get()))
+            prefs.set_pdf_profiles(self._selected_pdf_profiles())
+            prefs.set_pdf_cmyk_icc(ICC.preference_value(self.pdf_cmyk_icc_var.get()))
+            prefs.set_pdf_cmyk_pure_black_text(bool(self.pdf_cmyk_pure_black_text_var.get()))
+            prefs.set_pdfx_version(self._pdfx_value_from_label(self.pdfx_version_var.get()))
+            prefs.set_pdf_raster_mode(self.pdf_raster_mode_var.get())
+            prefs.set_export_dpi(self._export_dpi_value())
+            prefs.set_export_jpeg_quality(self._export_jpeg_quality_value())
+            prefs.set_export_png(bool(self.export_png_var.get()))
+            prefs.set_export_other_format(self.other_export_format_var.get())
+            prefs.set_export_other_pages(self.other_export_pages_var.get())
+            prefs.set_split_svg_output(bool(self.split_svg_output_var.get()))
+            prefs.set_split_svg_chunk_mb(int(str(self.split_svg_chunk_mb_var.get() or "64").strip() or "64"))
+        except Exception:
+            pass
         self._server_stop.set()
         self._stop_web_activity_monitor()
         self.root.destroy()
@@ -1893,6 +1505,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--template", default="")
     ap.add_argument("--sheet-id", default="")
     ap.add_argument("--sheet-range", default="")
+    ap.add_argument("--dataset-source-mode", default="")
     ap.add_argument("--log-level", default="global")
     ns = ap.parse_args(argv)
 
@@ -1902,6 +1515,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             template=_normalize_path(ns.template),
             sheet_id=ns.sheet_id,
             sheet_range=ns.sheet_range,
+            dataset_source_mode=ns.dataset_source_mode,
             log_level=ns.log_level,
         )
     app = DeckMakerApp(initial)
@@ -1911,3 +1525,4 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

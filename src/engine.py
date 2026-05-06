@@ -26,6 +26,7 @@ import text as TXT
 import marks as MK
 
 import dataset as DS
+import gui as PROGRESS
 import render as REN
 
 # --------------------- util / parsing ---------------------
@@ -161,7 +162,7 @@ def _launch_inkscape(svg_path: str) -> bool:
         return False
 
 def run(self, __version__):
-    """Run the refactored DeckMaker pipeline (entrypoint called from deckmaker.py)."""
+    """Run the DeckMaker render pipeline for the Tkinter app flow."""
     prefs.reload()
     _l.get_logger(self, console_level=self.options.log_level, file_level='global', tag_override='deckmaker')
     _l.i(f"start DeckMaker {__version__} — {__file__}")
@@ -373,11 +374,23 @@ def run(self, __version__):
                         f"forced={'yes' if force_chunk_output else 'no'} target_bytes={chunk_target_bytes}"
                     )
                     if use_chunk_output:
+                        try:
+                            full_doc = inkex.load_svg(inkex.etree.tostring(clone_doc.getroot()))
+                            full_norm_info = SVGCHUNKS.normalize_output_doc(full_doc, source_svg_path=_doc_path)
+                            _write_svg_atomic(full_doc, out_path)
+                            _l.i(
+                                f"[dm_output] wrote full external render: '{out_path}' "
+                                f"pages={int(full_norm_info.get('page_count') or 0)} "
+                                f"fixed_images={int(full_norm_info.get('fixed_images') or 0)}"
+                            )
+                        except Exception as ex:
+                            _l.w(f"[dm_output] write full output failed for '{out_path}': {ex}")
                         chunk_info = SVGCHUNKS.write_output_chunks_from_doc(
                             clone_doc,
                             out_path,
                             source_svg_path=_doc_path,
                             target_chunk_bytes=chunk_target_bytes,
+                            analysis=analysis,
                         )
                         chunk_count = int(chunk_info.get("chunk_count") or 0)
                         chunk_dir = str(chunk_info.get("chunk_dir") or "")
@@ -394,6 +407,13 @@ def run(self, __version__):
                     )
                 except Exception as ex:
                     _l.w(f"[dm_output] normalize output failed for '{out_path}': {ex}")
+                try:
+                    stem = os.path.splitext(os.path.basename(out_path))[0]
+                    chunk_dir = os.path.join(os.path.dirname(os.path.abspath(out_path)) or ".", f"{stem}_chunks")
+                    if os.path.isdir(chunk_dir):
+                        shutil.rmtree(chunk_dir, ignore_errors=True)
+                except Exception:
+                    pass
                 _write_svg_atomic(clone_doc, out_path)
                 _l.i(f"[dm_output] wrote external render: '{out_path}'")
                 _launch_inkscape(out_path)
@@ -622,6 +642,8 @@ def run(self, __version__):
             continue
 
         _l.i(f"----- DATASET SECTION #{ds_idx}/{len(datasets)} -----")
+        _l.i(f"[datasets] #{ds_idx}: rows={len(rows_data)}")
+        PROGRESS.emit("render_rows_total", dataset_index=int(ds_idx), total=int(len(rows_data)))
         placed = 0
 
         # Units needed early (e.g., spritesheets registration). Do not delay until after scans.

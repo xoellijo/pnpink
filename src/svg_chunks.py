@@ -6,12 +6,13 @@ from __future__ import annotations
 import copy
 import os
 import re
-import tempfile
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
 import log as LOG
+import temp_paths as TEMPPATHS
 
 _l = LOG
 
@@ -41,6 +42,116 @@ class SvgChunk:
     svg_path: str
     pdf_path: str
     png_prefix: str
+
+
+def _svg_page_count(svg_path: str) -> int:
+    try:
+        from xml.etree import ElementTree as ET
+
+        tree = ET.parse(svg_path)
+        root = tree.getroot()
+        count = 0
+        for _el in root.findall(".//{http://www.inkscape.org/namespaces/inkscape}page"):
+            count += 1
+        return count if count > 0 else 1
+    except Exception:
+        return 1
+
+
+def _svg_page_numbers(svg_path: str) -> tuple[int, ...]:
+    try:
+        from xml.etree import ElementTree as ET
+
+        tree = ET.parse(svg_path)
+        root = tree.getroot()
+        out: list[int] = []
+        for page in root.findall(".//{http://www.inkscape.org/namespaces/inkscape}page"):
+            page_id = str(page.get("id") or "").strip()
+            m = re.search(r"(\d+)$", page_id)
+            if m:
+                out.append(int(m.group(1)))
+        if out:
+            return tuple(out)
+        count = _svg_page_count(svg_path)
+        return tuple(range(1, count + 1))
+    except Exception:
+        count = _svg_page_count(svg_path)
+        return tuple(range(1, count + 1))
+
+
+def _chunk_dir_for_output(out_path: str) -> tuple[str, str, str]:
+    out_path = os.path.normpath(out_path)
+    out_dir = os.path.dirname(os.path.abspath(out_path)) or "."
+    stem = Path(out_path).stem
+    suffix = Path(out_path).suffix or ".svg"
+    chunk_dir = os.path.join(out_dir, f"{stem}_chunks")
+    manifest_path = os.path.join(chunk_dir, f"{stem}.chunks.txt")
+    return chunk_dir, manifest_path, suffix
+
+
+def _chunk_svg_path(chunk_dir: str, stem: str, suffix: str, index: int) -> str:
+    return os.path.normpath(os.path.join(chunk_dir, f"{stem}.chunk{index:02d}{suffix or '.svg'}"))
+
+
+def _chunk_pdf_path(work_dir: str, stem: str, index: int) -> str:
+    return os.path.normpath(os.path.join(work_dir, f"{stem}.chunk{index:02d}.pdf"))
+
+
+def _chunk_png_prefix(work_dir: str, stem: str, index: int) -> str:
+    return os.path.normpath(os.path.join(work_dir, f"{stem}.chunk{index:02d}.png"))
+
+
+def build_chunk_outputs(
+    chunk_paths: list[str],
+    *,
+    artifact_dir: str,
+    artifact_stem: str,
+) -> tuple[SvgChunk, ...]:
+    chunks: list[SvgChunk] = []
+    for idx, chunk_svg_path in enumerate(chunk_paths, start=1):
+        page_numbers = _svg_page_numbers(chunk_svg_path)
+        chunks.append(
+            SvgChunk(
+                index=idx,
+                pages=tuple(int(p) for p in page_numbers),
+                est_bytes=0,
+                svg_path=os.path.normpath(chunk_svg_path),
+                pdf_path=_chunk_pdf_path(artifact_dir, artifact_stem, idx),
+                png_prefix=_chunk_png_prefix(artifact_dir, artifact_stem, idx),
+            )
+        )
+    return tuple(chunks)
+
+
+def resolve_chunked_output(svg_path: str) -> dict:
+    src = os.path.normpath(os.path.abspath(str(svg_path or "").strip()))
+    if not src:
+        return {"svg_path": "", "chunk_paths": [], "manifest_path": "", "chunk_dir": ""}
+    chunk_dir, manifest_path, _suffix = _chunk_dir_for_output(src)
+    stem = Path(src).stem
+    chunk_paths: list[str] = []
+    if os.path.isfile(manifest_path):
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as fh:
+                chunk_paths = [os.path.normpath(line.strip()) for line in fh if line.strip()]
+        except Exception:
+            chunk_paths = []
+    if not chunk_paths and os.path.isdir(chunk_dir):
+        try:
+            chunk_paths = sorted(
+                os.path.normpath(os.path.join(chunk_dir, name))
+                for name in os.listdir(chunk_dir)
+                if re.fullmatch(rf"{re.escape(stem)}\.chunk\d+\.svg", name, re.IGNORECASE)
+            )
+        except Exception:
+            chunk_paths = []
+    chunk_paths = [path for path in chunk_paths if os.path.isfile(path)]
+    return {
+        "svg_path": src if os.path.isfile(src) else "",
+        "chunk_paths": chunk_paths,
+        "manifest_path": manifest_path if os.path.isfile(manifest_path) else "",
+        "chunk_dir": chunk_dir if os.path.isdir(chunk_dir) else "",
+    }
 
 
 def _style_dict(style: str) -> dict[str, str]:
@@ -507,23 +618,28 @@ def write_output_chunks_from_doc(
     source_svg_path: str,
     inkscape_exe: str | None = None,
     target_chunk_bytes: int,
+    analysis: dict | None = None,
 ) -> dict:
     import inkex
     import svg as SVG
 
-    analysis = analyze_output_doc(doc, source_svg_path=source_svg_path, inkscape_exe=inkscape_exe, analysis_label=out_path)
-    page_slices = list(analysis.get("pages") or [])
+    analysis_data = analysis or analyze_output_doc(
+        doc,
+        source_svg_path=source_svg_path,
+        inkscape_exe=inkscape_exe,
+        analysis_label=out_path,
+    )
+    page_slices = list(analysis_data.get("pages") or [])
     if not page_slices:
         raise ValueError("No generated pages available to export")
 
     groups = build_chunk_plan(page_slices, target_chunk_bytes=target_chunk_bytes)
-    fixed_images = int(analysis.get("fixed_images") or 0)
+    fixed_images = int(analysis_data.get("fixed_images") or 0)
     out_path = os.path.normpath(out_path)
-    out_dir = os.path.dirname(os.path.abspath(out_path)) or "."
-    os.makedirs(out_dir, exist_ok=True)
     stem = Path(out_path).stem
-    suffix = Path(out_path).suffix or ".svg"
-    chunk_dir = os.path.join(out_dir, f"{stem}_chunks")
+    chunk_dir, manifest_path, suffix = _chunk_dir_for_output(out_path)
+    if os.path.isdir(chunk_dir):
+        shutil.rmtree(chunk_dir, ignore_errors=True)
     os.makedirs(chunk_dir, exist_ok=True)
     base_raw = SVG.etree.tostring(doc.getroot(), encoding="utf-8")
     _l.i("[svg_chunks] write_output chunk_dir='%s' target='%s'", chunk_dir, out_path)
@@ -537,7 +653,7 @@ def write_output_chunks_from_doc(
             keep_pages={int(item.page_no) for item in group_pages},
             inkscape_exe=inkscape_exe,
         )
-        chunk_svg_path = out_path if len(groups) == 1 else os.path.join(chunk_dir, f"{stem}.chunk{group_index:02d}{suffix}")
+        chunk_svg_path = _chunk_svg_path(chunk_dir, stem, suffix, group_index)
         try:
             chunk_doc.write(chunk_svg_path, encoding="utf-8", xml_declaration=True)
         except TypeError:
@@ -553,12 +669,9 @@ def write_output_chunks_from_doc(
         )
         chunk_paths.append(os.path.normpath(chunk_svg_path))
 
-    manifest_path = ""
-    if len(chunk_paths) > 1:
-        manifest_path = os.path.join(chunk_dir, f"{stem}.chunks.txt")
-        with open(manifest_path, "w", encoding="utf-8") as fh:
-            for path in chunk_paths:
-                fh.write(path + "\n")
+    with open(manifest_path, "w", encoding="utf-8") as fh:
+        for path in chunk_paths:
+            fh.write(path + "\n")
 
     return {
         "fixed_images": fixed_images,
@@ -567,8 +680,8 @@ def write_output_chunks_from_doc(
         "chunk_count": len(chunk_paths),
         "chunk_dir": os.path.normpath(chunk_dir),
         "chunk_paths": tuple(chunk_paths),
-        "manifest_path": os.path.normpath(manifest_path) if manifest_path else "",
-        "unassigned_nodes": tuple(analysis.get("unassigned_nodes") or ()),
+        "manifest_path": os.path.normpath(manifest_path),
+        "unassigned_nodes": tuple(analysis_data.get("unassigned_nodes") or ()),
     }
 
 
@@ -766,6 +879,7 @@ def write_svg_chunks(
     *,
     inkscape_exe: str,
     target_chunk_bytes: int,
+    artifact_dir: str | None = None,
 ) -> dict:
     import inkex
     import svg as SVG
@@ -781,8 +895,10 @@ def write_svg_chunks(
     with open(svg_path, "rb") as fh:
         base_raw = fh.read()
 
-    chunk_dir = tempfile.mkdtemp(prefix="pnpink_svg_chunks_")
+    stem = Path(pdf_path).stem
+    chunk_dir = os.path.normpath(artifact_dir or TEMPPATHS.make_work_dir("svg_export_chunks", stem=stem))
     _l.i("[svg_chunks] write chunk_dir='%s' source_svg='%s' output_pdf='%s'", chunk_dir, svg_path, pdf_path)
+    _l.i("[svg_chunks] plan total=%d target_chunk_bytes=%d", len(groups), int(target_chunk_bytes))
     chunks: list[SvgChunk] = []
     for group_index, group_pages in enumerate(groups, start=1):
         doc = inkex.load_svg(base_raw)
@@ -793,10 +909,9 @@ def write_svg_chunks(
             inkscape_exe=inkscape_exe,
         )
 
-        stem = Path(pdf_path).stem
-        chunk_svg_path = os.path.join(chunk_dir, f"{stem}.chunk{group_index:02d}.svg")
-        chunk_pdf_path = os.path.join(chunk_dir, f"{stem}.chunk{group_index:02d}.pdf")
-        chunk_png_prefix = os.path.join(chunk_dir, f"{stem}.chunk{group_index:02d}.png")
+        chunk_svg_path = _chunk_svg_path(chunk_dir, stem, ".svg", group_index)
+        chunk_pdf_path = _chunk_pdf_path(chunk_dir, stem, group_index)
+        chunk_png_prefix = _chunk_png_prefix(chunk_dir, stem, group_index)
         try:
             doc.write(chunk_svg_path, encoding="utf-8", xml_declaration=True)
         except TypeError:

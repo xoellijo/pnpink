@@ -12,7 +12,7 @@ import atexit
 import inkex
 import prefs
 
-__all__ = ['get_logger', 'init', 'Logger', 'd', 'i', 'w', 'e', 't', 'a', 'close', 's']
+__all__ = ['get_logger', 'init', 'Logger', 'd', 'i', 'w', 'e', 't', 'a', 'close', 's', 'add_listener', 'remove_listener']
 
 # ---------------------------- Levels ----------------------------------------
 _VALID = {"none","error","warn","info","debug","trace",
@@ -106,8 +106,11 @@ class Logger:
 
         base = msg if isinstance(msg, str) else self._ensure_str(msg)
         if args:
-            parts = [self._ensure_str(a) for a in args]
-            base = base + " " + " ".join(parts)
+            try:
+                base = base % args
+            except Exception:
+                parts = [self._ensure_str(a) for a in args]
+                base = base + " " + " ".join(parts)
 
         line = f"[{level.upper()}: {mod}{dt_part}] {base}"
         return line, self._console_flags, self._file_flags
@@ -151,6 +154,12 @@ class Logger:
         line, con_flags, file_flags = self._compose(level, msg, *a)
         self._emit_console(line, con_flags, level)
         self._emit_file(line, file_flags, level)
+        if _LISTENERS:
+            for fn in list(_LISTENERS):
+                try:
+                    fn(line)
+                except Exception:
+                    pass
 
     def close(self):
         try:
@@ -164,6 +173,22 @@ class Logger:
 # --------------------------- singleton API -----------------------------------
 _LOGGER = None
 _ATEXIT_HOOKED = False
+_LISTENERS = []
+
+
+def add_listener(fn):
+    if not callable(fn):
+        return
+    if fn in _LISTENERS:
+        return
+    _LISTENERS.append(fn)
+
+
+def remove_listener(fn):
+    try:
+        _LISTENERS.remove(fn)
+    except ValueError:
+        pass
 
 
 def _ensure_atexit_hook():
