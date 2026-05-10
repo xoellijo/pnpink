@@ -37,7 +37,7 @@ _l = LOG
 
 _normalize_path = DMPATHS.normalize
 
-APP_VERSION = "deckmaker_app"
+APP_VERSION = "Deckmaker v0.49"
 DOCS_INTRO_URL = "https://xoellijo.github.io/pnpink/intro/"
 DOCS_GUIDE_URL = "https://xoellijo.github.io/pnpink/quickstart/"
 OTHER_EXPORT_FORMATS = ("png", "jpeg", "jpeg2000", "pdf", "svg", "tiff", "webp", "ps", "eps", "emf", "wmf")
@@ -77,7 +77,7 @@ class DeckMakerApp:
         self.scrolledtext = scrolledtext
         self.ttk = ttk
         self.root = tk.Tk()
-        self.root.title("PnPInk DeckMaker")
+        self.root.title(APP_VERSION)
         self.root.geometry("860x500")
         self.root.minsize(720, 430)
         self._icon_image = None
@@ -94,6 +94,7 @@ class DeckMakerApp:
         self._active_progress_label = ""
 
         self.template_var = tk.StringVar(value=(initial.template if initial else ""))
+        self._refresh_window_title()
         self.sheet_id_var = tk.StringVar(value=(initial.sheet_id if initial else ""))
         self.sheet_range_var = tk.StringVar(value=(initial.sheet_range if initial else ""))
         self.source_mode_var = tk.StringVar(value=SOURCE_MODE_VALUE_TO_LABEL.get(initial.dataset_source_mode if initial else "", "(empty)"))
@@ -123,6 +124,8 @@ class DeckMakerApp:
         self._run_started_at: float | None = None
         self._post_create_busy = False
         self._render_rows_total = 0
+        self._active_progress_started_at: float | None = None
+        self._active_progress_rate_unit = ""
         self._web_activity_stats = self._reset_web_activity_stats()
         try:
             TEMPPATHS.cleanup_runs_now()
@@ -161,8 +164,8 @@ class DeckMakerApp:
         notebook.grid(row=0, column=0, sticky="nsew")
 
         deck_tab = ttk.Frame(notebook, padding=12)
-        deck_tab.columnconfigure(1, weight=1)
-        deck_tab.rowconfigure(2, weight=1)
+        deck_tab.columnconfigure(0, weight=1)
+        deck_tab.rowconfigure(1, weight=1)
         notebook.add(deck_tab, text="Deck")
 
         pdf_tab = ttk.Frame(notebook, padding=12)
@@ -177,21 +180,18 @@ class DeckMakerApp:
         about_tab.columnconfigure(0, weight=1)
         notebook.add(about_tab, text="About")
 
-        ttk.Label(deck_tab, text="Template SVG").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
-        ttk.Entry(deck_tab, textvariable=self.template_var, state="readonly").grid(row=0, column=1, sticky="ew", pady=4)
-
         source_row = ttk.Frame(deck_tab)
-        source_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=4)
-        source_row.columnconfigure(1, weight=3)
-        source_row.columnconfigure(3, weight=2)
-        source_row.columnconfigure(5, weight=1)
+        source_row.grid(row=0, column=0, sticky="ew", pady=4)
+        source_row.columnconfigure(1, weight=2)
+        source_row.columnconfigure(3, weight=3)
+        source_row.columnconfigure(5, weight=2)
         gsheet_label = ttk.Label(source_row, text="GSheet ID")
         gsheet_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
-        gsheet_entry = ttk.Entry(source_row, textvariable=self.sheet_id_var)
+        gsheet_entry = ttk.Entry(source_row, textvariable=self.sheet_id_var, width=24)
         gsheet_entry.grid(row=0, column=1, sticky="ew")
         range_label = ttk.Label(source_row, text="Range / gid")
         range_label.grid(row=0, column=2, sticky="w", padx=(12, 8))
-        range_entry = ttk.Entry(source_row, textvariable=self.sheet_range_var)
+        range_entry = ttk.Entry(source_row, textvariable=self.sheet_range_var, width=24)
         range_entry.grid(row=0, column=3, sticky="ew")
         ttk.Label(source_row, text="Source").grid(row=0, column=4, sticky="w", padx=(12, 8))
         source_combo = ttk.Combobox(
@@ -199,7 +199,7 @@ class DeckMakerApp:
             textvariable=self.source_mode_var,
             values=SOURCE_MODE_LABELS,
             state="readonly",
-            width=20,
+            width=24,
         )
         source_combo.grid(row=0, column=5, sticky="ew")
         source_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_source_mode_changed())
@@ -250,7 +250,7 @@ class DeckMakerApp:
         GUI.attach_tooltip(auto_open_cb, "Auto-start Open SVG")
         GUI.attach_tooltip(auto_export_cb, "Auto-start export")
         self.log_text = scrolledtext.ScrolledText(deck_tab, height=13, wrap="word", state="disabled", font=log_font)
-        self.log_text.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(12, 0))
+        self.log_text.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
         try:
             self.log_text.tag_configure("live_activity", foreground="#555555")
         except Exception:
@@ -470,6 +470,17 @@ class DeckMakerApp:
         except Exception:
             pass
 
+    def _refresh_window_title(self):
+        try:
+            template = _normalize_path(self.template_var.get()) if hasattr(self, "template_var") else ""
+            name = os.path.basename(template) if template else ""
+            self.root.title(f"{APP_VERSION} - {name}" if name else APP_VERSION)
+        except Exception:
+            try:
+                self.root.title(APP_VERSION)
+            except Exception:
+                pass
+
     def _set_activity(self, message: str):
         text = str(message or "").strip()
         try:
@@ -521,6 +532,19 @@ class DeckMakerApp:
         except Exception:
             pass
 
+    def _progress_rate_suffix(self, label: str, current: int) -> str:
+        unit = str(getattr(self, "_active_progress_rate_unit", "") or "").strip()
+        if unit != "records":
+            return ""
+        started = getattr(self, "_active_progress_started_at", None)
+        if started is None:
+            return ""
+        elapsed = max(0.0, time.perf_counter() - float(started))
+        if elapsed <= 0.25 or int(current or 0) <= 0:
+            return ""
+        rate = (float(current) * 60.0) / elapsed
+        return f"  {rate:,.0f} records/min"
+
     def _make_process_output_activity(self, label: str):
         prefix = str(label or "Process").strip() or "Process"
         buffer = {"text": ""}
@@ -549,11 +573,16 @@ class DeckMakerApp:
             if self._active_progress_label:
                 self._commit_activity_to_log()
             self._active_progress_label = text_label
+            self._active_progress_started_at = time.perf_counter()
+            self._active_progress_rate_unit = "records" if text_label.lower().startswith("generating records") else ""
             self._log(text_label)
-        self._set_activity(GUI.progress_text("", current, total, width=50))
+        progress = GUI.progress_text("", current, total, width=50)
+        self._set_activity(progress + self._progress_rate_suffix(text_label, current))
         if int(total or 0) > 0 and int(current or 0) >= int(total or 0):
             self._commit_activity_to_log()
             self._active_progress_label = ""
+            self._active_progress_started_at = None
+            self._active_progress_rate_unit = ""
 
     def _commit_activity_to_log(self):
         text = str(self._live_activity_text or "").strip()
@@ -757,7 +786,14 @@ class DeckMakerApp:
                 except Exception:
                     self._render_rows_total = 0
                 if self._render_rows_total > 0:
-                    self._set_activity_progress("Generating rows", 0, self._render_rows_total)
+                    dataset_count = int(payload.get("dataset_count") or 0)
+                    dataset_index = int(payload.get("dataset_index") or 0)
+                    label = (
+                        f"Generating records dataset {dataset_index}/{dataset_count}"
+                        if dataset_count > 1 and dataset_index > 0
+                        else "Generating records"
+                    )
+                    self._set_activity_progress(label, 0, self._render_rows_total)
                 return
             if kind == "render_row":
                 try:
@@ -766,11 +802,18 @@ class DeckMakerApp:
                     current = 0
                 if current <= 0:
                     return
-                total = int(self._render_rows_total or 0)
+                total = int(payload.get("total") or self._render_rows_total or 0)
                 if total > 0:
-                    self._set_activity_progress("Generating rows", current, total)
+                    dataset_count = int(payload.get("dataset_count") or 0)
+                    dataset_index = int(payload.get("dataset_index") or 0)
+                    label = (
+                        f"Generating records dataset {dataset_index}/{dataset_count}"
+                        if dataset_count > 1 and dataset_index > 0
+                        else "Generating records"
+                    )
+                    self._set_activity_progress(label, current, total)
                 else:
-                    self._queue_ui_activity(f"Generating row {current}...")
+                    self._queue_ui_activity(f"Generating record {current}...")
 
         self._progress_listener = on_progress
         GUI.set_listener(self._progress_listener)
@@ -1101,6 +1144,7 @@ class DeckMakerApp:
         self._request_serial += 1
         serial = self._request_serial
         self.template_var.set(_normalize_path(req.template))
+        self._refresh_window_title()
         self.sheet_id_var.set(req.sheet_id or "")
         self.sheet_range_var.set(req.sheet_range or "")
         self._refresh_source_mode(req.template, req.dataset_source_mode)
@@ -1267,7 +1311,7 @@ class DeckMakerApp:
                 if auto_open:
                     try:
                         open_target = output_svg_path
-                        self._open_path_in_system(open_target)
+                        self._open_svg_in_inkscape(open_target)
                         self.root.after(0, lambda: self._log("Opened output automatically"))
                     except Exception as ex:
                         self.root.after(0, lambda ex=ex: self._log(f"Auto open failed: {ex}"))
@@ -1475,23 +1519,6 @@ class DeckMakerApp:
             self.root.after(0, self._refresh_icc_profile_choices)
 
     def _on_close(self):
-        try:
-            prefs.set_export_pdf(bool(self.export_pdf_var.get()))
-            prefs.set_export_pdfx(bool(self.export_pdfx_var.get()))
-            prefs.set_pdf_profiles(self._selected_pdf_profiles())
-            prefs.set_pdf_cmyk_icc(ICC.preference_value(self.pdf_cmyk_icc_var.get()))
-            prefs.set_pdf_cmyk_pure_black_text(bool(self.pdf_cmyk_pure_black_text_var.get()))
-            prefs.set_pdfx_version(self._pdfx_value_from_label(self.pdfx_version_var.get()))
-            prefs.set_pdf_raster_mode(self.pdf_raster_mode_var.get())
-            prefs.set_export_dpi(self._export_dpi_value())
-            prefs.set_export_jpeg_quality(self._export_jpeg_quality_value())
-            prefs.set_export_png(bool(self.export_png_var.get()))
-            prefs.set_export_other_format(self.other_export_format_var.get())
-            prefs.set_export_other_pages(self.other_export_pages_var.get())
-            prefs.set_split_svg_output(bool(self.split_svg_output_var.get()))
-            prefs.set_split_svg_chunk_mb(int(str(self.split_svg_chunk_mb_var.get() or "64").strip() or "64"))
-        except Exception:
-            pass
         self._server_stop.set()
         self._stop_web_activity_monitor()
         self.root.destroy()

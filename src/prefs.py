@@ -55,6 +55,8 @@ _DEFAULTS = {
     "split_svg_output":   "0",
     "split_svg_chunk_mb": "64",
     "inkscape_shell_workers": "6",
+    "inline_icons_bbox_backend": "query_all",
+    "template_engine": "legacy",
 
 }
 
@@ -88,6 +90,8 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     ("export_dpi", ("Global Inkscape export DPI. Raster filters use export_dpi * 1.5. Values: integer >= 1",)),
     ("export_jpeg_quality", ("JPEG quality used by JPEG exports (including Pillow fallback conversions). Values: integer 70..95",)),
     ("inkscape_shell_workers", ("Parallel Inkscape shell workers used during export. Values: integer >= 1",)),
+    ("inline_icons_bbox_backend", ("Inline icon bbox measurement backend. Values: query_all | shell_per_text",)),
+    ("template_engine", ("Template instantiation engine. Values: legacy | composed", "composed is experimental and intentionally fails on unsupported templates.")),
     ("split_svg_output", ("Split DM_output into SVG parts. Values: 0 | 1",)),
     ("split_svg_chunk_mb", ("Target size per SVG part in megabytes. Values: integer >= 1",)),
     ("marks_stroke", ("Default cut/registration mark stroke color. Values: any valid SVG color string",)),
@@ -452,3 +456,17 @@ def set_inkscape_shell_workers(value: int) -> None:
     except Exception:
         out = 6
     set("inkscape_shell_workers", str(max(1, min(out, 32))), save=True)
+
+
+def get_inline_icons_bbox_backend(default: str = "query_all") -> str:
+    value = str(get("inline_icons_bbox_backend", default) or default).strip().lower()
+    if value not in {"query_all", "shell_per_text"}:
+        return str(default or "query_all")
+    return value
+
+
+def get_template_engine(default: str = "legacy") -> str:
+    value = str(get("template_engine", default) or default).strip().lower()
+    if value not in {"legacy", "composed"}:
+        return str(default or "legacy")
+    return value

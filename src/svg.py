@@ -42,6 +42,7 @@ import log as LOG
 _l = LOG
 import inkex
 import const as CONST
+import inkscape_cli as INKSCAPE
 
 # inkex namespace map (prefix -> uri). Canonical: build from inkex.NSS + CONST.NS_*
 NSS = dict(getattr(inkex, 'NSS', {}) or {})
@@ -448,6 +449,96 @@ def _ensure_embedded_image_symbol(root, data_uri: str, *, base_w: float, base_h:
     im.set('height', f"{bh:.6f}")
     set_href(im, data_uri, touch_plain=True)
     return sid
+
+
+def hoist_template_images_to_defs(template_root, defs_root=None, *, id_factory=None) -> int:
+    """Move template <image> payloads to document defs and leave lightweight <use> nodes.
+
+    The visible/public id remains on the replacement <use>, so dataset headers
+    and FitAnchor keep resolving the same target.
+    """
+    if template_root is None:
+        return 0
+    root_for_defs = defs_root if defs_root is not None else template_root
+    defs = ensure_defs(root_for_defs)
+
+    def _inside_defs(node):
+        cur = node.getparent() if hasattr(node, "getparent") else None
+        while cur is not None:
+            if str(getattr(cur, "tag", "") or "").endswith("defs"):
+                return True
+            cur = cur.getparent() if hasattr(cur, "getparent") else None
+        return False
+
+    def _new_id(base="dm_tpl_img"):
+        if callable(id_factory):
+            return str(id_factory(base))
+        try:
+            return str(root_for_defs.get_unique_id(base))
+        except Exception:
+            return f"{base}_{hashlib.sha1(os.urandom(16)).hexdigest()[:12]}"
+
+    image_attrs_for_def = {
+        XLINK_HREF,
+        "href",
+        SODI_ABSREF,
+        "width",
+        "height",
+        "preserveAspectRatio",
+        "crossorigin",
+    }
+    use_skip_attrs = image_attrs_for_def - {"width", "height", "preserveAspectRatio"}
+
+    try:
+        images = list(template_root.xpath(".//svg:image", namespaces=NSS))
+    except Exception:
+        images = []
+    changed = 0
+    for im in images:
+        if _inside_defs(im):
+            continue
+        parent = im.getparent()
+        if parent is None:
+            continue
+        href = get_href(im)
+        if not href:
+            continue
+
+        def_id = _new_id("dm_tpl_img")
+        def_im = etree.Element(inkex.addNS("image", "svg"))
+        for key, value in list(im.attrib.items()):
+            if key in image_attrs_for_def or str(key).endswith("image-rendering"):
+                def_im.set(key, value)
+        def_im.set("x", "0")
+        def_im.set("y", "0")
+        set_href(def_im, href, touch_plain=True)
+        if im.get(SODI_ABSREF):
+            def_im.set(SODI_ABSREF, im.get(SODI_ABSREF))
+        def_im.set("id", def_id)
+        defs.append(def_im)
+
+        use = etree.Element(inkex.addNS("use", "svg"))
+        for key, value in list(im.attrib.items()):
+            if key in use_skip_attrs:
+                continue
+            use.set(key, value)
+        old_id = im.get("id")
+        if old_id and not use.get("id"):
+            use.set("id", old_id)
+        set_href(use, f"#{def_id}", touch_plain=True)
+
+        idx = parent.index(im)
+        parent.remove(im)
+        parent.insert(idx, use)
+        changed += 1
+
+    if changed:
+        try:
+            sid = template_root.get("id") or "<noid>"
+        except Exception:
+            sid = "<noid>"
+        _l.i(f"[svg] hoisted {changed} template image(s) to defs for subtree '{sid}'")
+    return changed
 
 
 def externalize_embedded_images_in_subtree(svg_root, subtree_root) -> int:
@@ -863,7 +954,40 @@ def find_id(root, element_id: str, *, include_defs: bool = True):
 
 
 
-def find_target_exact_in(scope, target_id: str):
+def build_target_index(scope):
+    """Build a fast local target index for generated template instances.
+
+    Priority mirrors find_target_exact_in(): id, data-origid, data-field, then
+    stripped generated suffix. Use this for trees we own instead of repeatedly
+    running XPath over the same subtree.
+    """
+    index = {}
+    if scope is None:
+        return index
+    try:
+        nodes = [
+            el for el in scope.iter()
+            if hasattr(el, "tag") and isinstance(el.tag, str)
+        ]
+    except Exception:
+        return index
+    for el in nodes:
+        cid = el.get("id")
+        if cid:
+            index.setdefault(cid, el)
+    for attr in ("data-origid", "data-field"):
+        for el in nodes:
+            value = el.get(attr)
+            if value:
+                index.setdefault(value, el)
+    for el in nodes:
+        cid = el.get("id")
+        if cid:
+            index.setdefault(strip_pnp_suffix(cid), el)
+    return index
+
+
+def find_target_exact_in(scope, target_id: str, target_index=None):
     """Busca un target dentro de un scope por:
     1) @id == target_id
     2) @data-origid == target_id
@@ -874,6 +998,13 @@ def find_target_exact_in(scope, target_id: str):
     """
     if scope is None or not target_id:
         return None
+    if target_index is not None:
+        try:
+            hit = target_index.get(target_id)
+            if hit is not None:
+                return hit
+        except Exception:
+            pass
     # 1) id
     n = find_id(scope, target_id, include_defs=True)
     if n is not None:
@@ -1001,6 +1132,38 @@ def replace_text(el, value: str):
     except Exception as e:
         _l.e(f"replace_text failed: {e}")
 
+
+def replace_text_fast(el, value: str) -> bool:
+    """Fast text replacement for already-normalized text nodes.
+
+    Returns False when the node appears to rely on child tspan styling; callers
+    should then use replace_text(), which preserves that legacy style shape.
+    """
+    if el is None:
+        return False
+    try:
+        parent_has_style = bool((el.get("style") or "").strip() or (el.get("class") or "").strip())
+        for child in el.iter():
+            if child is el:
+                continue
+            tag = str(getattr(child, "tag", "") or "")
+            if not tag.endswith("tspan"):
+                continue
+            child_has_style = bool(
+                (child.get("style") or "").strip()
+                or (child.get("class") or "").strip()
+                or (child.get("stroke") or "").strip()
+                or (child.get("stroke-width") or "").strip()
+                or (child.get("fill") or "").strip()
+            )
+            if child_has_style and not parent_has_style:
+                return False
+        clear_children(el)
+        el.text = "" if value is None else str(value)
+        return True
+    except Exception:
+        return False
+
 def _parse_fragment(fragment: str):
     if fragment is None: return None
     frag = fragment.strip()
@@ -1025,13 +1188,52 @@ def replace_xml(el, xml_fragment: str):
     except Exception as e:
         _l.e(f"replace_xml failed: {e}")
 
-def style_map(node: etree._Element):
+_CSS_STYLE_CACHE = {}
+
+def _pnp_css_rules_for_root(root):
+    try:
+        css_text = "\n".join((style_el.text or "") for style_el in root.xpath(".//svg:style", namespaces=NSS))
+    except Exception:
+        css_text = ""
+    key = (id(root), css_text)
+    cached = _CSS_STYLE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    rules = {}
+    for match in re.finditer(r"\.([A-Za-z_][A-Za-z0-9_-]*)\s*\{([^}]*)\}", css_text, re.S):
+        cls = match.group(1)
+        if not cls.startswith("pnp-txt-"):
+            continue
+        sm = {}
+        for d in (match.group(2) or "").split(";"):
+            if ":" in d:
+                k, v = d.split(":", 1)
+                sm[k.strip()] = v.strip()
+        rules[cls] = sm
+    _CSS_STYLE_CACHE.clear()
+    _CSS_STYLE_CACHE[key] = rules
+    return rules
+
+def _class_style_map(node: etree._Element):
     out = {}
+    try:
+        cls_raw = (node.get("class") or "").strip()
+        classes = [c for c in re.split(r"\s+", cls_raw) if c]
+        root = node.getroottree().getroot()
+        rules = _pnp_css_rules_for_root(root)
+        for cls in classes:
+            if cls.startswith("pnp-txt-"):
+                out.update(rules.get(cls) or {})
+    except Exception:
+        return out
+    return out
+
+def style_map(node: etree._Element):
+    out = _class_style_map(node)
     if node is None:
         return out
-    # In some versions/documents, the 'style' attribute may not exist
     st = node.get("style")
-    if not st:      # None, "" o solo espacios → devolvemos dict vacío
+    if not st:
         return out
     for d in st.split(";"):
         if ":" in d:
@@ -1042,6 +1244,59 @@ def style_map(node: etree._Element):
 def style_set(node: etree._Element, m: dict):
     node.set("style", ";".join(f"{k}:{v}" for k,v in m.items() if v!=""))
 
+def hoist_template_text_styles_to_css(template_root, defs_root=None) -> int:
+    """Deduplicate inline text styles into CSS classes stored in defs/style."""
+    if template_root is None:
+        return 0
+    root_for_defs = defs_root if defs_root is not None else template_root
+    defs = ensure_defs(root_for_defs)
+    try:
+        nodes = [n for n in template_root.iter() if isinstance(getattr(n, "tag", None), str) and is_text_like(n) and (n.get("style") or "").strip()]
+    except Exception:
+        nodes = []
+    if not nodes:
+        return 0
+    try:
+        style_el = defs.find(".//svg:style[@id='pnp_template_text_css']", namespaces=NSS)
+    except Exception:
+        style_el = None
+    if style_el is None:
+        style_el = etree.SubElement(defs, inkex.addNS("style", "svg"))
+        style_el.set("id", "pnp_template_text_css")
+        style_el.set("type", "text/css")
+    existing_css = style_el.text or ""
+    existing_classes = set(re.findall(r"\.([A-Za-z_][A-Za-z0-9_-]*)\s*\{", existing_css))
+    rules = []
+    changed = 0
+    for node in nodes:
+        style_raw = (node.get("style") or "").strip()
+        style_norm = ";".join(
+            f"{k.strip()}:{v.strip()}"
+            for part in style_raw.split(";")
+            if ":" in part
+            for k, v in [part.split(":", 1)]
+            if k.strip() and v.strip()
+        )
+        if not style_norm:
+            continue
+        digest = hashlib.sha1(style_norm.encode("utf-8", errors="ignore")).hexdigest()[:12]
+        cls = f"pnp-txt-{digest}"
+        if cls not in existing_classes:
+            rules.append(f".{cls}{{{style_norm}}}")
+            existing_classes.add(cls)
+        old_classes = [c for c in re.split(r"\s+", (node.get("class") or "").strip()) if c]
+        if cls not in old_classes:
+            old_classes.append(cls)
+        node.set("class", " ".join(old_classes))
+        node.attrib.pop("style", None)
+        changed += 1
+    if rules:
+        prefix = (existing_css.rstrip() + "\n") if existing_css.strip() else ""
+        style_el.text = prefix + "\n".join(rules)
+        _CSS_STYLE_CACHE.clear()
+    if changed:
+        _l.i(f"[svg] hoisted {changed} template text style(s) to CSS for subtree '{template_root.get('id') or '<noid>'}'")
+    return changed
 # ========= BBox / Query CLI ==================================================
 
 BBox = namedtuple("BBox", "left top width height")
@@ -1209,12 +1464,14 @@ def query_all(tree: etree._ElementTree, ids: set, inkscape_bin: str = None, *, m
     tmp = _write_temp_svg(work_tree)
     try:
         _l.i("[svg.query_all] tmp_svg='%s' ids=%d minimized=%s", tmp, len(ids), bool(minimize_for_ids))
-        cmd = [inkscape_bin or "inkscape", "--query-all", tmp]
+        exe = inkscape_bin or INKSCAPE.find_executable() or "inkscape"
+        cmd = [exe, "--query-all", tmp]
         _l.i("[svg.query_all] cmd=%s", " ".join(cmd))
-        p = subprocess.run(cmd, capture_output=True, text=True)
+        env = INKSCAPE.clean_launch_env(isolated_profile=True)
+        rc, msg = INKSCAPE.run(cmd, exe_dir=os.path.dirname(exe) or None, env=env)
 
         # Use stdout only; ignore stderr and returncode
-        bbs = _parse_query_all(p.stdout or "", ids)
+        bbs = _parse_query_all(msg or "", ids)
         _l.i("[svg.query_all] parsed_bboxes=%d", len(bbs))
         if bbs:
             return bbs
@@ -1410,8 +1667,6 @@ def _flowed_text_outer_box_from_shape_rect(node):
     tpts = [_apply_point_xy__safe(T, px,py) for (px,py) in pts]
     xs = [p[0] for p in tpts]; ys = [p[1] for p in tpts]
     return (float(min(xs)), float(min(ys)), float(max(xs)-min(xs)), float(max(ys)-min(ys)))
-
-
 
 
 def visual_bbox(node):
@@ -2155,6 +2410,52 @@ def uniquify_all_ids_in_scope(scope, suffix: str, get_unique_id):
         if unique != cur:
             el.set('id', unique)
 
+def uniquify_ids_and_build_target_index(scope, suffix: str, get_unique_id=None, *, trust_suffix_unique: bool = True):
+    """Uniquify generated instance ids and build its target index in one pass.
+
+    Render-generated suffixes are monotonic (_pnpN), so the normal path does not
+    need a document-wide uniqueness query per id. If a caller cannot guarantee
+    that, pass trust_suffix_unique=False.
+    """
+    index = {}
+    if scope is None:
+        return index
+    for el in scope.iter():
+        if not hasattr(el, 'tag') or not isinstance(el.tag, str):
+            continue
+        cur = el.get('id')
+        if not cur:
+            data_origid = el.get('data-origid')
+            data_field = el.get('data-field')
+            if data_origid:
+                index.setdefault(data_origid, el)
+            if data_field:
+                index.setdefault(data_field, el)
+            continue
+        base = el.get('data-origid')
+        if not base:
+            base = strip_pnp_suffix(cur)
+            el.set('data-origid', base)
+        proposed = f"{base}{suffix}"
+        if trust_suffix_unique:
+            unique = proposed
+        else:
+            try:
+                unique = get_unique_id(proposed) if callable(get_unique_id) else proposed
+            except Exception:
+                unique = proposed
+        if unique != cur:
+            el.set('id', unique)
+        index.setdefault(unique, el)
+        index.setdefault(base, el)
+        data_origid = el.get('data-origid')
+        data_field = el.get('data-field')
+        if data_origid:
+            index.setdefault(data_origid, el)
+        if data_field:
+            index.setdefault(data_field, el)
+    return index
+
 def _semanticize_ids_in_scope(scope, prefix: str = "af"):
     """
     Preserve meaningful ids when deep-cloning a subtree while still making them
@@ -2289,14 +2590,15 @@ __all__ = [
     "parse_len_px","namedview","page_size_px","add_inkscape_page_mm","list_existing_pages_px",
     "rightmost_page","next_dm_page_id","ensure_page_for","find_or_create_layer",
     "apply_translation","composed_transform","pick_anchor_in",
-    "clear_children","is_text_like","replace_text","replace_xml",
-    "style_map","style_set","BBox","query_all",
+    "clear_children","is_text_like","replace_text","replace_text_fast","replace_xml",
+    "style_map","style_set","hoist_template_images_to_defs","hoist_template_text_styles_to_css","BBox","query_all",
     "ensure_xlink_ns","clone_node_transform","absolutize_all_linked_images",
+    "build_target_index",
     "node_kind","visual_bbox",
     "ensure_id","keypad_to_anchor","compute_fit_scale",
     "build_fit_transform","clone_as_use","unlink_use","deepcopy_place","place_node",
     "apply_clip_from_rect",
     "rect_with_pad","anchor_point_in_rect","transform_bbox_to_rect",
-    "strip_pnp_suffix","scan_max_pnp_suffix","uniquify_all_ids_in_scope",
+    "strip_pnp_suffix","scan_max_pnp_suffix","uniquify_all_ids_in_scope","uniquify_ids_and_build_target_index",
     "common_group_ancestor", "fix_all_paths",
 ]

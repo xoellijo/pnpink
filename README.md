@@ -31,6 +31,7 @@ The DSL is designed to match how designers think, not how programmers write code
 
 ## Features
 
+- Standalone DeckMaker GUI for generation and export, with live progress, auto-generate, auto-open, and auto-export controls.
 - Fast data-driven generation from CSV or Google Sheets.
 - Placeholder-driven templates: map dataset columns to SVG IDs and regenerate entire sets instantly.
 - Precise `Fit` + `Anchor` controls for predictable placement and scaling inside target frames.
@@ -40,12 +41,25 @@ The DSL is designed to match how designers think, not how programmers write code
 - Reusable presets for page, grid, and component sizing.
 - Inline text icons: type icon names in text flow and render vector icons in-place.
 - Source catalogs: resolve assets by name from the dataset, including large free libraries (200K+ icons and 2M+ images, depending on source).
+- Hot SVG map generation from source expressions such as `osm://...` and `ofm://...`.
 - Spritesheet workflows for atlas-based assets and high-volume content pipelines.
 - Package formats (`.zvg` / `.pnp`) for portable projects with SVG, dataset, manifest, and assets.
 - Fully editable SVG output after generation, not flattened exports.
-- Native Inkscape workflow: design, compose, iterate, and export without leaving the editor.
+- Professional export pipeline: PDF profiles, PDF/X CMYK, ICC profile handling, smart rasterization of filtered SVG content, SVG chunking for large decks, and additional formats such as PNG, JPEG, TIFF, WebP, PS, EPS, EMF, and WMF.
+- VDP-oriented performance optimizations capable of generating more than 60K items/minute on suitable templates and hardware.
+- Native Inkscape workflow: design, compose, iterate, inspect, and export without leaving the editor.
 
 One template and one dataset can produce hundreds of print-ready components in seconds, and every generated piece remains editable.
+
+## Recent Additions
+
+- `DeckMaker GUI`: a dedicated window for dataset selection, generation, SVG opening, export configuration, progress reporting, and throughput feedback in records/min.
+- `Export module`: professional PDF output with presets (`default`, `screen`, `ebook`, `printer`, `prepress`), PDF/X CMYK export, ICC selection, pure-black text handling, filter rasterization modes, parallel Inkscape shell workers, and chunk-aware processing for large SVG outputs.
+- `Additional export formats`: page-based export to PNG, JPEG, JPEG2000, TIFF, WebP, PDF, SVG, PS, EPS, EMF, and WMF.
+- `Map sources`: on-demand SVG map generation using `osm://...` and `ofm://...` source expressions, usable like other PnPInk assets.
+- `Large-output handling`: optional SVG splitting into reusable parts so very large decks can be exported more reliably.
+- `VDP performance`: optimized generation paths for high-volume variable data printing, with measured throughput above 60K items/minute on suitable projects.
+- `Template optimization work`: generated outputs can reuse hoisted template images and shared text styles to reduce repeated SVG content.
 
 ## Installation (Quick)
 
@@ -69,6 +83,9 @@ One template and one dataset can produce hundreds of print-ready components in s
 ## Documentation
 
 - Start here (searchable docs site): [Introduction](https://xoellijo.github.io/pnpink/intro/)
+- DeckMaker GUI: [DeckMaker GUI](https://xoellijo.github.io/pnpink/deckmaker-gui/)
+- Export pipeline: [Export](https://xoellijo.github.io/pnpink/export/)
+- SVG maps: [Maps](https://xoellijo.github.io/pnpink/dsl/maps/)
 
 ## Project Status
 
@@ -80,4 +97,4 @@ Join the community on the BGG Guild to follow progress, share use cases, and inf
 
 ## Long-Term Roadmap
 
-Potential long-term directions (no guarantees): deeper professional PDF workflows, exports for virtual tabletop platforms, local AI-assisted bulk production tools, and professional integrations for QR/barcode and labeling standards.
+Potential long-term directions (no guarantees): exports for virtual tabletop platforms, local AI-assisted bulk production tools, deeper map workflows, and professional integrations for QR/barcode and labeling standards.

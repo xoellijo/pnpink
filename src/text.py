@@ -20,7 +20,7 @@ text.py ? inline icons with in-place ?I? spacer (no rich text rebuild)
 """
 
 from __future__ import annotations
-import os, sys, re, math, copy
+import os, sys, re, math, copy, tempfile, time
 from dataclasses import dataclass
 from typing import Optional, Tuple, List, Dict, Set, Callable
 from pathlib import Path
@@ -36,6 +36,8 @@ import log as LOG
 import dsl as DSL
 import sources as SRC
 import fit_anchor as FA
+import inkscape_cli as INKSCAPE
+import prefs
 _l = LOG
 __version__ = "text.py v7.51 (in-place; 1-query; baseline I; rich-visible→DOM all+warnings; vector placement; sin label)"
 
@@ -360,18 +362,6 @@ def _scale_bboxes_px_to_uu_xy(bbs: Dict[str,Dict[str,float]], uu_per_px_xy: tupl
         if "width" in nb: nb["width"] = float(nb["width"]) * ux
         if "y" in nb: nb["y"] = float(nb["y"]) * uy
         if "height" in nb: nb["height"] = float(nb["height"]) * uy
-        out[k] = nb
-    return out
-
-def _scale_bboxes_px_to_uu(bbs: Dict[str,Dict[str,float]], uu_per_px: float) -> Dict[str,Dict[str,float]]:
-    if not bbs or abs(uu_per_px - 1.0) < 1e-12:
-        return bbs
-    out: Dict[str,Dict[str,float]] = {}
-    for k, bb in bbs.items():
-        nb = dict(bb)
-        for key in ("x","y","width","height"):
-            if key in nb:
-                nb[key] = float(nb[key]) * uu_per_px
         out[k] = nb
     return out
 
@@ -727,30 +717,284 @@ def _escape_text_nodes_only(s: str) -> str:
 
     return "".join(out)
 
-# ----------------- symbols -----------------
-def _ensure_wrap_symbol(doc_root: SVG.etree._Element, icon_id: str, bb: Dict[str,float]) -> str:
-    defs = doc_root.find(".//svg:defs", namespaces={"svg": NS["svg"]})
-    if defs is None:
-        defs = SVG.etree.SubElement(doc_root, f"{{{NS['svg']}}}defs")
-    wrap_id = f"wrap_{icon_id}"
-    if doc_root.xpath(f".//*[@id='{wrap_id}']"):
-        return wrap_id
+_URL_REF_RE = re.compile(r"url\(\s*#([^)]+)\s*\)")
 
-    bw = max(1e-6, bb.get("width", 1.0))
-    bh = max(1e-6, bb.get("height", 1.0))
-    bx = bb.get("x", 0.0)
-    by = bb.get("y", 0.0)
 
-    sym = SVG.etree.SubElement(defs, f"{{{NS['svg']}}}symbol", id=wrap_id)
-    sym.set("viewBox", f"0 0 {bw} {bh}")
-    sym.set("preserveAspectRatio", "none")
+def _probe_refs_in_subtree(node) -> Set[str]:
+    refs: Set[str] = set()
+    for n in node.iter():
+        for _, value in (n.attrib or {}).items():
+            sv = str(value or "")
+            refs.update(r.strip() for r in _URL_REF_RE.findall(sv) if r.strip())
+            if sv.startswith("#") and len(sv) > 1:
+                refs.add(sv[1:].strip())
+    return refs
 
-    inner = SVG.etree.SubElement(sym, f"{{{NS['svg']}}}use")
-    inner.set(f"{{{NS['xlink']}}}href", f"#{icon_id}")
-    inner.set("href", f"#{icon_id}")
-    if bx or by:
-        inner.set("transform", f"translate({-bx:.6f},{-by:.6f})")
-    return wrap_id
+
+def _append_inline_probe_terminal_sentinels(root: SVG.etree._Element) -> None:
+    # Inkscape shell sometimes fails to report bbox for a terminal inline-hole tspan
+    # when it is the last text run. Add a probe-only invisible sentinel after it so
+    # the copied text subtree keeps a trailing run during measurement.
+    try:
+        for n in list(root.iter()):
+            if not isinstance(getattr(n, "tag", None), str) or not n.tag.endswith("tspan"):
+                continue
+            nid = str(n.get("id") or "")
+            if "__hole__" not in nid:
+                continue
+            parent = n.getparent()
+            if parent is None:
+                continue
+            siblings = list(parent)
+            idx = siblings.index(n)
+            if idx != (len(siblings) - 1):
+                continue
+            sentinel = SVG.etree.Element(f"{{{NS['svg']}}}tspan")
+            sentinel.set(CONST.XML_SPACE, "preserve")
+            sm = SVG.style_map(sentinel)
+            sm["fill-opacity"] = "0"
+            sm["stroke-opacity"] = "0"
+            sm["font-size"] = "0.001px"
+            SVG.style_set(sentinel, sm)
+            sentinel.text = "."
+            parent.insert(idx + 1, sentinel)
+    except Exception:
+        pass
+
+
+def _populate_inline_probe_defs(
+    root: SVG.etree._Element,
+    defs: SVG.etree._Element,
+    id_index: Dict[str, SVG.etree._Element],
+) -> None:
+    added: Set[str] = set()
+    pending = list(_probe_refs_in_subtree(root))
+    while pending:
+        rid = pending.pop()
+        if not rid or rid in added:
+            continue
+        src = id_index.get(rid)
+        if src is None:
+            continue
+        clone = copy.deepcopy(src)
+        defs.append(clone)
+        added.add(rid)
+        for subref in _probe_refs_in_subtree(clone):
+            if subref not in added:
+                pending.append(subref)
+
+
+def _inline_probe_tree_for_text(doc_root: SVG.etree._Element, text_el: SVG.etree._Element, id_index: Dict[str, SVG.etree._Element]):
+    """Build a small SVG with one text node in the same ancestor transform chain."""
+    nsmap = getattr(doc_root, "nsmap", None) or None
+    root = SVG.etree.Element(doc_root.tag, nsmap=nsmap)
+    for k, v in (doc_root.attrib or {}).items():
+        root.set(k, v)
+
+    defs = SVG.etree.SubElement(root, f"{{{NS['svg']}}}defs")
+
+    # Keep document/page context and CSS. Text metrics can depend on both.
+    try:
+        for nv in doc_root.xpath("./sodipodi:namedview", namespaces=SVG.NSS):
+            root.append(copy.deepcopy(nv))
+    except Exception:
+        pass
+    try:
+        for st in doc_root.xpath(".//svg:style", namespaces=SVG.NSS):
+            defs.append(copy.deepcopy(st))
+    except Exception:
+        pass
+
+    chain = []
+    cur = text_el
+    while cur is not None and cur is not doc_root:
+        chain.append(cur)
+        cur = cur.getparent()
+    chain.reverse()
+
+    parent_new = root
+    for node in chain:
+        if node is text_el:
+            parent_new.append(copy.deepcopy(text_el))
+            break
+        shallow = SVG.etree.Element(node.tag, nsmap=getattr(node, "nsmap", None) or None)
+        for k, v in (node.attrib or {}).items():
+            shallow.set(k, v)
+        parent_new.append(shallow)
+        parent_new = shallow
+
+    _append_inline_probe_terminal_sentinels(root)
+    _populate_inline_probe_defs(root, defs, id_index)
+
+    return SVG.etree.ElementTree(root)
+
+
+def _inline_probe_tree_for_texts(
+    doc_root: SVG.etree._Element,
+    text_els: List[SVG.etree._Element],
+    id_index: Dict[str, SVG.etree._Element],
+):
+    """Build one compact SVG with only the inline-icon texts and their transform chains."""
+    nsmap = getattr(doc_root, "nsmap", None) or None
+    root = SVG.etree.Element(doc_root.tag, nsmap=nsmap)
+    for k, v in (doc_root.attrib or {}).items():
+        root.set(k, v)
+
+    defs = SVG.etree.SubElement(root, f"{{{NS['svg']}}}defs")
+
+    try:
+        for nv in doc_root.xpath("./sodipodi:namedview", namespaces=SVG.NSS):
+            root.append(copy.deepcopy(nv))
+    except Exception:
+        pass
+    try:
+        for st in doc_root.xpath(".//svg:style", namespaces=SVG.NSS):
+            defs.append(copy.deepcopy(st))
+    except Exception:
+        pass
+
+    clone_map: Dict[int, SVG.etree._Element] = {id(doc_root): root}
+    for text_el in text_els:
+        if text_el is None:
+            continue
+        chain = []
+        cur = text_el
+        while cur is not None and cur is not doc_root:
+            chain.append(cur)
+            cur = cur.getparent()
+        chain.reverse()
+        if not chain:
+            continue
+        parent_orig = doc_root
+        for node in chain[:-1]:
+            parent_clone = clone_map.get(id(parent_orig), root)
+            node_key = id(node)
+            node_clone = clone_map.get(node_key)
+            if node_clone is None:
+                node_clone = SVG.etree.Element(node.tag, nsmap=getattr(node, "nsmap", None) or None)
+                for k, v in (node.attrib or {}).items():
+                    node_clone.set(k, v)
+                parent_clone.append(node_clone)
+                clone_map[node_key] = node_clone
+            parent_orig = node
+        text_parent_clone = clone_map.get(id(parent_orig), root)
+        text_parent_clone.append(copy.deepcopy(text_el))
+
+    _append_inline_probe_terminal_sentinels(root)
+    _populate_inline_probe_defs(root, defs, id_index)
+    return SVG.etree.ElementTree(root)
+
+
+def _query_inline_spacers_compact_query_all(tree, all_items: List[TokenItem]) -> Dict[str, Dict[str, float]]:
+    ids_text = sorted({it.spacer_id for it in all_items if it.spacer_id})
+    if not ids_text:
+        return {}
+    doc_root = tree.getroot()
+    id_index = {str(n.get("id")): n for n in doc_root.xpath(".//*[@id]") if n.get("id")}
+    text_ids = []
+    seen_text_ids: Set[str] = set()
+    for it in all_items:
+        tid = str(it.text_id or "")
+        if not tid or tid in seen_text_ids:
+            continue
+        seen_text_ids.add(tid)
+        text_ids.append(tid)
+    text_els = [id_index[tid] for tid in text_ids if tid in id_index]
+    t0 = time.perf_counter()
+    probe_tree = _inline_probe_tree_for_texts(doc_root, text_els, id_index)
+    build_ms = (time.perf_counter() - t0) * 1000.0
+    t1 = time.perf_counter()
+    bbs = SVG.query_all(probe_tree, set(ids_text), minimize_for_ids=False)
+    query_ms = (time.perf_counter() - t1) * 1000.0
+    _l.i(
+        "[inline_icons.query_all_compact] texts=%d ids=%d bboxes=%d build_ms=%.1f query_ms=%.1f total_ms=%.1f",
+        len(text_els), len(ids_text), len(bbs), build_ms, query_ms, build_ms + query_ms,
+    )
+    return bbs
+
+
+def _query_inline_spacers_shell_per_text(tree, all_items: List[TokenItem], *, timeout_s: float = 2.5) -> Dict[str, Dict[str, float]]:
+    """Experimental bbox backend: reuse one Inkscape shell and query one text subtree at a time.
+
+    REMEMBER TO ISSUE:
+    In our tests, `inkscape --shell` is not reliable for inline-icon spacer `<tspan>` metrics.
+    The problematic node is the synthetic `...__hole__N` tspan used to reserve horizontal
+    space for the icon. Shell mode consistently returned an incorrect bbox for that node:
+
+    - `query-all` in shell reported the spacer height as `1`
+    - direct `query-height:<id>` in shell also reported `1`
+    - in some cases direct `query-x/y/width:<id>` in shell appeared to resolve to the wrong box
+    - plain CLI `inkscape --query-all <svg>` on an equivalent compact probe SVG returned the
+      expected values
+
+    This means the issue is not our stdout parser and not just the bulk `query-all` format; it
+    appears to be an Inkscape shell-mode measurement bug for these text/tspan probes.
+
+    If shell mode is revisited in the future, please file an upstream bug with a minimal probe
+    SVG reproducing the bad bbox for the terminal spacer tspan.
+    """
+    ids_by_text: Dict[str, Set[str]] = {}
+    for it in all_items:
+        if it.text_id and it.spacer_id:
+            ids_by_text.setdefault(it.text_id, set()).add(it.spacer_id)
+    if not ids_by_text:
+        return {}
+    doc_root = tree.getroot()
+    id_index = {str(n.get("id")): n for n in doc_root.xpath(".//*[@id]") if n.get("id")}
+
+    exe = INKSCAPE.find_executable()
+    if not exe:
+        raise RuntimeError("Inkscape executable not found")
+
+    fd, tmp = tempfile.mkstemp(prefix="pnp_inline_icons_", suffix=".svg")
+    os.close(fd)
+    _l.i("[inline_icons.shell_per_text] tmp_svg='%s'", tmp)
+    out: Dict[str, Dict[str, float]] = {}
+    total_write_ms = 0.0
+    total_query_ms = 0.0
+    t_all = time.perf_counter()
+    try:
+        env = INKSCAPE.clean_launch_env(isolated_profile=True)
+        with INKSCAPE.ShellQuerySession(exe, exe_dir=os.path.dirname(exe) or None, env=env) as shell:
+            for idx, (text_id, ids) in enumerate(ids_by_text.items(), start=1):
+                t0 = time.perf_counter()
+                text_el = id_index.get(text_id)
+                if text_el is None:
+                    raise RuntimeError(f"text not found for id '{text_id}'")
+                mini = _inline_probe_tree_for_text(doc_root, text_el, id_index)
+                mini.write(tmp, pretty_print=False, xml_declaration=True, encoding="UTF-8")
+                write_ms = (time.perf_counter() - t0) * 1000.0
+
+                t1 = time.perf_counter()
+                bbs = shell.query_all(tmp, ids, timeout_s=timeout_s, open_delay_s=0.0)
+                query_ms = (time.perf_counter() - t1) * 1000.0
+                if not bbs:
+                    raise RuntimeError(f"no bboxes from shell for text '{text_id}'")
+                direct_metrics = {}
+                if len(ids) == 1:
+                    sid = next(iter(ids))
+                    try:
+                        direct_metrics, _ = shell.query_metrics(tmp, sid, timeout_s=max(2.0, timeout_s), open_delay_s=0.0)
+                    except Exception as ex:
+                        _l.w("[inline_icons.shell_per_text] direct query failed text=%s id=%s err=%s", text_id, sid, ex)
+
+                total_write_ms += write_ms
+                total_query_ms += query_ms
+                out.update(bbs)
+                _l.i(
+                    "[inline_icons.shell_per_text] text=%s/%s id='%s' ids=%d bboxes=%d write_ms=%.1f query_ms=%.1f direct=%s tmp_svg='%s'",
+                    idx, len(ids_by_text), text_id, len(ids), len(bbs), write_ms, query_ms, direct_metrics or {}, tmp,
+                )
+    finally:
+        _l.i("[inline_icons.shell_per_text] preserved tmp_svg='%s'", tmp)
+
+    total_ms = (time.perf_counter() - t_all) * 1000.0
+    _l.i(
+        "[inline_icons.shell_per_text] total texts=%d ids=%d bboxes=%d write_ms=%.1f query_ms=%.1f total_ms=%.1f",
+        len(ids_by_text), sum(len(v) for v in ids_by_text.values()), len(out), total_write_ms, total_query_ms, total_ms,
+    )
+    return out
+
 
 # ----------------- main -----------------
 def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=False, spacer_glyph: Optional[str]=None, *, source_manager: Optional[SRC.SourceManager]=None, doc_path: Optional[str]=None) -> ProcessResult:
@@ -952,9 +1196,23 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
 # PASO B: medir spacers (1 query)
     ids_text = sorted(spacers)
     uu_xy = _uu_per_px_xy(doc_root)
-    _l.i("[inline_icons] stage=passB_query ids=%d", len(ids_text))
-    # Reduced query scope for speed; keeps text/defs/style/page context.
-    bbs_doc = SVG.query_all(tree, ids_text, minimize_for_ids=True)
+    backend = "query_all"
+    try:
+        backend = prefs.get_inline_icons_bbox_backend("query_all")
+    except Exception:
+        backend = "query_all"
+    _l.i("[inline_icons] stage=passB_query ids=%d backend=%s", len(ids_text), backend)
+
+    bbs_doc = {}
+    if backend == "shell_per_text":
+        bbs_doc = _query_inline_spacers_shell_per_text(tree, all_items)
+        missing = set(ids_text) - set(bbs_doc.keys())
+        if missing:
+            raise RuntimeError(f"missing {len(missing)} bbox(es) from shell_per_text")
+    elif backend == "query_all":
+        bbs_doc = _query_inline_spacers_compact_query_all(tree, all_items)
+    else:
+        raise RuntimeError(f"unknown inline_icons_bbox_backend '{backend}'")
     bbs_doc = _scale_bboxes_px_to_uu_xy(bbs_doc, uu_xy)
     _l.i("[inline_icons] stage=passB_bboxes bboxes=%d", len(bbs_doc))
 
@@ -988,6 +1246,20 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
         yI_top  = bb_s_doc["y"]
         hI      = bb_s_doc["height"]
 
+        # REMEMBER TO ISSUE:
+        # `shell_per_text` can preserve the correct top/left/width but collapse the
+        # spacer bbox height to ~1px in the mini probe. That makes the icon center
+        # drift upward. This normalization is only a defensive fallback for the
+        # experimental shell backend; the preferred path is `query_all` on the
+        # compact unified probe because it returns correct spacer geometry.
+        hI_eff = float(hI)
+        if backend == "shell_per_text" and hI_eff <= max(1.5, H_doc * 0.25):
+            _l.i(
+                "[inline_icons.shell_per_text] spacer height normalized id=%s raw_h=%.4f nominal_h=%.4f",
+                it.spacer_id, hI_eff, H_doc,
+            )
+            hI_eff = float(H_doc)
+
         # --- geometry in <text> axes (robust against rotations) ---
         mag_u = math.hypot(aT, bT) or 1.0
         mag_v = math.hypot(cT, dT) or 1.0
@@ -996,14 +1268,14 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
 
         # Center of spacer bbox (DOC)
         cx = xI_left + wI * 0.5
-        cy = yI_top  + hI * 0.5
+        cy = yI_top  + hI_eff * 0.5
 
         # Center of hole [I + hole] along the text flow
         # (use base size to keep center stable when padding expands the rect)
         x_center_doc = cx + ux * (hole_base_w * 0.5)
         y_center_doc = cy + uy * (hole_base_w * 0.5)
 
-        # Baseline point (lower edge of the “I”)
+        # Original placement model: baseline derived from the nominal text height.
         baseline_x = x_center_doc + vx * (H_doc * 0.5)
         baseline_y = y_center_doc + vy * (H_doc * 0.5)
 

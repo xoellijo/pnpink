@@ -34,6 +34,9 @@ nav:
       - Advanced: dsl/advanced.md
   - PnPInk Overview: pnpink-general.md
   - Basic Workflow: quickstart.md
+  - DeckMaker GUI: deckmaker-gui.md
+  - Export: export.md
+  - Extensions and Tools: extensions.md
   - Snippets: snippets.md
   - Presets: presets.md
 

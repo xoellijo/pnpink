@@ -358,6 +358,7 @@ def run(self, __version__):
                         clone_doc,
                         source_svg_path=_doc_path,
                         analysis_label=out_path,
+                        absolutize_images=False,
                     )
                     page_slices = list(analysis.get("pages") or [])
                     total_est_bytes = sum(int(item.est_bytes or 0) for item in page_slices)
@@ -376,12 +377,12 @@ def run(self, __version__):
                     if use_chunk_output:
                         try:
                             full_doc = inkex.load_svg(inkex.etree.tostring(clone_doc.getroot()))
-                            full_norm_info = SVGCHUNKS.normalize_output_doc(full_doc, source_svg_path=_doc_path)
+                            full_info = SVGCHUNKS.prepare_full_output_doc(full_doc, source_svg_path=_doc_path, absolutize_images=False)
                             _write_svg_atomic(full_doc, out_path)
                             _l.i(
                                 f"[dm_output] wrote full external render: '{out_path}' "
-                                f"pages={int(full_norm_info.get('page_count') or 0)} "
-                                f"fixed_images={int(full_norm_info.get('fixed_images') or 0)}"
+                                f"pages={page_count} "
+                                f"fixed_images={int(full_info.get('fixed_images') or 0)}"
                             )
                         except Exception as ex:
                             _l.w(f"[dm_output] write full output failed for '{out_path}': {ex}")
@@ -391,6 +392,7 @@ def run(self, __version__):
                             source_svg_path=_doc_path,
                             target_chunk_bytes=chunk_target_bytes,
                             analysis=analysis,
+                            absolutize_images=False,
                         )
                         chunk_count = int(chunk_info.get("chunk_count") or 0)
                         chunk_dir = str(chunk_info.get("chunk_dir") or "")
@@ -400,7 +402,7 @@ def run(self, __version__):
                             f"dir='{chunk_dir}' manifest='{manifest_path}'"
                         )
                         return False
-                    norm_info = SVGCHUNKS.normalize_output_doc(clone_doc, source_svg_path=_doc_path)
+                    norm_info = SVGCHUNKS.normalize_output_doc(clone_doc, source_svg_path=_doc_path, absolutize_images=False)
                     _l.i(
                         f"[dm_output] normalized external render pages={int(norm_info.get('page_count') or 0)} "
                         f"fixed_images={int(norm_info.get('fixed_images') or 0)}"
@@ -627,7 +629,6 @@ def run(self, __version__):
         _pages0 = SVG.list_existing_pages_px(root)
     # Global page cursor is 0-based (like planner.page_index).
     start_page_index = int(len(_pages0))
-
     for ds_idx, ds0 in enumerate(datasets, start=1):
         ds_meta = ds0.get("meta", {}) or {}
         headers = ds0.get("headers", []) or []
@@ -643,7 +644,6 @@ def run(self, __version__):
 
         _l.i(f"----- DATASET SECTION #{ds_idx}/{len(datasets)} -----")
         _l.i(f"[datasets] #{ds_idx}: rows={len(rows_data)}")
-        PROGRESS.emit("render_rows_total", dataset_index=int(ds_idx), total=int(len(rows_data)))
         placed = 0
 
         # Units needed early (e.g., spritesheets registration). Do not delay until after scans.
@@ -1128,6 +1128,24 @@ def run(self, __version__):
                 _l.i(f"[templates] externalized {_ext_total} embedded template image(s) into shared defs symbols")
         except Exception as _ex:
             _l.w(f"[templates] embedded image externalization failed: {_ex}")
+
+        # Prepare template roots once. Instances are generated from these prepared
+        # roots, so per-card code must not repeat full-subtree normalization.
+        try:
+            _seen_tpl_roots = set()
+            _prep_flatten = 0
+            _prep_absolutize = 0
+            for _tr in _tpl_roots:
+                _oid = id(_tr)
+                if _oid in _seen_tpl_roots:
+                    continue
+                _seen_tpl_roots.add(_oid)
+                REN._flatten_group_transform(_tr)
+                _prep_flatten += 1
+                _prep_absolutize += int(SVG.absolutize_all_linked_images(_tr, _doc_path, prefer="fileuri") or 0)
+            _l.i(f"[templates] prepared template roots={_prep_flatten} absolutized_images={_prep_absolutize}")
+        except Exception as _ex:
+            _l.w(f"[templates] template preparation failed: {_ex}")
         # medir carta base
         template_anchor_x = None
         template_anchor_y = None
@@ -1797,6 +1815,7 @@ def run(self, __version__):
             ext=self, root=root,
             SM=SM, datasets=datasets, ds_idx=ds_idx, ds_meta=ds_meta, headers=headers, rows_data=rows_data,
             use_seq=use_seq, next_n=next_n, placed_total=placed_total, start_page_index=start_page_index,
+            dataset_count=len(datasets or []),
             planner=planner, proto_root=proto_root, out_layer=out_layer,
             doc_path=_doc_path,
             declared_bbox_id=declared_bbox_id,
@@ -1831,9 +1850,5 @@ def run(self, __version__):
     except Exception as ex:
         _l.w(f"[deckmaker.text] inline_icons ONE-PASS failed: {ex}")
         _l.w("[deckmaker.text] traceback:\n" + _tb.format_exc())
-
-    fixed_imgs_end = SVG.absolutize_all_linked_images(root, _doc_path, prefer="fileuri")
-    if fixed_imgs_end:
-        _l.i(f"[images] final absolutize linked images: {fixed_imgs_end}")
 
     _l.s("END DeckMaker")

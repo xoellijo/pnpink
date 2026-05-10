@@ -53,6 +53,7 @@ class Logger:
         self.file_level    = _norm_level(file_level)
         self.file_path     = file_path
         self._t_prev = time.perf_counter()
+        self._last_flush = self._t_prev
 
         # Precompute flags one time
         self._console_flags = _sink_flags(self.console_level)
@@ -115,29 +116,31 @@ class Logger:
         line = f"[{level.upper()}: {mod}{dt_part}] {base}"
         return line, self._console_flags, self._file_flags
 
+    def _is_enabled(self, flags, level):
+        allow_info, allow_warn, allow_error, allow_debug, allow_trace = flags
+        return ((level == "INFO" and allow_info) or
+                (level == "WARN" and allow_warn) or
+                (level == "ERROR" and allow_error) or
+                (level == "DEBUG" and allow_debug) or
+                (level == "TRACE" and allow_trace))
+
     def _emit_console(self, line, con_flags, level):
         allow_info, allow_warn, allow_error, allow_debug, allow_trace = con_flags
-        ok = ((level == "INFO" and allow_info) or
-              (level == "WARN" and allow_warn) or
-              (level == "ERROR" and allow_error) or
-              (level == "DEBUG" and allow_debug) or
-              (level == "TRACE" and allow_trace))
+        ok = self._is_enabled(con_flags, level)
         if ok:
             inkex.utils.debug(line)
 
     def _emit_file(self, line, file_flags, level):
         if not self._fh: 
             return
-        allow_info, allow_warn, allow_error, allow_debug, allow_trace = file_flags
-        ok = ((level == "INFO" and allow_info) or
-              (level == "WARN" and allow_warn) or
-              (level == "ERROR" and allow_error) or
-              (level == "DEBUG" and allow_debug) or
-              (level == "TRACE" and allow_trace))
+        ok = self._is_enabled(file_flags, level)
         if ok:
             try:
                 self._fh.write(line + "\n")
-                self._fh.flush()
+                now = time.perf_counter()
+                if level in ("WARN", "ERROR") or (now - self._last_flush) >= 0.25:
+                    self._fh.flush()
+                    self._last_flush = now
             except Exception:
                 pass
 
@@ -151,6 +154,8 @@ class Logger:
     i = info; w = warn; e = error; d = debug; t = trace
 
     def _log(self, level, msg, *a):
+        if (not self._is_enabled(self._console_flags, level)) and (not self._is_enabled(self._file_flags, level)):
+            return
         line, con_flags, file_flags = self._compose(level, msg, *a)
         self._emit_console(line, con_flags, level)
         self._emit_file(line, file_flags, level)

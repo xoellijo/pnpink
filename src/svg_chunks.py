@@ -7,6 +7,7 @@ import copy
 import os
 import re
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -221,6 +222,80 @@ def _find_pnpink_layer(root):
     return None
 
 
+def _is_marks_layer(node) -> bool:
+    try:
+        label = str(node.get("{http://www.inkscape.org/namespaces/inkscape}label") or "").strip().lower()
+    except Exception:
+        label = ""
+    try:
+        node_id = str(node.get("id") or "").strip().lower()
+    except Exception:
+        node_id = ""
+    return ("marks" in label) or node_id.startswith("marks")
+
+
+def prepare_full_output_doc(doc, *, source_svg_path: str, absolutize_images: bool = True) -> dict:
+    import svg as SVG
+
+    root = doc.getroot()
+    fixed_images = int(SVG.absolutize_all_linked_images(doc, source_svg_path, prefer="fileuri") or 0) if absolutize_images else 0
+    nv = SVG.namedview(root)
+    if nv is None:
+        raise ValueError("Output SVG has no namedview")
+    out_root, _run_groups = _find_output_groups(root)
+    if out_root is None:
+        raise ValueError("No 'pnpink-output' group found in output SVG")
+    pnpink_layer = _find_pnpink_layer(root)
+
+    for el in _iter_page_elements(nv):
+        try:
+            page_id = str(el.get("id") or "").strip()
+        except Exception:
+            page_id = ""
+        if page_id.startswith("dm_page_"):
+            continue
+        try:
+            nv.remove(el)
+        except Exception:
+            pass
+
+    for child in list(root):
+        if child is nv:
+            continue
+        tag = str(getattr(child, "tag", "") or "")
+        if tag.endswith("defs"):
+            continue
+        if _is_marks_layer(child):
+            try:
+                st = _style_dict(child.get("style") or "")
+                if st.get("display") == "none":
+                    st.pop("display", None)
+                    child.set("style", ";".join(f"{k}:{v}" for k, v in st.items()))
+            except Exception:
+                pass
+            continue
+        if pnpink_layer is not None and child is pnpink_layer:
+            continue
+        _set_style_value(child, "display", "none")
+
+    if pnpink_layer is not None:
+        for child in list(pnpink_layer):
+            try:
+                st = _style_dict(child.get("style") or "")
+                if st.get("display") == "none":
+                    st.pop("display", None)
+                    child.set("style", ";".join(f"{k}:{v}" for k, v in st.items()))
+            except Exception:
+                pass
+
+    return {
+        "fixed_images": fixed_images,
+        "root_width": str(root.get("width") or ""),
+        "root_height": str(root.get("height") or ""),
+        "root_viewbox": str(root.get("viewBox") or ""),
+    }
+
+
 def _output_generated_pages(pages: list[dict]) -> list[dict]:
     return [page for page in (pages or []) if str(page.get("id") or "").startswith("dm_page_")] or list(pages or [])
 
@@ -416,6 +491,15 @@ def _estimate_node_bytes(node, id_map: dict[str, object]) -> int:
     asset_bytes = _collect_used_asset_bytes(node, id_map, seen_paths, seen_ids)
     return int(xml_bytes + asset_bytes)
 
+
+def _estimate_node_xml_bytes(node) -> int:
+    try:
+        import svg as SVG
+
+        return int(len(SVG.etree.tostring(node, encoding="utf-8")))
+    except Exception:
+        return int(len(str(node).encode("utf-8", errors="ignore")))
+
 def _assign_output_nodes_to_pages(doc, root, generated_pages: list[dict], candidate_nodes: list[tuple[str, object]], *, inkscape_exe: str | None = None) -> tuple[dict[int, list[str]], dict[int, int], tuple[str, ...]]:
     import svg as SVG
 
@@ -453,11 +537,12 @@ def analyze_output_pages(svg_path: str, *, inkscape_exe: str | None = None) -> d
     return analyze_output_doc(doc, source_svg_path=svg_path, inkscape_exe=inkscape_exe, analysis_label=svg_path)
 
 
-def analyze_output_doc(doc, *, source_svg_path: str, inkscape_exe: str | None = None, analysis_label: str = "<doc>") -> dict:
+def analyze_output_doc(doc, *, source_svg_path: str, inkscape_exe: str | None = None, analysis_label: str = "<doc>", absolutize_images: bool = True) -> dict:
     import svg as SVG
 
+    t0 = time.perf_counter()
     root = doc.getroot()
-    fixed_images = int(SVG.absolutize_all_linked_images(doc, source_svg_path, prefer="fileuri") or 0)
+    fixed_images = int(SVG.absolutize_all_linked_images(doc, source_svg_path, prefer="fileuri") or 0) if absolutize_images else 0
     nv = SVG.namedview(root)
     if nv is None:
         raise ValueError("No namedview found in output SVG")
@@ -473,11 +558,7 @@ def analyze_output_doc(doc, *, source_svg_path: str, inkscape_exe: str | None = 
     if page_groups:
         generated_pages = _output_generated_pages(pages)
         slices: list[SvgPageSlice] = []
-        id_map = {}
-        for el in root.iter():
-            el_id = str(el.get("id") or "").strip()
-            if el_id:
-                id_map[el_id] = el
+        t_est = time.perf_counter()
         for idx, page in enumerate(generated_pages, start=1):
             group = page_groups[idx - 1] if idx - 1 < len(page_groups) else None
             if group is None:
@@ -485,7 +566,11 @@ def analyze_output_doc(doc, *, source_svg_path: str, inkscape_exe: str | None = 
                 node_ids = tuple()
             else:
                 group_id = _ensure_id(group, "pnpink_page_group_", [0])
-                est_bytes = _estimate_node_bytes(group, id_map)
+                # Page-grouped output is generated by us. For chunk planning, the
+                # page group's XML size is the relevant variable; shared defs/assets
+                # are document-level overhead and scanning them for every page is
+                # disproportionately expensive on large decks.
+                est_bytes = _estimate_node_xml_bytes(group)
                 node_ids = (group_id,)
             slices.append(
                 SvgPageSlice(
@@ -500,11 +585,13 @@ def analyze_output_doc(doc, *, source_svg_path: str, inkscape_exe: str | None = 
                 )
             )
         _l.i(
-            "[svg_chunks] analyze svg='%s' fixed_images=%d generated_pages=%d page_groups=%d grouped_mode=page",
+            "[svg_chunks] analyze svg='%s' fixed_images=%d generated_pages=%d page_groups=%d grouped_mode=page estimate_ms=%d total_ms=%d",
             analysis_label,
             fixed_images,
             len(slices),
             len(page_groups),
+            int((time.perf_counter() - t_est) * 1000),
+            int((time.perf_counter() - t0) * 1000),
         )
         for item in slices:
             _l.i(
@@ -619,6 +706,7 @@ def write_output_chunks_from_doc(
     inkscape_exe: str | None = None,
     target_chunk_bytes: int,
     analysis: dict | None = None,
+    absolutize_images: bool = True,
 ) -> dict:
     import inkex
     import svg as SVG
@@ -628,6 +716,7 @@ def write_output_chunks_from_doc(
         source_svg_path=source_svg_path,
         inkscape_exe=inkscape_exe,
         analysis_label=out_path,
+        absolutize_images=absolutize_images,
     )
     page_slices = list(analysis_data.get("pages") or [])
     if not page_slices:
@@ -645,14 +734,23 @@ def write_output_chunks_from_doc(
     _l.i("[svg_chunks] write_output chunk_dir='%s' target='%s'", chunk_dir, out_path)
 
     chunk_paths: list[str] = []
+    all_page_nos = tuple(int(item.page_no) for item in page_slices)
     for group_index, group_pages in enumerate(groups, start=1):
+        group_page_nos = tuple(int(item.page_no) for item in group_pages)
         chunk_doc = inkex.load_svg(base_raw)
-        chunk_info = normalize_output_doc(
-            chunk_doc,
-            source_svg_path=source_svg_path,
-            keep_pages={int(item.page_no) for item in group_pages},
-            inkscape_exe=inkscape_exe,
-        )
+        if len(groups) == 1 and group_page_nos == all_page_nos:
+            chunk_info = {
+                "root_width": str(chunk_doc.getroot().get("width") or ""),
+                "root_height": str(chunk_doc.getroot().get("height") or ""),
+            }
+        else:
+            chunk_info = normalize_output_doc(
+                chunk_doc,
+                source_svg_path=source_svg_path,
+                keep_pages=set(group_page_nos),
+                inkscape_exe=inkscape_exe,
+                absolutize_images=absolutize_images,
+            )
         chunk_svg_path = _chunk_svg_path(chunk_dir, stem, suffix, group_index)
         try:
             chunk_doc.write(chunk_svg_path, encoding="utf-8", xml_declaration=True)
@@ -717,13 +815,13 @@ def build_chunk_plan(
     return groups
 
 
-def normalize_output_doc(doc, *, source_svg_path: str, keep_pages: set[int] | None = None, inkscape_exe: str | None = None) -> dict:
+def normalize_output_doc(doc, *, source_svg_path: str, keep_pages: set[int] | None = None, inkscape_exe: str | None = None, absolutize_images: bool = True) -> dict:
     import svg as SVG
 
     root = doc.getroot()
     width_unit = _length_unit_suffix(root.get("width"))
     height_unit = _length_unit_suffix(root.get("height")) or width_unit
-    fixed_images = int(SVG.absolutize_all_linked_images(doc, source_svg_path, prefer="fileuri") or 0)
+    fixed_images = int(SVG.absolutize_all_linked_images(doc, source_svg_path, prefer="fileuri") or 0) if absolutize_images else 0
     nv = SVG.namedview(root)
     all_pages = SVG.list_existing_pages_px(root)
     if nv is None or not all_pages:

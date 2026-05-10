@@ -770,9 +770,9 @@ def parse_header_key(key: str) -> Tuple[str, str, bool]:
     return str(info.get('target_id') or ''), str(info.get('prop') or 'text'), bool(info.get('header_plus') or False)
 
 
-def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs, path_jobs, use_seq, layout_obj=None, sm=None, ss_registry=None, transform_jobs=None):
+def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs, path_jobs, use_seq, layout_obj=None, sm=None, ss_registry=None, transform_jobs=None, target_index=None, header_info=None):
     global _P1_KEEP_SET
-    hk = parse_header_key_full(key)
+    hk = header_info if isinstance(header_info, dict) else parse_header_key_full(key)
     target_tokens = hk.get('target_ids') if isinstance(hk, dict) else None
     if not target_tokens:
         target_tokens = [hk.get('target_id') or '']
@@ -792,7 +792,9 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                 inst, sub_key, raw_val, row,
                 root_doc=root_doc, use_jobs=use_jobs, fa_jobs=fa_jobs, path_jobs=path_jobs, use_seq=use_seq, layout_obj=layout_obj,
                 transform_jobs=transform_jobs,
-                sm=sm, ss_registry=ss_registry
+                sm=sm, ss_registry=ss_registry,
+                target_index=target_index,
+                header_info=None,
             )
             total += int(c or 0)
             if st != "miss":
@@ -838,11 +840,21 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
             op_key = "fill-opacity" if _prop == "fill" else "stroke-opacity"
             return rgb, op_key, f"{a:.4f}".rstrip("0").rstrip(".")
         return s, None, None
-    tgt = SVG.find_target_exact_in(inst, target_id)
+    tgt = SVG.find_target_exact_in(inst, target_id, target_index=target_index)
     if tgt is None:
-        _l.d(f"field '{key}': target id='{target_id}' NOT FOUND in clone")
         return 0, "miss"
     if SVG.is_text_like(tgt) or (tgt.tag in TEXT_LIKE):
+        if (
+            prop == "text"
+            and not header_plus
+            and not _default_expr
+            and not _default_id
+            and not _default_ops
+            and not _global_ops
+            and not _default_raw
+        ):
+            if SVG.replace_text_fast(tgt, value):
+                return 1, "text"
         if (not str(value or "").strip()):
             if _default_expr:
                 value = expand_value(str(_default_expr), row)
@@ -850,13 +862,11 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                 value = str(_default_id)
         if prop == "xml":
             SVG.replace_xml(tgt, value)
-            _l.d(f"field '{key}': XML -> id='{target_id}'")
             return 1, "xml"
         if prop != "text":
             try:
                 v, op_key, op_val = _normalize_style_value(prop, value)
                 if v == "":
-                    _l.d(f"field '{key}': STYLE[{prop}] empty -> keep current style id='{target_id}'")
                     return 0, "skip"
                 smap = SVG.style_map(tgt)
                 smap[prop] = v
@@ -878,13 +888,11 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                         SVG.style_set(_ch, _sm)
                 except Exception:
                     pass
-                _l.d(f"field '{key}': STYLE[{prop}] -> id='{target_id}'")
                 return 1, "style"
             except Exception as ex:
                 _l.w(f"field '{key}': STYLE[{prop}] failed on id='{target_id}': {ex}")
                 return 0, "miss"
         SVG.replace_text(tgt, value)
-        _l.d(f"field '{key}': TEXT -> id='{target_id}'")
         return 1, "text"
     if prop == "xml":
         _l.w(f"field '{key}': [xml] is only supported on text-like targets (id='{target_id}')")
@@ -905,7 +913,6 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                         _P1_KEEP_SET.add(target_id)
                 except Exception:
                     pass
-                _l.d(f"field '{key}': STYLE[{prop}] empty -> keep current style id='{target_id}'")
                 return 0, "skip"
             smap = SVG.style_map(tgt)
             smap[prop] = v
@@ -918,7 +925,6 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                     _P1_KEEP_SET.add(target_id)
             except Exception:
                 pass
-            _l.d(f"field '{key}': STYLE[{prop}] -> id='{target_id}'")
             return 1, "style"
         except Exception as ex:
             _l.w(f"field '{key}': STYLE[{prop}] failed on id='{target_id}': {ex}")
@@ -934,7 +940,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
         if len(toks) > 1:
             total = 0
             for _tok in reversed(toks):
-                c, _ = apply_field_in_clone(inst, key, _tok, row, root_doc=root_doc, use_jobs=use_jobs, fa_jobs=fa_jobs, path_jobs=path_jobs, use_seq=use_seq, layout_obj=layout_obj, sm=sm, ss_registry=ss_registry, transform_jobs=transform_jobs)
+                c, _ = apply_field_in_clone(inst, key, _tok, row, root_doc=root_doc, use_jobs=use_jobs, fa_jobs=fa_jobs, path_jobs=path_jobs, use_seq=use_seq, layout_obj=layout_obj, sm=sm, ss_registry=ss_registry, transform_jobs=transform_jobs, target_index=target_index, header_info=hk)
                 total += int(c or 0)
             return total, 'multi'
 
@@ -965,15 +971,12 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
             except Exception:
                 pass
             path_jobs.append((tgt, raw_paths_spec, _orient_hint(layout_obj)))
-            _l.d(f"field '{key}': PATHS only -> id='{target_id}'")
             return 1, "paths"
         # Phase-1: NEVER delete rect anchors (duplicate headers / multivalue need a stable, unique anchor element).
         if _is_rect_elem(tgt):
-            _l.d(f"field '{key}': empty rect anchor kept id='{target_id}'")
             return 0, "skip"
         # Phase-1: Do not delete non-text placeholders during render; they may act as anchors and
         # duplicates/multivalue rely on stability. Visibility is handled in the finalize step.
-        _l.d(f"field '{key}': empty non-text kept id='{target_id}'")
         return 0, "skip"
     raw_token, source_was_normalized, symbol_id_for_fallback = _normalize_source_token(
         raw_token, sm=sm, ss_registry=ss_registry

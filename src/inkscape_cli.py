@@ -9,11 +9,46 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
+import re
 
 import log as LOG
 import temp_paths as TEMPPATHS
 
 _l = LOG
+
+
+def _parse_query_all(stdout: str, want_ids: set[str] | None = None) -> dict[str, dict[str, float]]:
+    out: dict[str, dict[str, float]] = {}
+    wanted = set(want_ids or set())
+    for line in (stdout or "").splitlines():
+        parts = [p for p in re.split(r"[, \t]+", line.strip()) if p]
+        if len(parts) < 5:
+            continue
+        node_id = parts[0]
+        if wanted and node_id not in wanted:
+            continue
+        try:
+            x, y, w, h = map(float, parts[1:5])
+        except Exception:
+            continue
+        out[node_id] = {"x": x, "y": y, "width": w, "height": h}
+    return out
+
+
+def _parse_last_float_lines(stdout: str, count: int) -> list[float]:
+    vals: list[float] = []
+    for line in (stdout or "").splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        try:
+            vals.append(float(s))
+        except Exception:
+            continue
+    if count <= 0:
+        return vals
+    return vals[-count:]
 
 
 def find_executable() -> str | None:
@@ -98,7 +133,7 @@ def run(
         kwargs["creationflags"] = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if on_output is None:
         proc = subprocess.run(**kwargs)
-        msg = (proc.stderr or proc.stdout or "").strip()
+        msg = ((proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")).strip()
         rc = int(proc.returncode)
     else:
         proc = subprocess.Popen(**kwargs)
@@ -234,6 +269,195 @@ def run_shell_commands(
     else:
         _l.w("[inkscape_shell] failed rc=%d msg=%s", rc, msg[:1000])
     return rc, msg
+
+
+class ShellQuerySession:
+    """Persistent `inkscape --shell` process for repeated query-all probes."""
+
+    def __init__(self, exe: str, *, exe_dir: str | None = None, env: dict[str, str] | None = None):
+        self.exe = exe
+        self.exe_dir = exe_dir
+        self.env = env
+        self.proc: subprocess.Popen | None = None
+        self.output_q: queue.Queue[str] = queue.Queue()
+        self.readers: list[threading.Thread] = []
+        self.current_svg: str | None = None
+
+    def __enter__(self):
+        kwargs = {
+            "args": [self.exe, "--shell"],
+            "cwd": self.exe_dir or None,
+            "env": self.env,
+            "stdin": subprocess.PIPE,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        self.proc = subprocess.Popen(**kwargs)
+
+        def _reader(stream):
+            try:
+                while True:
+                    chunk = stream.read(1)
+                    if not chunk:
+                        break
+                    self.output_q.put(chunk)
+            except Exception:
+                pass
+            finally:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+
+        self.readers = [
+            threading.Thread(target=_reader, args=(self.proc.stdout,), daemon=True),
+            threading.Thread(target=_reader, args=(self.proc.stderr,), daemon=True),
+        ]
+        for reader in self.readers:
+            reader.start()
+        _l.i("[inkscape_shell_query] start exe='%s' cwd='%s'", self.exe, self.exe_dir or "")
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
+    def _drain(self) -> None:
+        while True:
+            try:
+                self.output_q.get_nowait()
+            except queue.Empty:
+                break
+
+    def _send(self, command: str) -> None:
+        if self.proc is None or self.proc.stdin is None or self.proc.poll() is not None:
+            raise RuntimeError("Inkscape shell is not running")
+        self.proc.stdin.write(command.rstrip("\n") + "\n")
+        self.proc.stdin.flush()
+
+    def _read_until_bboxes(self, ids: set[str], *, timeout_s: float) -> tuple[dict[str, dict[str, float]], str]:
+        deadline = time.perf_counter() + max(0.1, float(timeout_s))
+        chunks: list[str] = []
+        bbs: dict[str, dict[str, float]] = {}
+        while time.perf_counter() < deadline:
+            if self.proc is not None and self.proc.poll() is not None:
+                break
+            try:
+                chunk = self.output_q.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            chunks.append(chunk)
+            text = "".join(chunks)
+            bbs = _parse_query_all(text, ids)
+            if ids and ids.issubset(set(bbs.keys())):
+                return bbs, text
+        text = "".join(chunks)
+        return _parse_query_all(text, ids), text
+
+    def _read_until_float_count(self, count: int, *, timeout_s: float) -> tuple[list[float], str]:
+        deadline = time.perf_counter() + max(0.1, float(timeout_s))
+        chunks: list[str] = []
+        vals: list[float] = []
+        while time.perf_counter() < deadline:
+            if self.proc is not None and self.proc.poll() is not None:
+                break
+            try:
+                chunk = self.output_q.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            chunks.append(chunk)
+            text = "".join(chunks)
+            vals = _parse_last_float_lines(text, count)
+            if len(vals) >= count:
+                return vals[-count:], text
+        text = "".join(chunks)
+        return _parse_last_float_lines(text, count), text
+
+    def query_all(
+        self,
+        svg_path: str,
+        ids: set[str],
+        *,
+        timeout_s: float = 8.0,
+        open_delay_s: float = 0.0,
+    ) -> dict[str, dict[str, float]]:
+        ids = set(ids or set())
+        if not ids:
+            return {}
+        self._drain()
+        t0 = time.perf_counter()
+        self._send(f"file-open:{svg_path}")
+        self.current_svg = os.path.normcase(os.path.normpath(str(svg_path)))
+        if open_delay_s and open_delay_s > 0:
+            time.sleep(float(open_delay_s))
+        self._send("query-all")
+        bbs, out = self._read_until_bboxes(ids, timeout_s=timeout_s)
+        dt = (time.perf_counter() - t0) * 1000.0
+        _l.i("[inkscape_shell_query] query file='%s' ids=%d bboxes=%d ms=%.1f", svg_path, len(ids), len(bbs), dt)
+        _l.i("[inkscape_shell_query] raw_output=%s", repr((out or "")[:2000]))
+        if not bbs and out:
+            _l.w("[inkscape_shell_query] no bboxes; output=%s", out[:1000])
+        return bbs
+
+    def query_metrics(
+        self,
+        svg_path: str,
+        node_id: str,
+        *,
+        timeout_s: float = 4.0,
+        open_delay_s: float = 0.0,
+    ) -> tuple[dict[str, float], str]:
+        node_id = str(node_id or "").strip()
+        if not node_id:
+            return {}, ""
+        self._drain()
+        self._send(f"file-open:{svg_path}")
+        self.current_svg = os.path.normcase(os.path.normpath(str(svg_path)))
+        if open_delay_s and open_delay_s > 0:
+            time.sleep(float(open_delay_s))
+        self._send(f"query-x:{node_id}")
+        self._send(f"query-y:{node_id}")
+        self._send(f"query-width:{node_id}")
+        self._send(f"query-height:{node_id}")
+        vals, out = self._read_until_float_count(4, timeout_s=timeout_s)
+        metrics: dict[str, float] = {}
+        if len(vals) >= 4:
+            metrics = {
+                "x": float(vals[-4]),
+                "y": float(vals[-3]),
+                "width": float(vals[-2]),
+                "height": float(vals[-1]),
+            }
+        _l.i("[inkscape_shell_query] direct_metrics id='%s' metrics=%s", node_id, metrics or {})
+        _l.i("[inkscape_shell_query] direct_raw_output=%s", repr((out or "")[:1000]))
+        return metrics, out
+
+    def close(self) -> None:
+        proc = self.proc
+        if proc is None:
+            return
+        try:
+            if proc.stdin is not None and proc.poll() is None:
+                proc.stdin.write("quit\n")
+                proc.stdin.flush()
+                proc.stdin.close()
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=2.0)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        for reader in self.readers:
+            try:
+                reader.join(timeout=0.2)
+            except Exception:
+                pass
+        _l.i("[inkscape_shell_query] closed rc=%s", getattr(proc, "returncode", None))
 
 
 def build_pdf_export_argv(

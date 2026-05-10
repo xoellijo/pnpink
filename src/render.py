@@ -9,6 +9,7 @@ _l = LOG
 _DBG_FA_RECT_IDS = None  # debug: set of rect/placeholder ids used by FA in current instance
 import re
 import math
+import time
 
 
 # ---------------- spritesheet alias token parsing ----------------
@@ -35,6 +36,7 @@ import gui as PROGRESS
 import render_helpers as RHP
 import render_planner as RPL
 import render_tokens as RTK
+import template_compose as TCOMP
 from typing import Dict, Optional, Tuple
 
 _slot_index_to_rc = RPL.slot_index_to_rc
@@ -103,6 +105,7 @@ def render_phase(ctx):
     ds_idx = ctx.ds_idx
     headers = ctx.headers
     rows_data = ctx.rows_data
+    dataset_count = int(getattr(ctx, 'dataset_count', 0) or 0)
     use_seq = ctx.use_seq
     next_n = ctx.next_n
     placed_total = ctx.placed_total
@@ -136,19 +139,30 @@ def render_phase(ctx):
                 pass
         return node
 
+    page_group_cache = {}
+    try:
+        for _child in list(out_layer):
+            _pid = _child.get('data-pnpink-page-index')
+            if _pid:
+                page_group_cache.setdefault(int(_pid) - 1, _child)
+    except Exception:
+        page_group_cache = {}
+
     def _page_group_for(page_index: int):
+        page_index = int(page_index)
+        cached = page_group_cache.get(page_index)
+        if cached is not None:
+            return cached
         pinfo = pages[int(page_index)]
         page_id = str(pinfo.get('id') or f"page_{int(page_index)+1}")
-        gid = page_id
-        group = out_layer.find(f".//*[@id='{gid}']")
-        if group is None:
-            group = inkex.Group()
-            group.set('id', gid)
-            group.set(inkex.addNS('label', 'inkscape'), page_id)
-            group.set('data-pnpink-page-id', page_id)
-            group.set('data-pnpink-page-index', str(int(page_index) + 1))
-            _mark_generated(group)
-            out_layer.append(group)
+        group = inkex.Group()
+        group.set('id', page_id)
+        group.set(inkex.addNS('label', 'inkscape'), page_id)
+        group.set('data-pnpink-page-id', page_id)
+        group.set('data-pnpink-page-index', str(int(page_index) + 1))
+        _mark_generated(group)
+        out_layer.append(group)
+        page_group_cache[page_index] = group
         return group
 
     def _append_output(node, *, page_index: int | None = None):
@@ -157,16 +171,105 @@ def render_phase(ctx):
         parent.append(node)
         return node
 
-    def _set_card_group_identity(card_group, proto_id: str, page_index: int, row_index: int):
+    def _compile_field_specs(headers_list):
+        headers_local = list(headers_list or [])
+        by_header = {}
+        for i, h in enumerate(headers_local):
+            by_header.setdefault(h, []).append(i)
+        yielded = set()
+        order = []
+        for i, h in enumerate(headers_local):
+            if i in yielded:
+                continue
+            idxs = by_header.get(h) or [i]
+            if len(idxs) > 1:
+                idxs = list(reversed(idxs))
+            for j in idxs:
+                if j in yielded:
+                    continue
+                yielded.add(j)
+                order.append(j)
+        specs = []
+        for i in order:
+            key = headers_local[i] if i < len(headers_local) else ""
+            if not key:
+                continue
+            key_s = str(key)
+            hk = parse_header_key_full(key_s)
+            target_ids = list((hk or {}).get("target_ids") or [])
+            fast_text_target = ""
+            fast_text_plain = False
+            if (
+                not key_s.startswith("clone_")
+                and not (key_s.startswith("__dm_") or key_s.startswith("_"))
+                and str((hk or {}).get("prop") or "text") == "text"
+                and not bool((hk or {}).get("header_plus") or False)
+                and not str((hk or {}).get("default_id") or "")
+                and not str((hk or {}).get("default_ops") or "")
+                and not str((hk or {}).get("global_ops") or "")
+                and not str((hk or {}).get("default_expr") or "")
+                and not str((hk or {}).get("default_raw") or "")
+                and len(target_ids) == 1
+                and not _is_id_wildcard_token(target_ids[0])
+            ):
+                fast_text_target = target_ids[0]
+                try:
+                    proto_tgt = SVG.find_target_exact_in(proto_root, fast_text_target)
+                    if proto_tgt is not None and (SVG.is_text_like(proto_tgt) or (proto_tgt.tag in TEXT_LIKE)):
+                        parent_has_style = bool(
+                            (proto_tgt.get("style") or "").strip()
+                            or (proto_tgt.get("class") or "").strip()
+                        )
+                        has_blocking_child_style = False
+                        for child in proto_tgt.iter():
+                            if child is proto_tgt:
+                                continue
+                            tag = str(getattr(child, "tag", "") or "")
+                            if not tag.endswith("tspan"):
+                                continue
+                            if (
+                                (child.get("style") or "").strip()
+                                or (child.get("class") or "").strip()
+                                or (child.get("stroke") or "").strip()
+                                or (child.get("stroke-width") or "").strip()
+                                or (child.get("fill") or "").strip()
+                            ):
+                                has_blocking_child_style = not parent_has_style
+                                break
+                        fast_text_plain = not has_blocking_child_style
+                except Exception:
+                    fast_text_plain = False
+            specs.append({
+                "index": int(i),
+                "key": key_s,
+                "hk": hk,
+                "is_clone": key_s.startswith("clone_"),
+                "is_internal": key_s.startswith("__dm_") or key_s.startswith("_"),
+                "fast_text_target": fast_text_target,
+                "fast_text_plain": fast_text_plain,
+            })
+        return specs
+
+    def _set_card_group_identity(
+        card_group,
+        proto_id: str,
+        page_index: int,
+        row_index: int,
+        face_tag: str = "front",
+        face_ordinal: int = 1,
+    ):
         page1 = int(page_index) + 1
         dataset1 = int(ds_idx)
         row1 = int(row_index)
+        face = str(face_tag or "front").strip().lower()
+        ord1 = max(1, int(face_ordinal or 1))
         gid = f"{proto_id}_{page1}_{dataset1}_{row1}"
-        card_group.set('id', gid)
-        card_group.set(inkex.addNS('label', 'inkscape'), gid)
+        if face == "back":
+            gid += "_back" if ord1 == 1 else f"_back{ord1}"
         card_group.set('data-pnpink-page-index', str(page1))
         card_group.set('data-pnpink-dataset-index', str(dataset1))
         card_group.set('data-pnpink-row-index', str(row1))
+        card_group.set('data-pnpink-face', face)
         return gid
 
     def _flatten_card_group(card_group, main_group):
@@ -1050,10 +1153,8 @@ def render_phase(ctx):
         _queue_paths(int(planner.page_index), path_jobs, owner_group=owner_group)
         return _fa_remove_later
 
-    def _absolutize_instance_linked_images(inst_node):
-        if inst_node is None or not doc_path:
-            return
-        SVG.absolutize_all_linked_images(inst_node, doc_path)
+    # Template roots are prepared once in engine.py. Per-card instances must not
+    # repeat full-subtree image/link normalization.
     # --- end dedup helpers ---
 
     def _queue_paths(page_index: int, path_jobs, *, owner_group=None):
@@ -1264,9 +1365,8 @@ def render_phase(ctx):
             # We keep it invisible but renderable so Fit/Anchor can measure.
             tmp_group.set('style', 'opacity:0;fill:none;stroke:none')
             _append_output(tmp_group)
-            ctx._pnpink_tmp_group = tmp_group
+        ctx._pnpink_tmp_group = tmp_group
         inst = tmpl_root.copy()
-        _flatten_group_transform(inst)
         suffix = f"_pnp{next_n}_pg"; next_n += 1
         SVG.uniquify_all_ids_in_scope(inst, suffix, root.get_unique_id)
         page_wrap = inkex.Group(); page_wrap.set('id', root.get_unique_id(f"dm_pagewrap_{ds_idx}"))
@@ -1523,9 +1623,163 @@ def render_phase(ctx):
             except Exception as ex:
                 _l.w(f"[iconify] preload skipped/failed: {ex}")
         ctx._iconify_preloaded = True
-    for idx, row in enumerate(_iter_instances(rows_data), start=1):
-        _l.s(f"ROW {idx}: begin")
-        PROGRESS.emit("render_row", current=int(idx))
+    compiled_field_specs = _compile_field_specs(headers)
+    compiled_clone_specs = [s for s in compiled_field_specs if s.get("is_clone")]
+    compiled_apply_specs = [s for s in compiled_field_specs if (not s.get("is_clone")) and (not s.get("is_internal"))]
+    def _header_may_touch_anchor(hk):
+        if not hk:
+            return False
+        if str(hk.get("prop") or "text") != "text":
+            return True
+        for _tid in (hk.get("target_ids") or [hk.get("target_id") or ""]):
+            if not _tid:
+                continue
+            if _is_id_wildcard_token(_tid):
+                return True
+            try:
+                _t = SVG.find_target_exact_in(proto_root, _tid)
+                if _t is None:
+                    return True
+                if not (SVG.is_text_like(_t) or (_t.tag in TEXT_LIKE)):
+                    return True
+            except Exception:
+                return True
+        return False
+
+    compiled_rect_hks = [s.get("hk") for s in compiled_apply_specs if _header_may_touch_anchor(s.get("hk"))]
+
+    def _prepare_origids_once(template_root):
+        if template_root is None:
+            return 0
+        count = 0
+        for el in template_root.iter():
+            if not hasattr(el, 'tag') or not isinstance(el.tag, str):
+                continue
+            cur = el.get('id')
+            if not cur or el.get('data-origid'):
+                continue
+            el.set('data-origid', SVG.strip_pnp_suffix(cur))
+            count += 1
+        return count
+
+    prepared_origids = _prepare_origids_once(proto_root)
+    for _ot in (overlay_templates or []):
+        prepared_origids += _prepare_origids_once((_ot or {}).get('template_root'))
+    if prepared_origids:
+        _l.i(f"[templates_ids] prepared data-origid for {prepared_origids} template id(s)")
+
+    template_engine = prefs.get_template_engine("legacy") if hasattr(prefs, "get_template_engine") else "legacy"
+    composed_plan = None
+    if template_engine == "composed":
+        composed_dynamic_ids = []
+        for _spec in compiled_apply_specs:
+            _hk = _spec.get("hk") or {}
+            for _tid in (_hk.get("target_ids") or [(_hk.get("target_id") or "")]):
+                _tid = str(_tid or "").strip()
+                if _tid and not _is_id_wildcard_token(_tid):
+                    composed_dynamic_ids.append(_tid)
+        try:
+            prefix = root.get_unique_id(f"pnp_tpl_{ds_idx}") if hasattr(root, "get_unique_id") else f"pnp_tpl_{ds_idx}"
+            composed_plan = TCOMP.build_plan(
+                root=root,
+                proto_root=proto_root,
+                dynamic_ids=composed_dynamic_ids,
+                block_id_prefix=prefix,
+                has_overlays=bool(overlay_templates),
+                has_back_templates=bool(back_templates),
+                has_page_templates=bool(page_templates or page_back_templates),
+                has_clone_fields=bool(compiled_clone_specs),
+                has_anchor_visibility=bool(compiled_rect_hks),
+            )
+            _l.i(
+                f"[templates.compose] enabled static_blocks={composed_plan.static_blocks} "
+                f"dynamic_roots={composed_plan.dynamic_roots} dynamic_ids={len(composed_plan.dynamic_ids)}"
+            )
+        except TCOMP.UnsupportedComposedTemplate as ex:
+            raise inkex.AbortExtension(f"composed template engine unsupported template: {ex}")
+    else:
+        _l.i("[templates.compose] disabled template_engine=legacy")
+
+    template_declared_bbox = None
+    if declared_bbox_node is not None and declared_bbox_id:
+        rid = SVG.resolve_local_id(proto_root, declared_bbox_id)
+        bbox_elem = proto_root.find(f".//*[@id='{rid}']") if rid else None
+        if bbox_elem is not None:
+            try:
+                bb = bbox_elem.bounding_box()
+                template_declared_bbox = (float(bb.left), float(bb.top), float(bb.width), float(bb.height))
+                _l.i(
+                    f"[templates_bbox] cached declared bbox id='{declared_bbox_id}' "
+                    f"x={template_declared_bbox[0]:.3f} y={template_declared_bbox[1]:.3f} "
+                    f"w={template_declared_bbox[2]:.3f} h={template_declared_bbox[3]:.3f}"
+                )
+            except Exception as ex:
+                _l.w(f"[templates_bbox] cannot cache declared bbox id='{declared_bbox_id}': {ex}")
+        else:
+            _l.w(f"[templates_bbox] declared bbox id='{declared_bbox_id}' not found in prepared template.")
+
+    _profile = {
+        "instances_ms": 0.0,
+        "pre_ms": 0.0,
+        "clone_ms": 0.0,
+        "clone_deepcopy_ms": 0.0,
+        "clone_flatten_ms": 0.0,
+        "clone_absolutize_ms": 0.0,
+        "clone_uniquify_ms": 0.0,
+        "clone_index_ms": 0.0,
+        "fields_ms": 0.0,
+        "fields_fast_ms": 0.0,
+        "fields_generic_ms": 0.0,
+        "fields_fast_count": 0,
+        "fields_fast_plain_count": 0,
+        "fields_generic_count": 0,
+        "bbox_ms": 0.0,
+        "fit_ms": 0.0,
+        "fit_slot_ms": 0.0,
+        "fit_pagegroup_ms": 0.0,
+        "fit_node_append_ms": 0.0,
+        "fit_append_ms": 0.0,
+        "fit_transform_ms": 0.0,
+        "fit_geom_ms": 0.0,
+        "fit_marks_ms": 0.0,
+        "fa_ms": 0.0,
+        "post_ms": 0.0,
+        "row_total_ms": 0.0,
+        "rows": 0,
+    }
+    _profile_dataset_t0 = time.perf_counter()
+    _t_instances = time.perf_counter()
+    instances = list(_iter_instances(rows_data))
+    _profile["instances_ms"] = (time.perf_counter() - _t_instances) * 1000.0
+    progress_total = int(len(instances))
+    progress_step = max(1, progress_total // 200) if progress_total > 0 else 1
+    if progress_total > 0:
+        PROGRESS.emit(
+            "render_rows_total",
+            dataset_index=int(ds_idx),
+            dataset_count=int(dataset_count),
+            total=int(progress_total),
+        )
+    row_log_step = max(1, progress_total // 20) if progress_total > 0 else 1
+
+    def _log_row_stage(row_idx: int, stage: str) -> None:
+        if row_idx == 1 or row_idx == progress_total or (row_idx % row_log_step) == 0:
+            _l.i(f"ROW {row_idx}: {stage}")
+
+    for idx, row in enumerate(instances, start=1):
+        _profile_row_t0 = time.perf_counter()
+        _profile_phase_t0 = _profile_row_t0
+        _log_row_stage(idx, "begin")
+        if idx == 1 or idx == progress_total or (idx % progress_step) == 0:
+            PROGRESS.emit(
+                "render_row",
+                current=int(idx),
+                total=int(progress_total),
+                dataset_index=int(ds_idx),
+                dataset_count=int(dataset_count),
+                dataset_current=int(idx),
+                dataset_total=int(progress_total),
+            )
         row_map = _build_row_map(headers, row)
         row_page   = (row.get("__dm_page__")   or "").strip()
         row_layout = (row.get("__dm_layout__") or "").strip()
@@ -1537,11 +1791,11 @@ def render_phase(ctx):
                     is_placeholder = False
                     break
             if is_placeholder:
-                _l.s(f"ROW {idx}: placeholder (empty row) â†’ skip slot")
+                _log_row_stage(idx, "placeholder empty row, skip slot")
                 planner.commit_slot()
                 continue
         if row_page:
-            _l.s(f"ROW {idx}: apply PAGE preset")
+            _log_row_stage(idx, "apply PAGE preset")
             if re.fullmatch(r"\{\s*\}", row_page):
                 _jump_page_with_marks(planner)
             else:
@@ -1589,7 +1843,7 @@ def render_phase(ctx):
                         _apply_page_cursor_from_page(planner, ps_for_cursor)
             _l.i(f"Grid {planner.plan.cols}x{planner.plan.rows}, gaps {planner.current.gaps.h}Ã—{planner.current.gaps.v} mm; slots/page {planner.slots_per_page()}")
         if row_layout:
-            _l.s(f"ROW {idx}: apply LAYOUT tail")
+            _log_row_stage(idx, "apply LAYOUT tail")
             try:
                 ls = DSL.parse_layout_block(row_layout)
             except Exception as ex:
@@ -1607,7 +1861,7 @@ def render_phase(ctx):
                 _shape_dbg = _shape if not _orient else f"{_shape}/{_orient}"
                 _l.i(f"Tail applied: g={layout.cols}x{layout.rows} inv=({layout.invert_cols},{layout.invert_rows}) rowMajor={layout.sweep_rows_first} k={gaps.h}Ã—{gaps.v} s='{_shape_dbg}'")
         if row_marks:
-            _l.s(f"ROW {idx}: apply MARKS tail")
+            _log_row_stage(idx, "apply MARKS tail")
             if row_marks in ("0", "-"):
                 marks_current = None
             else:
@@ -1624,7 +1878,7 @@ def render_phase(ctx):
                     has_payload = True
                     break
             if not has_payload:
-                _l.s(f"ROW {idx}: control-only row (empty payload) -> no instance")
+                _log_row_stage(idx, "control-only row, no instance")
                 continue
         # Collect any @page requests from this row (they'll be executed when their referenced slot is reached)
         _queue_page_requests(row, row_map)
@@ -1703,15 +1957,25 @@ def render_phase(ctx):
                     )
                 except Exception as ex:
                     _l.w(f"[@page] placement failed at slot {slot_no}: {ex}")
+        _profile["pre_ms"] += (time.perf_counter() - _profile_phase_t0) * 1000.0
+        _profile_phase_t0 = time.perf_counter()
         card_group = inkex.Group()
-        inst_main = deepcopy(proto_root)
-        _flatten_group_transform(inst_main)
-        _absolutize_instance_linked_images(inst_main)
         suffix_main = f"_pnp{next_n}"; next_n += 1
-        SVG.uniquify_all_ids_in_scope(inst_main, suffix_main, root.get_unique_id)
+        if composed_plan is not None:
+            _clone_t = time.perf_counter()
+            inst_main, target_index_main = TCOMP.instantiate_plan(composed_plan, suffix_main, root_doc=root)
+            _profile["clone_deepcopy_ms"] += (time.perf_counter() - _clone_t) * 1000.0
+        else:
+            _clone_t = time.perf_counter()
+            inst_main = deepcopy(proto_root)
+            _profile["clone_deepcopy_ms"] += (time.perf_counter() - _clone_t) * 1000.0
+            _clone_t = time.perf_counter()
+            target_index_main = SVG.uniquify_ids_and_build_target_index(inst_main, suffix_main, root.get_unique_id)
+            _profile["clone_uniquify_ms"] += (time.perf_counter() - _clone_t) * 1000.0
         inst_jobs = []  # list of dicts: {node, use_jobs, fa_jobs, path_jobs, suffix, bbox_id}
         inst_jobs.append({
             'node': inst_main,
+            'target_index': target_index_main,
             'use_jobs': [],
             'fa_jobs': [],
             'path_jobs': [],
@@ -1729,12 +1993,13 @@ def render_phase(ctx):
             inst_ov = deepcopy((ot or {}).get('template_root'))
             if inst_ov is None:
                 continue
-            _flatten_group_transform(inst_ov)
-            _absolutize_instance_linked_images(inst_ov)
             suffix_ov = f"_pnp{next_n}_t{ot_i}"; next_n += 1
-            SVG.uniquify_all_ids_in_scope(inst_ov, suffix_ov, root.get_unique_id)
+            _clone_t = time.perf_counter()
+            target_index_ov = SVG.uniquify_ids_and_build_target_index(inst_ov, suffix_ov, root.get_unique_id)
+            _profile["clone_uniquify_ms"] += (time.perf_counter() - _clone_t) * 1000.0
             inst_jobs.append({
                 'node': inst_ov,
+                'target_index': target_index_ov,
                 'use_jobs': [],
                 'fa_jobs': [],
                 'path_jobs': [],
@@ -1743,16 +2008,50 @@ def render_phase(ctx):
                 'bbox_id': ((ot or {}).get('bbox_id') or ''),
                 'overlay_ops': ctrl_val,
             })
-        def _apply_field_any(key, raw):
+        _profile["clone_ms"] += (time.perf_counter() - _profile_phase_t0) * 1000.0
+        def _apply_field_any(spec, raw):
+            key = spec.get("key") if isinstance(spec, dict) else str(spec or "")
+            hk = spec.get("hk") if isinstance(spec, dict) else None
+            fast_text_target = spec.get("fast_text_target") if isinstance(spec, dict) else ""
+            fast_text_plain = bool(spec.get("fast_text_plain")) if isinstance(spec, dict) else False
+            if fast_text_target:
+                _field_t0 = time.perf_counter()
+                value = raw
+                if ("\\" in value) or ("${" in value):
+                    value = expand_value(value, row_map)
+                for j in inst_jobs:
+                    tgt = (j.get("target_index") or {}).get(fast_text_target)
+                    if tgt is None:
+                        continue
+                    if SVG.is_text_like(tgt) or (tgt.tag in TEXT_LIKE):
+                        if fast_text_plain:
+                            SVG.clear_children(tgt)
+                            tgt.text = "" if value is None else str(value)
+                            _profile["fields_fast_plain_count"] += 1
+                        elif not SVG.replace_text_fast(tgt, value):
+                            SVG.replace_text(tgt, value)
+                        _profile["fields_fast_ms"] += (time.perf_counter() - _field_t0) * 1000.0
+                        _profile["fields_fast_count"] += 1
+                        return 1, "text"
+                # If the indexed fast path cannot find the target, fall through
+                # to the generic handler so missing/renamed ids keep producing
+                # the same diagnostics and behavior as complex fields.
+            _field_t0 = time.perf_counter()
             for j in inst_jobs:
                 cnt, st = apply_field_in_clone(
                     j['node'], key, raw, row_map,
                     root_doc=root, use_jobs=j['use_jobs'], fa_jobs=j['fa_jobs'], path_jobs=j['path_jobs'],
                     use_seq=use_seq, layout_obj=planner.current.layout, sm=SM, ss_registry=ss_registry,
-                    transform_jobs=j['transform_jobs']
+                    transform_jobs=j['transform_jobs'],
+                    target_index=j.get('target_index'),
+                    header_info=hk,
                 )
                 if st != 'miss':
+                    _profile["fields_generic_ms"] += (time.perf_counter() - _field_t0) * 1000.0
+                    _profile["fields_generic_count"] += 1
                     return cnt, st
+            _profile["fields_generic_ms"] += (time.perf_counter() - _field_t0) * 1000.0
+            _profile["fields_generic_count"] += 1
             return 0, 'miss'
 
         # Phase-1: per-row keep-visible set for rect anchors (populated by parse_header_key on headers with '+').
@@ -1760,17 +2059,25 @@ def render_phase(ctx):
         global _P1_KEEP_SET
         _P1_KEEP_SET = set()
         RAP._P1_KEEP_SET = _P1_KEEP_SET
+        for _spec in compiled_apply_specs:
+            _hk = _spec.get("hk") or {}
+            if not (bool(_hk.get("header_plus") or False) or str(_hk.get("prop") or "text") != "text"):
+                continue
+            for _tid in (_hk.get("target_ids") or [(_hk.get("target_id") or "")]):
+                if _tid and not RAP._is_id_wildcard_token(_tid):
+                    _P1_KEEP_SET.add(_tid)
 
-        for key, raw in _iter_row_fields(headers, row):
-            if not key or not key.startswith('clone_'):
-                continue
-            _apply_field_any(key, raw)
-        for key, raw in _iter_row_fields(headers, row):
-            if (not key) or key.startswith('clone_'):
-                continue
-            if key.startswith('__dm_') or key.startswith('_'):
-                continue
-            _apply_field_any(key, raw)
+        _profile_phase_t0 = time.perf_counter()
+        _cells_for_fields = _row_cells(row)
+        for _spec in compiled_clone_specs:
+            _i = int(_spec.get("index") or 0)
+            _raw = _cells_for_fields[_i] if _i < len(_cells_for_fields) else ""
+            _apply_field_any(_spec, "" if _raw is None else str(_raw))
+        for _spec in compiled_apply_specs:
+            _i = int(_spec.get("index") or 0)
+            _raw = _cells_for_fields[_i] if _i < len(_cells_for_fields) else ""
+            _apply_field_any(_spec, "" if _raw is None else str(_raw))
+        _profile["fields_ms"] += (time.perf_counter() - _profile_phase_t0) * 1000.0
         if len(inst_jobs) > 1 and declared_bbox_id:
             rid_main = SVG.resolve_local_id(inst_main, declared_bbox_id)
             rect_elem_main = inst_main.find(f".//*[@id='{rid_main}']") if rid_main else None
@@ -1824,9 +2131,12 @@ def render_phase(ctx):
             n = j.get('node')
             if n is not None and n.getparent() is None:
                 card_group.append(n)
-        _l.s(f"ROW {idx}: place card")
+        _profile_phase_t0 = time.perf_counter()
+        _log_row_stage(idx, "place card")
         placed_node = None
-        if declared_bbox_node is not None and declared_bbox_id:
+        if template_declared_bbox is not None:
+            bx, by, bw, bh = template_declared_bbox
+        elif declared_bbox_node is not None and declared_bbox_id:
             rid = SVG.resolve_local_id(inst_main, declared_bbox_id)
             bbox_elem = inst_main.find(f".//*[@id='{rid}']") if rid else None
             if bbox_elem is None:
@@ -1844,6 +2154,7 @@ def render_phase(ctx):
             an = SVG.pick_anchor_in(inst_main)
             bb = an.bounding_box()
             bx, by, bw, bh = float(bb.left), float(bb.top), float(bb.width), float(bb.height)
+        _profile["bbox_ms"] += (time.perf_counter() - _profile_phase_t0) * 1000.0
         # Split boards when template bbox exceeds page inner frame.
         inner_rect_now = _page_inner_rect_elem_for(int(planner.page_index))
         split_boards = False
@@ -1985,9 +2296,12 @@ def render_phase(ctx):
                     part.set('id', part_name)
                     part.set(inkex.addNS('label', 'inkscape'), part_name)
             placed += 1
+            _profile["row_total_ms"] += (time.perf_counter() - _profile_row_t0) * 1000.0
+            _profile["rows"] += 1
             planner.commit_slot()
             continue
 
+        _profile_phase_t0 = time.perf_counter()
         if (_slot_w_target is not None) and (_slot_h_target is not None):
             slot_w, slot_h = _slot_w_target, _slot_h_target
         else:
@@ -1995,22 +2309,32 @@ def render_phase(ctx):
                 _, _, slot_w, slot_h = planner.local_slots[planner.slot_index]
             except Exception:
                 slot_w, slot_h = bw, bh
-        _append_output(card_group, page_index=int(planner.page_index))
+        _sub_t = time.perf_counter()
+        _profile["fit_slot_ms"] += (_sub_t - _profile_phase_t0) * 1000.0
+        _pg_t = time.perf_counter()
+        _mark_generated(card_group)
+        parent = _page_group_for(int(planner.page_index))
+        _pg_t2 = time.perf_counter()
+        parent.append(card_group)
+        _pg_t3 = time.perf_counter()
+        _profile["fit_pagegroup_ms"] += (_pg_t2 - _pg_t) * 1000.0
+        _profile["fit_node_append_ms"] += (_pg_t3 - _pg_t2) * 1000.0
+        _sub_t2 = time.perf_counter()
+        _profile["fit_append_ms"] += (_sub_t2 - _sub_t) * 1000.0
+        _sub_t = _sub_t2
         placed_node = card_group
-        T_fit = SVG.transform_bbox_to_rect(
-            bx=bx, by=by, bw=bw, bh=bh,
-            dst_x=slot_x, dst_y=slot_y, dst_w=slot_w, dst_h=slot_h,
-            fit='a',
-            anchor=(0.0, 0.0),
-            shift=(0.0, 0.0),
-            rot_deg=0.0, mir_h=False, mir_v=False
-        )
-        try:
-            curT = inkex.Transform(card_group.get('transform') or "")
-        except Exception:
-            curT = inkex.Transform()
-        card_group.set('transform', str(T_fit @ curT))
+        sx = (float(slot_w) / float(bw)) if bw else 1.0
+        sy = (float(slot_h) / float(bh)) if bh else 1.0
+        tx = float(slot_x) - (float(bx) * sx)
+        ty = float(slot_y) - (float(by) * sy)
+        card_group.set('transform', f"matrix({sx:.12g} 0 0 {sy:.12g} {tx:.12g} {ty:.12g})")
+        _sub_t2 = time.perf_counter()
+        _profile["fit_transform_ms"] += (_sub_t2 - _sub_t) * 1000.0
+        _sub_t = _sub_t2
         geom_registry.add_group(int(planner.page_index), card_group)
+        _sub_t2 = time.perf_counter()
+        _profile["fit_geom_ms"] += (_sub_t2 - _sub_t) * 1000.0
+        _sub_t = _sub_t2
         if marks_current is not None:
             try:
                 ms = marks_current
@@ -2031,6 +2355,8 @@ def render_phase(ctx):
                 })
             except Exception as ex:
                 _l.w(f"[marks] render failed: {ex}")
+        _profile["fit_marks_ms"] += (time.perf_counter() - _sub_t) * 1000.0
+        _profile["fit_ms"] += (time.perf_counter() - _profile_phase_t0) * 1000.0
         # DEBUG: collect rect/placeholder ids that FA will touch in this ROW so we can detect early placeholder removals
         global _DBG_FA_RECT_IDS
         try:
@@ -2045,7 +2371,8 @@ def render_phase(ctx):
                         if _rid: _DBG_FA_RECT_IDS.add(_rid)
         except Exception:
             _DBG_FA_RECT_IDS = None
-        _l.s(f"ROW {idx}: fit-anchor")
+        _profile_phase_t0 = time.perf_counter()
+        _log_row_stage(idx, "fit-anchor")
         _fa_remove_later = []
         for j in inst_jobs:
             _fa_remove_later.extend(_exec_use_fa_paths(
@@ -2067,6 +2394,7 @@ def render_phase(ctx):
                         par.remove(_ph)
             except Exception:
                 pass
+        _profile["fa_ms"] += (time.perf_counter() - _profile_phase_t0) * 1000.0
 
         # Phase-1: hide non-text anchors at the end of the row, unless any duplicate header for that base id used '+'.
         # This must happen AFTER all bbox measurements / placements.
@@ -2074,18 +2402,12 @@ def render_phase(ctx):
             _keep = _P1_KEEP_SET if isinstance(_P1_KEEP_SET, set) else set()
         except Exception:
             _keep = set()
+        _profile_phase_t0 = time.perf_counter()
 
         # Collect header specs; wildcard targets are resolved per-scope.
-        _rect_hks = []
-        try:
-            for _k, _raw in _iter_row_fields(headers, row):
-                if not _k or _k.startswith('__dm_') or _k.startswith('_'):
-                    continue
-                _rect_hks.append(parse_header_key_full(_k))
-        except Exception:
-            pass
+        _rect_hks = compiled_rect_hks
 
-        def _apply_anchor_visibility(_scope):
+        def _apply_anchor_visibility(_scope, _target_index=None):
             _rect_ids = set()
             for _hk in (_rect_hks or []):
                 _h_targets = (_hk.get('target_ids') or [(_hk.get('target_id') or '')])
@@ -2094,7 +2416,7 @@ def render_phase(ctx):
                         _rect_ids.add(_tid)
             for _rid in _rect_ids:
                 try:
-                    _e = SVG.find_target_exact_in(_scope, _rid)
+                    _e = SVG.find_target_exact_in(_scope, _rid, target_index=_target_index)
                     _rid_eff = _rid
                     if _e is None:
                         # ids inside instances are suffixed (_pnpNNNN). Resolve a unique suffixed element in this scope.
@@ -2133,13 +2455,14 @@ def render_phase(ctx):
                     pass
 
         # Apply to every instantiated template scope (main + overlays) so anchors behave consistently.
-        try:
-            for _j in (inst_jobs or []):
-                _scope = _j.get('node')
-                if _scope is not None:
-                    _apply_anchor_visibility(_scope)
-        except Exception:
-            pass
+        if _rect_hks:
+            try:
+                for _j in (inst_jobs or []):
+                    _scope = _j.get('node')
+                    if _scope is not None:
+                        _apply_anchor_visibility(_scope, _j.get('target_index'))
+            except Exception:
+                pass
 
         _flatten_card_group(card_group, inst_main)
 
@@ -2158,7 +2481,7 @@ def render_phase(ctx):
         else:
             col1 = (within // planner.plan.rows)+1; row1 = (within % planner.plan.rows)+1
         page1 = planner.page_index+1
-        new_name = _set_card_group_identity(card_group, str(proto_root.get('id') or 'card'), int(planner.page_index), int(idx))
+        new_name = _set_card_group_identity(card_group, str(proto_root.get('id') or 'card'), int(planner.page_index), int(idx), "front", 1)
         try:
             unique_name = root.get_unique_id(new_name)
         except Exception:
@@ -2175,6 +2498,9 @@ def render_phase(ctx):
                 pass
         else:
             planner.commit_slot()
+        _profile["post_ms"] += (time.perf_counter() - _profile_phase_t0) * 1000.0
+        _profile["row_total_ms"] += (time.perf_counter() - _profile_row_t0) * 1000.0
+        _profile["rows"] += 1
         try:
             holes = _coerce_holes(row.get('__dm_holes__', []) or [])
             cur_copy_idx = int(row.get('_i', 0) or 0) + 1
@@ -2342,8 +2668,6 @@ def render_phase(ctx):
 
                     card_group = inkex.Group()
                     inst = deepcopy(tmpl_root)
-                    _flatten_group_transform(inst)
-                    _absolutize_instance_linked_images(inst)
                     suffix = f"_pnp{next_n}_b{bt_i}"; next_n += 1
                     SVG.uniquify_all_ids_in_scope(inst, suffix, root.get_unique_id)
 
@@ -2389,7 +2713,20 @@ def render_phase(ctx):
 
                     # Note: we do NOT mirror artwork; we only mirrored the slot selection (sp_m).
                     _flatten_card_group(card_group, inst)
-                    _set_card_group_identity(card_group, str(tmpl_root.get('id') or 'card'), int(planner.page_index), int(idx))
+                    back_name = _set_card_group_identity(
+                        card_group,
+                        str(tmpl_root.get('id') or 'card'),
+                        int(planner.page_index),
+                        int(idx),
+                        "back",
+                        int(bt_i),
+                    )
+                    try:
+                        back_unique_name = root.get_unique_id(back_name)
+                    except Exception:
+                        back_unique_name = back_name
+                    card_group.set('id', back_unique_name)
+                    card_group.set(inkex.addNS('label', 'inkscape'), back_name)
                     card_group.set('transform', str(T_fit @ curT))
                     geom_registry.add_group(int(planner.page_index), card_group)
                     placed_back += 1
@@ -2416,6 +2753,54 @@ def render_phase(ctx):
         except Exception:
             n_back_pages = 0
         _l.i(f"[@back] placed={placed_back} instances; skipped={skipped_back_instances}; back_pages_created={n_back_pages}")
+    try:
+        _profile_rows = int(_profile.get("rows") or 0)
+        if _profile_rows > 0:
+            _profile_dataset_ms = (time.perf_counter() - _profile_dataset_t0) * 1000.0
+            _profile_avg = float(_profile.get("row_total_ms") or 0.0) / float(_profile_rows)
+            _l.i(
+                f"[render.profile] dataset={ds_idx} rows={_profile_rows} placed={placed} "
+                f"dataset_ms={_profile_dataset_ms:.1f} row_sum_ms={float(_profile.get('row_total_ms') or 0.0):.1f} "
+                f"avg_row_ms={_profile_avg:.2f} instances_ms={float(_profile.get('instances_ms') or 0.0):.1f}"
+            )
+            _l.i(
+                f"[render.profile] dataset={ds_idx} avg_ms "
+                f"pre={float(_profile.get('pre_ms') or 0.0) / _profile_rows:.2f} "
+                f"clone={float(_profile.get('clone_ms') or 0.0) / _profile_rows:.2f} "
+                f"fields={float(_profile.get('fields_ms') or 0.0) / _profile_rows:.2f} "
+                f"bbox={float(_profile.get('bbox_ms') or 0.0) / _profile_rows:.2f} "
+                f"fit={float(_profile.get('fit_ms') or 0.0) / _profile_rows:.2f} "
+                f"fa={float(_profile.get('fa_ms') or 0.0) / _profile_rows:.2f} "
+                f"post={float(_profile.get('post_ms') or 0.0) / _profile_rows:.2f}"
+            )
+            _l.i(
+                f"[render.profile.clone] dataset={ds_idx} avg_ms "
+                f"deepcopy={float(_profile.get('clone_deepcopy_ms') or 0.0) / _profile_rows:.2f} "
+                f"flatten={float(_profile.get('clone_flatten_ms') or 0.0) / _profile_rows:.2f} "
+                f"absolutize={float(_profile.get('clone_absolutize_ms') or 0.0) / _profile_rows:.2f} "
+                f"uniquify={float(_profile.get('clone_uniquify_ms') or 0.0) / _profile_rows:.2f} "
+                f"index={float(_profile.get('clone_index_ms') or 0.0) / _profile_rows:.2f}"
+            )
+            _l.i(
+                f"[render.profile.fields] dataset={ds_idx} "
+                f"fast_count={int(_profile.get('fields_fast_count') or 0)} "
+                f"fast_plain_count={int(_profile.get('fields_fast_plain_count') or 0)} "
+                f"generic_count={int(_profile.get('fields_generic_count') or 0)} "
+                f"avg_fast_ms={float(_profile.get('fields_fast_ms') or 0.0) / max(1, int(_profile.get('fields_fast_count') or 0)):.4f} "
+                f"avg_generic_ms={float(_profile.get('fields_generic_ms') or 0.0) / max(1, int(_profile.get('fields_generic_count') or 0)):.4f}"
+            )
+            _l.i(
+                f"[render.profile.fit] dataset={ds_idx} avg_ms "
+                f"slot={float(_profile.get('fit_slot_ms') or 0.0) / _profile_rows:.2f} "
+                f"append={float(_profile.get('fit_append_ms') or 0.0) / _profile_rows:.2f} "
+                f"pagegroup={float(_profile.get('fit_pagegroup_ms') or 0.0) / _profile_rows:.2f} "
+                f"node_append={float(_profile.get('fit_node_append_ms') or 0.0) / _profile_rows:.2f} "
+                f"transform={float(_profile.get('fit_transform_ms') or 0.0) / _profile_rows:.2f} "
+                f"geom={float(_profile.get('fit_geom_ms') or 0.0) / _profile_rows:.2f} "
+                f"marks={float(_profile.get('fit_marks_ms') or 0.0) / _profile_rows:.2f}"
+            )
+    except Exception as ex:
+        _l.w(f"[render.profile] failed: {ex}")
     _l.i(f"[datasets] #{ds_idx}: placed={placed} cards; end_page={planner.page_index+1}")
     placed_total += placed
     start_page_index = planner.page_index + 1
