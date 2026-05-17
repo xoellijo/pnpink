@@ -1,10 +1,9 @@
-# [2026-02-19] Chore: translate comments to English.
 import webview  # pip install pywebview
 
 HTML = """
 <!doctype html>
 <meta charset="utf-8">
-<title>pywebview mínimo</title>
+<title>pywebview minimal</title>
 <style>
   body { margin:0; font-family:system-ui, sans-serif; background:#111; color:#eee; }
   .wrap { max-width:560px; margin:40px auto; padding:20px; background:#1b1b1b; border-radius:12px; }
@@ -17,7 +16,7 @@ HTML = """
   <h1>pywebview • ejemplo mínimo</h1>
   <p>Escribe tu nombre y pulsa el botón (llama a <code>Python</code> desde JavaScript).</p>
   <div class="row">
-    <input id="name" placeholder="Tu nombre"/>
+  <input id="name" placeholder="Your name"/>
     <button onclick="greet()">Saludar</button>
   </div>
   <div id="out"></div>

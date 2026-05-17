@@ -1079,7 +1079,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                 try:
                     arr = _parse_array_token(tok_core)
                 except Exception:
-                    _l.w(f"[deckmaker.fa] placeholder '{key}': array token invalido '{tok_core}'")
+                    _l.w(f"[deckmaker.fa] placeholder '{key}': invalid array token '{tok_core}'")
                     continue
                 if not arr or not arr.get('items'):
                     continue
@@ -1099,7 +1099,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
             try:
                 base_id, place, ops_tok = _parse_object_token(tok_core)
             except Exception:
-                _l.w(f"[deckmaker.fa] placeholder '{key}': token invalido '{tok_core}'")
+                _l.w(f"[deckmaker.fa] placeholder '{key}': invalid token '{tok_core}'")
                 continue
             ops_body = (ops_tok or "") or default_ops
             ops_full = _merge_header_global_ops(ops_body)

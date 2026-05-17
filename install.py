@@ -212,6 +212,21 @@ def inkscape_user_data_dir(inkscape_exe: str) -> Path:
     return Path(value)
 
 
+def remove_installed_inx_files(dst_folder: Path) -> int:
+    removed = 0
+    if not dst_folder.exists():
+        return 0
+    for path in sorted(dst_folder.rglob("*.inx")):
+        if not path.is_file():
+            continue
+        try:
+            path.unlink()
+            removed += 1
+        except Exception as ex:
+            die(f"Failed to remove previous manifest '{path}': {ex}")
+    return removed
+
+
 def main() -> int:
     here = Path(__file__).resolve().parent
 
@@ -240,6 +255,9 @@ def main() -> int:
 
         dst_folder = ext_dir / APP_DIR_NAME
         if dst_folder.exists():
+            removed_inx = remove_installed_inx_files(dst_folder)
+            if removed_inx:
+                log(f"[5] Removed previous .inx files: {removed_inx}")
             log(f"[5] Removing previous install: {dst_folder}")
             shutil.rmtree(dst_folder)
 

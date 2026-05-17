@@ -83,6 +83,7 @@ One template and one dataset can produce hundreds of print-ready components in s
 ## Documentation
 
 - Start here (searchable docs site): [Introduction](https://xoellijo.github.io/pnpink/intro/)
+- Full PDF guide: [pnpink.pdf](https://xoellijo.github.io/pnpink/pnpink.pdf)
 - DeckMaker GUI: [DeckMaker GUI](https://xoellijo.github.io/pnpink/deckmaker-gui/)
 - Export pipeline: [Export](https://xoellijo.github.io/pnpink/export/)
 - SVG maps: [Maps](https://xoellijo.github.io/pnpink/dsl/maps/)

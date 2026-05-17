@@ -129,7 +129,6 @@ class OSMMapSource:
                     timeout=30,
                     retries=4,
                     log_prefix="[sources] nominatim",
-                    headers={"User-Agent": "PnPInk OSM/1.0 (+https://github.com/pnpink)"},
                 )
                 try:
                     cache.parent.mkdir(parents=True, exist_ok=True)

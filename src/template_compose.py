@@ -2,12 +2,12 @@
 """Experimental composed-template renderer.
 
 This module deliberately supports only a narrow, measurable subset:
-- one main template, no overlays/back/page templates;
+- one template root at a time;
 - plain text fields handled by render.py fast path;
 - static top-level runs without internal id/url references.
 
-If the caller explicitly enables the composed engine and the template is not
-compatible, fail loudly instead of falling back silently.
+Unsupported roots raise UnsupportedComposedTemplate; render.py decides whether
+to fall back to the legacy clone path for that individual template.
 """
 from __future__ import annotations
 
@@ -129,8 +129,6 @@ def build_plan(
 ) -> TemplatePlan:
     if proto_root is None:
         raise UnsupportedComposedTemplate("composed template requires proto_root")
-    if has_overlays or has_back_templates or has_page_templates:
-        raise UnsupportedComposedTemplate("composed template does not support overlays/@back/@page yet")
     if has_clone_fields:
         raise UnsupportedComposedTemplate("composed template does not support clone_ fields yet")
 

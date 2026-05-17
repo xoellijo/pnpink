@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# [2026-02-19] Chore: translate comments to English.
 """
 spritesheet.py - PnPInk
 

@@ -86,6 +86,8 @@ Useful advanced keys:
 
 If generation appears to use old settings, close the DeckMaker window before editing `preferences.ini`. The GUI should not save preferences on close, but explicit GUI interactions still save the corresponding preference.
 
+If Inkscape hangs while opening a very large generated SVG, check whether the Export panel is being restored by the Inkscape profile. On Windows this state is stored in `%APPDATA%\inkscape\dialogs-state-ex.ini`; closing the Export panel or resetting that dialog state avoids the hang. CLI export and isolated-profile launches are not affected.
+
 If inline icons are missing or misaligned, check `inline_icons_bbox_backend`. The supported backend is `query_all`. The `shell_per_text` backend is experimental because Inkscape shell has shown inconsistent bbox results for inline text spacers.
 
 If the composed template engine fails with an "unsupported template" error, switch `template_engine` back to `legacy`.

@@ -8,6 +8,8 @@ import socket
 import ssl
 import threading
 import time
+import email.utils
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -31,12 +33,13 @@ except Exception:  # pragma: no cover
 
 TRANSIENT_HTTP_STATUS = {429, 500, 502, 503, 504}
 LOAD_SHEDDING_HTTP_STATUS = {429, 503}
-DEFAULT_HEADERS = {"User-Agent": "PnPInk"}
+DEFAULT_USER_AGENT = "github.com/xoellijo/pnpink"
+DEFAULT_HEADERS = {"User-Agent": DEFAULT_USER_AGENT}
 DEFAULT_HOST_WORKERS = 8
-WIKIMEDIA_HOST_WORKERS = 8
+WIKIMEDIA_HOST_WORKERS = 2
 HOST_429_DELAY_BASE_S = 0.5
-HOST_429_DELAY_MAX_S = 3.0
-HOST_LOAD_EVENTS_PER_WORKER_DROP = 4
+HOST_429_DELAY_MAX_S = 8.0
+HOST_LOAD_EVENTS_PER_WORKER_DROP = 2
 
 _HOST_LOCK = threading.RLock()
 _HOST_429_DELAY_S: Dict[str, float] = {}
@@ -99,10 +102,45 @@ def _is_retryable_exception(ex: Exception) -> bool:
 
 
 def _request_headers(headers: Optional[Dict[str, str]]) -> Dict[str, str]:
+    user_agent = DEFAULT_USER_AGENT
+    try:
+        import prefs
+        user_agent = prefs.get_web_user_agent(DEFAULT_USER_AGENT)
+    except Exception:
+        user_agent = DEFAULT_USER_AGENT
     out = dict(DEFAULT_HEADERS)
+    out["User-Agent"] = str(user_agent or DEFAULT_USER_AGENT).strip() or DEFAULT_USER_AGENT
     if headers:
         out.update({str(k): str(v) for k, v in headers.items()})
     return out
+
+
+def _retry_after_seconds(headers: Any) -> Optional[float]:
+    try:
+        raw = ""
+        if headers is not None:
+            get = getattr(headers, "get", None)
+            if callable(get):
+                raw = str(get("Retry-After") or get("retry-after") or "").strip()
+            elif isinstance(headers, dict):
+                raw = str(headers.get("Retry-After") or headers.get("retry-after") or "").strip()
+        if not raw:
+            return None
+        if re_match := re.match(r"^\d+(?:\.\d+)?$", raw):
+            return max(0.0, float(re_match.group(0)))
+        dt = email.utils.parsedate_to_datetime(raw)
+        if dt is None:
+            return None
+        return max(0.0, float(dt.timestamp() - time.time()))
+    except Exception:
+        return None
+
+
+def _retry_after_label(headers: Any) -> str:
+    seconds = _retry_after_seconds(headers)
+    if seconds is None:
+        return "retry-after=none"
+    return f"retry-after={seconds:.1f}s"
 
 
 def _url_host(url: str) -> str:
@@ -153,6 +191,7 @@ def _host_delay_before_request(url: str) -> None:
         return
     with _HOST_LOCK:
         delay_s = float(_HOST_429_DELAY_S.get(host, 0.0) or 0.0)
+        delay_s = min(delay_s, HOST_429_DELAY_MAX_S)
     if delay_s > 0.0:
         try:
             time.sleep(delay_s)
@@ -166,7 +205,8 @@ def _host_penalize_load(url: str) -> Tuple[float, int]:
         return 0.0, 1
     with _HOST_LOCK:
         prev = float(_HOST_429_DELAY_S.get(host, 0.0) or 0.0)
-        new = min(HOST_429_DELAY_MAX_S, prev + HOST_429_DELAY_BASE_S)
+        incremental = min(HOST_429_DELAY_MAX_S, prev + HOST_429_DELAY_BASE_S)
+        new = min(HOST_429_DELAY_MAX_S, max(prev, incremental))
         _HOST_429_DELAY_S[host] = new
         strikes = int(_HOST_429_COUNT.get(host, 0) or 0) + 1
         _HOST_429_COUNT[host] = strikes
@@ -178,6 +218,19 @@ def _host_penalize_load(url: str) -> Tuple[float, int]:
             _HOST_429_COUNT[host] = 0
             limit = gate.limit
         return new, limit
+
+
+def _host_apply_retry_after(url: str, headers: Any) -> Optional[float]:
+    retry_after = _retry_after_seconds(headers)
+    if retry_after is None:
+        return None
+    capped = min(float(retry_after), HOST_429_DELAY_MAX_S)
+    host = _url_host(url)
+    if not host:
+        return retry_after
+    with _HOST_LOCK:
+        _HOST_429_DELAY_S[host] = max(float(_HOST_429_DELAY_S.get(host, 0.0) or 0.0), capped)
+    return retry_after
 
 
 def _host_relax_success(url: str) -> None:
@@ -239,11 +292,12 @@ def fetch_bytes(
                 with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
                     status = int(getattr(resp, "status", 200) or 200)
                     if status in TRANSIENT_HTTP_STATUS and attempt < retries:
+                        _host_apply_retry_after(url, getattr(resp, "headers", None))
                         if status in LOAD_SHEDDING_HTTP_STATUS:
                             delay_s, limit = _host_penalize_load(url)
-                            _l.w(f"{log_prefix} transient HTTP {status}; retry {attempt}/{retries}; host delay={delay_s:.1f}s workers={limit}")
+                            _l.w(f"{log_prefix} transient HTTP {status}; retry {attempt}/{retries}; {_retry_after_label(getattr(resp, 'headers', None))}; host delay={delay_s:.1f}s workers={limit}")
                         else:
-                            _l.w(f"{log_prefix} transient HTTP {status}; retry {attempt}/{retries}")
+                            _l.w(f"{log_prefix} transient HTTP {status}; retry {attempt}/{retries}; {_retry_after_label(getattr(resp, 'headers', None))}")
                         _sleep_backoff(attempt)
                         continue
                     raw = resp.read()
@@ -254,12 +308,13 @@ def fetch_bytes(
                 last_ex = ex
                 status = int(getattr(ex, "code", 0) or 0)
                 if status in TRANSIENT_HTTP_STATUS and attempt < retries:
+                    _host_apply_retry_after(url, getattr(ex, "headers", None))
                     _close_exc_response(ex)
                     if status in LOAD_SHEDDING_HTTP_STATUS:
                         delay_s, limit = _host_penalize_load(url)
-                        _l.w(f"{log_prefix} transient HTTP {status}; retry {attempt}/{retries}; host delay={delay_s:.1f}s workers={limit}")
+                        _l.w(f"{log_prefix} transient HTTP {status}; retry {attempt}/{retries}; {_retry_after_label(getattr(ex, 'headers', None))}; host delay={delay_s:.1f}s workers={limit}")
                     else:
-                        _l.w(f"{log_prefix} transient HTTP {status}; retry {attempt}/{retries}")
+                        _l.w(f"{log_prefix} transient HTTP {status}; retry {attempt}/{retries}; {_retry_after_label(getattr(ex, 'headers', None))}")
                     _sleep_backoff(attempt)
                     continue
                 if _is_cert_verify_error(ex) and allow_unverified_tls and (not tls_unverified):
@@ -365,15 +420,16 @@ def requests_get(
             try:
                 r = s.get(url, timeout=timeout, verify=(not tls_unverified), headers=req_headers)
                 if (r.status_code in TRANSIENT_HTTP_STATUS) and attempt < retries:
+                    _host_apply_retry_after(url, getattr(r, "headers", None))
                     try:
                         r.close()
                     except Exception:
                         pass
                     if r.status_code in LOAD_SHEDDING_HTTP_STATUS:
                         delay_s, limit = _host_penalize_load(url)
-                        _l.w(f"{log_prefix} transient HTTP {r.status_code}; retry {attempt}/{retries}; host delay={delay_s:.1f}s workers={limit}")
+                        _l.w(f"{log_prefix} transient HTTP {r.status_code}; retry {attempt}/{retries}; {_retry_after_label(getattr(r, 'headers', None))}; host delay={delay_s:.1f}s workers={limit}")
                     else:
-                        _l.w(f"{log_prefix} transient HTTP {r.status_code}; retry {attempt}/{retries}")
+                        _l.w(f"{log_prefix} transient HTTP {r.status_code}; retry {attempt}/{retries}; {_retry_after_label(getattr(r, 'headers', None))}")
                     _sleep_backoff(attempt)
                     continue
                 _host_relax_success(url)

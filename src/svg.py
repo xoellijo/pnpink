@@ -1,7 +1,3 @@
-# [2026-02-18] Log: add query-all audit logs for inline-icons pipeline.
-# [2026-02-19] Fix: honor explicit data-bbox for stable group measurement.
-# [2026-02-19] Chore: translate comments to English.
-
 def coerce_margins_mm(mg):
     """Return an object with .left/.top/.right/.bottom from object/dict/tuple/list (mm units)."""
     from types import SimpleNamespace
@@ -619,7 +615,7 @@ def apply_clip_from_rect(svgdoc, node, rect_or_bbox, *, stage: str = "post", cli
         rx = ry = rw = rh = 0.0
 
     if rw <= 0.0 or rh <= 0.0:
-        _l.w(f"[apply_clip_from_rect] bbox inválido stage='{stage}' rx={rx} ry={ry} rw={rw} rh={rh}")
+        _l.w(f"[apply_clip_from_rect] invalid bbox stage='{stage}' rx={rx} ry={ry} rw={rw} rh={rh}")
         return
 
     # ids
@@ -1490,9 +1486,14 @@ def query_all(tree: etree._ElementTree, ids: set, inkscape_bin: str = None, *, m
 
 def ensure_xlink_ns(root):
     try:
-        if 'xmlns:xlink' not in root.attrib:
-            root.set('xmlns:xlink', NSS.get('xlink', getattr(CONST,'NS_XLINK','http://www.w3.org/1999/xlink'))); _l.d("ensure_xlink_ns: added xmlns:xlink")
-    except Exception: pass
+        etree.register_namespace("xlink", NSS.get('xlink', getattr(CONST,'NS_XLINK','http://www.w3.org/1999/xlink')))
+        bad_key = "{http://www.w3.org/2000/xmlns/}xlink"
+        if bad_key in root.attrib:
+            root.attrib.pop(bad_key, None)
+        if "xmlns:xlink" in root.attrib:
+            root.attrib.pop("xmlns:xlink", None)
+    except Exception:
+        pass
     return root
 
 def clone_node_transform(
@@ -1743,7 +1744,7 @@ def visual_bbox(node):
 from inkex.paths import Path as SvgPath
 
 # -----------------------------------------------------------------------------
-# Geometry helpers (MVP for smart hex kerf)
+# Geometry helpers for smart hex kerf
 # -----------------------------------------------------------------------------
 
 _DM_NUM_RE = re.compile(r"[-+]?(?:(?:\d+\.\d+)|(?:\d+\.)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
@@ -1751,7 +1752,7 @@ _DM_NUM_RE = re.compile(r"[-+]?(?:(?:\d+\.\d+)|(?:\d+\.)|(?:\.\d+)|(?:\d+))(?:[e
 def path_characteristic_points(d: str, transform=None):
     """Return a list of characteristic points for an SVG path.
 
-    Rules (MVP):
+    Rules:
       - If `d` contains curves, we use curve endpoints (not control points).
       - The input may have shorthand/relative commands; we try to normalize it
         using inkex Path, then parse.
@@ -2249,7 +2250,7 @@ def place_node(base, parent, *,
     except Exception:
         parent_ctm = inkex.Transform()
 
-    # 3) Inversa para pasar de documento → local del parent
+    # 3) Inverse transform from document coordinates to parent-local coordinates.
     try:
         inv_parent = parent_ctm.inverse()
     except Exception:
@@ -2352,6 +2353,50 @@ def transform_bbox_to_rect(*, bx, by, bw, bh, dst_x, dst_y, dst_w, dst_h,
 # ========= Unique ID helpers for deepcopies (minimal, no ref rewrites) ======
 
 _PNP_SUFFIX_RX = re.compile(r"^(?P<base>.+?)_pnp(?P<num>\d+)(?:[_-]\d+)?$")
+_MD_ID_RX = re.compile(r"^_MD(?P<num>\d+)")
+_ID_SAFE_RX = re.compile(r"[^A-Za-z0-9_.:-]+")
+_TAG_ID_PREFIX = {
+    "path": "p",
+    "image": "i",
+    "use": "u",
+    "text": "t",
+    "tspan": "ts",
+    "rect": "r",
+    "circle": "c",
+    "ellipse": "e",
+    "line": "l",
+    "polyline": "pl",
+    "polygon": "pg",
+    "g": "g",
+}
+
+
+def _local_tag_name(el) -> str:
+    try:
+        tag = str(getattr(el, "tag", "") or "")
+    except Exception:
+        return ""
+    if "}" in tag:
+        tag = tag.rsplit("}", 1)[-1]
+    return tag.lower()
+
+
+def _compact_id_tail(el, base: str) -> str:
+    base = str(base or "").strip() or _local_tag_name(el) or "x"
+    tag = _local_tag_name(el)
+    short = _TAG_ID_PREFIX.get(tag, tag[:1] or "x")
+    tail = base
+    if tag and base.lower().startswith(tag):
+        tail = base[len(tag):] or base
+    tail = _ID_SAFE_RX.sub("_", tail)
+    return f"{short}{tail}" if tag in _TAG_ID_PREFIX else tail
+
+
+def _generated_id_from_suffix(el, base: str, suffix: str) -> str:
+    suffix = str(suffix or "")
+    if not (suffix.startswith("_MD") and suffix[3:].isdigit()):
+        return f"{base}{suffix}"
+    return f"_MD{suffix[3:]}{_compact_id_tail(el, base)}"
 
 def strip_pnp_suffix(id_str: str) -> str:
     """Remove trailing _pnp{n} once, tolerating collision tails (_1/-1)."""
@@ -2361,7 +2406,7 @@ def strip_pnp_suffix(id_str: str) -> str:
     return m.group('base') if m else id_str
 
 def scan_max_pnp_suffix(svg_root) -> int:
-    """Scan whole document for ids ending with _pnp{n} and return max n (0 if none)."""
+    """Scan generated ids and return the max numeric item suffix (0 if none)."""
     maxn = 0
     try:
         nodes = svg_root.xpath('.//*[@id]')
@@ -2372,6 +2417,8 @@ def scan_max_pnp_suffix(svg_root) -> int:
         if not _id:
             continue
         m = _PNP_SUFFIX_RX.match(_id)
+        if not m:
+            m = _MD_ID_RX.match(_id)
         if m:
             try:
                 n = int(m.group('num'))
@@ -2393,6 +2440,7 @@ def uniquify_all_ids_in_scope(scope, suffix: str, get_unique_id):
     """
     if scope is None:
         return
+    used_ids = set()
     for el in scope.iter():
         if not hasattr(el, 'tag') or not isinstance(el.tag, str):
             continue
@@ -2402,7 +2450,14 @@ def uniquify_all_ids_in_scope(scope, suffix: str, get_unique_id):
         base = strip_pnp_suffix(cur)
         if el.get('data-origid') is None:
             el.set('data-origid', base)
-        proposed = f"{base}{suffix}"
+        proposed = _generated_id_from_suffix(el, base, suffix)
+        if proposed in used_ids:
+            base_proposed = proposed
+            i = 2
+            while f"{base_proposed}_{i}" in used_ids:
+                i += 1
+            proposed = f"{base_proposed}_{i}"
+        used_ids.add(proposed)
         try:
             unique = get_unique_id(proposed)
         except Exception:
@@ -2420,6 +2475,7 @@ def uniquify_ids_and_build_target_index(scope, suffix: str, get_unique_id=None, 
     index = {}
     if scope is None:
         return index
+    used_ids = set()
     for el in scope.iter():
         if not hasattr(el, 'tag') or not isinstance(el.tag, str):
             continue
@@ -2436,7 +2492,14 @@ def uniquify_ids_and_build_target_index(scope, suffix: str, get_unique_id=None, 
         if not base:
             base = strip_pnp_suffix(cur)
             el.set('data-origid', base)
-        proposed = f"{base}{suffix}"
+        proposed = _generated_id_from_suffix(el, base, suffix)
+        if proposed in used_ids:
+            base_proposed = proposed
+            i = 2
+            while f"{base_proposed}_{i}" in used_ids:
+                i += 1
+            proposed = f"{base_proposed}_{i}"
+        used_ids.add(proposed)
         if trust_suffix_unique:
             unique = proposed
         else:

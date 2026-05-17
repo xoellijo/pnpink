@@ -74,6 +74,10 @@ def find_executable() -> str | None:
     return None
 
 
+def executable_dir(exe: str | None) -> str | None:
+    return os.path.dirname(str(exe or "")) if exe else None
+
+
 def clean_launch_env(*, isolated_profile: bool = True) -> dict[str, str]:
     env = dict(os.environ)
     exact_keys = {
@@ -98,15 +102,82 @@ def clean_launch_env(*, isolated_profile: bool = True) -> dict[str, str]:
             env.pop(sk, None)
     if isolated_profile:
         try:
-            env["INKSCAPE_PROFILE_DIR"] = TEMPPATHS.named_dir("inkscape_profile", stem="automation")
+            profile_dir = TEMPPATHS.named_dir("inkscape_profile", stem="automation")
+            env["INKSCAPE_PROFILE_DIR"] = profile_dir
+        except Exception:
+            profile_dir = ""
+        try:
+            env["XDG_CONFIG_HOME"] = TEMPPATHS.named_dir("xdg_config", stem="automation")
+        except Exception:
+            pass
+        try:
+            env["XDG_CACHE_HOME"] = TEMPPATHS.named_dir("xdg_cache", stem="automation")
         except Exception:
             pass
         try:
             # GTK writes recently-used.xbel under XDG_DATA_HOME; isolate it for automation runs.
-            env["XDG_DATA_HOME"] = TEMPPATHS.named_dir("xdg_data", stem="automation")
+            xdg_data = TEMPPATHS.named_dir("xdg_data", stem="automation")
+            env["XDG_DATA_HOME"] = xdg_data
+            env["GTK_RECENT_FILES"] = os.path.join(xdg_data, "recently-used.xbel")
+        except Exception:
+            pass
+        if os.name == "nt":
+            try:
+                appdata = TEMPPATHS.named_dir("win_appdata", stem="automation")
+                local_appdata = TEMPPATHS.named_dir("win_localappdata", stem="automation")
+                env["APPDATA"] = appdata
+                env["LOCALAPPDATA"] = local_appdata
+            except Exception:
+                pass
+        try:
+            _l.i(
+                "[inkscape_cli] isolated profile='%s' xdg_data='%s'",
+                env.get("INKSCAPE_PROFILE_DIR", ""),
+                env.get("XDG_DATA_HOME", ""),
+            )
         except Exception:
             pass
     return env
+
+
+def launch_gui(svg_path: str, *, detached: bool = True) -> bool:
+    """Open an SVG in the user's normal Inkscape GUI profile.
+
+    This is intentionally separate from CLI automation. GUI opening is the one
+    path where we want Inkscape to behave like the user's normal application.
+    """
+    target = os.path.normpath(os.path.abspath(str(svg_path or "")))
+    if not target or not os.path.isfile(target):
+        raise FileNotFoundError(target or "missing svg")
+    exe = find_executable()
+    if not exe:
+        return False
+    kwargs = {
+        "args": [exe, target],
+        "cwd": executable_dir(exe),
+        "env": clean_launch_env(isolated_profile=False),
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "close_fds": True,
+    }
+    if os.name == "nt":
+        creationflags = 0
+        if detached:
+            for flag_name in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP"):
+                creationflags |= int(getattr(subprocess, flag_name, 0))
+        creationflags |= int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        kwargs["creationflags"] = creationflags
+    elif detached:
+        kwargs["start_new_session"] = True
+    proc = subprocess.Popen(**kwargs)
+    if detached:
+        try:
+            proc.returncode = 0
+        except Exception:
+            pass
+    _l.i("[inkscape_gui] launched svg='%s'", target)
+    return True
 
 
 def run(
@@ -123,7 +194,7 @@ def run(
     kwargs = {
         "args": argv,
         "cwd": exe_dir or None,
-        "env": env,
+        "env": env if env is not None else clean_launch_env(isolated_profile=True),
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
@@ -205,7 +276,7 @@ def run_shell_commands(
     kwargs = {
         "args": [exe, "--shell"],
         "cwd": exe_dir or None,
-        "env": env,
+        "env": env if env is not None else clean_launch_env(isolated_profile=True),
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
         "text": True,
@@ -287,7 +358,7 @@ class ShellQuerySession:
         kwargs = {
             "args": [self.exe, "--shell"],
             "cwd": self.exe_dir or None,
-            "env": self.env,
+            "env": self.env if self.env is not None else clean_launch_env(isolated_profile=True),
             "stdin": subprocess.PIPE,
             "stdout": subprocess.PIPE,
             "stderr": subprocess.PIPE,

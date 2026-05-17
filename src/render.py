@@ -1,12 +1,7 @@
-﻿# [2026-02-18] Change: remove %...% variable expansion in dataset values.
-# Changelog: add target array grouping with explicit group bbox for fit_anchor.
-# [2026-02-19] Add: split layout gaps into gaps + offset properties.
-# [2026-02-20] Add: split-board rendering for oversized templates using fit+clip pipeline.
-# [2026-02-20] Debug: log fallback slot failure for split boards.
 # -*- coding: utf-8 -*-
 import log as LOG
 _l = LOG
-_DBG_FA_RECT_IDS = None  # debug: set of rect/placeholder ids used by FA in current instance
+_DBG_FA_RECT_IDS = None
 import re
 import math
 import time
@@ -139,30 +134,35 @@ def render_phase(ctx):
                 pass
         return node
 
-    page_group_cache = {}
+    page_group_cache_by_id = {}
     try:
         for _child in list(out_layer):
-            _pid = _child.get('data-pnpink-page-index')
-            if _pid:
-                page_group_cache.setdefault(int(_pid) - 1, _child)
+            _page_id = str(_child.get('data-pnpink-page-id') or '').strip()
+            if _page_id:
+                page_group_cache_by_id.setdefault(_page_id, _child)
     except Exception:
-        page_group_cache = {}
+        page_group_cache_by_id = {}
 
     def _page_group_for(page_index: int):
         page_index = int(page_index)
-        cached = page_group_cache.get(page_index)
-        if cached is not None:
-            return cached
         pinfo = pages[int(page_index)]
         page_id = str(pinfo.get('id') or f"page_{int(page_index)+1}")
+        cached = page_group_cache_by_id.get(page_id)
+        if cached is not None:
+            return cached
+        group_id = f"_MDgp{int(page_index) + 1}"
+        try:
+            group_id = root.get_unique_id(group_id)
+        except Exception:
+            pass
         group = inkex.Group()
-        group.set('id', page_id)
-        group.set(inkex.addNS('label', 'inkscape'), page_id)
+        group.set('id', group_id)
+        group.set(inkex.addNS('label', 'inkscape'), group_id)
         group.set('data-pnpink-page-id', page_id)
         group.set('data-pnpink-page-index', str(int(page_index) + 1))
         _mark_generated(group)
         out_layer.append(group)
-        page_group_cache[page_index] = group
+        page_group_cache_by_id[page_id] = group
         return group
 
     def _append_output(node, *, page_index: int | None = None):
@@ -257,19 +257,35 @@ def render_phase(ctx):
         row_index: int,
         face_tag: str = "front",
         face_ordinal: int = 1,
+        item_no: int | None = None,
+        col_index: int | None = None,
+        row_slot_index: int | None = None,
     ):
         page1 = int(page_index) + 1
         dataset1 = int(ds_idx)
         row1 = int(row_index)
         face = str(face_tag or "front").strip().lower()
         ord1 = max(1, int(face_ordinal or 1))
-        gid = f"{proto_id}_{page1}_{dataset1}_{row1}"
+        try:
+            item1 = max(1, int(item_no or row1))
+        except Exception:
+            item1 = max(1, row1)
+        try:
+            col1 = max(1, int(col_index or 1))
+        except Exception:
+            col1 = 1
+        try:
+            slot_row1 = max(1, int(row_slot_index or 1))
+        except Exception:
+            slot_row1 = 1
+        gid = f"_MDgc{item1}_{col1}_{slot_row1}"
         if face == "back":
-            gid += "_back" if ord1 == 1 else f"_back{ord1}"
+            gid += "b" if ord1 == 1 else f"b{ord1}"
         card_group.set('data-pnpink-page-index', str(page1))
         card_group.set('data-pnpink-dataset-index', str(dataset1))
         card_group.set('data-pnpink-row-index', str(row1))
         card_group.set('data-pnpink-face', face)
+        card_group.set('data-pnpink-template-id', str(proto_id or "card"))
         return gid
 
     def _flatten_card_group(card_group, main_group):
@@ -337,7 +353,7 @@ def render_phase(ctx):
             sx, sy = planner_obj.begin_slot()
         if sx is None:
             raise inkex.AbortExtension(
-                f"No hay huecos disponibles (slots) para colocar mÃ¡s cartas. "
+                f"No available slots left to place more cards. "
                 f"per_page={getattr(planner_obj.plan,'per_page',-1)} "
                 f"page={planner_obj.page_index+1} slot_index={planner_obj.slot_index}"
             )
@@ -1172,14 +1188,15 @@ def render_phase(ctx):
             return
         for job in list(deferred_path_jobs):
             try:
+                _pi = int(job.get('page_index', 0) or 0)
                 PATHS.render_paths_for_target(
                     geom_registry,
                     job.get('target_el'),
                     job.get('paths_spec_raw') or '',
-                    page_index=int(job.get('page_index', 0) or 0),
+                    page_index=_pi,
                     orient_hint=job.get('orient_hint'),
                     style_scope_node=root,
-                    insert_parent=out_layer,
+                    insert_parent=_page_group_for(_pi),
                     insert_after_elem=job.get('owner_group'),
                 )
             except Exception as ex:
@@ -1366,10 +1383,9 @@ def render_phase(ctx):
             tmp_group.set('style', 'opacity:0;fill:none;stroke:none')
             _append_output(tmp_group)
         ctx._pnpink_tmp_group = tmp_group
-        inst = tmpl_root.copy()
-        suffix = f"_pnp{next_n}_pg"; next_n += 1
-        SVG.uniquify_all_ids_in_scope(inst, suffix, root.get_unique_id)
-        page_wrap = inkex.Group(); page_wrap.set('id', root.get_unique_id(f"dm_pagewrap_{ds_idx}"))
+        suffix = f"_MD{next_n}"; next_n += 1
+        inst, _target_index_page = _instantiate_template(tmpl_root, suffix, f"@page:{bid}")
+        page_wrap = inkex.Group(); page_wrap.set('id', root.get_unique_id(f"_MDpw{ds_idx}_{int(page_index)+1}"))
         page_wrap.append(inst)
         tmp_group.append(page_wrap)
         # Fill fields (same rules as normal templates)
@@ -1663,40 +1679,69 @@ def render_phase(ctx):
         return count
 
     prepared_origids = _prepare_origids_once(proto_root)
-    for _ot in (overlay_templates or []):
-        prepared_origids += _prepare_origids_once((_ot or {}).get('template_root'))
+    for _tpl_entry in list(overlay_templates or []) + list(back_templates or []) + list(page_templates or []) + list(page_back_templates or []):
+        prepared_origids += _prepare_origids_once((_tpl_entry or {}).get('template_root'))
     if prepared_origids:
         _l.i(f"[templates_ids] prepared data-origid for {prepared_origids} template id(s)")
 
     template_engine = prefs.get_template_engine("legacy") if hasattr(prefs, "get_template_engine") else "legacy"
-    composed_plan = None
-    if template_engine == "composed":
-        composed_dynamic_ids = []
-        for _spec in compiled_apply_specs:
-            _hk = _spec.get("hk") or {}
-            for _tid in (_hk.get("target_ids") or [(_hk.get("target_id") or "")]):
-                _tid = str(_tid or "").strip()
-                if _tid and not _is_id_wildcard_token(_tid):
-                    composed_dynamic_ids.append(_tid)
+    composed_plan_cache = {}
+    composed_dynamic_ids = []
+    for _spec in compiled_apply_specs:
+        _hk = _spec.get("hk") or {}
+        for _tid in (_hk.get("target_ids") or [(_hk.get("target_id") or "")]):
+            _tid = str(_tid or "").strip()
+            if _tid and not _is_id_wildcard_token(_tid):
+                composed_dynamic_ids.append(_tid)
+    for _bbox_id in [declared_bbox_id] + [
+        (_tpl_entry or {}).get('bbox_id') or ''
+        for _tpl_entry in list(overlay_templates or []) + list(back_templates or []) + list(page_templates or []) + list(page_back_templates or [])
+    ]:
+        _bbox_id = str(_bbox_id or '').strip()
+        if _bbox_id and _bbox_id not in composed_dynamic_ids:
+            composed_dynamic_ids.append(_bbox_id)
+
+    def _template_plan_for(template_root, label: str):
+        if template_engine != "composed" or template_root is None:
+            return None
+        key = id(template_root)
+        if key in composed_plan_cache:
+            return composed_plan_cache[key]
         try:
-            prefix = root.get_unique_id(f"pnp_tpl_{ds_idx}") if hasattr(root, "get_unique_id") else f"pnp_tpl_{ds_idx}"
-            composed_plan = TCOMP.build_plan(
+            prefix = root.get_unique_id(f"pnp_tpl_{ds_idx}_{len(composed_plan_cache) + 1}") if hasattr(root, "get_unique_id") else f"pnp_tpl_{ds_idx}_{len(composed_plan_cache) + 1}"
+            plan = TCOMP.build_plan(
                 root=root,
-                proto_root=proto_root,
+                proto_root=template_root,
                 dynamic_ids=composed_dynamic_ids,
                 block_id_prefix=prefix,
-                has_overlays=bool(overlay_templates),
-                has_back_templates=bool(back_templates),
-                has_page_templates=bool(page_templates or page_back_templates),
+                has_overlays=False,
+                has_back_templates=False,
+                has_page_templates=False,
                 has_clone_fields=bool(compiled_clone_specs),
                 has_anchor_visibility=bool(compiled_rect_hks),
             )
+            composed_plan_cache[key] = plan
             _l.i(
-                f"[templates.compose] enabled static_blocks={composed_plan.static_blocks} "
-                f"dynamic_roots={composed_plan.dynamic_roots} dynamic_ids={len(composed_plan.dynamic_ids)}"
+                f"[templates.compose] enabled template={label} static_blocks={plan.static_blocks} "
+                f"dynamic_roots={plan.dynamic_roots} dynamic_ids={len(plan.dynamic_ids)}"
             )
+            return plan
         except TCOMP.UnsupportedComposedTemplate as ex:
-            raise inkex.AbortExtension(f"composed template engine unsupported template: {ex}")
+            composed_plan_cache[key] = None
+            _l.i(f"[templates.compose] legacy template={label}: {ex}")
+            return None
+
+    def _instantiate_template(template_root, suffix: str, label: str):
+        plan = _template_plan_for(template_root, label)
+        if plan is not None:
+            return TCOMP.instantiate_plan(plan, suffix, root_doc=root)
+        inst = deepcopy(template_root)
+        target_index = SVG.uniquify_ids_and_build_target_index(inst, suffix, root.get_unique_id)
+        return inst, target_index
+
+    if template_engine == "composed":
+        _template_plan_for(proto_root, "main")
+        _l.i(f"[templates.compose] mode=composed plans={sum(1 for v in composed_plan_cache.values() if v is not None)}")
     else:
         _l.i("[templates.compose] disabled template_engine=legacy")
 
@@ -1960,18 +2005,11 @@ def render_phase(ctx):
         _profile["pre_ms"] += (time.perf_counter() - _profile_phase_t0) * 1000.0
         _profile_phase_t0 = time.perf_counter()
         card_group = inkex.Group()
-        suffix_main = f"_pnp{next_n}"; next_n += 1
-        if composed_plan is not None:
-            _clone_t = time.perf_counter()
-            inst_main, target_index_main = TCOMP.instantiate_plan(composed_plan, suffix_main, root_doc=root)
-            _profile["clone_deepcopy_ms"] += (time.perf_counter() - _clone_t) * 1000.0
-        else:
-            _clone_t = time.perf_counter()
-            inst_main = deepcopy(proto_root)
-            _profile["clone_deepcopy_ms"] += (time.perf_counter() - _clone_t) * 1000.0
-            _clone_t = time.perf_counter()
-            target_index_main = SVG.uniquify_ids_and_build_target_index(inst_main, suffix_main, root.get_unique_id)
-            _profile["clone_uniquify_ms"] += (time.perf_counter() - _clone_t) * 1000.0
+        card_item_no = int(next_n)
+        suffix_main = f"_MD{next_n}"; next_n += 1
+        _clone_t = time.perf_counter()
+        inst_main, target_index_main = _instantiate_template(proto_root, suffix_main, "main")
+        _profile["clone_deepcopy_ms"] += (time.perf_counter() - _clone_t) * 1000.0
         inst_jobs = []  # list of dicts: {node, use_jobs, fa_jobs, path_jobs, suffix, bbox_id}
         inst_jobs.append({
             'node': inst_main,
@@ -1990,13 +2028,13 @@ def render_phase(ctx):
             ctrl_val = (row_map.get(ctrl_key) or '').strip() if ctrl_key else ''
             if ctrl_val in ('0', '-'):
                 continue
-            inst_ov = deepcopy((ot or {}).get('template_root'))
-            if inst_ov is None:
+            tmpl_ov = (ot or {}).get('template_root')
+            if tmpl_ov is None:
                 continue
-            suffix_ov = f"_pnp{next_n}_t{ot_i}"; next_n += 1
+            suffix_ov = f"_MD{next_n}"; next_n += 1
             _clone_t = time.perf_counter()
-            target_index_ov = SVG.uniquify_ids_and_build_target_index(inst_ov, suffix_ov, root.get_unique_id)
-            _profile["clone_uniquify_ms"] += (time.perf_counter() - _clone_t) * 1000.0
+            inst_ov, target_index_ov = _instantiate_template(tmpl_ov, suffix_ov, "overlay")
+            _profile["clone_deepcopy_ms"] += (time.perf_counter() - _clone_t) * 1000.0
             inst_jobs.append({
                 'node': inst_ov,
                 'target_index': target_index_ov,
@@ -2251,7 +2289,7 @@ def render_phase(ctx):
                     src_x = float(bx) + float(cc) * tile_w
                     src_y = float(by) + float(rr) * tile_h
                     part = deepcopy(card_group)
-                    suffix_part = f"_pnp{next_n}_sb{part_idx}"; next_n += 1
+                    suffix_part = f"_MD{next_n}"; next_n += 1
                     SVG.uniquify_all_ids_in_scope(part, suffix_part, root.get_unique_id)
                     _append_output(part, page_index=int(planner.page_index))
                     SVG.apply_clip_from_rect(
@@ -2259,7 +2297,7 @@ def render_phase(ctx):
                         part,
                         (src_x, src_y, tile_w, tile_h),
                         stage='split_board',
-                        clip_id=f"clip{suffix_part}",
+                        clip_id=f"_MDcl{next_n - 1}",
                     )
                     # No scaling: just translate so tile is centered in the page inner rect.
                     tx = dx + (dw - tile_w) * 0.5 - src_x
@@ -2278,6 +2316,7 @@ def render_phase(ctx):
                             jobs = _marks_pending_by_page.setdefault(int(planner.page_index), [])
                             jobs.append({
                                 'ms': marks_current,
+                                'parent': _page_group_for(int(planner.page_index)),
                                 'bbox': (float(mx), float(my), float(tile_w), float(tile_h)),
                                 'within': 0,
                                 'r': 0,
@@ -2292,7 +2331,7 @@ def render_phase(ctx):
                             _l.w(f"[marks] render failed (split): {ex}")
 
                     page1 = int(planner.page_index) + 1
-                    part_name = f"{proto_root.get('id','card')}_{page1}_split_{rr+1}_{cc+1}"
+                    part_name = f"_MDgc{next_n - 1}_{cc+1}_{rr+1}"
                     part.set('id', part_name)
                     part.set(inkex.addNS('label', 'inkscape'), part_name)
             placed += 1
@@ -2343,6 +2382,7 @@ def render_phase(ctx):
                 jobs = _marks_pending_by_page.setdefault(int(planner.page_index), [])
                 jobs.append({
                     'ms': ms,
+                    'parent': parent,
                     'bbox': (float(slot_x), float(slot_y), float(slot_w), float(slot_h)),
                     'within': within,
                     'r': int(r0),
@@ -2481,7 +2521,17 @@ def render_phase(ctx):
         else:
             col1 = (within // planner.plan.rows)+1; row1 = (within % planner.plan.rows)+1
         page1 = planner.page_index+1
-        new_name = _set_card_group_identity(card_group, str(proto_root.get('id') or 'card'), int(planner.page_index), int(idx), "front", 1)
+        new_name = _set_card_group_identity(
+            card_group,
+            str(proto_root.get('id') or 'card'),
+            int(planner.page_index),
+            int(idx),
+            "front",
+            1,
+            item_no=int(card_item_no),
+            col_index=int(col1),
+            row_slot_index=int(row1),
+        )
         try:
             unique_name = root.get_unique_id(new_name)
         except Exception:
@@ -2652,6 +2702,13 @@ def render_phase(ctx):
                     slot_x = page_x0 + page_w - (float(slot_x) - page_x0) - float(slot_w)
                 except Exception:
                     continue
+                try:
+                    brow0, bcol0 = _slot_index_to_rc(int(sp), planner.plan, planner.current.layout)
+                    back_col1 = int(bcol0) + 1
+                    back_row1 = int(brow0) + 1
+                except Exception:
+                    back_col1 = 1
+                    back_row1 = 1
 
                 row_map = _build_row_map(headers, row)
                 # Place back templates (one or many columns)
@@ -2667,9 +2724,9 @@ def render_phase(ctx):
                         continue
 
                     card_group = inkex.Group()
-                    inst = deepcopy(tmpl_root)
-                    suffix = f"_pnp{next_n}_b{bt_i}"; next_n += 1
-                    SVG.uniquify_all_ids_in_scope(inst, suffix, root.get_unique_id)
+                    back_item_no = int(next_n)
+                    suffix = f"_MD{next_n}"; next_n += 1
+                    inst, _target_index_back = _instantiate_template(tmpl_root, suffix, "back")
 
                     use_jobs = []
                     fa_jobs = []
@@ -2720,6 +2777,9 @@ def render_phase(ctx):
                         int(idx),
                         "back",
                         int(bt_i),
+                        item_no=int(back_item_no),
+                        col_index=int(back_col1),
+                        row_slot_index=int(back_row1),
                     )
                     try:
                         back_unique_name = root.get_unique_id(back_name)

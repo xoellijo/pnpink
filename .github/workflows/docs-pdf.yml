@@ -3,14 +3,8 @@ name: docs-pdf
 on:
   workflow_dispatch:
     inputs:
-      commit_pdf:
-        description: "Commit generated PDF to src/docs/pnpink.pdf"
-        required: false
-        default: "true"
-        type: choice
-        options: ["true", "false"]
       release_tag:
-        description: "Optional tag to push (format vX.Y.Z) after committing PDF"
+        description: "Optional tag to push (format vX.Y.Z) after building the PDF"
         required: false
         default: ""
   push:
@@ -47,6 +41,7 @@ jobs:
             libpangoft2-1.0-0 \
             libcairo2 \
             libgdk-pixbuf-2.0-0 \
+            libglib2.0-0 \
             libffi-dev \
             shared-mime-info
 
@@ -55,16 +50,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r docs/requirements-pdf.txt
 
-      - name: Build docs with PDF
+      - name: Build docs site with PDF
         run: mkdocs build -f mkdocs.pdf.yml --strict
 
       - name: Collect PDF artifact
         run: |
           mkdir -p .artifacts
-          if [ -f pnpink.pdf ]; then
-            cp pnpink.pdf .artifacts/pnpink.pdf
-          elif [ -f site/pnpink.pdf ]; then
+          if [ -f site/pnpink.pdf ]; then
             cp site/pnpink.pdf .artifacts/pnpink.pdf
+          elif [ -f pnpink.pdf ]; then
+            cp pnpink.pdf .artifacts/pnpink.pdf
           else
             PDF_PATH="$(find . -type f -name '*.pdf' | head -n 1 || true)"
             if [ -n "$PDF_PATH" ]; then
@@ -80,21 +75,6 @@ jobs:
           name: pnpink-docs-pdf
           path: .artifacts/pnpink.pdf
           if-no-files-found: error
-
-      - name: Commit PDF into repository
-        if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event.inputs.commit_pdf == 'true') }}
-        run: |
-          mkdir -p src/docs
-          cp .artifacts/pnpink.pdf src/docs/pnpink.pdf
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f src/docs/pnpink.pdf
-          if git diff --cached --quiet -- src/docs/pnpink.pdf; then
-            echo "No changes in src/docs/pnpink.pdf"
-          else
-            git commit -m "docs(pdf): update generated documentation PDF"
-            git push
-          fi
 
       - name: Push release tag
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '' }}

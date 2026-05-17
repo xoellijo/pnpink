@@ -23,6 +23,21 @@ _l = LOG
 DEFAULT_SVG_CHUNK_TARGET_BYTES = 64 * 1024 * 1024
 MAX_INKSCAPE_SHELL_WORKERS = 6
 
+
+def split_chunk_kwargs() -> dict:
+    if not prefs.get_split_svg_output(False):
+        return {}
+    mode = prefs.get_split_svg_mode("limits")
+    if mode == "parts":
+        parts = prefs.get_split_svg_parts()
+        return {"target_parts": parts}
+    limit_mb = prefs.get_split_svg_chunk_mb_optional()
+    return {
+        "target_chunk_bytes": (int(limit_mb) * 1024 * 1024) if limit_mb else None,
+        "target_pages": prefs.get_split_svg_limit_pages(),
+        "target_records": prefs.get_split_svg_limit_records(),
+    }
+
 _PILLOW_EXPORT_ALIASES = {
     "jpeg": "JPEG",
     "jpg": "JPEG",
@@ -146,6 +161,8 @@ def resolve_chunked_output_source(svg_path: str) -> dict:
 
 
 def chunk_plan_from_existing_output(svg_path: str, artifact_dir: str, artifact_stem: str) -> dict | None:
+    if not prefs.get_split_svg_output(False):
+        return None
     src_info = resolve_chunked_output_source(svg_path)
     chunk_paths = list(src_info.get("chunk_paths") or [])
     if not chunk_paths:
@@ -217,8 +234,8 @@ def export_png_pages_via_inkscape(
             svg_path,
             os.path.splitext(png_path)[0] + ".pdf",
             inkscape_exe=exe,
-            target_chunk_bytes=DEFAULT_SVG_CHUNK_TARGET_BYTES,
             artifact_dir=export_work_dir,
+            **split_chunk_kwargs(),
         )
         chunks = list(chunk_plan.get("chunks") or [])
         if page_count <= 0:
@@ -392,8 +409,8 @@ def export_other_pages_via_inkscape(
             svg_path,
             os.path.splitext(out_path)[0] + ".pdf",
             inkscape_exe=exe,
-            target_chunk_bytes=DEFAULT_SVG_CHUNK_TARGET_BYTES,
             artifact_dir=export_work_dir,
+            **split_chunk_kwargs(),
         )
         chunks = list(chunk_plan.get("chunks") or [])
         if page_count <= 0:

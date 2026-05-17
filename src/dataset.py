@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-# [2026-02-18 | v0.20+] Align comment semantics with documented rules.
-# [2026-02-16 | v0.20+] Header '#' and '##' column disabling semantics added.
 import os, re, csv, io
 import urllib.parse
 
@@ -568,6 +566,11 @@ def _load_ini_datasets(base_dir: str, *, warn_if_missing: bool = False) -> Optio
         return None
 
 
+def load_csv_datasets(csv_path: str):
+    """Load a CSV file and split it into DeckMaker dataset sections."""
+    return _matrix_to_datasets(_read_csv_matrix(csv_path))
+
+
 def _split_selector(selector: Optional[str]) -> Tuple[str, str]:
     """Return (kind, value) for sheet selector.
 
@@ -802,7 +805,7 @@ def load_datasets(effect, doc_path: Optional[str] = None):
         csv_path = resolve_csv(options, base_dir, svg_stem)
         if not os.path.isfile(csv_path):
             raise inkex.AbortExtension(
-                f"CSV no encontrado...\n  intenté: {csv_path}\nIndica --csv_path o usa Google Sheet."
+                f"CSV not found.\n  Tried: {csv_path}\nSet --csv_path or use Google Sheets."
             )
         matrix = _read_csv_matrix(csv_path)
 
@@ -827,7 +830,7 @@ def load_datasets(effect, doc_path: Optional[str] = None):
     # 4) Validate datasets (must have at least one non-empty header in columns B+)
     valid = [ds for ds in datasets if _headers_are_valid(ds.get('headers'))]
     if not valid:
-        _l.e("Dataset sin cabecera válida.")
+        _l.e("Dataset has no valid header.")
         return []
 
     # 5) Diagnostic log (kept identical)

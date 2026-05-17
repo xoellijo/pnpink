@@ -12,6 +12,14 @@ pnpink.log
 *.tmp
 *.bak
 *.swp
+*.hb
+*.err
+*.part
+*_debug.svg
+tmp_*.py
+_tail_*.txt
+_cpu_burn_*.py
+tools/probe_pythonw.log
 
 # Windows junk
 Thumbs.db
@@ -19,12 +27,14 @@ Desktop.ini
 
 # Editor settings
 .vscode/
+*.code-workspace
+**/gdocs_original/*.docx
 
 # Generated documentation artifacts
 src/docs/*.pdf
-!src/docs/pnpink.pdf
 .artifacts/
 site/
+chat_package_stage/
 
 # old branches
 .git_old/

@@ -362,14 +362,30 @@ def _run_deckmaker_if_requested(svg_root, info: PackageInfo):
 
     csv_rel = str(info.manifest.get("csv") or "").strip()
     csv_path = str(_safe_join(info.base_dir, csv_rel)) if csv_rel else ""
-    sheet_id = str(info.manifest.get("gsheet_id") or "").strip()
-    sheet_range = str(info.manifest.get("gsheet_range") or "").strip()
+    has_packaged_csv = bool(csv_path and os.path.isfile(csv_path))
+    sheet_id = "" if has_packaged_csv else str(info.manifest.get("gsheet_id") or "").strip()
+    sheet_range = "" if has_packaged_csv else str(info.manifest.get("gsheet_range") or "").strip()
     preset = str(info.manifest.get("preset") or "{A4}")
+    preloaded_datasets = None
+    if has_packaged_csv and str(info.manifest.get("gsheet_id") or "").strip():
+        _l.i(f"[pnp] using packaged CSV on import, ignoring manifest gsheet_id for deterministic render: '{csv_rel}'")
+    if has_packaged_csv:
+        try:
+            import dataset as DS
+
+            preloaded_datasets = DS.load_csv_datasets(csv_path)
+            _l.i(f"[pnp] preloaded packaged CSV datasets={len(preloaded_datasets or [])} path='{csv_rel}'")
+        except Exception as ex:
+            _l.w(f"[pnp] could not preload packaged CSV '{csv_rel}': {ex}")
+            preloaded_datasets = None
 
     class _Runner:
-        def __init__(self, root, path):
+        def __init__(self, root, path, datasets=None):
             self.svg = root
             self._path = str(path)
+            self._dm_output_disabled = True
+            if datasets is not None:
+                self._dm_preloaded_datasets = datasets
             self.options = SimpleNamespace(
                 tab="",
                 csv_path=csv_path,
@@ -407,7 +423,7 @@ def _run_deckmaker_if_requested(svg_root, info: PackageInfo):
             return layer
 
     try:
-        runner = _Runner(svg_root, info.svg_abs)
+        runner = _Runner(svg_root, info.svg_abs, preloaded_datasets)
         ENG.run(runner, "pnp-import")
         _l.i("[pnp] deckmaker auto-run on import: OK")
         return runner.svg

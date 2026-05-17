@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# [2026-02-19] Chore: translate comments to English.
 r"""
 snippets.py ? snippet engine (new format, no retro-compat)
 
@@ -84,10 +83,10 @@ def _split_args_spec(spec: str) -> Tuple[List[str], Dict[str, str]]:
 
 def parse_definition_line(line: str) -> Optional[SnippetDef]:
     """
-    Acepta ÚNICAMENTE:
-      # :Nombre(arg1 arg2=def) = plantilla
-    Sin retrocompatibilidad con '->' ni comillas obligatorias.
-    Debe NO haber espacio entre el nombre y '('.
+    Accept only:
+      # :Name(arg1 arg2=default) = template
+    There is no compatibility with '->' or mandatory quotes.
+    There must be no space between the name and '('.
     """
     if not line:
         return None
@@ -98,7 +97,7 @@ def parse_definition_line(line: str) -> Optional[SnippetDef]:
     if not body.startswith(":"):
         return None
 
-    # :Nombre( ... ) = plantilla
+    # :Name( ... ) = template
     i = 1
     m = IDENT_RE.match(body, i)
     if not m:
@@ -106,7 +105,7 @@ def parse_definition_line(line: str) -> Optional[SnippetDef]:
     name = m.group(0)
     j = m.end()
 
-    # debe venir '(' SIN espacio
+    # '(' must follow the name without a space.
     if j >= len(body) or body[j] != "(":
         return None
 
@@ -137,8 +136,10 @@ def parse_definition_line(line: str) -> Optional[SnippetDef]:
 
 
 def load_definitions_from_comments(comment_lines: List[str]) -> Dict[str, SnippetDef]:
-    """Construye el registro de snippets a partir de líneas de comentario.
-       Acepta tanto cadenas como filas (listas/tuplas) y usa la primera celda."""
+    """Build the snippet registry from comment lines.
+
+    Accepts either strings or CSV/Sheet rows and uses the first cell.
+    """
     reg: Dict[str, SnippetDef] = {}
     for raw in (comment_lines or []):
         # Normalize: may be a full CSV/Sheet row.
@@ -155,8 +156,8 @@ def load_definitions_from_comments(comment_lines: List[str]) -> Dict[str, Snippe
 
 def _find_call_at(text: str, start: int) -> Optional[Tuple[int, int, str, str]]:
     """
-    Si en 'start' hay ':Nombre(', devuelve (i0, i1, name, inner)
-    donde i0..i1 abarca toda la llamada ':Nombre(...)' y 'inner' es el contenido dentro.
+    If ':Name(' starts at `start`, return (i0, i1, name, inner).
+    i0..i1 spans the full ':Name(...)' call; inner is the content inside.
     """
     m = CALL_LEAD_RE.match(text, start)
     if not m:
@@ -181,7 +182,7 @@ def _find_call_at(text: str, start: int) -> Optional[Tuple[int, int, str, str]]:
 
 
 def _split_call_args(inner: str) -> List[str]:
-    """Divide los argumentos de la llamada por espacios (respeta comillas)."""
+    """Split call arguments on spaces while respecting quotes."""
     inner = (inner or "").strip()
     if not inner:
         return []
@@ -192,7 +193,7 @@ def _split_call_args(inner: str) -> List[str]:
 
 
 def _parse_call_kwargs(tokens: List[str]) -> Tuple[List[str], Dict[str, str]]:
-    """Separa argumentos posicionales y nombrados (y repara 'name = value')."""
+    """Split positional and named arguments, also repairing 'name = value'."""
     fixed: List[str] = []
     i = 0
     while i < len(tokens):
@@ -216,7 +217,7 @@ def _parse_call_kwargs(tokens: List[str]) -> Tuple[List[str], Dict[str, str]]:
 
 
 def _apply_args_to_def(defn: SnippetDef, pos: List[str], named: Dict[str, str]) -> Dict[str, str]:
-    """Construye el mapping final de variables para la plantilla."""
+    """Build the final variable mapping for the template."""
     out: Dict[str, str] = {}
     for i, p in enumerate(defn.params):
         if i < len(pos):
@@ -295,7 +296,7 @@ def _apply_conditionals(tpl: str, mapping: Dict[str, Any]) -> str:
         out_chunks.append(tpl[i:k])
 
         # try parsing ${var? body}
-        j = k + 2  # posición tras '${'
+        j = k + 2  # Position after '${'.
         # var name
         m = IDENT_RE.match(tpl, j)
         if not m:
@@ -319,7 +320,7 @@ def _apply_conditionals(tpl: str, mapping: Dict[str, Any]) -> str:
         while j < n and tpl[j].isspace():
             j += 1
 
-        # escanear cuerpo hasta '}' considerando ${...} anidados
+        # Scan body until '}', accounting for nested ${...}.
         body_start = j
         depth = 0
         found_close = False
@@ -345,7 +346,7 @@ def _apply_conditionals(tpl: str, mapping: Dict[str, Any]) -> str:
             i = body_start
             continue
 
-        body = tpl[body_start:j]  # sin la llave de cierre
+        body = tpl[body_start:j]  # Without the closing brace.
         # include body if the variable has a value
         val = _resolve_mapping_expr(var, mapping)
         if val:

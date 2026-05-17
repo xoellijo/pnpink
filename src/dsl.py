@@ -1,7 +1,3 @@
-# [2026-02-19] Fix: correct numeric regex call for fit shift parsing.
-# [2026-02-19] Fix: allow negative grid tokens to flip grid axes.
-# [2026-02-19] Add: split layout gaps into gaps + offset properties.
-# [2026-02-19] Change: drop legacy 6-value gaps parsing.
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 import re
@@ -93,7 +89,7 @@ class PageSpec:
     border: Optional[List[str]] = None
     multiplier: Optional[int] = None
     pagebreak_only: Optional[bool] = None
-    # v0.9+: global page cursor control (owned by Page{}, not Layout{}).
+    # Global page cursor control belongs to Page{}, not Layout{}.
     # Examples: at=+3, a=-1, @5
     at: Optional[str] = None
 
@@ -118,7 +114,7 @@ class LayoutSpec:
 class MarksSpec:
     """Marks{} / M{} specification.
 
-    Dev note:
+    Developer note:
       - The style template is selected with t=...
       - b and d reuse the same list grammar as Page/Fit border: 1/2/3/4 tokens.
       - Rendering is slot-based (per placed instance).
@@ -353,7 +349,7 @@ def parse_dataset_decl(cellA: str, *, allow_bare: bool = False) -> Optional[Dict
         idx = _find_top_level_equal(t)
         if idx < 0:
             # For now, treat additional bare tokens as syntactic error.
-            raise DSLError(f"Token inválido en dataset marker: '{t}'")
+            raise DSLError(f"Invalid token in dataset marker: '{t}'")
 
         k = t[:idx].strip()
         v = t[idx + 1 :].strip()
@@ -397,18 +393,18 @@ def _source_from_body(body: str) -> SourceRef:
         b = b[1:-1].strip()
 
     if b.lower() in {"img", "pdf", "url", "file", "iconify", "svg"}:
-        raise DSLError("Source requiere src")
+        raise DSLError("Source requires src")
 
     mlead = re.match(r"^(img|pdf|url|file|iconify|svg)\s+(.*)$", b, re.I)
     if mlead:
         kind = mlead.group(1).lower()
         rest = mlead.group(2).strip()
         if not rest:
-            raise DSLError("Source requiere src")
+            raise DSLError("Source requires src")
         args = _parse_brace_dict("{"+rest+"}")
         src = str(args.get("src") or args.get("href") or args.get("url") or "")
         if not src:
-            raise DSLError("Source requiere src")
+            raise DSLError("Source requires src")
         return SourceRef(kind, src, args)
 
     has_kv = "=" in b
@@ -416,7 +412,7 @@ def _source_from_body(body: str) -> SourceRef:
         args = _parse_brace_dict("{"+b+"}")
         src = str(args.get("src") or args.get("href") or args.get("url") or "")
         if not src:
-            raise DSLError("Source requiere src")
+            raise DSLError("Source requires src")
         s = src
         sl = s.lower()
         if re.match(r"^https?://", s, re.I):
@@ -547,7 +543,7 @@ def _lex_fit_trail(trail: str) -> List[str]:
                     out.append('!!'); i += 2; continue
                 out.append('!'); i += 1; continue
         m = re.match(r"^[^\s\[\]\^|!]+", s[i:])
-        if not m: raise DSLError("Token inválido en fit")
+        if not m: raise DSLError("Invalid fit token")
         out.append(m.group(0)); i += len(m.group(0))
     return out
 
@@ -624,7 +620,7 @@ def _transform_from_dict(args: Dict[str, Any]) -> TransformSpec:
 def _parse_fit_long(cmd: str) -> FitSpec:
     m = re.match(r"^\s*(?:[A-Za-z][\w\-.]*\s*)?\.Fit\s*(\{.*\})\s*$", cmd)
     if not m:
-        raise DSLError("Fit largo inválido")
+        raise DSLError("Invalid long Fit form")
     args = _parse_brace_dict(m.group(1))
     return _fit_from_dict(args)
 
@@ -917,7 +913,7 @@ def measure_to_mm(token, base_mm=None, default_unit="mm"):
         _l.w(f"[measure_to_mm] unidad desconocida '{unit}' en '{s}'; asumiendo mm")
         return val
 
-    # Último intento: float simple
+    # Last fallback: plain float.
     try:
         return float(s)
     except (TypeError, ValueError):
@@ -1024,7 +1020,7 @@ def _parse_grid_token_and_inline(value: str) -> Tuple[GridSpec, Optional[str]]:
         re.I,
     )
     if not m:
-        raise DSLError("pattern requiere formato colsxrows (soporta ?, | y ^)")
+        raise DSLError("pattern requires colsxrows format (supports ?, | and ^)")
 
     c_tok = (m.group("c") or "").strip()
     r_tok = (m.group("r") or "").strip()
@@ -1088,7 +1084,7 @@ def _parse_shape_v2(val: str) -> ShapeSpec:
 def _parse_layout_v2(layout_cmd: str) -> LayoutSpec:
     m = re.match(r"^\s*(?:[A-Za-z][\w\-.]*\s*)?\.(?:Layout|L)\s*(\{.*\})\s*$", layout_cmd)
     if not m:
-        raise DSLError("Layout inválido")
+        raise DSLError("Invalid layout")
     # Layout braces accept:
     #   - key=value tokens (g=3x3 k=[...] s=poker ...)
     inner = _strip_balanced(m.group(1), "{", "}").strip()
@@ -1304,7 +1300,7 @@ def _parse_alias_access(s: str) -> AliasRef:
     s = s.strip()
     m = re.match(r"^@(?P<name>[A-Za-z][\w\-\.]*)(?P<idx>(?:\[[^\]]+\])*)$", s)
     if not m:
-        raise DSLError("Alias inválido")
+        raise DSLError("Invalid alias")
     name = m.group("name")
     idxs_raw = m.group("idx")
     indices: List[Union[int, RangeIdx, ListIdx, StarIdx]] = []
@@ -1349,7 +1345,7 @@ def parse(s: str) -> Command:
             except DSLError:
                 cmd = None
         if cmd is None:
-            raise DSLError("RHS inválido en alias")
+            raise DSLError("Invalid alias RHS")
         return Command(name="AliasDefine", args={"alias": alias, "value": cmd})
 
     # Page v2: Page{...} / P{...} o {...}
@@ -1369,7 +1365,7 @@ def parse(s: str) -> Command:
     if "~" in s and "{" not in s:
         m = re.match(r"^\s*(?P<id>[A-Za-z][\w\-.]*)\s*~\s*(?P<trail>.+?)\s*$", s)
         if not m:
-            raise DSLError("Fit shorthand inválido")
+            raise DSLError("Invalid Fit shorthand")
         fs = _parse_fit_shorthand(m.group("trail"))
         return Command("Fit", target=IdRef(m.group("id")), fit=fs)
 
@@ -1377,7 +1373,7 @@ def parse(s: str) -> Command:
     if ".Layout" in s or ".L" in s:
         m2 = re.search(r"\.(?:Layout|L)\s*(\{.*\})\s*$", s)
         if not m2:
-            raise DSLError("Layout inválido")
+            raise DSLError("Invalid layout")
         ls = _parse_layout_v2(s[s.find("."):])
         return Command("Layout", layout=ls)
 
@@ -1723,9 +1719,9 @@ class DLeadingCell:
     slot_select_raw: Optional[str] = None
     slot_select_mode: Optional[str] = None
     copies_explicit: bool = False
-    page_block: Optional[str] = None   # texto "{A3 ...}" o None
-    layout_block: Optional[str] = None # texto "L{ ... }" o "{ ... }" o None
-    marks_block: Optional[str] = None  # texto "M{ ... }" o None
+    page_block: Optional[str] = None   # "{A3 ...}" text or None.
+    layout_block: Optional[str] = None # "L{ ... }" / "{ ... }" text or None.
+    marks_block: Optional[str] = None  # "M{ ... }" text or None.
     page: Optional["PageSpec"] = None
     layout: Optional["LayoutSpec"] = None
     marks: Optional["MarksSpec"] = None
@@ -1743,7 +1739,7 @@ def parse_layout_block(text: str) -> "LayoutSpec":
     if re.match(r"^(?:Layout|L)\b", s, re.I):
         s = re.sub(r"^(?:Layout|L)\b", "", s, count=1, flags=re.I).lstrip()
     if not (s.startswith("{") and s.endswith("}")):
-        raise DSLError("layout tail inválido; se esperaba bloque {...}")
+        raise DSLError("Invalid layout tail; expected {...} block")
     return _parse_layout_v2(f"dummy.L{s}")
 
 
@@ -1764,7 +1760,7 @@ def parse_marks_block(text: str) -> "MarksSpec":
     if s.startswith("M"):
         s = s[1:].lstrip()
     if not (s.startswith("{") and s.endswith("}")):
-        raise DSLError("marks tail inválido; se esperaba bloque {...}")
+        raise DSLError("Invalid marks tail; expected {...} block")
 
     args = _parse_brace_dict(s)
 

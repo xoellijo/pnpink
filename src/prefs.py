@@ -53,10 +53,15 @@ _DEFAULTS = {
     "export_dpi":         "300",
     "export_jpeg_quality": "90",
     "split_svg_output":   "0",
+    "split_svg_mode":     "limits",
+    "split_svg_parts":    "",
+    "split_svg_limit_pages": "",
+    "split_svg_limit_records": "",
     "split_svg_chunk_mb": "64",
     "inkscape_shell_workers": "6",
     "inline_icons_bbox_backend": "query_all",
-    "template_engine": "legacy",
+    "template_engine": "composed",
+    "web_user_agent": "github.com/xoellijo/pnpink",
 
 }
 
@@ -91,9 +96,14 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     ("export_jpeg_quality", ("JPEG quality used by JPEG exports (including Pillow fallback conversions). Values: integer 70..95",)),
     ("inkscape_shell_workers", ("Parallel Inkscape shell workers used during export. Values: integer >= 1",)),
     ("inline_icons_bbox_backend", ("Inline icon bbox measurement backend. Values: query_all | shell_per_text",)),
-    ("template_engine", ("Template instantiation engine. Values: legacy | composed", "composed is experimental and intentionally fails on unsupported templates.")),
+    ("template_engine", ("Template instantiation engine. Values: legacy | composed", "composed is the default; unsupported individual templates fall back to legacy.")),
+    ("web_user_agent", ("User-Agent used for Wikimedia/direct web asset downloads. Empty = github.com/xoellijo/pnpink",)),
     ("split_svg_output", ("Split DM_output into SVG parts. Values: 0 | 1",)),
-    ("split_svg_chunk_mb", ("Target size per SVG part in megabytes. Values: integer >= 1",)),
+    ("split_svg_mode", ("SVG split mode. Values: parts | limits",)),
+    ("split_svg_parts", ("Split SVG into this number of parts when split_svg_mode=parts. Empty = disabled.",)),
+    ("split_svg_limit_pages", ("Maximum pages per SVG part when split_svg_mode=limits. Empty = no page limit.",)),
+    ("split_svg_limit_records", ("Maximum records/cards per SVG part when split_svg_mode=limits. Empty = no record limit.",)),
+    ("split_svg_chunk_mb", ("Maximum megabytes per SVG part when split_svg_mode=limits. Empty = no MB limit.",)),
     ("marks_stroke", ("Default cut/registration mark stroke color. Values: any valid SVG color string",)),
     ("marks_stroke_width", ("Default cut/registration mark stroke width. Values: any SVG/CSS length",)),
     ("marks_opacity", ("Default cut/registration mark opacity. Values: 0.0..1.0",)),
@@ -106,7 +116,7 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
 def get_marks_style_dict() -> dict[str, str]:
     """Return default stroke-related style for Marks{}.
 
-    Dev note: this is intentionally minimal and additive; no UI wiring in this iteration.
+    Keep this in sync with the persisted marks_* preferences.
     """
     return {
         "stroke": str(get("marks_stroke", "#000000")),
@@ -185,6 +195,15 @@ def set_file_level(level: str) -> None:
 
 def set_log_json(flag: bool) -> None:
     set("log_json", "1" if flag else "0", save=True)
+
+
+def get_web_user_agent(default: str = "github.com/xoellijo/pnpink") -> str:
+    value = str(get("web_user_agent", default) or "").strip()
+    return value or str(default or "github.com/xoellijo/pnpink")
+
+
+def set_web_user_agent(value: str) -> None:
+    set("web_user_agent", str(value or "").strip(), save=True)
 
 
 def get_pdf_profiles(default: str = "default") -> list[str]:
@@ -426,20 +445,76 @@ def set_split_svg_output(flag: bool) -> None:
     set("split_svg_output", "1" if flag else "0", save=True)
 
 
+def get_split_svg_mode(default: str = "limits") -> str:
+    value = str(get("split_svg_mode", default) or default).strip().lower()
+    return value if value in {"parts", "limits"} else str(default or "limits")
+
+
+def set_split_svg_mode(value: str) -> None:
+    item = str(value or "limits").strip().lower()
+    set("split_svg_mode", item if item in {"parts", "limits"} else "limits", save=True)
+
+
+def _get_optional_positive_int(name: str, default: str = "", max_value: int = 1000000) -> int | None:
+    raw = str(get(name, default) or "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(float(raw))
+    except Exception:
+        return None
+    if value <= 0:
+        return None
+    return max(1, min(value, int(max_value)))
+
+
+def _set_optional_positive_int(name: str, value, max_value: int = 1000000) -> None:
+    raw = str(value or "").strip()
+    if not raw:
+        set(name, "", save=True)
+        return
+    try:
+        out = int(float(raw))
+    except Exception:
+        out = 0
+    set(name, "" if out <= 0 else str(max(1, min(out, int(max_value)))), save=True)
+
+
+def get_split_svg_parts(default: str = "") -> int | None:
+    return _get_optional_positive_int("split_svg_parts", default, 10000)
+
+
+def set_split_svg_parts(value) -> None:
+    _set_optional_positive_int("split_svg_parts", value, 10000)
+
+
+def get_split_svg_limit_pages(default: str = "") -> int | None:
+    return _get_optional_positive_int("split_svg_limit_pages", default, 1000000)
+
+
+def set_split_svg_limit_pages(value) -> None:
+    _set_optional_positive_int("split_svg_limit_pages", value, 1000000)
+
+
+def get_split_svg_limit_records(default: str = "") -> int | None:
+    return _get_optional_positive_int("split_svg_limit_records", default, 100000000)
+
+
+def set_split_svg_limit_records(value) -> None:
+    _set_optional_positive_int("split_svg_limit_records", value, 100000000)
+
+
 def get_split_svg_chunk_mb(default: int = 64) -> int:
-    try:
-        value = int(str(get("split_svg_chunk_mb", default) or default).strip())
-    except Exception:
-        value = int(default)
-    return max(1, min(value, 2048))
+    value = _get_optional_positive_int("split_svg_chunk_mb", str(default), 2048)
+    return max(1, min(int(value or default), 2048))
 
 
-def set_split_svg_chunk_mb(value: int) -> None:
-    try:
-        out = int(value)
-    except Exception:
-        out = 64
-    set("split_svg_chunk_mb", str(max(1, min(out, 2048))), save=True)
+def get_split_svg_chunk_mb_optional(default: str = "") -> int | None:
+    return _get_optional_positive_int("split_svg_chunk_mb", default, 2048)
+
+
+def set_split_svg_chunk_mb(value) -> None:
+    _set_optional_positive_int("split_svg_chunk_mb", value, 2048)
 
 
 def get_inkscape_shell_workers(default: int = 6) -> int:

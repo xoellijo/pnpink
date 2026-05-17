@@ -1,7 +1,4 @@
-# [2026-02-18] Fix: add missing re import for source token parsing.
-# [2026-02-18] Log: track source cache hits/misses for inline-icons audit.
 # -*- coding: utf-8 -*-
-# [2026-02-19] Chore: translate comments to English.
 """
 sources.py ? PnPInk v07 (Phase 1)
 External source manager -> <symbol> in <defs> + later <use> clones.
@@ -52,7 +49,7 @@ except Exception:
 class SourceKey:
     scheme: str      # "file" | "data" | "logical"
     path: str        # abs path (normcase) OR data-uri head OR logical name
-    mtime: float     # 0.0 para data/logical sin file backing
+    mtime: float     # 0.0 for data/logical sources without file backing.
     fragment: str = ""
     page: int = 0
 
@@ -206,7 +203,7 @@ def _guess_bitmap_size_px(abspath: Path, default_dpi: float = SVG.DPI) -> Tuple[
             w, h = im.size
             return float(w), float(h)
     except Exception:
-        _l.w(f"[sources] Pillow no disponible o fallo leyendo '{abspath.name}'; usando {DEFAULT_W}x{DEFAULT_H}px")
+        _l.w(f"[sources] Pillow unavailable or failed reading '{abspath.name}'; using {DEFAULT_W}x{DEFAULT_H}px")
         return (DEFAULT_W, DEFAULT_H)
 
 def _is_data_uri(s: str) -> bool:
@@ -498,6 +495,16 @@ class SourceManager:
         self._dl_done: Dict[str, Optional[Path]] = {}
         self._virtual_futures: Dict[str, Future] = {}
         self._virtual_done: Set[str] = set()
+        self._web_stats = {
+            "direct_scheduled": 0,
+            "virtual_scheduled": 0,
+            "wkmc_scheduled": 0,
+            "download_ok": 0,
+            "download_cached": 0,
+            "download_failed": 0,
+            "wkmc_resolved": 0,
+            "wkmc_failed": 0,
+        }
 
         # doc unit conversion helpers
         try:
@@ -529,10 +536,22 @@ class SourceManager:
         return assets
 
     def resolve_wkmc_urls(self, expr: str) -> Optional[List[str]]:
-        return self.web.resolve_wkmc_urls(expr)
+        urls = self.web.resolve_wkmc_urls(expr)
+        with self._dl_lock:
+            if urls:
+                self._web_stats["wkmc_resolved"] = int(self._web_stats.get("wkmc_resolved") or 0) + 1
+            elif urls == []:
+                self._web_stats["wkmc_failed"] = int(self._web_stats.get("wkmc_failed") or 0) + 1
+        return urls
 
     def resolve_wkmc_items(self, expr: str):
-        return self.web.resolve_wkmc_items(expr)
+        items = self.web.resolve_wkmc_items(expr)
+        with self._dl_lock:
+            if items:
+                self._web_stats["wkmc_resolved"] = int(self._web_stats.get("wkmc_resolved") or 0) + 1
+            elif items == []:
+                self._web_stats["wkmc_failed"] = int(self._web_stats.get("wkmc_failed") or 0) + 1
+        return items
 
     def resolve_pxby_urls(self, expr: str) -> Optional[List[str]]:
         return self.web.resolve_pxby_urls(expr)
@@ -608,7 +627,6 @@ class SourceManager:
             raw, hdrs, _status = NET.fetch_bytes(
                 url,
                 headers={
-                    "User-Agent": "pnpink/1.0 (+https://github.com/pnpink)",
                     "Accept": "image/*,*/*;q=0.8",
                 },
                 timeout=30,
@@ -625,8 +643,12 @@ class SourceManager:
                 f.write(raw)
             os.replace(str(tmp), str(out))
             _l.i(f"[sources] web cached -> {out.name}")
+            with self._dl_lock:
+                self._web_stats["download_ok"] = int(self._web_stats.get("download_ok") or 0) + 1
             return out.resolve()
         except Exception as ex:
+            with self._dl_lock:
+                self._web_stats["download_failed"] = int(self._web_stats.get("download_failed") or 0) + 1
             u0 = str(url or "").strip().lower()
             if ("render.openstreetmap.org/cgi-bin/export" in u0) and ("HTTP Error 400" in str(ex or "")):
                 _l.w(
@@ -665,9 +687,15 @@ class SourceManager:
         ext_hint = self._guess_ext_from_url_or_type(u, "")
         p0 = self._http_cache_path(u, ext_hint=ext_hint)
         if p0.is_file():
+            _l.i(f"[sources] web cache hit -> {p0.name}")
+            with self._dl_lock:
+                self._web_stats["download_cached"] = int(self._web_stats.get("download_cached") or 0) + 1
             return p0.resolve()
         p_any = self._find_http_cached_any(u)
         if p_any is not None:
+            _l.i(f"[sources] web cache hit -> {p_any.name}")
+            with self._dl_lock:
+                self._web_stats["download_cached"] = int(self._web_stats.get("download_cached") or 0) + 1
             return p_any
 
         f = self._ensure_http_future(u)
@@ -693,6 +721,8 @@ class SourceManager:
             n += 1
         if n:
             _l.i(f"[sources] web prefetch scheduled: {n} url(s)")
+            with self._dl_lock:
+                self._web_stats["direct_scheduled"] = int(self._web_stats.get("direct_scheduled") or 0) + n
         return n
 
     def _extract_http_from_source_body(self, body: str) -> Optional[str]:
@@ -842,6 +872,12 @@ class SourceManager:
                     virtuals.update(self.extract_virtual_web_sources_from_text(v))
         n = self.prefetch_urls(sorted(urls))
         wkmc_exprs = sorted(expr for expr in virtuals if str(expr or "").strip().lower().startswith("wkmc://"))
+        _l.i(
+            "[sources.progress] web_sources discovered direct=%d virtual=%d wkmc=%d",
+            len(urls),
+            len(virtuals),
+            len(wkmc_exprs),
+        )
         batch_prefetched = 0
         if wkmc_exprs:
             try:
@@ -864,7 +900,36 @@ class SourceManager:
             vcount += 1
         if vcount:
             _l.i(f"[sources] virtual prefetch scheduled: {vcount} expr(s)")
+            with self._dl_lock:
+                self._web_stats["virtual_scheduled"] = int(self._web_stats.get("virtual_scheduled") or 0) + vcount
+                self._web_stats["wkmc_scheduled"] = int(self._web_stats.get("wkmc_scheduled") or 0) + len(wkmc_exprs)
         return n + vcount + batch_prefetched
+
+    def log_web_summary(self) -> None:
+        try:
+            pending_direct = 0
+            pending_virtual = 0
+            with self._dl_lock:
+                pending_direct = len([f for f in self._dl_futures.values() if f is not None and not f.done()])
+                pending_virtual = len([f for f in self._virtual_futures.values() if f is not None and not f.done()])
+                stats = dict(self._web_stats)
+                stats["pending_direct"] = pending_direct
+                stats["pending_virtual"] = pending_virtual
+            _l.i(
+                "[sources.progress] web_sources final direct=%d virtual=%d wkmc=%d "
+                "downloaded=%d cached=%d download_failed=%d wkmc_resolved=%d wkmc_failed=%d pending=%d",
+                int(stats.get("direct_scheduled") or 0),
+                int(stats.get("virtual_scheduled") or 0),
+                int(stats.get("wkmc_scheduled") or 0),
+                int(stats.get("download_ok") or 0),
+                int(stats.get("download_cached") or 0),
+                int(stats.get("download_failed") or 0),
+                int(stats.get("wkmc_resolved") or 0),
+                int(stats.get("wkmc_failed") or 0),
+                int(stats.get("pending_direct") or 0) + int(stats.get("pending_virtual") or 0),
+            )
+        except Exception:
+            pass
 
     # ---------------- high-level resolution ----------------
 
@@ -927,7 +992,7 @@ class SourceManager:
         parsed0 = urlparse(raw)
         if parsed0.scheme.lower() in ("icon", "iconify"):
             if ICON is None:
-                sid, wh = _make_placeholder_symbol(self.defs, raw, "iconify.py no disponible")
+                sid, wh = _make_placeholder_symbol(self.defs, raw, "iconify.py unavailable")
                 return SourceRef(symbol_id=sid, content_type="svg", intrinsic_box=wh, canonical_key=None)
 
             # icon://prefix/name  (prefix in netloc, name in path)
@@ -955,7 +1020,7 @@ class SourceManager:
                 return SourceRef(symbol_id=sid, content_type="svg", intrinsic_box=wh, canonical_key=None)
 
             if not prefix or not name:
-                sid, wh = _make_placeholder_symbol(self.defs, raw, "icon:// requiere set/name")
+                sid, wh = _make_placeholder_symbol(self.defs, raw, "icon:// requires set/name")
                 return SourceRef(symbol_id=sid, content_type="svg", intrinsic_box=wh, canonical_key=None)
 
             key = _build_key_for_iconify(prefix, name)
@@ -1210,8 +1275,8 @@ class SourceManager:
             _l.i(f"[sources] file: registered → {ref.symbol_id} ← {resolved_file.name} ({ref.intrinsic_box[0]}x{ref.intrinsic_box[1]}px)")
             return ref
 
-        # No resuelto → placeholder
-        sid, wh = _make_placeholder_symbol(self.defs, raw, "no encontrado")
+        # Unresolved source -> placeholder.
+        sid, wh = _make_placeholder_symbol(self.defs, raw, "not found")
         return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
 
     # ---------------- symbol creation ----------------

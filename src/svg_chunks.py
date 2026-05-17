@@ -33,6 +33,7 @@ class SvgPageSlice:
     h: float
     est_bytes: int
     node_ids: tuple[str, ...]
+    record_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,17 @@ class SvgChunk:
     svg_path: str
     pdf_path: str
     png_prefix: str
+
+
+@dataclass(frozen=True)
+class OutputPageLayout:
+    pairs: tuple[tuple[dict, object | None], ...]
+    selected: tuple[tuple[int, dict], ...]
+    keep_page_nos: frozenset[int]
+    new_pos: dict[int, tuple[float, float]]
+    extent_width: float
+    extent_height: float
+    page_gap_px: float
 
 
 def _svg_page_count(svg_path: str) -> int:
@@ -65,14 +77,21 @@ def _svg_page_numbers(svg_path: str) -> tuple[int, ...]:
 
         tree = ET.parse(svg_path)
         root = tree.getroot()
-        out: list[int] = []
+        generated: list[int] = []
+        fallback: list[int] = []
         for page in root.findall(".//{http://www.inkscape.org/namespaces/inkscape}page"):
             page_id = str(page.get("id") or "").strip()
             m = re.search(r"(\d+)$", page_id)
             if m:
-                out.append(int(m.group(1)))
-        if out:
-            return tuple(out)
+                value = int(m.group(1))
+                if page_id.startswith("dm_page_"):
+                    generated.append(value)
+                else:
+                    fallback.append(value)
+        if generated:
+            return tuple(generated)
+        if fallback:
+            return tuple(fallback)
         count = _svg_page_count(svg_path)
         return tuple(range(1, count + 1))
     except Exception:
@@ -90,6 +109,16 @@ def _chunk_dir_for_output(out_path: str) -> tuple[str, str, str]:
     return chunk_dir, manifest_path, suffix
 
 
+def cleanup_output_chunks(out_path: str) -> None:
+    """Remove persisted chunks for a generated DM_output SVG."""
+    chunk_dir, _manifest_path, _suffix = _chunk_dir_for_output(out_path)
+    try:
+        if os.path.isdir(chunk_dir):
+            shutil.rmtree(chunk_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+
 def _chunk_svg_path(chunk_dir: str, stem: str, suffix: str, index: int) -> str:
     return os.path.normpath(os.path.join(chunk_dir, f"{stem}.chunk{index:02d}{suffix or '.svg'}"))
 
@@ -100,6 +129,58 @@ def _chunk_pdf_path(work_dir: str, stem: str, index: int) -> str:
 
 def _chunk_png_prefix(work_dir: str, stem: str, index: int) -> str:
     return os.path.normpath(os.path.join(work_dir, f"{stem}.chunk{index:02d}.png"))
+
+
+def _write_svg_doc(doc, path: str) -> None:
+    try:
+        doc.write(path, encoding="utf-8", xml_declaration=True)
+    except TypeError:
+        doc.write(path)
+
+
+def _page_gap_px(pages: list[dict]) -> float:
+    if len(pages or []) <= 1:
+        return 10.0
+    first, second = pages[0], pages[1]
+    return float(second["x"] - (first["x"] + first["w"]))
+
+
+def _slice_pages_label(items: Iterable[SvgPageSlice]) -> str:
+    return ",".join(str(int(item.page_no)) for item in items)
+
+
+def _slice_est_bytes(items: Iterable[SvgPageSlice]) -> int:
+    return sum(int(item.est_bytes or 0) for item in items)
+
+
+def _slice_record_count(items: Iterable[SvgPageSlice]) -> int:
+    return sum(int(getattr(item, "record_count", 0) or 0) for item in items)
+
+
+def _log_page_slices(items: Iterable[SvgPageSlice]) -> None:
+    for item in items:
+        _l.i(
+            "[svg_chunks] page=%d page_id='%s' est_bytes=%d nodes=%d box=(%.2f,%.2f %.2fx%.2f)",
+            int(item.page_no),
+            item.page_id,
+            int(item.est_bytes),
+            len(item.node_ids),
+            float(item.x),
+            float(item.y),
+            float(item.w),
+            float(item.h),
+        )
+
+
+def _log_chunk_groups(groups: list[list[SvgPageSlice]]) -> None:
+    for idx, group in enumerate(groups, start=1):
+        _l.i(
+            "[svg_chunks] chunk=%d pages=%s est_bytes=%d records=%d",
+            idx,
+            _slice_pages_label(group),
+            _slice_est_bytes(group),
+            _slice_record_count(group),
+        )
 
 
 def build_chunk_outputs(
@@ -124,12 +205,59 @@ def build_chunk_outputs(
     return tuple(chunks)
 
 
+def _regular_svg_chunk_plan(
+    svg_path: str,
+    pdf_path: str,
+    *,
+    artifact_dir: str,
+    target_chunk_bytes: int | None = None,
+    target_pages: int | None = None,
+    target_records: int | None = None,
+    target_parts: int | None = None,
+) -> dict:
+    """Treat a plain SVG as a single export part.
+
+    DeckMaker outputs can be split by generated page groups. A normal SVG has no
+    pnpink-output group, so there is nothing to normalize or split.
+    """
+    stem = Path(pdf_path).stem
+    page_count = _svg_page_count(svg_path)
+    chunk = SvgChunk(
+        index=1,
+        pages=tuple(range(1, int(page_count or 1) + 1)),
+        est_bytes=int(os.path.getsize(svg_path)) if os.path.isfile(svg_path) else 0,
+        svg_path=os.path.normpath(svg_path),
+        pdf_path=_chunk_pdf_path(artifact_dir, stem, 1),
+        png_prefix=_chunk_png_prefix(artifact_dir, stem, 1),
+    )
+    _l.i(
+        "[svg_chunks] regular_svg source='%s' pages=%d artifact_dir='%s'",
+        svg_path,
+        int(page_count or 1),
+        artifact_dir,
+    )
+    return {
+        "fixed_images": 0,
+        "chunk_dir": "",
+        "work_dir": os.path.normpath(artifact_dir),
+        "chunks": (chunk,),
+        "page_slices": (),
+        "target_chunk_bytes": int(target_chunk_bytes or 0),
+        "target_pages": int(target_pages or 0),
+        "target_records": int(target_records or 0),
+        "target_parts": int(target_parts or 0),
+        "unassigned_nodes": tuple(),
+        "source_svg": os.path.normpath(svg_path),
+        "from_regular_svg": True,
+    }
+
+
 def resolve_chunked_output(svg_path: str) -> dict:
     src = os.path.normpath(os.path.abspath(str(svg_path or "").strip()))
     if not src:
         return {"svg_path": "", "chunk_paths": [], "manifest_path": "", "chunk_dir": ""}
-    chunk_dir, manifest_path, _suffix = _chunk_dir_for_output(src)
     stem = Path(src).stem
+    chunk_dir, manifest_path, _suffix = _chunk_dir_for_output(src)
     chunk_paths: list[str] = []
     if os.path.isfile(manifest_path):
         try:
@@ -150,8 +278,8 @@ def resolve_chunked_output(svg_path: str) -> dict:
     return {
         "svg_path": src if os.path.isfile(src) else "",
         "chunk_paths": chunk_paths,
-        "manifest_path": manifest_path if os.path.isfile(manifest_path) else "",
-        "chunk_dir": chunk_dir if os.path.isdir(chunk_dir) else "",
+        "manifest_path": manifest_path if chunk_paths and os.path.isfile(manifest_path) else "",
+        "chunk_dir": chunk_dir if chunk_paths and os.path.isdir(chunk_dir) else "",
     }
 
 
@@ -170,6 +298,14 @@ def _style_dict(style: str) -> dict[str, str]:
 def _set_style_value(el, key: str, value: str) -> None:
     style = _style_dict(el.get("style") or "")
     style[str(key)] = str(value)
+    el.set("style", ";".join(f"{k}:{v}" for k, v in style.items()))
+
+
+def _remove_style_value(el, key: str) -> None:
+    style = _style_dict(el.get("style") or "")
+    if str(key) not in style:
+        return
+    style.pop(str(key), None)
     el.set("style", ";".join(f"{k}:{v}" for k, v in style.items()))
 
 
@@ -212,6 +348,95 @@ def _find_output_page_groups(out_root) -> list:
     return groups
 
 
+def _output_page_group_pairs(pages: list[dict], page_groups: list) -> list[tuple[dict, object | None]]:
+    """Pair generated page geometry with generated output groups.
+
+    Page-grouped output carries the real page id in data-pnpink-page-id. Using
+    positional matching is unsafe when the source document has an original
+    template page before dm_page_* pages.
+    """
+    if page_groups:
+        pages_by_id: dict[str, dict] = {}
+        for page in pages or []:
+            page_id = str(page.get("id") or "").strip()
+            if page_id:
+                pages_by_id[page_id] = page
+
+        pairs: list[tuple[dict, object | None]] = []
+        seen: set[str] = set()
+        missing: list[str] = []
+        for group in page_groups:
+            page_id = str(group.get("data-pnpink-page-id") or "").strip()
+            page = pages_by_id.get(page_id)
+            if page is None:
+                if page_id:
+                    missing.append(page_id)
+                continue
+            if page_id in seen:
+                continue
+            seen.add(page_id)
+            pairs.append((page, group))
+        if pairs:
+            if missing:
+                _l.w(
+                    "[svg_chunks] page groups without matching namedview page: %s",
+                    ",".join(missing[:10]) + ("..." if len(missing) > 10 else ""),
+                )
+            return pairs
+
+    generated_pages = _output_generated_pages(pages)
+    return [
+        (page, page_groups[idx] if idx < len(page_groups or []) else None)
+        for idx, page in enumerate(generated_pages)
+    ]
+
+
+def _build_output_page_layout(
+    pages: list[dict],
+    page_groups: list,
+    keep_pages: set[int] | None = None,
+) -> OutputPageLayout:
+    pairs = tuple(_output_page_group_pairs(pages, page_groups))
+    generated_pages = [page for page, _group in pairs]
+    keep_page_nos = frozenset(
+        int(p)
+        for p in (keep_pages or set(range(1, len(generated_pages) + 1)))
+        if int(p) > 0
+    )
+    selected = tuple(
+        (idx, page)
+        for idx, page in enumerate(generated_pages, start=1)
+        if idx in keep_page_nos
+    )
+    if not selected:
+        raise ValueError("No output pages selected")
+
+    min_x = min(float(page["x"]) for _page_no, page in selected)
+    min_y = min(float(page["y"]) for _page_no, page in selected)
+    new_pos = {
+        page_no: (float(page["x"]) - min_x, float(page["y"]) - min_y)
+        for page_no, page in selected
+    }
+    extent_width = max(float(new_pos[page_no][0]) + float(page["w"]) for page_no, page in selected)
+    extent_height = max(float(new_pos[page_no][1]) + float(page["h"]) for page_no, page in selected)
+    return OutputPageLayout(
+        pairs=pairs,
+        selected=selected,
+        keep_page_nos=keep_page_nos,
+        new_pos=new_pos,
+        extent_width=float(extent_width),
+        extent_height=float(extent_height),
+        page_gap_px=_page_gap_px(generated_pages),
+    )
+
+
+def _move_node_to_page_layout(node, page_no: int, page: dict, layout: OutputPageLayout) -> None:
+    new_x, new_y = layout.new_pos[int(page_no)]
+    dx = float(new_x) - float(page["x"])
+    dy = float(new_y) - float(page["y"])
+    _translate_in_place(node, dx, dy)
+
+
 def _find_pnpink_layer(root):
     for child in list(root):
         try:
@@ -222,7 +447,29 @@ def _find_pnpink_layer(root):
     return None
 
 
+def _estimate_record_count(node) -> int:
+    if node is None:
+        return 0
+    count = 0
+    try:
+        iterator = node.iter()
+    except Exception:
+        iterator = []
+    for el in iterator:
+        try:
+            if str(el.get("data-pnpink-row-index") or "").strip():
+                count += 1
+        except Exception:
+            continue
+    return count
+
+
 def _is_marks_layer(node) -> bool:
+    try:
+        if str(node.get("data-pnpink-generated-root") or "").strip().lower() == "marks":
+            return True
+    except Exception:
+        pass
     try:
         label = str(node.get("{http://www.inkscape.org/namespaces/inkscape}label") or "").strip().lower()
     except Exception:
@@ -246,13 +493,19 @@ def prepare_full_output_doc(doc, *, source_svg_path: str, absolutize_images: boo
     if out_root is None:
         raise ValueError("No 'pnpink-output' group found in output SVG")
     pnpink_layer = _find_pnpink_layer(root)
+    page_groups = _find_output_page_groups(out_root)
+    output_page_ids = {
+        str(group.get("data-pnpink-page-id") or "").strip()
+        for group in page_groups
+        if str(group.get("data-pnpink-page-id") or "").strip()
+    }
 
     for el in _iter_page_elements(nv):
         try:
             page_id = str(el.get("id") or "").strip()
         except Exception:
             page_id = ""
-        if page_id.startswith("dm_page_"):
+        if (output_page_ids and page_id in output_page_ids) or (not output_page_ids and page_id.startswith("dm_page_")):
             continue
         try:
             nv.remove(el)
@@ -266,13 +519,7 @@ def prepare_full_output_doc(doc, *, source_svg_path: str, absolutize_images: boo
         if tag.endswith("defs"):
             continue
         if _is_marks_layer(child):
-            try:
-                st = _style_dict(child.get("style") or "")
-                if st.get("display") == "none":
-                    st.pop("display", None)
-                    child.set("style", ";".join(f"{k}:{v}" for k, v in st.items()))
-            except Exception:
-                pass
+            _remove_style_value(child, "display")
             continue
         if pnpink_layer is not None and child is pnpink_layer:
             continue
@@ -280,13 +527,7 @@ def prepare_full_output_doc(doc, *, source_svg_path: str, absolutize_images: boo
 
     if pnpink_layer is not None:
         for child in list(pnpink_layer):
-            try:
-                st = _style_dict(child.get("style") or "")
-                if st.get("display") == "none":
-                    st.pop("display", None)
-                    child.set("style", ";".join(f"{k}:{v}" for k, v in st.items()))
-            except Exception:
-                pass
+            _remove_style_value(child, "display")
 
     return {
         "fixed_images": fixed_images,
@@ -556,11 +797,10 @@ def analyze_output_doc(doc, *, source_svg_path: str, inkscape_exe: str | None = 
     page_groups = _find_output_page_groups(out_root)
 
     if page_groups:
-        generated_pages = _output_generated_pages(pages)
+        page_pairs = _output_page_group_pairs(pages, page_groups)
         slices: list[SvgPageSlice] = []
         t_est = time.perf_counter()
-        for idx, page in enumerate(generated_pages, start=1):
-            group = page_groups[idx - 1] if idx - 1 < len(page_groups) else None
+        for idx, (page, group) in enumerate(page_pairs, start=1):
             if group is None:
                 est_bytes = 0
                 node_ids = tuple()
@@ -582,6 +822,7 @@ def analyze_output_doc(doc, *, source_svg_path: str, inkscape_exe: str | None = 
                     h=float(page["h"]),
                     est_bytes=int(est_bytes),
                     node_ids=node_ids,
+                    record_count=_estimate_record_count(group),
                 )
             )
         _l.i(
@@ -593,22 +834,11 @@ def analyze_output_doc(doc, *, source_svg_path: str, inkscape_exe: str | None = 
             int((time.perf_counter() - t_est) * 1000),
             int((time.perf_counter() - t0) * 1000),
         )
-        for item in slices:
-            _l.i(
-                "[svg_chunks] page=%d page_id='%s' est_bytes=%d nodes=%d box=(%.2f,%.2f %.2fx%.2f)",
-                int(item.page_no),
-                item.page_id,
-                int(item.est_bytes),
-                len(item.node_ids),
-                float(item.x),
-                float(item.y),
-                float(item.w),
-                float(item.h),
-            )
+        _log_page_slices(slices)
         return {
             "fixed_images": fixed_images,
             "pages": slices,
-            "page_gap_px": float((generated_pages[1]["x"] - (generated_pages[0]["x"] + generated_pages[0]["w"])) if len(generated_pages) > 1 else 10.0),
+            "page_gap_px": _page_gap_px([page for page, _group in page_pairs]),
             "unassigned_nodes": tuple(),
         }
 
@@ -646,6 +876,7 @@ def analyze_output_doc(doc, *, source_svg_path: str, inkscape_exe: str | None = 
                 h=float(page["h"]),
                 est_bytes=est_bytes,
                 node_ids=node_ids,
+                record_count=len(node_ids),
             )
         )
 
@@ -665,6 +896,7 @@ def analyze_output_doc(doc, *, source_svg_path: str, inkscape_exe: str | None = 
                 h=item.h,
                 est_bytes=item.est_bytes,
                 node_ids=item.node_ids,
+                record_count=item.record_count,
             )
             for idx, item in enumerate(slices, start=1)
         ]
@@ -678,22 +910,11 @@ def analyze_output_doc(doc, *, source_svg_path: str, inkscape_exe: str | None = 
         sum(len(item.node_ids) for item in slices),
         len(unassigned_nodes),
     )
-    for item in slices:
-        _l.i(
-            "[svg_chunks] page=%d page_id='%s' est_bytes=%d nodes=%d box=(%.2f,%.2f %.2fx%.2f)",
-            int(item.page_no),
-            item.page_id,
-            int(item.est_bytes),
-            len(item.node_ids),
-            float(item.x),
-            float(item.y),
-            float(item.w),
-            float(item.h),
-        )
+    _log_page_slices(slices)
     return {
         "fixed_images": fixed_images,
         "pages": slices,
-        "page_gap_px": float((generated_pages[1]["x"] - (generated_pages[0]["x"] + generated_pages[0]["w"])) if len(generated_pages) > 1 else 10.0),
+        "page_gap_px": _page_gap_px(generated_pages),
         "unassigned_nodes": tuple(unassigned_nodes),
     }
 
@@ -704,7 +925,10 @@ def write_output_chunks_from_doc(
     *,
     source_svg_path: str,
     inkscape_exe: str | None = None,
-    target_chunk_bytes: int,
+    target_chunk_bytes: int | None = None,
+    target_pages: int | None = None,
+    target_records: int | None = None,
+    target_parts: int | None = None,
     analysis: dict | None = None,
     absolutize_images: bool = True,
 ) -> dict:
@@ -722,13 +946,18 @@ def write_output_chunks_from_doc(
     if not page_slices:
         raise ValueError("No generated pages available to export")
 
-    groups = build_chunk_plan(page_slices, target_chunk_bytes=target_chunk_bytes)
+    groups = build_chunk_plan(
+        page_slices,
+        target_chunk_bytes=target_chunk_bytes,
+        target_pages=target_pages,
+        target_records=target_records,
+        target_parts=target_parts,
+    )
     fixed_images = int(analysis_data.get("fixed_images") or 0)
     out_path = os.path.normpath(out_path)
     stem = Path(out_path).stem
     chunk_dir, manifest_path, suffix = _chunk_dir_for_output(out_path)
-    if os.path.isdir(chunk_dir):
-        shutil.rmtree(chunk_dir, ignore_errors=True)
+    cleanup_output_chunks(out_path)
     os.makedirs(chunk_dir, exist_ok=True)
     base_raw = SVG.etree.tostring(doc.getroot(), encoding="utf-8")
     _l.i("[svg_chunks] write_output chunk_dir='%s' target='%s'", chunk_dir, out_path)
@@ -752,16 +981,13 @@ def write_output_chunks_from_doc(
                 absolutize_images=absolutize_images,
             )
         chunk_svg_path = _chunk_svg_path(chunk_dir, stem, suffix, group_index)
-        try:
-            chunk_doc.write(chunk_svg_path, encoding="utf-8", xml_declaration=True)
-        except TypeError:
-            chunk_doc.write(chunk_svg_path)
+        _write_svg_doc(chunk_doc, chunk_svg_path)
         _l.i(
             "[svg_chunks] wrote output chunk=%d pages=%s svg='%s' est_bytes=%d root=(%s x %s)",
             group_index,
-            ",".join(str(int(item.page_no)) for item in group_pages),
+            _slice_pages_label(group_pages),
             chunk_svg_path,
-            sum(int(item.est_bytes or 0) for item in group_pages),
+            _slice_est_bytes(group_pages),
             str(chunk_info.get("root_width") or ""),
             str(chunk_info.get("root_height") or ""),
         )
@@ -774,7 +1000,10 @@ def write_output_chunks_from_doc(
     return {
         "fixed_images": fixed_images,
         "page_slices": page_slices,
-        "target_chunk_bytes": int(target_chunk_bytes),
+        "target_chunk_bytes": int(target_chunk_bytes or 0),
+        "target_pages": int(target_pages or 0),
+        "target_records": int(target_records or 0),
+        "target_parts": int(target_parts or 0),
         "chunk_count": len(chunk_paths),
         "chunk_dir": os.path.normpath(chunk_dir),
         "chunk_paths": tuple(chunk_paths),
@@ -786,32 +1015,59 @@ def write_output_chunks_from_doc(
 def build_chunk_plan(
     page_slices: list[SvgPageSlice],
     *,
-    target_chunk_bytes: int,
+    target_chunk_bytes: int | None = None,
+    target_pages: int | None = None,
+    target_records: int | None = None,
+    target_parts: int | None = None,
 ) -> list[list[SvgPageSlice]]:
+    if target_parts is not None and int(target_parts or 0) > 0:
+        parts = max(1, min(int(target_parts or 1), len(page_slices) or 1))
+        groups = []
+        n = len(page_slices)
+        for idx in range(parts):
+            start = (idx * n) // parts
+            end = ((idx + 1) * n) // parts
+            group = page_slices[start:end]
+            if group:
+                groups.append(group)
+        _l.i("[svg_chunks] chunk_plan parts=%d chunks=%d", parts, len(groups))
+        _log_chunk_groups(groups)
+        return groups
+
     groups: list[list[SvgPageSlice]] = []
     current: list[SvgPageSlice] = []
     current_bytes = 0
+    current_records = 0
+    byte_limit = int(target_chunk_bytes or 0)
+    page_limit = int(target_pages or 0)
+    record_limit = int(target_records or 0)
     for item in page_slices:
         item_bytes = max(1, int(item.est_bytes or 0))
-        if current and (current_bytes + item_bytes) > max(1, int(target_chunk_bytes or 1)):
+        item_records = max(0, int(getattr(item, "record_count", 0) or 0))
+        over_bytes = bool(byte_limit > 0 and (current_bytes + item_bytes) > byte_limit)
+        over_pages = bool(page_limit > 0 and (len(current) + 1) > page_limit)
+        over_records = bool(record_limit > 0 and current_records > 0 and (current_records + item_records) > record_limit)
+        if current and (over_bytes or over_pages or over_records):
             groups.append(current)
             current = [item]
             current_bytes = item_bytes
+            current_records = item_records
             continue
         current.append(item)
         current_bytes += item_bytes
+        current_records += item_records
     if current:
         groups.append(current)
     if not groups and page_slices:
         groups = [[item] for item in page_slices]
-    _l.i("[svg_chunks] chunk_plan target_bytes=%d chunks=%d", int(target_chunk_bytes), len(groups))
-    for idx, group in enumerate(groups, start=1):
-        _l.i(
-            "[svg_chunks] chunk=%d pages=%s est_bytes=%d",
-            idx,
-            ",".join(str(int(item.page_no)) for item in group),
-            sum(int(item.est_bytes or 0) for item in group),
-        )
+    _l.i(
+        "[svg_chunks] chunk_plan target_bytes=%d target_pages=%d target_records=%d chunks=%d",
+        int(byte_limit),
+        int(page_limit),
+        int(record_limit),
+        len(groups),
+    )
+    _log_chunk_groups(groups)
     return groups
 
 
@@ -826,17 +1082,13 @@ def normalize_output_doc(doc, *, source_svg_path: str, keep_pages: set[int] | No
     all_pages = SVG.list_existing_pages_px(root)
     if nv is None or not all_pages:
         raise ValueError("Output SVG has no namedview/pages")
-    generated_pages = _output_generated_pages(all_pages)
     out_root, run_groups = _find_output_groups(root)
     if out_root is None:
         raise ValueError("No 'pnpink-output' group found in output SVG")
     pnpink_layer = _find_pnpink_layer(root)
     page_groups = _find_output_page_groups(out_root)
-
-    keep_page_nos = set(int(p) for p in (keep_pages or set(range(1, len(generated_pages) + 1))) if int(p) > 0)
-    selected_pages = [page for idx, page in enumerate(generated_pages, start=1) if idx in keep_page_nos]
-    if not selected_pages:
-        raise ValueError("No output pages selected")
+    page_layout = _build_output_page_layout(all_pages, page_groups, keep_pages)
+    generated_pages = [page for page, _group in page_layout.pairs]
 
     for child in list(root):
         if child is nv:
@@ -844,31 +1096,30 @@ def normalize_output_doc(doc, *, source_svg_path: str, keep_pages: set[int] | No
         tag = str(getattr(child, "tag", "") or "")
         if tag.endswith("defs"):
             continue
+        if _is_marks_layer(child):
+            _remove_style_value(child, "display")
+            continue
         if pnpink_layer is not None and child is pnpink_layer:
             continue
         _set_style_value(child, "display", "none")
 
-    page_gap_px = float((generated_pages[1]["x"] - (generated_pages[0]["x"] + generated_pages[0]["w"])) if len(generated_pages) > 1 else 10.0)
-    x_cursor = 0.0
-    page_new_x: dict[int, float] = {}
-    selected_page_items: list[tuple[int, dict]] = []
-    for page_no, page in enumerate(generated_pages, start=1):
-        if page_no not in keep_page_nos:
-            continue
-        page_new_x[page_no] = x_cursor
-        selected_page_items.append((page_no, page))
-        x_cursor += float(page["w"]) + page_gap_px
-
     if page_groups:
         unassigned_nodes: tuple[str, ...] = tuple()
-        for page_no, page_group in enumerate(list(page_groups), start=1):
-            if page_no not in keep_page_nos:
-                out_root.remove(page_group)
+        selected_groups = {
+            id(group): page_no
+            for page_no, (_page, group) in enumerate(page_layout.pairs, start=1)
+            if group is not None and page_no in page_layout.keep_page_nos
+        }
+        for page_group in list(page_groups):
+            page_no = selected_groups.get(id(page_group))
+            if page_no is None:
+                try:
+                    out_root.remove(page_group)
+                except Exception:
+                    pass
                 continue
             page = generated_pages[page_no - 1]
-            dx = float(page_new_x[page_no]) - float(page["x"])
-            dy = 0.0 - float(page["y"])
-            _translate_in_place(page_group, dx, dy)
+            _move_node_to_page_layout(page_group, page_no, page, page_layout)
     else:
         counter = [0]
         candidate_nodes: list[tuple[str, object]] = []
@@ -889,7 +1140,7 @@ def normalize_output_doc(doc, *, source_svg_path: str, keep_pages: set[int] | No
         )
         selected_page_by_node: dict[str, tuple[int, dict]] = {}
         for page_no, page in enumerate(generated_pages, start=1):
-            if page_no not in keep_page_nos:
+            if page_no not in page_layout.keep_page_nos:
                 continue
             for node_id in page_nodes.get(page_no) or []:
                 selected_page_by_node[node_id] = (page_no, page)
@@ -904,9 +1155,7 @@ def normalize_output_doc(doc, *, source_svg_path: str, keep_pages: set[int] | No
                     container.remove(child)
                     continue
                 page_no, page = page_info
-                dx = float(page_new_x[page_no]) - float(page["x"])
-                dy = 0.0 - float(page["y"])
-                _translate_in_place(child, dx, dy)
+                _move_node_to_page_layout(child, page_no, page, page_layout)
             if container is not out_root and len(container) == 0:
                 try:
                     out_root.remove(container)
@@ -918,25 +1167,25 @@ def normalize_output_doc(doc, *, source_svg_path: str, keep_pages: set[int] | No
             nv.remove(el)
         except Exception:
             pass
-    for page_no, page in selected_page_items:
+    for page_no, page in page_layout.selected:
         old_el = page.get("el")
         if old_el is None:
             continue
         new_el = copy.deepcopy(old_el)
-        new_el.set("x", f"{page_new_x[page_no]:.6f}")
-        new_el.set("y", "0")
+        new_x, new_y = page_layout.new_pos[page_no]
+        new_el.set("x", f"{new_x:.6f}")
+        new_el.set("y", f"{new_y:.6f}")
         nv.append(new_el)
 
-    total_width = max(0.0, x_cursor - page_gap_px) if selected_page_items else float(selected_pages[0]["w"])
-    total_height = max(float(page["h"]) for _page_no, page in selected_page_items) if selected_page_items else float(selected_pages[0]["h"])
-    first_page_w = float(selected_pages[0]["w"])
-    first_page_h = float(selected_pages[0]["h"])
-    root.set("width", f"{first_page_w:.6f}{width_unit}")
-    root.set("height", f"{first_page_h:.6f}{height_unit}")
-    root.set("viewBox", f"0 0 {first_page_w:.6f} {first_page_h:.6f}")
+    first_page = page_layout.selected[0][1]
+    root_w = float(first_page["w"])
+    root_h = float(first_page["h"])
+    root.set("width", f"{root_w:.6f}{width_unit}")
+    root.set("height", f"{root_h:.6f}{height_unit}")
+    root.set("viewBox", f"0 0 {root_w:.6f} {root_h:.6f}")
     _l.i(
         "[svg_chunks] normalize pages=%s grouped_mode=%s out_children=%d root=(%s x %s)",
-        ",".join(str(int(page_no)) for page_no, _page in selected_page_items),
+        ",".join(str(int(page_no)) for page_no, _page in page_layout.selected),
         "page" if page_groups else "legacy",
         len([child for child in list(out_root) if isinstance(getattr(child, 'tag', None), str)]),
         str(root.get("width") or ""),
@@ -944,12 +1193,12 @@ def normalize_output_doc(doc, *, source_svg_path: str, keep_pages: set[int] | No
     )
     return {
         "fixed_images": fixed_images,
-        "page_gap_px": page_gap_px,
-        "page_count": len(selected_page_items),
-        "pages": tuple(int(page_no) for page_no, _page in selected_page_items),
+        "page_gap_px": page_layout.page_gap_px,
+        "page_count": len(page_layout.selected),
+        "pages": tuple(int(page_no) for page_no, _page in page_layout.selected),
         "unassigned_nodes": tuple(unassigned_nodes),
-        "extent_width": float(total_width),
-        "extent_height": float(total_height),
+        "extent_width": page_layout.extent_width,
+        "extent_height": page_layout.extent_height,
         "root_width": str(root.get("width") or ""),
         "root_height": str(root.get("height") or ""),
         "root_viewbox": str(root.get("viewBox") or ""),
@@ -963,10 +1212,7 @@ def normalize_output_svg_file(svg_path: str, *, out_path: str | None = None, ink
         doc = inkex.load_svg(fh.read())
     info = normalize_output_doc(doc, source_svg_path=svg_path, inkscape_exe=inkscape_exe)
     target = os.path.normpath(out_path or svg_path)
-    try:
-        doc.write(target, encoding="utf-8", xml_declaration=True)
-    except TypeError:
-        doc.write(target)
+    _write_svg_doc(doc, target)
     info["svg_path"] = target
     return info
 
@@ -976,19 +1222,45 @@ def write_svg_chunks(
     pdf_path: str,
     *,
     inkscape_exe: str,
-    target_chunk_bytes: int,
+    target_chunk_bytes: int | None = None,
+    target_pages: int | None = None,
+    target_records: int | None = None,
+    target_parts: int | None = None,
     artifact_dir: str | None = None,
 ) -> dict:
-    import inkex
-    import svg as SVG
-
-    analysis = analyze_output_pages(svg_path, inkscape_exe=inkscape_exe)
+    try:
+        analysis = analyze_output_pages(svg_path, inkscape_exe=inkscape_exe)
+    except ValueError as ex:
+        msg = str(ex)
+        if (
+            "pnpink-output" in msg
+            or "No pages found" in msg
+            or "No namedview" in msg
+        ):
+            return _regular_svg_chunk_plan(
+                svg_path,
+                pdf_path,
+                artifact_dir=os.path.normpath(artifact_dir or TEMPPATHS.make_work_dir("svg_export", stem=Path(pdf_path).stem)),
+                target_chunk_bytes=target_chunk_bytes,
+                target_pages=target_pages,
+                target_records=target_records,
+                target_parts=target_parts,
+            )
+        raise
     page_slices = list(analysis.get("pages") or [])
     if not page_slices:
         raise ValueError("No generated pages available to export")
 
-    groups = build_chunk_plan(page_slices, target_chunk_bytes=target_chunk_bytes)
+    groups = build_chunk_plan(
+        page_slices,
+        target_chunk_bytes=target_chunk_bytes,
+        target_pages=target_pages,
+        target_records=target_records,
+        target_parts=target_parts,
+    )
     fixed_images = int(analysis.get("fixed_images") or 0)
+
+    import inkex
 
     with open(svg_path, "rb") as fh:
         base_raw = fh.read()
@@ -996,7 +1268,14 @@ def write_svg_chunks(
     stem = Path(pdf_path).stem
     chunk_dir = os.path.normpath(artifact_dir or TEMPPATHS.make_work_dir("svg_export_chunks", stem=stem))
     _l.i("[svg_chunks] write chunk_dir='%s' source_svg='%s' output_pdf='%s'", chunk_dir, svg_path, pdf_path)
-    _l.i("[svg_chunks] plan total=%d target_chunk_bytes=%d", len(groups), int(target_chunk_bytes))
+    _l.i(
+        "[svg_chunks] plan total=%d target_chunk_bytes=%d target_pages=%d target_records=%d target_parts=%d",
+        len(groups),
+        int(target_chunk_bytes or 0),
+        int(target_pages or 0),
+        int(target_records or 0),
+        int(target_parts or 0),
+    )
     chunks: list[SvgChunk] = []
     for group_index, group_pages in enumerate(groups, start=1):
         doc = inkex.load_svg(base_raw)
@@ -1010,17 +1289,16 @@ def write_svg_chunks(
         chunk_svg_path = _chunk_svg_path(chunk_dir, stem, ".svg", group_index)
         chunk_pdf_path = _chunk_pdf_path(chunk_dir, stem, group_index)
         chunk_png_prefix = _chunk_png_prefix(chunk_dir, stem, group_index)
-        try:
-            doc.write(chunk_svg_path, encoding="utf-8", xml_declaration=True)
-        except TypeError:
-            doc.write(chunk_svg_path)
+        chunk_pages = tuple(int(item.page_no) for item in group_pages)
+        chunk_est_bytes = _slice_est_bytes(group_pages)
+        _write_svg_doc(doc, chunk_svg_path)
         _l.i(
             "[svg_chunks] wrote chunk=%d pages=%s svg='%s' pdf='%s' est_bytes=%d root=(%s x %s) extent=(%.2f x %.2f)",
             group_index,
-            ",".join(str(int(item.page_no)) for item in group_pages),
+            _slice_pages_label(group_pages),
             chunk_svg_path,
             chunk_pdf_path,
-            sum(int(item.est_bytes or 0) for item in group_pages),
+            chunk_est_bytes,
             str(chunk_info.get("root_width") or ""),
             str(chunk_info.get("root_height") or ""),
             float(chunk_info.get("extent_width") or 0.0),
@@ -1029,8 +1307,8 @@ def write_svg_chunks(
         chunks.append(
             SvgChunk(
                 index=group_index,
-                pages=tuple(int(item.page_no) for item in group_pages),
-                est_bytes=sum(int(item.est_bytes or 0) for item in group_pages),
+                pages=chunk_pages,
+                est_bytes=chunk_est_bytes,
                 svg_path=os.path.normpath(chunk_svg_path),
                 pdf_path=os.path.normpath(chunk_pdf_path),
                 png_prefix=os.path.normpath(chunk_png_prefix),
@@ -1050,6 +1328,9 @@ def write_svg_chunks(
         "chunk_dir": os.path.normpath(chunk_dir),
         "chunks": launch_order,
         "page_slices": page_slices,
-        "target_chunk_bytes": int(target_chunk_bytes),
+        "target_chunk_bytes": int(target_chunk_bytes or 0),
+        "target_pages": int(target_pages or 0),
+        "target_records": int(target_records or 0),
+        "target_parts": int(target_parts or 0),
         "unassigned_nodes": tuple(analysis.get("unassigned_nodes") or ()),
     }

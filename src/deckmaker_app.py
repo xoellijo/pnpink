@@ -110,8 +110,18 @@ class DeckMakerApp:
         self.pdf_raster_mode_var = tk.StringVar(value=prefs.get_pdf_raster_mode())
         self.export_dpi_var = tk.StringVar(value=str(prefs.get_export_dpi()))
         self.export_jpeg_quality_var = tk.StringVar(value=str(prefs.get_export_jpeg_quality()))
+        self.inkscape_workers_var = tk.StringVar(value=str(prefs.get_inkscape_shell_workers()))
+        self.template_engine_var = tk.StringVar(value=prefs.get_template_engine())
+        self.inline_bbox_backend_var = tk.StringVar(value=prefs.get_inline_icons_bbox_backend())
+        self.web_user_agent_var = tk.StringVar(value=prefs.get_web_user_agent())
+        self.console_log_level_var = tk.StringVar(value=prefs.get_console_level())
+        self.file_log_level_var = tk.StringVar(value=prefs.get_file_level())
         self.split_svg_output_var = tk.BooleanVar(value=prefs.get_split_svg_output())
-        self.split_svg_chunk_mb_var = tk.StringVar(value=str(prefs.get_split_svg_chunk_mb()))
+        self.split_svg_mode_var = tk.StringVar(value=prefs.get_split_svg_mode())
+        self.split_svg_parts_var = tk.StringVar(value="" if prefs.get_split_svg_parts() is None else str(prefs.get_split_svg_parts()))
+        self.split_svg_limit_pages_var = tk.StringVar(value="" if prefs.get_split_svg_limit_pages() is None else str(prefs.get_split_svg_limit_pages()))
+        self.split_svg_limit_records_var = tk.StringVar(value="" if prefs.get_split_svg_limit_records() is None else str(prefs.get_split_svg_limit_records()))
+        self.split_svg_chunk_mb_var = tk.StringVar(value="" if prefs.get_split_svg_chunk_mb_optional() is None else str(prefs.get_split_svg_chunk_mb_optional()))
         self._pdf_profile_names = ("default", "screen", "ebook", "printer", "prepress")
         self.pdf_profile_vars = {key: tk.BooleanVar(value=False) for key in self._pdf_profile_names}
         self._icc_profiles = ICC.display_choices()
@@ -127,6 +137,10 @@ class DeckMakerApp:
         self._active_progress_started_at: float | None = None
         self._active_progress_rate_unit = ""
         self._web_activity_stats = self._reset_web_activity_stats()
+        self._source_change_after_id = None
+        self._suppress_source_change = False
+        self._generated_output_ready = False
+        self._dataset_source_invalid = False
         try:
             TEMPPATHS.cleanup_runs_now()
         except Exception:
@@ -141,7 +155,8 @@ class DeckMakerApp:
         self.root.after(150, self._drain_queue)
         self.root.after(80, self._drain_ui_queue)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.sheet_id_var.trace_add("write", lambda *_: self._schedule_auth_warmup())
+        self.sheet_id_var.trace_add("write", lambda *_: self._on_dataset_source_edited())
+        self.sheet_range_var.trace_add("write", lambda *_: self._on_dataset_source_edited())
 
     def _build_ui(self):
         tk = self.tk
@@ -387,28 +402,95 @@ class DeckMakerApp:
         jpeg_quality_spin.bind("<FocusOut>", lambda _e: self._on_export_jpeg_quality_changed())
         jpeg_quality_spin.bind("<Return>", lambda _e: self._on_export_jpeg_quality_changed())
 
-        split_box = ttk.LabelFrame(other_tab, text="SVG Parts", padding=8)
-        split_box.grid(row=0, column=0, sticky="ew", pady=(0, 12))
-        split_box.columnconfigure(1, weight=1)
-        ttk.Checkbutton(
-            split_box,
-            text="Split SVG",
+        split_box = ttk.LabelFrame(other_tab, padding=8)
+        split_label = ttk.Frame(split_box)
+        split_toggle = ttk.Checkbutton(
+            split_label,
+            text="",
             variable=self.split_svg_output_var,
             command=self._on_svg_chunk_prefs_changed,
-        ).grid(row=0, column=0, columnspan=2, sticky="w")
-        ttk.Label(split_box, text="Part target MB").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
-        chunk_spin = ttk.Spinbox(
-            split_box,
-            from_=1,
-            to=2048,
-            increment=1,
-            textvariable=self.split_svg_chunk_mb_var,
-            width=8,
-            command=self._on_svg_chunk_prefs_changed,
         )
-        chunk_spin.grid(row=1, column=1, sticky="w", pady=(8, 0))
-        chunk_spin.bind("<FocusOut>", lambda _e: self._on_svg_chunk_prefs_changed())
-        chunk_spin.bind("<Return>", lambda _e: self._on_svg_chunk_prefs_changed())
+        split_toggle.grid(row=0, column=0, sticky="w")
+        ttk.Label(split_label, text="SVG Parts").grid(row=0, column=1, sticky="w", padx=(2, 0))
+        split_box.configure(labelwidget=split_label)
+        split_box.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        ttk.Radiobutton(
+            split_box,
+            text="By parts",
+            value="parts",
+            variable=self.split_svg_mode_var,
+            command=self._on_svg_chunk_prefs_changed,
+        ).grid(row=0, column=0, sticky="w", padx=(0, 8))
+        ttk.Label(split_box, text="Parts").grid(row=0, column=1, sticky="w", padx=(0, 4))
+        parts_entry = ttk.Entry(split_box, textvariable=self.split_svg_parts_var, width=8)
+        parts_entry.grid(row=0, column=2, sticky="w")
+        ttk.Radiobutton(
+            split_box,
+            text="By limits",
+            value="limits",
+            variable=self.split_svg_mode_var,
+            command=self._on_svg_chunk_prefs_changed,
+        ).grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
+        ttk.Label(split_box, text="Pages").grid(row=1, column=1, sticky="w", padx=(0, 4), pady=(8, 0))
+        pages_entry = ttk.Entry(split_box, textvariable=self.split_svg_limit_pages_var, width=8)
+        pages_entry.grid(row=1, column=2, sticky="w", pady=(8, 0))
+        ttk.Label(split_box, text="Records").grid(row=1, column=3, sticky="w", padx=(10, 4), pady=(8, 0))
+        records_entry = ttk.Entry(split_box, textvariable=self.split_svg_limit_records_var, width=8)
+        records_entry.grid(row=1, column=4, sticky="w", pady=(8, 0))
+        ttk.Label(split_box, text="MB").grid(row=1, column=5, sticky="w", padx=(10, 4), pady=(8, 0))
+        mb_entry = ttk.Entry(split_box, textvariable=self.split_svg_chunk_mb_var, width=8)
+        mb_entry.grid(row=1, column=6, sticky="w", pady=(8, 0))
+        for entry in (parts_entry, pages_entry, records_entry, mb_entry):
+            entry.bind("<FocusOut>", lambda _e: self._on_svg_chunk_prefs_changed())
+            entry.bind("<Return>", lambda _e: self._on_svg_chunk_prefs_changed())
+
+        advanced_box = ttk.LabelFrame(other_tab, text="Advanced", padding=8)
+        advanced_box.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        ttk.Label(advanced_box, text="Inkscape workers").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        workers_entry = ttk.Entry(advanced_box, textvariable=self.inkscape_workers_var, width=8)
+        workers_entry.grid(row=0, column=1, sticky="w")
+        workers_entry.bind("<FocusOut>", lambda _e: self._on_advanced_prefs_changed())
+        workers_entry.bind("<Return>", lambda _e: self._on_advanced_prefs_changed())
+        ttk.Label(advanced_box, text="Template engine").grid(row=0, column=2, sticky="w", padx=(12, 6))
+        template_combo = ttk.Combobox(
+            advanced_box,
+            textvariable=self.template_engine_var,
+            values=("legacy", "composed"),
+            state="readonly",
+            width=12,
+        )
+        template_combo.grid(row=0, column=3, sticky="w")
+        template_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_advanced_prefs_changed())
+        ttk.Label(advanced_box, text="BBox backend").grid(row=0, column=4, sticky="w", padx=(12, 6))
+        bbox_combo = ttk.Combobox(
+            advanced_box,
+            textvariable=self.inline_bbox_backend_var,
+            values=("query_all", "shell_per_text"),
+            state="readonly",
+            width=14,
+        )
+        bbox_combo.grid(row=0, column=5, sticky="w")
+        bbox_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_advanced_prefs_changed())
+        ttk.Label(advanced_box, text="Web User-Agent").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        web_ua_entry = ttk.Entry(advanced_box, textvariable=self.web_user_agent_var, width=42)
+        web_ua_entry.grid(row=1, column=1, columnspan=5, sticky="ew", pady=(8, 0))
+        web_ua_entry.bind("<FocusOut>", lambda _e: self._on_advanced_prefs_changed())
+        web_ua_entry.bind("<Return>", lambda _e: self._on_advanced_prefs_changed())
+        advanced_box.columnconfigure(5, weight=1)
+        ttk.Button(advanced_box, text="Open preferences", command=self._open_preferences_file).grid(row=0, column=6, sticky="w", padx=(12, 0))
+
+        logs_box = ttk.LabelFrame(other_tab, text="Logs", padding=8)
+        logs_box.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        log_levels = ("none", "error", "warn", "info", "debug", "trace", "all")
+        ttk.Label(logs_box, text="Console").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        console_combo = ttk.Combobox(logs_box, textvariable=self.console_log_level_var, values=log_levels, state="readonly", width=10)
+        console_combo.grid(row=0, column=1, sticky="w")
+        console_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_log_prefs_changed())
+        ttk.Label(logs_box, text="File").grid(row=0, column=2, sticky="w", padx=(12, 6))
+        file_combo = ttk.Combobox(logs_box, textvariable=self.file_log_level_var, values=log_levels, state="readonly", width=10)
+        file_combo.grid(row=0, column=3, sticky="w")
+        file_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_log_prefs_changed())
+        ttk.Button(logs_box, text="Open log file", command=self._open_log_file).grid(row=0, column=4, sticky="w", padx=(12, 0))
 
         about_text = (
             "PnPInk DeckMaker\n\n"
@@ -565,6 +647,35 @@ class DeckMakerApp:
 
         return on_output
 
+    def _make_final_pdf_output_activity(self, total_pages: int):
+        total = max(0, int(total_pages or 0))
+        buffer = {"text": ""}
+
+        def on_output(chunk: str):
+            text = str(chunk or "")
+            if not text:
+                return
+            buffer["text"] += text
+            while "\n" in buffer["text"] or "\r" in buffer["text"]:
+                line, sep, rest = buffer["text"].partition("\n")
+                if not sep:
+                    line, _sep, rest = buffer["text"].partition("\r")
+                buffer["text"] = rest
+                item = line.strip()
+                if not item:
+                    continue
+                m = re.search(r"PNPINK_FINAL_PDF_PROGRESS\s+(\d+)\s+(\d+)", item)
+                if m:
+                    self._set_activity_progress("Preparing final PDF", int(m.group(1)), int(m.group(2)))
+                    continue
+                m = re.search(r"\bPage\s+(\d+)\b", item, re.IGNORECASE)
+                if m and total > 0:
+                    self._set_activity_progress("Preparing final PDF", min(int(m.group(1)), total), total)
+                else:
+                    self._queue_ui_activity("Preparing final PDF ...")
+
+        return on_output
+
     def _handle_progress_update(self, label: str, current: int, total: int):
         text_label = str(label or "").strip()
         if not text_label:
@@ -602,6 +713,8 @@ class DeckMakerApp:
             "wkmc_fetched": 0,
             "web_cached": 0,
             "wkmc_failed": 0,
+            "web_sources_total": 0,
+            "web_sources_done": 0,
             "raster_jobs": 0,
             "raster_chunks": 0,
             "raster_job_total": 0,
@@ -681,23 +794,95 @@ class DeckMakerApp:
                 if m:
                     _set_activity(f"Preparing {m.group(1)} direct web download(s)...")
                 return
+            if "[sources.progress] web_sources discovered" in line:
+                direct = virtual = wkmc = 0
+                m = re.search(r"direct=(\d+)\s+virtual=(\d+)\s+wkmc=(\d+)", line)
+                if m:
+                    direct, virtual, wkmc = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                total = max(0, int(direct) + int(virtual))
+                self._web_activity_stats["web_sources_total"] = total
+                self._web_activity_stats["web_sources_done"] = 0
+                if total > 0:
+                    _set_progress("Preparing web assets", 0, total)
+                elif wkmc > 0:
+                    _set_activity(f"Preparing Wikimedia assets ({wkmc})...")
+                return
             if "[sources] wkmc fetched query=" in line:
                 self._web_activity_stats["wkmc_fetched"] += 1
                 n = int(self._web_activity_stats["wkmc_fetched"])
-                if n <= 3 or (n % 10) == 0:
+                total = int(self._web_activity_stats.get("web_sources_total") or 0)
+                if total > 0:
+                    self._web_activity_stats["web_sources_done"] = min(total, int(self._web_activity_stats.get("web_sources_done") or 0) + 1)
+                    _set_progress("Preparing web assets", int(self._web_activity_stats["web_sources_done"]), total)
+                elif n <= 3 or (n % 10) == 0:
                     _set_activity(f"Wikimedia resolved {n} item(s)...")
+                return
+            if "[sources] wkmc cache hit query=" in line:
+                self._web_activity_stats["wkmc_fetched"] += 1
+                n = int(self._web_activity_stats["wkmc_fetched"])
+                total = int(self._web_activity_stats.get("web_sources_total") or 0)
+                if total > 0:
+                    self._web_activity_stats["web_sources_done"] = min(total, int(self._web_activity_stats.get("web_sources_done") or 0) + 1)
+                    _set_progress("Preparing web assets", int(self._web_activity_stats["web_sources_done"]), total)
+                elif n <= 3 or (n % 10) == 0:
+                    _set_activity(f"Using cached Wikimedia result(s): {n}")
                 return
             if "[sources] web cached ->" in line:
                 self._web_activity_stats["web_cached"] += 1
                 n = int(self._web_activity_stats["web_cached"])
-                if n <= 3 or (n % 5) == 0:
+                total = int(self._web_activity_stats.get("web_sources_total") or 0)
+                if total > 0:
+                    self._web_activity_stats["web_sources_done"] = min(total, int(self._web_activity_stats.get("web_sources_done") or 0) + 1)
+                    _set_progress("Preparing web assets", int(self._web_activity_stats["web_sources_done"]), total)
+                elif n <= 3 or (n % 5) == 0:
                     _set_activity(f"Downloaded {n} web asset(s)...")
+                return
+            if "[sources] web cache hit ->" in line:
+                self._web_activity_stats["web_cached"] += 1
+                n = int(self._web_activity_stats["web_cached"])
+                total = int(self._web_activity_stats.get("web_sources_total") or 0)
+                if total > 0:
+                    self._web_activity_stats["web_sources_done"] = min(total, int(self._web_activity_stats.get("web_sources_done") or 0) + 1)
+                    _set_progress("Preparing web assets", int(self._web_activity_stats["web_sources_done"]), total)
+                elif n <= 3 or (n % 5) == 0:
+                    _set_activity(f"Using cached web asset(s): {n}")
+                return
+            if "transient HTTP 429" in line or "transient HTTP 503" in line:
+                m = re.search(r"transient HTTP\s+(\d+).*?(retry-after=[^;]+).*?host delay=([0-9.]+)s.*?workers=(\d+)", line, re.I)
+                if m:
+                    _set_activity(
+                        f"Remote service is rate-limiting downloads: HTTP {m.group(1)}, "
+                        f"{m.group(2)}, waiting {m.group(3)}s, workers={m.group(4)}"
+                    )
+                else:
+                    _set_activity("Remote service is rate-limiting downloads; retrying with backoff...")
                 return
             if "[sources] wkmc fetch failed" in line:
                 self._web_activity_stats["wkmc_failed"] += 1
                 n = int(self._web_activity_stats["wkmc_failed"])
                 if n <= 3 or (n % 5) == 0:
                     _set_activity(f"Wikimedia retries/failures: {n}")
+                return
+            if "[sources.progress] web_sources final" in line:
+                m = re.search(
+                    r"direct=(\d+)\s+virtual=(\d+)\s+wkmc=(\d+)\s+downloaded=(\d+)\s+cached=(\d+)\s+download_failed=(\d+)\s+wkmc_resolved=(\d+)\s+wkmc_failed=(\d+)\s+pending=(\d+)",
+                    line,
+                )
+                if m:
+                    downloaded = int(m.group(4))
+                    cached = int(m.group(5))
+                    download_failed = int(m.group(6))
+                    wkmc_resolved = int(m.group(7))
+                    wkmc_failed = int(m.group(8))
+                    pending = int(m.group(9))
+                    total = int(self._web_activity_stats.get("web_sources_total") or 0)
+                    done = max(downloaded + cached + wkmc_resolved + download_failed + wkmc_failed, total - pending)
+                    if total > 0:
+                        _set_progress("Preparing web assets", min(done, total), total)
+                    _set_activity(
+                        f"Web assets ready: downloaded={downloaded}, cached={cached}, Wikimedia={wkmc_resolved}, "
+                        f"failed={download_failed + wkmc_failed}, pending={pending}"
+                    )
                 return
             if "[raster] export-id png jobs=" in line:
                 m = re.search(r"export-id png jobs=%d ids=%s\s+(\d+)", line)
@@ -745,20 +930,10 @@ class DeckMakerApp:
                     self._web_activity_stats["last_png_logged"] = done
                 return
             if "[export.pdf] merge_profiles total=" in line:
-                m = re.search(r"merge_profiles total=\s*(\d+)", line)
-                if m:
-                    self._web_activity_stats["pdf_merge_total"] = int(m.group(1))
-                    self._web_activity_stats["pdf_merge_done"] = 0
-                    _set_progress("Merging PDF profiles", 0, int(m.group(1)))
+                _set_activity("Preparing final PDF ...")
                 return
             if "[export.pdf] merge profile=" in line:
-                total = int(self._web_activity_stats.get("pdf_merge_total") or 0)
-                if total > 0:
-                    self._web_activity_stats["pdf_merge_done"] += 1
-                    done = int(self._web_activity_stats.get("pdf_merge_done") or 0)
-                    _set_progress("Merging PDF profiles", min(done, total), total)
-                else:
-                    _set_activity("Merging PDF profiles...")
+                _set_activity("Preparing final PDF ...")
                 return
 
         self._activity_listener = process_line
@@ -861,11 +1036,11 @@ class DeckMakerApp:
 
     def _detect_source_mode(self, template: str, sheet_id: str, explicit: str = "") -> str:
         mode = str(explicit or "").strip().lower()
-        if mode and mode in SOURCE_MODE_VALUE_TO_LABEL:
-            return mode
         template = _normalize_path(template)
         sheet_id = str(sheet_id or "").strip()
         if sheet_id:
+            if mode in {"public", "oauth"}:
+                return mode
             try:
                 import dataset_state as DSTATE
 
@@ -877,11 +1052,64 @@ class DeckMakerApp:
             except Exception:
                 pass
             return ""
+        if mode and mode in SOURCE_MODE_VALUE_TO_LABEL:
+            return mode
         if template:
             csv_path = os.path.splitext(template)[0] + ".csv"
             if os.path.isfile(csv_path):
                 return "local_csv"
         return ""
+
+    def _has_dataset_source(self, template: str = "", sheet_id: str = "") -> bool:
+        template = _normalize_path(template or self.template_var.get())
+        if str(sheet_id or self.sheet_id_var.get() or "").strip():
+            return True
+        if not template:
+            return False
+        return os.path.isfile(os.path.splitext(template)[0] + ".csv")
+
+    def _template_exists(self, template: str = "") -> bool:
+        target = _normalize_path(template or self.template_var.get())
+        return bool(target and os.path.isfile(target))
+
+    def _output_exists(self, template: str = "") -> bool:
+        if not self._template_exists(template):
+            return False
+        return os.path.isfile(DMPATHS.output_svg(template or self.template_var.get()))
+
+    def _can_generate(self, template: str = "", sheet_id: str = "") -> bool:
+        target = _normalize_path(template or self.template_var.get())
+        return bool(
+            target
+            and os.path.isfile(target)
+            and (not self._dataset_source_invalid)
+            and self._has_dataset_source(target, sheet_id)
+        )
+
+    def _can_open_output(self, template: str = "") -> bool:
+        target = _normalize_path(template or self.template_var.get())
+        if not self._can_generate(target):
+            return False
+        return bool(self._generated_output_ready and self._output_exists(target))
+
+    def _export_source_svg_path(self, template: str) -> str:
+        target = _normalize_path(template)
+        if self._can_open_output(target):
+            return DMPATHS.output_svg(target)
+        return target
+
+    def _refresh_action_button_state(self) -> None:
+        busy = bool((self._render_thread is not None) or self._post_create_busy)
+        template = _normalize_path(self.template_var.get())
+        can_generate = (not busy) and self._can_generate(template)
+        can_open = (not busy) and self._can_open_output(template)
+        can_export = (not busy) and self._template_exists(template) and bool(self._selected_export_formats())
+        try:
+            self.run_btn.configure(state="normal" if can_generate else "disabled")
+            self.open_btn.configure(state="normal" if can_open else "disabled")
+            self.pdf_btn.configure(state="normal" if can_export else "disabled")
+        except Exception:
+            pass
 
     def _refresh_source_mode(self, template: str = "", explicit: str = "") -> None:
         detected = self._detect_source_mode(
@@ -892,7 +1120,46 @@ class DeckMakerApp:
         self.source_mode_var.set(self._source_mode_label(detected))
 
     def _on_source_mode_changed(self) -> None:
+        self._on_dataset_source_edited()
         self._log(f"Dataset source mode = {self.source_mode_var.get()}")
+
+    def _on_dataset_source_edited(self) -> None:
+        if self._suppress_source_change:
+            return
+        try:
+            if self._source_change_after_id is not None:
+                self.root.after_cancel(self._source_change_after_id)
+        except Exception:
+            pass
+        self._source_change_after_id = self.root.after(250, self._commit_dataset_source_edit)
+
+    def _commit_dataset_source_edit(self) -> None:
+        self._source_change_after_id = None
+        template = _normalize_path(self.template_var.get())
+        sheet_id = self.sheet_id_var.get().strip()
+        source_mode = self._source_mode_value()
+        if sheet_id and source_mode == "local_csv":
+            self._refresh_source_mode(template, "")
+            source_mode = self._source_mode_value()
+        elif not source_mode:
+            self._refresh_source_mode(template)
+            source_mode = self._source_mode_value()
+        self._schedule_auth_warmup()
+        self._generated_output_ready = False
+        self._dataset_source_invalid = False
+        if template and sheet_id:
+            try:
+                import dataset_state as DSTATE
+
+                access_mode = source_mode if source_mode in {"public", "oauth"} else ""
+                DSTATE.set_gsheet_for_svg(template, sheet_id, self.sheet_range_var.get().strip(), access_mode)
+            except Exception:
+                _l.w("[deckmaker_app] dataset state save on edit failed\n" + traceback.format_exc())
+        self._refresh_action_button_state()
+        if self._has_dataset_source(template, sheet_id):
+            self.status_var.set("Ready")
+        else:
+            self.status_var.set("Choose CSV or Google Sheet source")
 
     def _refresh_icc_profile_choices(self):
         current = ICC.preference_value(self.pdf_cmyk_icc_var.get())
@@ -955,17 +1222,62 @@ class DeckMakerApp:
 
     def _on_svg_chunk_prefs_changed(self):
         prefs.set_split_svg_output(bool(self.split_svg_output_var.get()))
-        try:
-            chunk_mb = int(str(self.split_svg_chunk_mb_var.get() or "").strip())
-        except Exception:
-            chunk_mb = prefs.get_split_svg_chunk_mb()
-        chunk_mb = max(1, min(chunk_mb, 2048))
-        self.split_svg_chunk_mb_var.set(str(chunk_mb))
-        prefs.set_split_svg_chunk_mb(chunk_mb)
+        mode = str(self.split_svg_mode_var.get() or "limits").strip().lower()
+        if mode not in {"parts", "limits"}:
+            mode = "limits"
+            self.split_svg_mode_var.set(mode)
+        prefs.set_split_svg_mode(mode)
+        prefs.set_split_svg_parts(self.split_svg_parts_var.get())
+        prefs.set_split_svg_limit_pages(self.split_svg_limit_pages_var.get())
+        prefs.set_split_svg_limit_records(self.split_svg_limit_records_var.get())
+        prefs.set_split_svg_chunk_mb(self.split_svg_chunk_mb_var.get())
+        parts = prefs.get_split_svg_parts()
+        pages = prefs.get_split_svg_limit_pages()
+        records = prefs.get_split_svg_limit_records()
+        mb = prefs.get_split_svg_chunk_mb_optional()
+        self.split_svg_parts_var.set("" if parts is None else str(parts))
+        self.split_svg_limit_pages_var.set("" if pages is None else str(pages))
+        self.split_svg_limit_records_var.set("" if records is None else str(records))
+        self.split_svg_chunk_mb_var.set("" if mb is None else str(mb))
         self._log(
             "Preference saved: split SVG into parts = "
             f"{'on' if self.split_svg_output_var.get() else 'off'}, "
-            f"part_mb={chunk_mb}"
+            f"mode={mode}, parts={parts or ''}, pages={pages or ''}, records={records or ''}, mb={mb or ''}"
+        )
+
+    def _on_advanced_prefs_changed(self):
+        try:
+            workers = int(float(str(self.inkscape_workers_var.get() or "").strip()))
+        except Exception:
+            workers = prefs.get_inkscape_shell_workers()
+        workers = max(1, min(workers, 32))
+        self.inkscape_workers_var.set(str(workers))
+        prefs.set_inkscape_shell_workers(workers)
+        template_engine = str(self.template_engine_var.get() or "legacy").strip().lower()
+        if template_engine not in {"legacy", "composed"}:
+            template_engine = "legacy"
+            self.template_engine_var.set(template_engine)
+        bbox_backend = str(self.inline_bbox_backend_var.get() or "query_all").strip().lower()
+        if bbox_backend not in {"query_all", "shell_per_text"}:
+            bbox_backend = "query_all"
+            self.inline_bbox_backend_var.set(bbox_backend)
+        prefs.set("template_engine", template_engine, save=True)
+        prefs.set("inline_icons_bbox_backend", bbox_backend, save=True)
+        web_user_agent = str(self.web_user_agent_var.get() or "").strip()
+        prefs.set_web_user_agent(web_user_agent)
+        self.web_user_agent_var.set(prefs.get_web_user_agent())
+        self._log(
+            "Preference saved: "
+            f"workers={workers}, template_engine={template_engine}, "
+            f"bbox_backend={bbox_backend}, web_user_agent={prefs.get_web_user_agent()}"
+        )
+
+    def _on_log_prefs_changed(self):
+        prefs.set_console_level(self.console_log_level_var.get())
+        prefs.set_file_level(self.file_log_level_var.get())
+        self._log(
+            "Preference saved: logs = "
+            f"console={prefs.get_console_level()}, file={prefs.get_file_level()}"
         )
 
     def _selected_export_formats(self) -> list[str]:
@@ -977,11 +1289,7 @@ class DeckMakerApp:
         return out
 
     def _refresh_export_button_state(self):
-        try:
-            enabled = bool(self._selected_export_formats())
-            self.pdf_btn.configure(state="normal" if enabled else "disabled")
-        except Exception:
-            pass
+        self._refresh_action_button_state()
 
     def _export_dpi_value(self) -> int:
         try:
@@ -1107,12 +1415,23 @@ class DeckMakerApp:
     def _open_examples_folder(self) -> None:
         self._open_path_in_system(DMPATHS.examples_dir(os.path.dirname(__file__)))
 
+    def _open_preferences_file(self) -> None:
+        self._open_path_in_system(prefs.ini_path())
+
+    def _open_log_file(self) -> None:
+        self._open_path_in_system(os.path.join(os.path.dirname(__file__), "pnpink.log"))
+
     def _open_output_clicked(self) -> None:
-        svg_path = self._output_svg_path()
-        open_target = svg_path if os.path.isfile(svg_path) else ""
-        if not open_target or not os.path.isfile(open_target):
+        if not self._has_dataset_source():
+            self.status_var.set("Choose CSV or Google Sheet source")
+            self._log("Open output disabled: choose a CSV or Google Sheet source first")
+            self._refresh_action_button_state()
+            return
+        open_target = self._output_svg_path()
+        if not self._can_open_output():
             self.status_var.set("Generate output first")
             self._log("Generate output first")
+            self._refresh_action_button_state()
             return
         try:
             self._open_svg_in_inkscape(open_target)
@@ -1126,33 +1445,52 @@ class DeckMakerApp:
         target = _normalize_path(svg_path)
         if not target or not os.path.isfile(target):
             raise FileNotFoundError(target or "missing svg")
-        exe = INKSCAPE.find_executable()
-        if not exe:
+        if not INKSCAPE.launch_gui(target):
             self._open_path_in_system(target)
             return
-        kwargs = {
-            "args": [exe, target],
-            "cwd": os.path.dirname(target) or None,
-            "env": INKSCAPE.clean_launch_env(isolated_profile=False),
-            "stdin": subprocess.DEVNULL,
-            "stdout": subprocess.DEVNULL,
-            "stderr": subprocess.DEVNULL,
-        }
-        subprocess.Popen(**kwargs)
 
     def _set_request(self, req: AppRequest):
         self._request_serial += 1
         serial = self._request_serial
-        self.template_var.set(_normalize_path(req.template))
-        self._refresh_window_title()
-        self.sheet_id_var.set(req.sheet_id or "")
-        self.sheet_range_var.set(req.sheet_range or "")
-        self._refresh_source_mode(req.template, req.dataset_source_mode)
+        sheet_id = req.sheet_id or ""
+        sheet_range = req.sheet_range or ""
+        self._suppress_source_change = True
+        try:
+            self.template_var.set(_normalize_path(req.template))
+            self._refresh_window_title()
+            if not sheet_id:
+                try:
+                    import dataset_state as DSTATE
+
+                    rec = DSTATE.get_gsheet_for_svg(req.template) or {}
+                    sheet_id = str(rec.get("sheet_id") or "")
+                    sheet_range = str(rec.get("sheet_range") or "")
+                    if not req.dataset_source_mode:
+                        req = AppRequest(
+                            template=req.template,
+                            sheet_id=sheet_id,
+                            sheet_range=sheet_range,
+                            log_level=req.log_level,
+                            dataset_source_mode=str(rec.get("access_mode") or ""),
+                        )
+                except Exception:
+                    pass
+            self.sheet_id_var.set(sheet_id)
+            self.sheet_range_var.set(sheet_range)
+            self._refresh_source_mode(req.template, req.dataset_source_mode)
+        finally:
+            self._suppress_source_change = False
+        self._dataset_source_invalid = False
         self.status_var.set("Template received")
         self._log(f"Template: {os.path.basename(_normalize_path(req.template))}")
-        if req.sheet_id:
-            detail = f" range={req.sheet_range}" if req.sheet_range else ""
+        if sheet_id:
+            detail = f" range={sheet_range}" if sheet_range else ""
             self._log(f"Google Sheets source ready{detail}")
+        elif not self._has_dataset_source(req.template, sheet_id):
+            self.status_var.set("Choose CSV or Google Sheet source")
+            self._log("No dataset source configured yet; enter a Google Sheet ID or add a CSV next to the SVG")
+        self._generated_output_ready = self._has_dataset_source(req.template, sheet_id) and self._output_exists(req.template)
+        self._refresh_action_button_state()
         self._schedule_auth_warmup()
         try:
             self.root.lift()
@@ -1224,6 +1562,11 @@ class DeckMakerApp:
             return
         if not _normalize_path(self.template_var.get()) or not os.path.isfile(_normalize_path(self.template_var.get())):
             return
+        if not self._can_generate():
+            self.status_var.set("Choose CSV or Google Sheet source")
+            self._log("Auto generate skipped: choose CSV or Google Sheet source")
+            self._refresh_action_button_state()
+            return
         self._run_clicked(autorun=True)
 
     def _run_clicked(self, autorun: bool = False):
@@ -1233,6 +1576,14 @@ class DeckMakerApp:
         if not template or not os.path.isfile(template):
             self.status_var.set("Save/open a template SVG first")
             self._log("Save/open a template SVG first")
+            return
+        if not self._can_generate(template):
+            self.status_var.set("Choose CSV or Google Sheet source")
+            if self._dataset_source_invalid:
+                self._log("Dataset source failed or has no usable data; edit the CSV/Google Sheet settings before generating again")
+            else:
+                self._log("Choose a CSV next to the SVG or enter a Google Sheet ID")
+            self._refresh_action_button_state()
             return
         source_mode = self._detect_source_mode(template, self.sheet_id_var.get().strip(), self._source_mode_value())
         sheet_id = "" if source_mode == "local_csv" else self.sheet_id_var.get().strip()
@@ -1246,10 +1597,13 @@ class DeckMakerApp:
         self._run_started_at = time.perf_counter()
         self.run_btn.configure(state="disabled")
         self.open_btn.configure(state="disabled")
+        self.pdf_btn.configure(state="disabled")
+        self._generated_output_ready = False
         self.progress.start(10)
         self.status_var.set("Generating...")
         self._set_activity("Generating output...")
         self._log(("Auto generate" if autorun else "Generate") + " started")
+        self._dataset_source_invalid = False
         self._render_thread = threading.Thread(target=self._render_worker, args=(req,), daemon=True)
         self._render_thread.start()
 
@@ -1277,20 +1631,23 @@ class DeckMakerApp:
             dpi_report = PREFLIGHT.effective_image_dpi_report(DMPATHS.output_svg(req.template))
             self.root.after(0, lambda dpi_report=dpi_report: self._log_image_dpi_preflight(dpi_report))
             elapsed = (time.perf_counter() - self._run_started_at) if self._run_started_at else 0.0
+            self._generated_output_ready = os.path.isfile(DMPATHS.output_svg(req.template))
             self.root.after(0, lambda: self._render_done(f"Done ({elapsed:.2f}s)"))
             self.root.after(0, self._after_create_success)
         except Exception as ex:
+            self._generated_output_ready = False
+            self._dataset_source_invalid = True
             _l.w("[deckmaker_app] render failed:\n" + traceback.format_exc())
             self.root.after(0, lambda: self._render_done(f"Error: {ex}"))
         finally:
             self._stop_progress_listener()
             self._stop_web_activity_monitor()
+            self._render_thread = None
+            self.root.after(0, self._refresh_action_button_state)
 
     def _render_done(self, status: str):
         self.progress.stop()
-        self.run_btn.configure(state="normal")
-        self.open_btn.configure(state="normal")
-        self._refresh_export_button_state()
+        self._refresh_action_button_state()
         self.status_var.set(status)
         self._commit_activity_to_log()
         self._set_activity("")
@@ -1299,9 +1656,13 @@ class DeckMakerApp:
     def _after_create_success(self):
         if self._post_create_busy:
             return
-        self._post_create_busy = True
         auto_open = bool(self.auto_open_var.get())
         auto_export = bool(self.auto_export_var.get()) and bool(self._selected_export_formats())
+        if not auto_open and not auto_export:
+            self._refresh_action_button_state()
+            return
+        self._post_create_busy = True
+        self._refresh_action_button_state()
         output_svg_path = self._output_svg_path()
         template = self.template_var.get()
         export_options = self._export_options_snapshot()
@@ -1310,9 +1671,12 @@ class DeckMakerApp:
             try:
                 if auto_open:
                     try:
-                        open_target = output_svg_path
-                        self._open_svg_in_inkscape(open_target)
-                        self.root.after(0, lambda: self._log("Opened output automatically"))
+                        if not self._can_open_output(template):
+                            self.root.after(0, lambda: self._log("Auto open skipped: no generated output available"))
+                        else:
+                            open_target = output_svg_path
+                            self._open_svg_in_inkscape(open_target)
+                            self.root.after(0, lambda: self._log("Opened output automatically"))
                     except Exception as ex:
                         self.root.after(0, lambda ex=ex: self._log(f"Auto open failed: {ex}"))
                 if auto_export:
@@ -1320,6 +1684,7 @@ class DeckMakerApp:
                     self._export_worker(template, export_options)
             finally:
                 self._post_create_busy = False
+                self.root.after(0, self._refresh_action_button_state)
 
         threading.Thread(target=worker, name="pnpink-post-create", daemon=True).start()
 
@@ -1360,6 +1725,7 @@ class DeckMakerApp:
         if not template or not os.path.isfile(template):
             self.status_var.set("Save/open a template SVG first")
             self._log("Save/open a template SVG first")
+            self._refresh_action_button_state()
             return
         options = self._export_options_snapshot()
         self._begin_export_ui(options)
@@ -1369,7 +1735,7 @@ class DeckMakerApp:
         try:
             TEMPPATHS.cleanup_old_runs()
             self._start_web_activity_monitor()
-            svg_path = DMPATHS.output_svg(template)
+            svg_path = self._export_source_svg_path(template)
             formats = list(options.formats)
             started = time.perf_counter()
             _l.i(
@@ -1378,8 +1744,9 @@ class DeckMakerApp:
                 svg_path,
                 ",".join(formats),
             )
-            self._queue_ui_activity("Resolving generated SVG output...")
-            self.root.after(0, lambda: self._log(f"Export source: {os.path.basename(svg_path)}"))
+            self._queue_ui_activity("Resolving SVG export source...")
+            source_kind = "generated output" if os.path.normcase(svg_path) == os.path.normcase(DMPATHS.output_svg(template)) else "current SVG"
+            self.root.after(0, lambda: self._log(f"Export source: {os.path.basename(svg_path)} ({source_kind})"))
             source_info = EXPORT.resolve_chunked_output_source(svg_path)
             if source_info.get("chunk_paths"):
                 self.root.after(0, lambda count=len(source_info.get("chunk_paths") or []): self._log(
@@ -1391,6 +1758,10 @@ class DeckMakerApp:
             if "pdf" in formats:
                 pdf_path = DMPATHS.output_pdf(template)
                 selected_profiles = self._selected_pdf_profiles_for_export(options)
+                try:
+                    final_pdf_pages = EXPORT.svg_page_count(svg_path) if os.path.isfile(svg_path) else 0
+                except Exception:
+                    final_pdf_pages = 0
                 self._queue_ui_activity("Preparing PDF export...")
                 self.root.after(0, lambda: self._log(f"PDF profiles: {', '.join(selected_profiles)}"))
                 self.root.after(
@@ -1429,7 +1800,7 @@ class DeckMakerApp:
                     export_dpi=int(options.export_dpi or 300),
                     on_page_pdf_created=_page_pdf_created,
                     on_raster_progress=_raster_progress,
-                    on_ghostscript_output=self._make_process_output_activity("Ghostscript"),
+                    on_ghostscript_output=self._make_final_pdf_output_activity(final_pdf_pages),
                 )
                 chunk_dir = str((info or {}).get("chunk_dir") or "") if isinstance(info, dict) else ""
                 work_dir = str((info or {}).get("work_dir") or "") if isinstance(info, dict) else ""

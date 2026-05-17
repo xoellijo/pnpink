@@ -1,10 +1,3 @@
-# [2026-02-18 | v0.21] Fix: keep hole center stable when padding expands inline icon rect.
-# [2026-02-18 | v0.21] Fix: preserve text order around inline icon tokens.
-# [2026-02-18 | v0.21] Fix: avoid undefined DEFAULT_H in inline icon bbox fallback.
-# [2026-02-18 | v0.21] Log: add inline-icons audit counters per stage.
-# [2026-02-16 | v0.21] Cleanup: early-exit when no inline-icons; compute uu scaling only for mini pass-B.
-# [2026-02-19] Chore: translate comments to English.
-# [2026-02-16 | v0.21] Fix: convert mini pass-B query-all bboxes from px to viewBox units (uu) using root size.
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -45,10 +38,10 @@ __version__ = "text.py v7.51 (in-place; 1-query; baseline I; rich-visible→DOM 
 NBSP = "\u00A0"
 EPS = 1e-12
 
-EXTRA_RATIO = 0.10   # margen extra (fracción de H) que añadimos al hueco
-OVERSHOOT   = 0.98   # apoyo óptico sobre baseline (1.00 = exacto)
+EXTRA_RATIO = 0.10   # Extra margin as a fraction of text height.
+OVERSHOOT   = 0.98   # Optical baseline support (1.00 = exact).
 
-DEFAULT_SPACER_GLYPH = "I"  # configurable vía --spacer_glyph
+DEFAULT_SPACER_GLYPH = "I"  # Configurable via --spacer_glyph.
 INHERIT_TEXT_ROTATION = True
 
 PX_PER_MM = SVG.PX_PER_MM
@@ -369,7 +362,7 @@ def _scale_bboxes_px_to_uu_xy(bbs: Dict[str,Dict[str,float]], uu_per_px_xy: tupl
 def _icon_bbox_uu(doc_root: SVG.etree._Element, icon_id: str) -> Dict[str, float]:
     node = (doc_root.xpath(f".//*[@id='{icon_id}']") or [None])[0]
     if node is None:
-        _l.w("icon id '%s' no encontrado — uso 1×1", icon_id)
+        _l.w("icon id '%s' not found; using 1x1", icon_id)
         return {"x":0.0,"y":0.0,"width":1.0,"height":1.0}
     try:
         if hasattr(SVG, "visual_bbox"):
@@ -534,7 +527,7 @@ def _process_text_fragment(
 
         t0, t1, inner = hit
 
-        # texto previo al token
+        # Literal text before the token.
         acc += s[pos:t0]
 
         # try parsing :@{...}: / :S{...}: / :Source{...}:  or :id:
@@ -542,9 +535,9 @@ def _process_text_fragment(
             try:
                 src_uri, suffix = _parse_source_inner_token(inner)
             except Exception as ex:
-                # token mal formado → dejar literal (mejor UX)
+                # Malformed token: keep the literal text for better UX.
                 acc += s[t0:t1]
-                _l.w(f"[inline_icons] token inválido (se deja literal): {s[t0:t1]!r}  ({ex})")
+                _l.w(f"[inline_icons] invalid token kept as literal: {s[t0:t1]!r}  ({ex})")
                 pos = t1
                 continue
 
@@ -569,7 +562,7 @@ def _process_text_fragment(
             else:
                 if not _INLINE_ID_RX.fullmatch(inner or ""):
                     acc += s[t0:t1]
-                    _l.w(f"[inline_icons] token invalido (se deja literal): {s[t0:t1]!r}")
+                    _l.w(f"[inline_icons] invalid token kept as literal: {s[t0:t1]!r}")
                     pos = t1
                     continue
                 if callable(source_exists) and (not source_exists(inner)):
@@ -693,7 +686,7 @@ def _escape_text_nodes_only(s: str) -> str:
         # Fuera de etiqueta: vigilar '&' sueltos
         if ch == "&":
             j = i + 1
-            # Buscar hasta ';' o separador
+            # Scan until ';' or a separator.
             while j < n and s[j] not in " \t\r\n<>":
                 if s[j] == ";":
                     break
@@ -1006,12 +999,12 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
 
     _l.i("scope=%s — in-place pipeline (spacer glyph=%r)", root_scope.get('id'), spacer_glyph)
 
-    # 0) **NORMALIZAR RICH-VISIBLE → DOM PARA TODOS LOS <text>**
+    # Normalize rich-visible content to DOM for every <text>.
     normalized = _normalize_rich_visible_for_all_texts(root_scope)
     if normalized:
         _l.i("normalized=%d texts (rich-visible→DOM)", normalized)
 
-    # 1) localizar SOLO los <text> que contengan :@{...}:
+    # Process only <text> nodes containing inline source tokens.
     texts_with_icons: List[SVG.etree._Element] = []
     for t in root_scope.findall(".//svg:text", namespaces={"svg":NS["svg"]}):
         try:

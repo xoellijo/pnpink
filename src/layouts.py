@@ -1,11 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-# Changelog: allow grid flip on both axes with 'hv'.
-# Changelog: split layout gaps into gaps + offset properties.
-# Changelog: remove legacy 6-value gaps handling.
 layouts.py — v3.3.0
 
-Objetivo (PnPInk):
+Purpose (PnPInk):
 - DSL "dumb": gaps/shift/border/etc are carried as raw text tokens.
 - The logic (mm, %, units, offsets w1/h1/w2/h2) lives here.
 - Maintain compatibility with current deckmaker.py.
@@ -100,7 +97,7 @@ class LayoutSpec:
     gaps: List[str] = field(default_factory=list)
     # offset raw tokens: ["w1","h1","w2","h2"]
     offset: List[str] = field(default_factory=list)
-    # Smart shapes (MVP): do not alter card sizing; only adjust gaps additively in deckmaker.
+    # Smart shapes do not alter card sizing; DeckMaker adjusts gaps additively.
     # Values: 'hexgrid' | 'hextile' | 'hextiles'
     smart_shape: Optional[str] = None
 
@@ -326,7 +323,7 @@ def parse_and_resolve_page(text: str, current_page: PageSpec, doc_page_mm: Tuple
         # "{3}" / "{}" (pagebreak only)
         if re.fullmatch(r"\{\s*\d*\s*\}", t):
             return current_page
-        raise ValueError(f"Preset de página inválido: {text}")
+        raise ValueError(f"Invalid page preset: {text}")
 
     ps: DSL.PageSpec = cmd.args.get("page")
     if ps is None or getattr(ps, "pagebreak_only", False):

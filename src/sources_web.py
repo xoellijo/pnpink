@@ -420,7 +420,7 @@ class WebSources:
             }
             params = {k: v for k, v in params.items() if v is not None}
             url = "https://commons.wikimedia.org/w/api.php?" + urllib.parse.urlencode(params)
-            data = NET.fetch_json(url, timeout=1.5, retries=3, log_prefix="[sources] wkmc")
+            data = NET.fetch_json(url, timeout=10, retries=5, log_prefix="[sources] wkmc")
             pages = ((data or {}).get("query") or {}).get("pages") or {}
             seen_batch = set()
             for _pid, pg in pages.items():
@@ -596,7 +596,7 @@ class WebSources:
             # remove None
             params = {k: v for k, v in params.items() if v is not None}
             url = "https://commons.wikimedia.org/w/api.php?" + urllib.parse.urlencode(params)
-            data = NET.fetch_json(url, timeout=1.5, retries=3, log_prefix="[sources] wkmc")
+            data = NET.fetch_json(url, timeout=10, retries=5, log_prefix="[sources] wkmc")
             pages = ((data or {}).get("query") or {}).get("pages") or {}
             for _pid, pg in pages.items():
                 ii = (pg or {}).get("imageinfo") or []

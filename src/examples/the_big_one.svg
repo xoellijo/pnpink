@@ -9,13 +9,11 @@
    id="svg1"
    inkscape:version="1.4.2 (f4327f4, 2025-05-13)"
    sodipodi:docname="the_big_one.svg"
-   ns0:xlink="http://www.w3.org/1999/xlink"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns:xlink="http://www.w3.org/1999/xlink"
    xmlns="http://www.w3.org/2000/svg"
-   xmlns:svg="http://www.w3.org/2000/svg"
-   xmlns:ns0="xmlns">
+   xmlns:svg="http://www.w3.org/2000/svg">
   <sodipodi:namedview
      id="namedview1"
      pagecolor="#ffffff"
@@ -26,9 +24,9 @@
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
      inkscape:document-units="mm"
-     inkscape:zoom="0.08"
-     inkscape:cx="3718.75"
-     inkscape:cy="868.75"
+     inkscape:zoom="0.32"
+     inkscape:cx="62.5"
+     inkscape:cy="657.8125"
      inkscape:window-width="1920"
      inkscape:window-height="974"
      inkscape:window-x="-11"
@@ -1220,9 +1218,8 @@
          y="0"
          width="120"
          height="120"
-         xlink:href="C:\Users\t148888\Documents\ink\img\bola_rosa.png"
-         href="C:\Users\t148888\Documents\ink\img\bola_rosa.png"
-         sodipodi:absref="C:\Users\t148888\Documents\ink\img\bola_rosa.png"
+         xlink:href="assets/bola_rosa.png"
+         href="assets/bola_rosa.png"
          id="image3646" />
     </symbol>
     <clipPath
@@ -1617,9 +1614,9 @@
        transform="translate(15.621904,10.289876)"><tspan
          x="47.294273"
          y="235.80989"
-         id="tspan12"><tspan
+         id="tspan3"><tspan
            style="fill:#251f6f"
-           id="tspan11">This is a label</tspan></tspan></text>
+           id="tspan2">This is a label</tspan></tspan></text>
   </g>
   <g
      id="g450"
@@ -1667,17 +1664,17 @@
        inkscape:label="main_text"><tspan
          x="-241.08886"
          y="229.73633"
-         id="tspan13">This is the template of a card. 
+         id="tspan5">This is the template of a card. 
 </tspan><tspan
          x="-286.78496"
          y="253.0697"
-         id="tspan14">With PnPInk&gt;deckmaker you can create </tspan><tspan
+         id="tspan6">With PnPInk&gt;deckmaker you can create </tspan><tspan
          x="-287.14894"
          y="276.40308"
-         id="tspan15">lots of variations from this from a csv or </tspan><tspan
+         id="tspan7">lots of variations from this from a csv or </tspan><tspan
          x="-162.74471"
          y="299.73645"
-         id="tspan16">google sheet</tspan></text>
+         id="tspan8">google sheet</tspan></text>
     <text
        xml:space="preserve"
        transform="matrix(0,-0.199295,0.263167,0,98.5138,36.7166)"
@@ -1688,7 +1685,7 @@
        inkscape:label="example of vertical text frame"><tspan
          x="-268.16883"
          y="225.3227"
-         id="tspan18">vertical text example</tspan></text>
+         id="tspan9">vertical text example</tspan></text>
     <use
        x="0"
        y="0"
@@ -1750,7 +1747,7 @@
        y="0"><tspan
          x="-214.06019"
          y="266.91398"
-         id="tspan19">fit and anchor</tspan></text>
+         id="tspan10">fit and anchor</tspan></text>
   </g>
   <g
      id="g1462"
@@ -1785,7 +1782,7 @@
   </g>
   <g
      id="g20"
-     transform="matrix(1.0022375,0,0,0.80832886,65.927823,-137.33235)">
+     transform="matrix(1.0022375,0,0,0.80832886,46.910896,-117.4886)">
     <rect
        style="fill:#ccb58b;fill-opacity:1;stroke:#000000;stroke-width:13.798;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:6.2;stroke-dasharray:none"
        id="great_board"

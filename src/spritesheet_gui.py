@@ -12,9 +12,6 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
-import subprocess
-import sys
 import tempfile
 import threading
 import tkinter as tk
@@ -27,6 +24,7 @@ from tkinter import ttk
 import inkex
 
 import const as CONST
+import inkscape_cli as INKSCAPE
 import log as LOG
 import svg as SVG
 import svg
@@ -181,42 +179,13 @@ def _compute_grid(spec, bw, bh, svgdoc):
     }
 
 
-def _find_inkscape_exe() -> str | None:
-    exe = shutil.which("inkscape")
-    if exe:
-        p = Path(exe)
-        if p.suffix.lower() == ".com":
-            alt = p.with_suffix(".exe")
-            if alt.is_file():
-                return str(alt)
-        return exe
-    pyexe = os.path.abspath(sys.executable)
-    bin_dir = os.path.dirname(pyexe)
-    candidates = [
-        os.path.join(bin_dir, "inkscape.exe"),
-        os.path.join(os.path.dirname(bin_dir), "inkscape.exe"),
-        os.path.join(os.path.dirname(bin_dir), "bin", "inkscape.exe"),
-    ]
-    for c in candidates:
-        if c and os.path.isfile(c):
-            return c
-    return None
-
-
-def _run_quiet(cmd):
-    kwargs = {
-        "stdout": subprocess.PIPE,
-        "stderr": subprocess.PIPE,
-        "check": False,
-        "text": True,
-        "timeout": 25,
-    }
-    if os.name == "nt":
-        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        si = subprocess.STARTUPINFO()
-        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        kwargs["startupinfo"] = si
-    return subprocess.run(cmd, **kwargs)
+def _run_inkscape_quiet(cmd):
+    rc, msg = INKSCAPE.run(
+        cmd,
+        exe_dir=INKSCAPE.executable_dir(cmd[0] if cmd else ""),
+        env=INKSCAPE.clean_launch_env(isolated_profile=True),
+    )
+    return rc, msg
 
 
 def _try_export_png_area(input_svg: str, bx, by, bw, bh, inkscape_exe: str | None) -> str | None:
@@ -234,8 +203,8 @@ def _try_export_png_area(input_svg: str, bx, by, bw, bh, inkscape_exe: str | Non
         f"--export-filename={out_png}",
     ]
     try:
-        p = _run_quiet(cmd)
-        if p.returncode == 0 and os.path.isfile(out_png):
+        rc, _msg = _run_inkscape_quiet(cmd)
+        if rc == 0 and os.path.isfile(out_png):
             return out_png
     except Exception:
         pass
@@ -260,8 +229,8 @@ def _try_export_png_id(input_svg: str, node_id: str | None, inkscape_exe: str | 
         f"--export-filename={out_png}",
     ]
     try:
-        p = _run_quiet(cmd)
-        if p.returncode == 0 and os.path.isfile(out_png):
+        rc, _msg = _run_inkscape_quiet(cmd)
+        if rc == 0 and os.path.isfile(out_png):
             return out_png
     except Exception:
         pass
@@ -694,7 +663,7 @@ class SpriteSheetGUIExtension(inkex.EffectExtension):
                 _l.d("[spritesheet_gui] using direct image file:", direct_img)
                 return direct_img, []
             cleanup = []
-            inkscape_exe = _find_inkscape_exe()
+            inkscape_exe = INKSCAPE.find_executable()
             # More robust with text/groups than area bbox.
             out = _try_export_png_id(input_svg, single_id, inkscape_exe)
             if not out:

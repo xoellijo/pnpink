@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import threading
 import time
 from pathlib import Path
 
@@ -19,6 +20,23 @@ import svg_chunks as SVGCHUNKS
 import temp_paths as TEMPPATHS
 
 _l = LOG
+
+
+_INKSCAPE_PDF_FATAL_MARKERS = (
+    "failed to save inkscape file",
+    "couldn't render page in output",
+    "error while rendering output",
+    "error while rendering page",
+    "error while writing to output stream",
+    "insufficient memory to store",
+)
+
+
+def _inkscape_pdf_message_is_fatal(message: str | None) -> bool:
+    text = str(message or "").strip().lower()
+    if not text:
+        return False
+    return any(marker in text for marker in _INKSCAPE_PDF_FATAL_MARKERS)
 
 
 def pdfx_version_number(value: str) -> int:
@@ -76,20 +94,34 @@ def cmyk_merge_kwargs(
 
 def _run_pdf_chunk_job(job: dict, *, exe_dir: str | None, env: dict[str, str] | None, on_output=None) -> dict:
     started = time.perf_counter()
+    pdf_path = str(job["pdf_path"])
+    try:
+        if os.path.isfile(pdf_path):
+            os.remove(pdf_path)
+    except Exception as ex:
+        _l.w("[export.pdf] cannot remove stale chunk pdf='%s': %s", pdf_path, ex)
     rc, msg = INKSCAPE.run(job["argv"], exe_dir=exe_dir, env=env, on_output=on_output)
     elapsed = time.perf_counter() - started
-    ok = EXPORT.paths_exist_with_size([job["pdf_path"]])
+    fatal_msg = _inkscape_pdf_message_is_fatal(msg)
+    ok = rc == 0 and not fatal_msg and EXPORT.paths_exist_with_size([pdf_path])
+    output_size = 0
+    try:
+        output_size = os.path.getsize(pdf_path) if os.path.isfile(pdf_path) else 0
+    except Exception:
+        output_size = 0
     return {
         "index": int(job["index"]),
         "pages": list(job["pages"]),
-        "pdf_path": job["pdf_path"],
+        "pdf_path": pdf_path,
         "svg_path": job["svg_path"],
         "est_bytes": int(job["est_bytes"]),
         "returncode": int(rc),
         "message": msg,
         "elapsed_s": float(elapsed),
         "ok": bool(ok),
-        "soft_ok": rc != 0 and ok,
+        "soft_ok": False,
+        "fatal_message": bool(fatal_msg),
+        "output_size": int(output_size),
     }
 
 
@@ -145,8 +177,8 @@ def export_pdf_via_inkscape(
             svg_path,
             pdf_path,
             inkscape_exe=exe,
-            target_chunk_bytes=EXPORT.DEFAULT_SVG_CHUNK_TARGET_BYTES,
             artifact_dir=export_work_dir,
+            **EXPORT.split_chunk_kwargs(),
         )
         chunks = list(chunk_plan.get("chunks") or [])
         if page_count <= 0:
@@ -249,11 +281,13 @@ def export_pdf_via_inkscape(
             for job, fut in futs:
                 result = fut.result()
                 _l.i(
-                    "[export.pdf] chunk_done idx=%d pages=%s rc=%d ok=%s elapsed=%.2fs pdf='%s'",
+                    "[export.pdf] chunk_done idx=%d pages=%s rc=%d ok=%s fatal_msg=%s size=%d elapsed=%.2fs pdf='%s'",
                     int(result["index"]),
                     ",".join(str(p) for p in result["pages"]),
                     int(result["returncode"]),
                     "yes" if result["ok"] else "no",
+                    "yes" if result.get("fatal_message") else "no",
+                    int(result.get("output_size") or 0),
                     float(result["elapsed_s"]),
                     result["pdf_path"],
                 )
@@ -281,10 +315,12 @@ def export_pdf_via_inkscape(
                 )
                 retried = _run_pdf_chunk_job(job, exe_dir=exe_dir, env=env, on_output=on_inkscape_output)
                 _l.i(
-                    "[export.pdf] chunk_retry_done idx=%d rc=%d ok=%s elapsed=%.2fs pdf='%s'",
+                    "[export.pdf] chunk_retry_done idx=%d rc=%d ok=%s fatal_msg=%s size=%d elapsed=%.2fs pdf='%s'",
                     int(retried["index"]),
                     int(retried["returncode"]),
                     "yes" if retried["ok"] else "no",
+                    "yes" if retried.get("fatal_message") else "no",
+                    int(retried.get("output_size") or 0),
                     float(retried["elapsed_s"]),
                     retried["pdf_path"],
                 )
@@ -320,6 +356,9 @@ def export_pdf_via_inkscape(
                 "failed_chunk_svg": str(first.get("svg_path") or ""),
                 "failed_chunk_pdf": str(first.get("pdf_path") or ""),
                 "failed_chunk_index": int(first.get("index") or 0),
+                "failed_chunk_returncode": int(first.get("returncode") or 0),
+                "failed_chunk_fatal_message": bool(first.get("fatal_message")),
+                "failed_chunk_message": str(first.get("message") or "")[:1200],
                 "elapsed_s": total_elapsed,
                 "results": results,
                 "page_count": page_count,
@@ -351,7 +390,34 @@ def export_pdf_via_inkscape(
                     pure_black_text=cmyk_pure_black_text,
                     pdfx_version=pdfx_version,
                 ))
-            res = GS.merge_pdfs(ordered_chunk_pdfs, target_pdf, on_output=on_ghostscript_output, **merge_kwargs)
+            progress_stop = threading.Event()
+
+            def _progress_output(text: str) -> None:
+                if on_ghostscript_output is not None:
+                    try:
+                        on_ghostscript_output(text)
+                    except Exception:
+                        pass
+
+            def _progress_tick() -> None:
+                total = max(1, int(page_count or 0))
+                current = 0
+                _progress_output(f"PNPINK_FINAL_PDF_PROGRESS {current} {total}\n")
+                while not progress_stop.wait(0.7):
+                    current = min(total - 1, current + 1)
+                    _progress_output(f"PNPINK_FINAL_PDF_PROGRESS {current} {total}\n")
+
+            progress_thread = threading.Thread(target=_progress_tick, daemon=True)
+            progress_thread.start()
+            try:
+                res = GS.merge_pdfs(ordered_chunk_pdfs, target_pdf, on_output=on_ghostscript_output, **merge_kwargs)
+            finally:
+                progress_stop.set()
+                try:
+                    progress_thread.join(timeout=0.2)
+                except Exception:
+                    pass
+                _progress_output(f"PNPINK_FINAL_PDF_PROGRESS {max(1, int(page_count or 0))} {max(1, int(page_count or 0))}\n")
             if (
                 str(profile or "").strip().lower() == "cmyk"
                 and merge_kwargs.get("text_k_preserve") is not None

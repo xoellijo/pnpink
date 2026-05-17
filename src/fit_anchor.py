@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# [2026-02-19] Chore: translate comments to English.
 """
 fit_anchor.py — PnPInk (v1.2.2)
 
 Place a node onto a rect using dsl.py fit syntax.
 There is NO legacy parsing here. dsl.py handles everything.
 """
-# Changelog: clip to original rect when border expands inner fit area.
 
 import re
 import hashlib

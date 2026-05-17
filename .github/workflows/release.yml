@@ -87,6 +87,8 @@ jobs:
           with zipfile.ZipFile(payload_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
               for p in sorted(src.rglob("*")):
                   if p.is_file():
+                      if p.parent == src / "docs" and p.suffix.lower() == ".pdf":
+                          continue
                       zf.write(p, p.relative_to(root).as_posix())
 
           bundle_name = f"pnpink_{version}.zip"

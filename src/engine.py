@@ -1,11 +1,7 @@
-# [2026-02-18] Chore: remove unused legacy %...% var regex.
-# [2026-02-19] Add: split layout gaps into gaps + offset properties.
-# [2026-02-20] Add: allow oversized templates to proceed with split-board fallback slots.
-# [2026-02-20] Fix: allow declared templates without header-matching ids.
 # -*- coding: utf-8 -*-
 import log as LOG
 _l = LOG
-import os, sys, re, subprocess, shutil
+import os, sys, re
 from copy import deepcopy
 from types import SimpleNamespace
 from typing import List
@@ -69,97 +65,20 @@ def _write_svg_atomic(doc, out_path: str) -> None:
     os.makedirs(out_dir, exist_ok=True)
     base = os.path.basename(out_path)
     tmp = os.path.join(out_dir, f".{base}.tmp")
-    doc.write(tmp, encoding="UTF-8", xml_declaration=True)
+    try:
+        SVG.ensure_xlink_ns(doc.getroot())
+    except Exception:
+        pass
+    try:
+        raw = inkex.etree.tostring(doc.getroot(), encoding="UTF-8", xml_declaration=True)
+        raw = re.sub(br'\s+ns\d+:xlink="http://www\.w3\.org/1999/xlink"', b"", raw)
+        raw = re.sub(br'\s+xmlns:ns\d+="xmlns"', b"", raw)
+        with open(tmp, "wb") as fh:
+            fh.write(raw)
+    except Exception:
+        doc.write(tmp, encoding="UTF-8", xml_declaration=True)
     os.replace(tmp, out_path)
 
-
-def _find_inkscape_executable() -> str | None:
-    names = ["inkscape.exe", "inkscape"] if os.name == "nt" else ["inkscape"]
-    for name in names:
-        exe = shutil.which(name)
-        if exe:
-            return exe
-    pyexe = os.path.abspath(sys.executable)
-    bin_dir = os.path.dirname(pyexe)
-    candidates = [
-        os.path.join(bin_dir, "inkscape.exe"),
-        os.path.join(os.path.dirname(bin_dir), "inkscape.exe"),
-        os.path.join(os.path.dirname(bin_dir), "bin", "inkscape.exe"),
-        os.path.join(bin_dir, "inkscape"),
-        os.path.join(os.path.dirname(bin_dir), "inkscape"),
-        os.path.join(os.path.dirname(bin_dir), "bin", "inkscape"),
-    ]
-    for c in candidates:
-        if c and os.path.isfile(c):
-            return c
-    return None
-
-
-def _clean_inkscape_launch_env() -> dict[str, str]:
-    env = dict(os.environ)
-    exact_keys = {
-        "SELF_CALL",
-        "DOCUMENT_PATH",
-        "PYTHONHOME",
-        "PYTHONPATH",
-        "PYTHONIOENCODING",
-    }
-    prefix_keys = (
-        "INKEX_",
-        "INKSCAPE_",
-        "GDK_",
-        "GTK_",
-        "XDG_",
-    )
-    for key in list(env.keys()):
-        sk = str(key or "")
-        if not sk or sk.startswith("="):
-            continue
-        if sk in exact_keys or any(sk.startswith(prefix) for prefix in prefix_keys):
-            env.pop(sk, None)
-    return env
-
-
-def _launch_inkscape(svg_path: str) -> bool:
-    if not svg_path or not os.path.isfile(svg_path):
-        return False
-    exe = _find_inkscape_executable()
-    if not exe:
-        _l.w(f"[dm_output] inkscape executable not found; output saved at '{svg_path}'")
-        return False
-    try:
-        env = _clean_inkscape_launch_env()
-        argv = [exe, svg_path]
-        kwargs = {
-            "args": argv,
-            "cwd": os.path.dirname(exe) or None,
-            "env": env,
-            "stdin": subprocess.DEVNULL,
-            "stdout": subprocess.DEVNULL,
-            "stderr": subprocess.DEVNULL,
-            "close_fds": True,
-        }
-        if os.name == "nt":
-            creationflags = 0
-            for flag_name in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP", "CREATE_NO_WINDOW"):
-                creationflags |= int(getattr(subprocess, flag_name, 0))
-            kwargs["creationflags"] = creationflags
-        else:
-            kwargs["start_new_session"] = True
-        proc = subprocess.Popen(**kwargs)
-        # Detached launch: we intentionally do not wait on this child.
-        # Mark the local Popen object as finalized so Python does not emit
-        # ResourceWarning when it gets garbage-collected while the process
-        # is still running.
-        try:
-            proc.returncode = 0
-        except Exception:
-            pass
-        _l.i(f"[dm_output] launched Inkscape: '{svg_path}'")
-        return True
-    except Exception as ex:
-        _l.w(f"[dm_output] failed launching Inkscape for '{svg_path}': {ex}")
-        return False
 
 def run(self, __version__):
     """Run the DeckMaker render pipeline for the Tkinter app flow."""
@@ -352,8 +271,13 @@ def run(self, __version__):
                 try:
                     import svg_chunks as SVGCHUNKS
 
-                    chunk_target_bytes = max(1, int(prefs.get_split_svg_chunk_mb(64))) * 1024 * 1024
                     force_chunk_output = bool(prefs.get_split_svg_output(False))
+                    split_mode = prefs.get_split_svg_mode("limits")
+                    split_parts = prefs.get_split_svg_parts() if split_mode == "parts" else None
+                    split_limit_pages = prefs.get_split_svg_limit_pages() if split_mode == "limits" else None
+                    split_limit_records = prefs.get_split_svg_limit_records() if split_mode == "limits" else None
+                    split_limit_mb = prefs.get_split_svg_chunk_mb_optional() if split_mode == "limits" else None
+                    chunk_target_bytes = (int(split_limit_mb) * 1024 * 1024) if split_limit_mb else 0
                     analysis = SVGCHUNKS.analyze_output_doc(
                         clone_doc,
                         source_svg_path=_doc_path,
@@ -363,16 +287,22 @@ def run(self, __version__):
                     page_slices = list(analysis.get("pages") or [])
                     total_est_bytes = sum(int(item.est_bytes or 0) for item in page_slices)
                     page_count = len(page_slices)
-                    use_chunk_output = (
-                        force_chunk_output
+                    total_records = sum(int(getattr(item, "record_count", 0) or 0) for item in page_slices)
+                    split_triggered = (
+                        (split_parts is not None and int(split_parts or 0) > 1)
                         or page_count >= int(DM_OUTPUT_CHUNK_THRESHOLD_PAGES)
-                        or total_est_bytes >= int(chunk_target_bytes)
+                        or (chunk_target_bytes > 0 and total_est_bytes >= int(chunk_target_bytes))
+                        or (split_limit_pages is not None and page_count > int(split_limit_pages))
+                        or (split_limit_records is not None and total_records > int(split_limit_records))
                     )
+                    use_chunk_output = force_chunk_output and split_triggered
                     _l.i(
                         f"[dm_output] analyzed external render pages={page_count} "
                         f"fixed_images={int(analysis.get('fixed_images') or 0)} "
                         f"est_bytes={total_est_bytes} chunked={'yes' if use_chunk_output else 'no'} "
-                        f"forced={'yes' if force_chunk_output else 'no'} target_bytes={chunk_target_bytes}"
+                        f"forced={'yes' if force_chunk_output else 'no'} split_mode={split_mode} "
+                        f"target_bytes={chunk_target_bytes} target_pages={int(split_limit_pages or 0)} "
+                        f"target_records={int(split_limit_records or 0)} target_parts={int(split_parts or 0)}"
                     )
                     if use_chunk_output:
                         try:
@@ -391,6 +321,9 @@ def run(self, __version__):
                             out_path,
                             source_svg_path=_doc_path,
                             target_chunk_bytes=chunk_target_bytes,
+                            target_pages=split_limit_pages,
+                            target_records=split_limit_records,
+                            target_parts=split_parts,
                             analysis=analysis,
                             absolutize_images=False,
                         )
@@ -410,15 +343,12 @@ def run(self, __version__):
                 except Exception as ex:
                     _l.w(f"[dm_output] normalize output failed for '{out_path}': {ex}")
                 try:
-                    stem = os.path.splitext(os.path.basename(out_path))[0]
-                    chunk_dir = os.path.join(os.path.dirname(os.path.abspath(out_path)) or ".", f"{stem}_chunks")
-                    if os.path.isdir(chunk_dir):
-                        shutil.rmtree(chunk_dir, ignore_errors=True)
+                    import svg_chunks as SVGCHUNKS
+                    SVGCHUNKS.cleanup_output_chunks(out_path)
                 except Exception:
                     pass
                 _write_svg_atomic(clone_doc, out_path)
                 _l.i(f"[dm_output] wrote external render: '{out_path}'")
-                _launch_inkscape(out_path)
                 return False
             except Exception as ex:
                 try:
@@ -611,9 +541,9 @@ def run(self, __version__):
     next_n = SVG.scan_max_pnp_suffix(root) + 1
     placed_total = 0
 
-    # ---------------- Page cursor (v0.9+) ----------------
-    # We never start placing content on any pre-existing page of the input SVG.
-    # By default, we append after the last existing page (respecting the original SVG).
+    # ---------------- Page cursor ----------------
+    # Start placing on the first existing page (index 0), so output content
+    # can occupy page 1 instead of always appending after template pages.
     # The cursor is global across dataset sections and can be moved via Layout at=/a=/@.
     try:
         _px_per_mm0 = float(root.unittouu("1mm"))
@@ -628,7 +558,7 @@ def run(self, __version__):
         SVG.add_inkscape_page_mm(nv0, 0, 0, w0, h0, "page1", {})
         _pages0 = SVG.list_existing_pages_px(root)
     # Global page cursor is 0-based (like planner.page_index).
-    start_page_index = int(len(_pages0))
+    start_page_index = 0
     for ds_idx, ds0 in enumerate(datasets, start=1):
         ds_meta = ds0.get("meta", {}) or {}
         headers = ds0.get("headers", []) or []
@@ -636,10 +566,10 @@ def run(self, __version__):
         comment_lines = ds0.get("comments", []) or []
 
         if not headers:
-            _l.w(f"[datasets] #{ds_idx}: sin cabecera válida; skip.")
+            _l.w(f"[datasets] #{ds_idx}: no valid header; skipping.")
             continue
         if not rows_data:
-            _l.w(f"[datasets] #{ds_idx}: sin filas útiles; skip.")
+            _l.w(f"[datasets] #{ds_idx}: no usable rows; skipping.")
             continue
 
         _l.i(f"----- DATASET SECTION #{ds_idx}/{len(datasets)} -----")
@@ -1378,6 +1308,7 @@ def run(self, __version__):
             jobs = _marks_pending_by_page.get(int(page_idx)) or []
             if not jobs:
                 return
+            marks_parent = jobs[0].get("parent") or out_layer
 
             # Special case: hextile/hextiles marks must be computed at the PAGE level.
             # Slot-based rectangular marks are geometrically wrong for hex tiles.
@@ -1394,6 +1325,7 @@ def run(self, __version__):
                         root,
                         jobs=jobs,
                         px_per_mm=float(px_per_mm),
+                        parent=marks_parent,
                         style_id=getattr(ms0, 'style', None) if ms0 is not None else None,
                         layer_label=(getattr(ms0, 'layer', None) if ms0 is not None else None) or "marks",
                         b_tokens=getattr(ms0, 'b', None) if ms0 is not None else None,
@@ -1435,6 +1367,7 @@ def run(self, __version__):
                         root,
                         slot_bbox_px=j['bbox'],
                         px_per_mm=float(px_per_mm),
+                        parent=marks_parent,
                         style_id=getattr(ms, 'style', None),
                         layer_label=getattr(ms, 'layer', None) or "marks",
                         b_tokens=getattr(ms, 'b', None),
@@ -1631,7 +1564,7 @@ def run(self, __version__):
             return None
 
         def _apply_smart_shape_gaps(card_obj, layout_obj):
-            """Auto-adjust gaps for smart hex shapes (MVP)."""
+            """Auto-adjust gaps for smart hex shapes."""
             try:
                 sp = (getattr(layout_obj, 'smart_shape', None) or '').strip().lower()
                 if sp not in ('hexgrid', 'hextile', 'hextiles'):
@@ -1644,8 +1577,8 @@ def run(self, __version__):
                     orient = 'pointy' if sp in ('hexgrid', 'hextile', 'hextiles') else None
 
                 # Persist the detected orientation for downstream consumers (e.g. Marks{} hextiles).
-                # This is intentionally simple (MVP): marks must not try to re-infer orientation
-                # from noisy geometry when DeckMaker already determined it for smart gaps.
+                # Marks must not re-infer orientation from noisy geometry when
+                # DeckMaker already determined it for smart gaps.
                 try:
                     layout_obj.smart_hex_orient = orient or None
                 except Exception:
@@ -1850,5 +1783,9 @@ def run(self, __version__):
     except Exception as ex:
         _l.w(f"[deckmaker.text] inline_icons ONE-PASS failed: {ex}")
         _l.w("[deckmaker.text] traceback:\n" + _tb.format_exc())
+    try:
+        SM.log_web_summary()
+    except Exception:
+        pass
 
     _l.s("END DeckMaker")

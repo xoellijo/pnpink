@@ -468,16 +468,26 @@ def merge_pdfs(
         returncode = int(proc.returncode or 0)
         message = "".join(chunks).strip()
     out_pdf = _norm_path(output_pdf)
-    ok = returncode == 0 and os.path.isfile(out_pdf) and os.path.getsize(out_pdf) > 0
-    if ok:
-        _l.i(f"[gs] merge ok output='{out_pdf}'")
-    else:
-        output_size = 0
+    input_size = 0
+    for src in srcs:
         try:
-            output_size = os.path.getsize(out_pdf) if os.path.isfile(out_pdf) else 0
+            input_size += os.path.getsize(src)
         except Exception:
-            output_size = 0
-        _l.w(f"[gs] merge failed rc={returncode} output='{out_pdf}' output_size={output_size}")
+            pass
+    output_size = 0
+    try:
+        output_size = os.path.getsize(out_pdf) if os.path.isfile(out_pdf) else 0
+    except Exception:
+        output_size = 0
+    min_output_size = 4096 if input_size > 65536 else 1
+    ok = returncode == 0 and output_size >= min_output_size
+    if ok:
+        _l.i(f"[gs] merge ok output='{out_pdf}' output_size={output_size}")
+    else:
+        _l.w(
+            f"[gs] merge failed rc={returncode} output='{out_pdf}' "
+            f"output_size={output_size} input_size={input_size} min_output_size={min_output_size}"
+        )
         if message:
             _l.w(f"[gs] message {message[:1200]}")
         try:

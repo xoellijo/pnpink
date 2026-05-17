@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# [2026-02-19] Chore: translate comments to English.
 """
 gsheets_client_pkce.py v2.0 ? Google Sheets read-only client (stable PKCE loopback)
 
@@ -49,7 +48,7 @@ except Exception as e:
     raise RuntimeError("gsheets_client_pkce: 'requests' is required") from e
 
 # ------------------------------------------------------------------
-# Config (IMPORT-TIME) — hardcoded con override opcional por entorno
+# Import-time configuration with optional environment overrides.
 # ------------------------------------------------------------------
 
 CLIENT_ID: str = os.environ.get(
@@ -83,7 +82,7 @@ def _legacy_app_dir() -> str:
     else:
         return os.path.join(os.path.expanduser("~/.pnpink"), "gsheets")
 
-TOKENS_FILE = os.path.join(_legacy_app_dir(), "tokens.json")  # como el original
+TOKENS_FILE = os.path.join(_legacy_app_dir(), "tokens.json")
 _MEM_ENTRY: Optional[Dict[str, Any]] = None
 _AUTH_LOCK = threading.RLock()
 
@@ -227,7 +226,7 @@ def _authorize_with_pkce(client_id: str) -> Dict[str, Any]:
 
     # 1) Start server *BEFORE* opening the browser. If wanted_port=0, the OS chooses.
     server = _ReusableHTTPServer((host, wanted_port), _CodeHandler)
-    actual_port = server.server_port  # si era 0, aquí tenemos el real
+    actual_port = server.server_port
     redirect_uri = f"http://{host}:{actual_port}/"
 
     th = threading.Thread(target=server.serve_forever, daemon=True); th.start()

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# [2026-02-19] Chore: translate comments to English.
 """marks.py — PnPInk Marks{} (cut/crosshair marks)
 
 __version__ = "v0.2.1-hextiles-extremes-by-c"
 
-Dev note (v0.1):
+Developer note:
   - Slot-based geometry: marks are generated per placed slot bbox (post-layout).
   - Style stack: if s points to a <g>, each direct child contributes one style layer
     and the same geometry is rendered once per child.
@@ -85,6 +84,14 @@ def _extract_stroke_style(el) -> Dict[str, str]:
 
 def _resolve_style_layers(root, style_id: Optional[str]):
     return PATHS.resolve_style_templates_for_marks(root, style_id)
+
+
+def _target_group(root, label: str, parent=None):
+    if parent is not None:
+        return parent
+    layer = SVG.find_or_create_layer(root, label)
+    layer.set("data-pnpink-generated-root", "marks")
+    return layer
 
 
 def _norm_trbl_tokens(tokens: Optional[List[str]], default: List[str]) -> List[str]:
@@ -254,6 +261,7 @@ def render_slot_marks(
     *,
     slot_bbox_px: Tuple[float, float, float, float],
     px_per_mm: float,
+    parent=None,
     style_id: Optional[str] = None,
     layer_label: Optional[str] = None,
     b_tokens: Optional[List[str]] = None,
@@ -325,7 +333,7 @@ def render_slot_marks(
     # In practice users already expect b to work like a border/inset; we keep pattern support
     # for future versions behind a different key.
 
-    layer = SVG.find_or_create_layer(root, layer_label)
+    layer = _target_group(root, layer_label, parent=parent)
 
     d_attr = _build_edge_paths(
         x0, y0, x1, y1,
@@ -346,7 +354,7 @@ def render_slot_marks(
     return created
 
 
-# -------------------------- Hextiles (MVP) -----------------------------------
+# -------------------------- Hextiles ----------------------------------------
 
 def _parse_scalar_mm(tokens: Optional[List[str]], default_mm: float = 0.0) -> float:
     """Parse a single scalar (first non-empty token) to mm."""
@@ -369,6 +377,7 @@ def render_hextiles_page_marks(
     *,
     jobs: List[dict],
     px_per_mm: float,
+    parent=None,
     style_id: Optional[str] = None,
     layer_label: Optional[str] = None,
     b_tokens: Optional[List[str]] = None,
@@ -403,7 +412,7 @@ def render_hextiles_page_marks(
         return 0
 
     layer_label = (layer_label or "marks").strip() or "marks"
-    layer = SVG.find_or_create_layer(root, layer_label)
+    layer = _target_group(root, layer_label, parent=parent)
 
     # Parameters
     b_mm = _parse_scalar_mm(b_tokens, default_mm=0.0)
