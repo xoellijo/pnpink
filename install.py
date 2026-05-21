@@ -246,6 +246,23 @@ def remove_installed_inx_files(dst_folder: Path) -> int:
     return removed
 
 
+def remove_previous_install(path: Path) -> bool:
+    if path.is_symlink():
+        log(f"[5] Previous install is a symlink; keeping link and installing into target: {path}")
+        return False
+    if path.is_dir():
+        try:
+            shutil.rmtree(path)
+            return True
+        except OSError as ex:
+            if "symbolic link" not in str(ex).lower():
+                raise
+            log(f"[5] Previous install behaves like a symlink; keeping link and installing into target: {path}")
+            return False
+    path.unlink()
+    return True
+
+
 def main() -> int:
     here = Path(__file__).resolve().parent
 
@@ -273,15 +290,16 @@ def main() -> int:
         log(f"[4] Payload root: {payload_root}")
 
         dst_folder = ext_dir / APP_DIR_NAME
+        copy_into_existing = False
         if dst_folder.exists():
             removed_inx = remove_installed_inx_files(dst_folder)
             if removed_inx:
                 log(f"[5] Removed previous .inx files: {removed_inx}")
             log(f"[5] Removing previous install: {dst_folder}")
-            shutil.rmtree(dst_folder)
+            copy_into_existing = not remove_previous_install(dst_folder)
 
         log(f"[6] Installing payload to: {dst_folder}")
-        shutil.copytree(payload_root, dst_folder)
+        shutil.copytree(payload_root, dst_folder, dirs_exist_ok=copy_into_existing)
     finally:
         try:
             shutil.rmtree(tmp_root)
