@@ -174,10 +174,7 @@ class DeckMakerApp:
         frame.rowconfigure(0, weight=1)
 
         style = ttk.Style()
-        try:
-            style.configure("Thin.Horizontal.TProgressbar", thickness=6)
-        except Exception:
-            pass
+        self._configure_ttk_style(style)
 
         notebook = ttk.Notebook(frame)
         notebook.grid(row=0, column=0, sticky="nsew")
@@ -259,6 +256,7 @@ class DeckMakerApp:
         auto_open_cb = ttk.Checkbutton(buttons, text="", variable=self.auto_open_var, command=self._on_auto_prefs_changed)
         auto_open_cb.grid(row=0, column=2, sticky="w", padx=(0, 2))
         self.open_btn = ttk.Button(buttons, text="Open SVG", command=self._open_output_clicked)
+
         self.open_btn.grid(row=0, column=3, sticky="w", padx=(0, 12))
         auto_export_cb = ttk.Checkbutton(buttons, text="", variable=self.auto_export_var, command=self._on_auto_prefs_changed)
         auto_export_cb.grid(row=0, column=4, sticky="w", padx=(0, 2))
@@ -525,6 +523,94 @@ class DeckMakerApp:
 
         self.status_bar = GUI.StatusBar(frame, textvariable=self.status_var)
         self.status_bar.grid(row=3, column=0, sticky="ew", pady=(4, 0))
+
+    def _configure_ttk_style(self, style):
+        # Linux defaults can look dated depending on distro theme packs.
+        # Apply a clean, modern ttk palette only on Linux.
+        if not sys.platform.startswith("linux"):
+            try:
+                style.configure("Thin.Horizontal.TProgressbar", thickness=6)
+            except Exception:
+                pass
+            return
+        try:
+            available = set(style.theme_names() or ())
+            if "clam" in available:
+                style.theme_use("clam")
+        except Exception:
+            pass
+        try:
+            self.root.configure(bg="#f6f8fb")
+        except Exception:
+            pass
+        try:
+            style.configure(".", background="#f6f8fb", foreground="#1f2430")
+            style.configure("TFrame", background="#f6f8fb")
+            style.configure("TLabelframe", background="#f6f8fb", borderwidth=1, relief="solid")
+            style.configure("TLabelframe.Label", background="#f6f8fb", foreground="#2a3140")
+            style.configure("TLabel", background="#f6f8fb", foreground="#1f2430")
+            style.configure("TCheckbutton", background="#f6f8fb", foreground="#1f2430")
+            style.map("TCheckbutton", background=[("active", "#f6f8fb")])
+
+            style.configure(
+                "TButton",
+                background="#e8eef8",
+                foreground="#1f2430",
+                borderwidth=0,
+                focusthickness=0,
+                padding=(10, 6),
+            )
+            style.map(
+                "TButton",
+                background=[("pressed", "#cedcf3"), ("active", "#dce7f8"), ("disabled", "#edf2f9")],
+                foreground=[("disabled", "#8a93a3")],
+            )
+
+            style.configure(
+                "TEntry",
+                fieldbackground="#ffffff",
+                foreground="#1f2430",
+                bordercolor="#c8d2e1",
+                lightcolor="#c8d2e1",
+                darkcolor="#c8d2e1",
+                insertcolor="#1f2430",
+                padding=(6, 4),
+            )
+            style.map(
+                "TEntry",
+                bordercolor=[("focus", "#7da2d8")],
+                lightcolor=[("focus", "#7da2d8")],
+                darkcolor=[("focus", "#7da2d8")],
+            )
+
+            style.configure("TCombobox", fieldbackground="#ffffff", foreground="#1f2430", padding=(6, 4))
+            style.map("TCombobox", fieldbackground=[("readonly", "#ffffff")], bordercolor=[("focus", "#7da2d8")])
+
+            style.configure("TNotebook", background="#f6f8fb", borderwidth=0)
+            style.configure("TNotebook.Tab", background="#e9edf4", foreground="#2a3140", padding=(12, 7))
+            style.map("TNotebook.Tab", background=[("selected", "#ffffff"), ("active", "#dfe7f3")], foreground=[("selected", "#111827")])
+
+            style.configure("Treeview", background="#ffffff", fieldbackground="#ffffff", foreground="#1f2430", bordercolor="#d6deea", rowheight=22)
+            style.configure("Treeview.Heading", background="#e7eef8", foreground="#1f2430", relief="flat")
+            style.map("Treeview", background=[("selected", "#d8e7ff")], foreground=[("selected", "#0f172a")])
+            style.map("Treeview.Heading", background=[("active", "#dbe6f5")])
+
+            style.configure("Horizontal.TSeparator", background="#d8dfeb")
+            style.configure("Vertical.TSeparator", background="#d8dfeb")
+            style.configure(
+                "Thin.Horizontal.TProgressbar",
+                thickness=6,
+                troughcolor="#dce3ef",
+                background="#4a86d9",
+                bordercolor="#dce3ef",
+                lightcolor="#4a86d9",
+                darkcolor="#4a86d9",
+            )
+        except Exception:
+            try:
+                style.configure("Thin.Horizontal.TProgressbar", thickness=6)
+            except Exception:
+                pass
 
     def _apply_window_icon(self):
         icon_path = DMPATHS.app_icon(os.path.dirname(__file__))
