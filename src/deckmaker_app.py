@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -99,6 +100,10 @@ class DeckMakerApp:
         self.sheet_range_var = tk.StringVar(value=(initial.sheet_range if initial else ""))
         self.source_mode_var = tk.StringVar(value=SOURCE_MODE_VALUE_TO_LABEL.get(initial.dataset_source_mode if initial else "", "(empty)"))
         self.status_var = tk.StringVar(value="Ready")
+        self._base_status_text = "Ready"
+        self._mini_status_text = ""
+        self._mini_status_after_id = None
+        self._mini_status_dots = 0
         self.auto_create_var = tk.BooleanVar(value=prefs.get_auto_create())
         self.auto_open_var = tk.BooleanVar(value=prefs.get_auto_open())
         self.auto_export_var = tk.BooleanVar(value=prefs.get_auto_export())
@@ -113,7 +118,6 @@ class DeckMakerApp:
         self.inkscape_workers_var = tk.StringVar(value=str(prefs.get_inkscape_shell_workers()))
         self.template_engine_var = tk.StringVar(value=prefs.get_template_engine())
         self.inline_bbox_backend_var = tk.StringVar(value=prefs.get_inline_icons_bbox_backend())
-        self.web_user_agent_var = tk.StringVar(value=prefs.get_web_user_agent())
         self.console_log_level_var = tk.StringVar(value=prefs.get_console_level())
         self.file_log_level_var = tk.StringVar(value=prefs.get_file_level())
         self.split_svg_output_var = tk.BooleanVar(value=prefs.get_split_svg_output())
@@ -260,7 +264,6 @@ class DeckMakerApp:
         auto_export_cb.grid(row=0, column=4, sticky="w", padx=(0, 2))
         self.pdf_btn = ttk.Button(buttons, text="Export", command=self._export_clicked)
         self.pdf_btn.grid(row=0, column=5, sticky="w")
-        ttk.Label(buttons, textvariable=self.status_var).grid(row=0, column=6, sticky="w", padx=(12, 0))
         GUI.attach_tooltip(auto_create_cb, "Auto-start generate")
         GUI.attach_tooltip(auto_open_cb, "Auto-start Open SVG")
         GUI.attach_tooltip(auto_export_cb, "Auto-start export")
@@ -455,9 +458,9 @@ class DeckMakerApp:
         template_combo = ttk.Combobox(
             advanced_box,
             textvariable=self.template_engine_var,
-            values=("legacy", "composed"),
+            values=("legacy", "composed", "composed-instance"),
             state="readonly",
-            width=12,
+            width=17,
         )
         template_combo.grid(row=0, column=3, sticky="w")
         template_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_advanced_prefs_changed())
@@ -471,11 +474,6 @@ class DeckMakerApp:
         )
         bbox_combo.grid(row=0, column=5, sticky="w")
         bbox_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_advanced_prefs_changed())
-        ttk.Label(advanced_box, text="Web User-Agent").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
-        web_ua_entry = ttk.Entry(advanced_box, textvariable=self.web_user_agent_var, width=42)
-        web_ua_entry.grid(row=1, column=1, columnspan=5, sticky="ew", pady=(8, 0))
-        web_ua_entry.bind("<FocusOut>", lambda _e: self._on_advanced_prefs_changed())
-        web_ua_entry.bind("<Return>", lambda _e: self._on_advanced_prefs_changed())
         advanced_box.columnconfigure(5, weight=1)
         ttk.Button(advanced_box, text="Open preferences", command=self._open_preferences_file).grid(row=0, column=6, sticky="w", padx=(12, 0))
 
@@ -524,6 +522,9 @@ class DeckMakerApp:
         progress_wrap.columnconfigure(0, weight=1)
         self.progress = ttk.Progressbar(progress_wrap, mode="indeterminate", style="Thin.Horizontal.TProgressbar")
         self.progress.grid(row=0, column=0, sticky="ew")
+
+        self.status_bar = GUI.StatusBar(frame, textvariable=self.status_var)
+        self.status_bar.grid(row=3, column=0, sticky="ew", pady=(4, 0))
 
     def _apply_window_icon(self):
         icon_path = DMPATHS.app_icon(os.path.dirname(__file__))
@@ -608,6 +609,82 @@ class DeckMakerApp:
         except Exception:
             pass
 
+    def _queue_ui_mini_status(self, message: str, active: bool = True):
+        try:
+            self._ui_queue.put(("mini_status", (str(message or ""), bool(active))))
+        except Exception:
+            pass
+
+    def _set_base_status(self, message: str):
+        self._base_status_text = str(message or "").strip() or "Ready"
+        try:
+            self.status_bar.set_main(self._base_status_text)
+        except Exception:
+            self.status_var.set(self._base_status_text)
+
+    def _short_status_text(self, text: str, limit: int = 120) -> str:
+        s = " ".join(str(text or "").split())
+        if len(s) <= limit:
+            return s
+        return s[: max(0, limit - 3)].rstrip() + "..."
+
+    def _set_mini_status(self, message: str, active: bool = True):
+        text = self._short_status_text(message)
+        retry = ""
+        m = re.search(r"\[(retry after\s*=\s*[^\]]+|retrying)\]", text, re.I)
+        if m:
+            retry = m.group(1)
+            text = (text[:m.start()] + text[m.end():]).strip()
+        self._mini_status_text = text
+        try:
+            self.status_bar.set_detail(text)
+            self.status_bar.set_retry(retry)
+        except Exception:
+            pass
+        if self._mini_status_text and active and self._mini_status_after_id is None:
+            self._mini_status_dots = 0
+            self._mini_status_tick()
+        else:
+            self._refresh_status_text()
+
+    def _clear_mini_status(self):
+        self._mini_status_text = ""
+        self._mini_status_dots = 0
+        try:
+            self.status_bar.clear_detail()
+        except Exception:
+            pass
+        if self._mini_status_after_id is not None:
+            try:
+                self.root.after_cancel(self._mini_status_after_id)
+            except Exception:
+                pass
+            self._mini_status_after_id = None
+        self._refresh_status_text()
+
+    def _mini_status_tick(self):
+        if not self._mini_status_text:
+            self._mini_status_after_id = None
+            self._refresh_status_text()
+            return
+        self._mini_status_dots = (int(self._mini_status_dots or 0) % 10) + 1
+        self._refresh_status_text()
+        try:
+            self._mini_status_after_id = self.root.after(450, self._mini_status_tick)
+        except Exception:
+            self._mini_status_after_id = None
+
+    def _refresh_status_text(self):
+        base = str(self._base_status_text or "Ready").strip() or "Ready"
+        detail = str(self._mini_status_text or "").strip()
+        dots = "." * max(1, int(self._mini_status_dots or 1)) if detail else ""
+        try:
+            self.status_bar.set_main(base)
+            self.status_bar.set_detail(detail)
+            self.status_bar.set_pulse(dots)
+        except Exception:
+            self.status_var.set(f"{base} {detail} {dots}".strip() if detail else base)
+
     def _set_activity_progress(self, label: str, current: int, total: int):
         try:
             self._ui_queue.put(("progress", (str(label or "").strip(), int(current or 0), int(total or 0))))
@@ -680,6 +757,10 @@ class DeckMakerApp:
         text_label = str(label or "").strip()
         if not text_label:
             return
+        try:
+            self.status_bar.set_phase(text_label)
+        except Exception:
+            pass
         if text_label != self._active_progress_label:
             if self._active_progress_label:
                 self._commit_activity_to_log()
@@ -742,6 +823,13 @@ class DeckMakerApp:
         def _set_progress(label: str, current: int, total: int):
             self._set_activity_progress(label, current, total)
 
+        def _set_mini(msg: str, active: bool = True):
+            self._queue_ui_mini_status(msg, active)
+
+        def _quoted_value(name: str, line: str) -> str:
+            m = re.search(rf"{re.escape(name)}='([^']*)'", line)
+            return str(m.group(1) if m else "").strip()
+
         def process_line(raw_line: str):
             line = str(raw_line or "").strip()
             if not line:
@@ -788,11 +876,27 @@ class DeckMakerApp:
                 m = re.search(r"virtual prefetch scheduled:\s*(\d+)\s*expr", line)
                 if m:
                     _set_activity(f"Preparing {m.group(1)} web source expression(s)...")
+                    _set_mini(f"resolving {m.group(1)} web source expression(s)")
                 return
             if "[sources] web prefetch scheduled:" in line:
                 m = re.search(r"web prefetch scheduled:\s*(\d+)\s*url", line)
                 if m:
                     _set_activity(f"Preparing {m.group(1)} direct web download(s)...")
+                    _set_mini(f"preparing {m.group(1)} direct web download(s)")
+                return
+            if "[sources.progress] web_download start" in line:
+                url = _quoted_value("url", line)
+                _set_activity(f"Downloading {url or 'web asset'}...")
+                _set_mini(f"downloading {url or 'web asset'}")
+                return
+            if "[sources.progress] wkmc fetch" in line:
+                query = _quoted_value("query", line)
+                size = _quoted_value("size", line)
+                label = f"wkmc://{query}" if query else "Wikimedia"
+                if size:
+                    label += f" size={size}"
+                _set_activity(f"Resolving {label}...")
+                _set_mini(f"downloading {label}")
                 return
             if "[sources.progress] web_sources discovered" in line:
                 direct = virtual = wkmc = 0
@@ -849,13 +953,18 @@ class DeckMakerApp:
                 return
             if "transient HTTP 429" in line or "transient HTTP 503" in line:
                 m = re.search(r"transient HTTP\s+(\d+).*?(retry-after=[^;]+).*?host delay=([0-9.]+)s.*?workers=(\d+)", line, re.I)
+                url = _quoted_value("url", line)
                 if m:
                     _set_activity(
                         f"Remote service is rate-limiting downloads: HTTP {m.group(1)}, "
                         f"{m.group(2)}, waiting {m.group(3)}s, workers={m.group(4)}"
                     )
+                    _set_mini(
+                        f"downloading {url or 'remote asset'} [{m.group(2).replace('retry-after=', 'retry after = ')}]",
+                    )
                 else:
                     _set_activity("Remote service is rate-limiting downloads; retrying with backoff...")
+                    _set_mini(f"downloading {url or 'remote asset'} [retrying]")
                 return
             if "[sources] wkmc fetch failed" in line:
                 self._web_activity_stats["wkmc_failed"] += 1
@@ -883,6 +992,7 @@ class DeckMakerApp:
                         f"Web assets ready: downloaded={downloaded}, cached={cached}, Wikimedia={wkmc_resolved}, "
                         f"failed={download_failed + wkmc_failed}, pending={pending}"
                     )
+                    _set_mini("", False)
                 return
             if "[raster] export-id png jobs=" in line:
                 m = re.search(r"export-id png jobs=%d ids=%s\s+(\d+)", line)
@@ -989,6 +1099,16 @@ class DeckMakerApp:
                     self._set_activity_progress(label, current, total)
                 else:
                     self._queue_ui_activity(f"Generating record {current}...")
+                return
+            if kind == "mini_status":
+                message = str(payload.get("message") or "").strip()
+                active = bool(payload.get("active", True))
+                self._queue_ui_mini_status(message, active)
+                return
+            if kind == "activity":
+                message = str(payload.get("message") or "").strip()
+                if message:
+                    self._queue_ui_activity(message)
 
         self._progress_listener = on_progress
         GUI.set_listener(self._progress_listener)
@@ -1254,7 +1374,7 @@ class DeckMakerApp:
         self.inkscape_workers_var.set(str(workers))
         prefs.set_inkscape_shell_workers(workers)
         template_engine = str(self.template_engine_var.get() or "legacy").strip().lower()
-        if template_engine not in {"legacy", "composed"}:
+        if template_engine not in {"legacy", "composed", "composed-instance"}:
             template_engine = "legacy"
             self.template_engine_var.set(template_engine)
         bbox_backend = str(self.inline_bbox_backend_var.get() or "query_all").strip().lower()
@@ -1263,13 +1383,10 @@ class DeckMakerApp:
             self.inline_bbox_backend_var.set(bbox_backend)
         prefs.set("template_engine", template_engine, save=True)
         prefs.set("inline_icons_bbox_backend", bbox_backend, save=True)
-        web_user_agent = str(self.web_user_agent_var.get() or "").strip()
-        prefs.set_web_user_agent(web_user_agent)
-        self.web_user_agent_var.set(prefs.get_web_user_agent())
         self._log(
             "Preference saved: "
             f"workers={workers}, template_engine={template_engine}, "
-            f"bbox_backend={bbox_backend}, web_user_agent={prefs.get_web_user_agent()}"
+            f"bbox_backend={bbox_backend}"
         )
 
     def _on_log_prefs_changed(self):
@@ -1541,16 +1658,34 @@ class DeckMakerApp:
         try:
             while True:
                 kind, payload = self._ui_queue.get_nowait()
-                if kind == "log":
-                    self._log(payload)
-                elif kind == "activity":
-                    self._set_activity(payload)
-                elif kind == "progress":
-                    label, current, total = payload
-                    self._handle_progress_update(label, current, total)
+                try:
+                    if kind == "log":
+                        self._log(payload)
+                    elif kind == "activity":
+                        self._set_activity(payload)
+                    elif kind == "progress":
+                        label, current, total = payload
+                        self._handle_progress_update(label, current, total)
+                    elif kind == "mini_status":
+                        message, active = payload
+                        if str(message or "").strip():
+                            self._set_mini_status(message, bool(active))
+                        else:
+                            self._clear_mini_status()
+                except Exception as ex:
+                    try:
+                        self._log(f"UI activity update skipped: {ex}")
+                    except Exception:
+                        pass
         except queue.Empty:
             pass
-        self.root.after(80, self._drain_ui_queue)
+        except Exception as ex:
+            try:
+                self._log(f"UI activity queue error: {ex}")
+            except Exception:
+                pass
+        finally:
+            self.root.after(80, self._drain_ui_queue)
 
     def _autorun(self, serial: int):
         if serial <= self._autorun_serial:
@@ -1600,7 +1735,8 @@ class DeckMakerApp:
         self.pdf_btn.configure(state="disabled")
         self._generated_output_ready = False
         self.progress.start(10)
-        self.status_var.set("Generating...")
+        self._set_base_status("Generating...")
+        self._clear_mini_status()
         self._set_activity("Generating output...")
         self._log(("Auto generate" if autorun else "Generate") + " started")
         self._dataset_source_invalid = False
@@ -1627,9 +1763,8 @@ class DeckMakerApp:
                     DSTATE.set_gsheet_for_svg(req.template, req.sheet_id, req.sheet_range, access_mode)
             except Exception:
                 _l.w("[deckmaker_app] dataset state save failed\n" + traceback.format_exc())
-            self._queue_ui_activity("Analyzing generated images...")
-            dpi_report = PREFLIGHT.effective_image_dpi_report(DMPATHS.output_svg(req.template))
-            self.root.after(0, lambda dpi_report=dpi_report: self._log_image_dpi_preflight(dpi_report))
+            if prefs.get_image_preflight(False):
+                PREFLIGHT.write_text_report(DMPATHS.output_svg(req.template))
             elapsed = (time.perf_counter() - self._run_started_at) if self._run_started_at else 0.0
             self._generated_output_ready = os.path.isfile(DMPATHS.output_svg(req.template))
             self.root.after(0, lambda: self._render_done(f"Done ({elapsed:.2f}s)"))
@@ -1648,7 +1783,12 @@ class DeckMakerApp:
     def _render_done(self, status: str):
         self.progress.stop()
         self._refresh_action_button_state()
-        self.status_var.set(status)
+        self._clear_mini_status()
+        try:
+            self.status_bar.clear_activity()
+        except Exception:
+            pass
+        self._set_base_status(status)
         self._commit_activity_to_log()
         self._set_activity("")
         self._log(status)
@@ -1695,7 +1835,8 @@ class DeckMakerApp:
         self.progress.start(10)
         formats = list(options.formats)
         label = ", ".join(fmt.upper() for fmt in formats)
-        self.status_var.set(f"Exporting {label}...")
+        self._set_base_status(f"Exporting {label}...")
+        self._clear_mini_status()
         self._set_activity("Preparing export...")
         self._log(("Auto export" if auto else "Export") + f" started: {label}")
         _l.i(

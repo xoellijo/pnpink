@@ -24,15 +24,15 @@
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
      inkscape:document-units="mm"
-     inkscape:zoom="1.28"
-     inkscape:cx="482.8125"
-     inkscape:cy="383.20313"
+     inkscape:zoom="0.90509668"
+     inkscape:cx="-318.19805"
+     inkscape:cy="599.38348"
      inkscape:window-width="1920"
      inkscape:window-height="974"
      inkscape:window-x="-11"
      inkscape:window-y="-11"
      inkscape:window-maximized="1"
-     inkscape:current-layer="svg1" />
+     inkscape:current-layer="g57" />
   <defs
      id="defs1">
     <marker
@@ -163,10 +163,10 @@
        inkscape:collect="always"
        style="color-interpolation-filters:sRGB"
        id="filter9"
-       x="-0.009536527"
-       y="-0.029808453"
-       width="1.0190731"
-       height="1.0596169">
+       x="-0.0095207959"
+       y="-0.029759282"
+       width="1.0190416"
+       height="1.0595186">
       <feGaussianBlur
          inkscape:collect="always"
          stdDeviation="0.021233297"
@@ -234,13 +234,13 @@
       <text
          xml:space="preserve"
          id="text9"
-         style="font-size:21.3333px;line-height:1;font-family:SimSun;-inkscape-font-specification:SimSun;text-align:center;text-decoration-color:#000000;letter-spacing:-1.5px;word-spacing:0px;writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect9);display:inline;mix-blend-mode:normal;fill:#25363a;fill-opacity:1;stroke:#150000;stroke-width:0.767492;stroke-miterlimit:6.2;stroke-dasharray:none;paint-order:stroke fill markers;filter:url(#filter9)"
+         style="font-size:21.3333px;line-height:1;font-family:SimSun;-inkscape-font-specification:SimSun;text-align:center;text-decoration-color:#000000;letter-spacing:-1.5px;word-spacing:0px;writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect9);display:inline;mix-blend-mode:normal;fill:#25363a;fill-opacity:1;stroke:#0b0b0b;stroke-width:0.76605784;stroke-miterlimit:6.2;stroke-dasharray:none;paint-order:stroke fill markers;filter:url(#filter9);stroke-opacity:1"
          x="73.083176"
          y="0"
          transform="matrix(0.23228292,0,0,0.26482977,-82.164928,42.004613)"><tspan
            x="492.74548"
            y="353.37432"
-           id="tspan1">Text9</tspan></text>
+           id="tspan12">Text9</tspan></text>
       <g
          transform="matrix(1.0673144,0,0,0.52667872,-161.20942,-31.02062)"
          id="g26-3"
@@ -425,51 +425,51 @@
            xml:space="preserve"
            transform="matrix(0.26458333,0,0,0.26458333,-16.83951,21.58332)"
            id="text1"
-           style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:177.778px;line-height:0.5;font-family:'Berlin Sans FB';-inkscape-font-specification:'Berlin Sans FB, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:center;writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect1-8);display:inline;fill:#751c1c;stroke-width:7.55906;stroke-dasharray:none;stroke-dashoffset:0"
+           style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:177.778px;line-height:0.5;font-family:'Berlin Sans FB';-inkscape-font-specification:'Berlin Sans FB, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:center;writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect1-8);display:inline;fill:#751c1c;stroke:#000000;stroke-width:7.56046;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"
            x="38.151089"
            y="0"><tspan
              x="207.28717"
              y="256.12736"
-             id="tspan3"><tspan
-               style="fill:none;stroke:#000000;stroke-linecap:round;stroke-linejoin:round"
-               id="tspan2">3</tspan></tspan></text>
+             id="tspan14"><tspan
+               style="fill:none;stroke-linecap:round;stroke-linejoin:round"
+               id="tspan13">3</tspan></tspan></text>
         <text
            xml:space="preserve"
            transform="matrix(0.26458333,0,0,0.26458333,-21.366835,21.34445)"
            id="text1-2"
-           style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:177.778px;line-height:0.5;font-family:'Berlin Sans FB';-inkscape-font-specification:'Berlin Sans FB, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:center;writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect1-4-8);shape-padding:0.883456;display:inline;fill:#e0a169;fill-opacity:1;stroke:#ffffff;stroke-width:2.64567;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"
+           style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:177.778px;line-height:0.5;font-family:'Berlin Sans FB';-inkscape-font-specification:'Berlin Sans FB, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:center;writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect1-4-8);shape-padding:0.883456;display:inline;fill:#e0a169;fill-opacity:1;stroke:#ffffff;stroke-width:2.64475;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"
            x="38.151089"
            y="0"><tspan
              x="224.51666"
              y="257.01018"
-             id="tspan5"><tspan
+             id="tspan16"><tspan
                style="stroke-linecap:round;stroke-linejoin:round"
-               id="tspan4">3</tspan></tspan></text>
+               id="tspan15">3</tspan></tspan></text>
       </g>
       <text
          xml:space="preserve"
          transform="matrix(0.27911526,-0.11072102,0.11949142,0.37630069,-54.948339,64.525235)"
          id="text3"
-         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:46.5952px;line-height:0.5;font-family:'Berlin Sans FB';-inkscape-font-specification:'Berlin Sans FB, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:center;writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect1-8-6);display:inline;fill:#751c1c;stroke-width:0.954835;stroke-dasharray:none;stroke-dashoffset:0"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:46.5952px;line-height:0.5;font-family:'Berlin Sans FB';-inkscape-font-specification:'Berlin Sans FB, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:center;writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect1-8-6);display:inline;fill:#751c1c;stroke-width:1.244578;stroke-dasharray:none;stroke-dashoffset:0;stroke:#000000;stroke-opacity:1"
          x="38.151089"
          y="0"><tspan
            x="180.76687"
            y="181.98373"
-           id="tspan7"><tspan
-             style="fill:#5b1616;stroke:#000000;stroke-linecap:round;stroke-linejoin:round"
-             id="tspan6">Second
+           id="tspan18"><tspan
+             style="fill:#5b1616;stroke-linecap:round;stroke-linejoin:round"
+             id="tspan17">Second
 </tspan></tspan><tspan
            x="249.2832"
            y="205.28134"
-           id="tspan9"><tspan
-             style="fill:#5b1616;stroke:#000000;stroke-linecap:round;stroke-linejoin:round"
-             id="tspan8">
+           id="tspan20"><tspan
+             style="fill:#5b1616;stroke-linecap:round;stroke-linejoin:round"
+             id="tspan19">
 </tspan></tspan><tspan
            x="182.12059"
            y="228.57894"
-           id="tspan11"><tspan
-             style="fill:#5b1616;stroke:#000000;stroke-linecap:round;stroke-linejoin:round"
-             id="tspan10">chance
+           id="tspan22"><tspan
+             style="fill:#5b1616;stroke-linecap:round;stroke-linejoin:round"
+             id="tspan21">chance
 </tspan></tspan></text>
       <rect
          style="display:inline;opacity:0.189;fill:url(#pattern58);stroke:none;stroke-width:2.25209;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"

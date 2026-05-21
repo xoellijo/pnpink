@@ -71,12 +71,31 @@ def extract_zip_to_temp(zip_path: Path) -> Path:
 
 def find_payload_root(extracted_root: Path) -> Path:
     inx_dirs = sorted(p for p in extracted_root.rglob("inx") if p.is_dir())
-    if not inx_dirs:
-        die("Could not find 'inx/' folder inside extracted zip.")
-    payload_root = inx_dirs[0].parent
-    if not any((payload_root / "inx").glob("*.inx")):
+    for inx_dir in inx_dirs:
+        payload_root = inx_dir.parent
+        if any((payload_root / "inx").glob("*.inx")):
+            return payload_root
+
+    nested_zips = sorted(
+        (p for p in extracted_root.rglob("*.zip") if p.is_file()),
+        key=lambda p: (not p.name.startswith("pnpink_payload_"), p.name),
+    )
+    for nested_zip in nested_zips:
+        nested_root = extracted_root / f"__nested_{nested_zip.stem}"
+        nested_root.mkdir(parents=True, exist_ok=True)
+        try:
+            with zipfile.ZipFile(nested_zip, "r") as zf:
+                zf.extractall(nested_root)
+            log(f"[4] Inspecting nested payload zip: {nested_zip.name}")
+            return find_payload_root(nested_root)
+        except SystemExit:
+            continue
+        except Exception as ex:
+            log(f"[4] Skipping nested zip '{nested_zip.name}': {ex}")
+
+    if inx_dirs:
         die(f"Found inx folder at {inx_dirs[0]}, but no .inx files inside.")
-    return payload_root
+    die("Could not find 'inx/' folder inside extracted zip.")
 
 
 def find_inkscape_from_env() -> Optional[str]:

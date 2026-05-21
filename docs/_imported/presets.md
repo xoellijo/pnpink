@@ -65,4 +65,4 @@ Aliases resolve internally to a canonical preset.
 - **Counter1** (counter1, inch1) — 25.4 × 25.4 mm
 
 ### Cards & IDs
-- **CreditCard** (creditcard, cr80, ID-1, id1) — 54 × 85.6 mm
+- **CreditCard** (creditcard, cr80, ID-1, id1) — 85.6 × 54 mm

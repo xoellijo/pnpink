@@ -113,5 +113,5 @@ This is useful for:
 
 ## Related Pages
 
-- [Fit-Anchor](/dsl/fit-anchor/)
-- [Source](/dsl/source/)
+- [Fit-Anchor](fit-anchor.md)
+- [Source](source.md)

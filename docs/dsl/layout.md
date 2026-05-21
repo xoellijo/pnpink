@@ -121,6 +121,13 @@ s=hex<24x33>
 s=polygon<[5 23x32]>
 ```
 
+Append `^` to swap width and height for a shape size or preset:
+
+```txt
+s=creditcard   -> 85.6 x 54
+s=creditcard^  -> 54 x 85.6
+```
+
 See the Presets page for the full list of named sizes.
 
 ### Hex Shapes
@@ -135,4 +142,4 @@ Smart shapes adjust gaps and offsets without changing card size:
 Inkscape tip: use `Tools > Stars and Polygons` (Shift+F9), set corners to 6,
 and hold Ctrl while resizing to keep alignment.
 
-For practical examples and the differences between `hexgrid`, `hextiles`, and hex cut lines, see [Hexes](/dsl/hexes/).
+For practical examples and the differences between `hexgrid`, `hextiles`, and hex cut lines, see [Hexes](hexes.md).

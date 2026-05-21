@@ -98,6 +98,7 @@ class ShapeSpec:
     kind: Optional[str] = None
     preset: Optional[str] = None
     args: Optional[List[str]] = None
+    swap: bool = False
 
 @dataclass
 class LayoutSpec:
@@ -1068,18 +1069,22 @@ _shape_size_re = re.compile(r"^\s*\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?(?:[a-z%]+)?\
 
 def _parse_shape_v2(val: str) -> ShapeSpec:
     v = (val or "").strip()
+    swap = False
+    if v.endswith("^"):
+        swap = True
+        v = v[:-1].strip()
     # size like "55x77" (with or without units)
     if _shape_size_re.match(v):
-        return ShapeSpec(kind="rect", args=[v])
+        return ShapeSpec(kind="rect", args=[v], swap=swap)
     # rect<...> / hex<...> / polygon<[...]>
     if v.startswith("rect<"):
-        return ShapeSpec(kind="rect", args=[v[v.find('<'):]])
+        return ShapeSpec(kind="rect", args=[v[v.find('<'):]], swap=swap)
     if v.startswith("hex<"):
-        return ShapeSpec(kind="hex", args=[v[v.find('<'):]])
+        return ShapeSpec(kind="hex", args=[v[v.find('<'):]], swap=swap)
     if v.startswith("polygon<"):
-        return ShapeSpec(kind="polygon", args=[v[v.find('<'):]])
+        return ShapeSpec(kind="polygon", args=[v[v.find('<'):]], swap=swap)
     # preset
-    return ShapeSpec(kind="preset", preset=v)
+    return ShapeSpec(kind="preset", preset=v, swap=swap)
 
 def _parse_layout_v2(layout_cmd: str) -> LayoutSpec:
     m = re.match(r"^\s*(?:[A-Za-z][\w\-.]*\s*)?\.(?:Layout|L)\s*(\{.*\})\s*$", layout_cmd)

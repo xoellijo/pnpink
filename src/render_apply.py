@@ -577,7 +577,12 @@ def _is_id_wildcard_token(token: str) -> bool:
 def _expand_id_wildcard_in_scope(scope, token: str) -> list:
     """Expand a wildcard token like 'main_icon-*' against ids in `scope`.
 
-    Matches by prefix over `strip_pnp_suffix(@id)`, preserving document order.
+    Matches by prefix over stable target names, preserving document order.
+
+    Generated instances may have compact physical ids (for example ``_MD1t1``).
+    Exact header lookup already resolves those through ``data-origid`` /
+    ``data-field``; wildcard expansion must do the same or headers like
+    ``text1*`` stop matching ``text1-2`` after id compaction.
     """
     t = (token or "").strip()
     if not t:
@@ -589,16 +594,31 @@ def _expand_id_wildcard_in_scope(scope, token: str) -> list:
     seen = set()
     if scope is None:
         return out
+
+    def _candidate_target_names(el) -> list:
+        names = []
+
+        def add(value):
+            v = (value or "").strip()
+            if v and v not in names:
+                names.append(v)
+
+        cid = (el.get("id") or "").strip()
+        if cid:
+            add(cid)
+            add(SVG.strip_pnp_suffix(cid) or cid)
+        add(el.get("data-origid"))
+        add(el.get("data-field"))
+        return names
+
     try:
         for el in scope.iter():
-            cid = (el.get("id") or "").strip()
-            if not cid:
-                continue
-            bid = (SVG.strip_pnp_suffix(cid) or cid).strip()
-            if (not bid) or (not bid.startswith(pref)) or (bid in seen):
-                continue
-            seen.add(bid)
-            out.append(bid)
+            for bid in _candidate_target_names(el):
+                if (not bid) or (not bid.startswith(pref)) or (bid in seen):
+                    continue
+                seen.add(bid)
+                out.append(bid)
+                break
     except Exception:
         return []
     return out

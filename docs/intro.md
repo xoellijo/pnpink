@@ -1,6 +1,6 @@
 ﻿# Introduction
 
-This documentation is also available as a [single PDF guide](pnpink.pdf).
+This documentation is also available as a [single PDF guide](https://xoellijo.github.io/pnpink/pnpink.pdf).
 
 ## What is PnPInk?
 PnPInk is an open-source extension suite for Inkscape that turns it into a practical production environment for print-and-play components: cards, tiles, counters, boards, and player aids.

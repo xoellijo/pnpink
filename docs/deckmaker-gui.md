@@ -76,7 +76,7 @@ Useful advanced keys:
 
 | Key | Values | Purpose |
 | --- | --- | --- |
-| `template_engine` | `legacy`, `composed` | Template instantiation engine. `legacy` is the normal engine. `composed` is experimental and intentionally fails on unsupported templates. |
+| `template_engine` | `legacy`, `composed`, `composed-instance` | Template instantiation engine. `legacy` is the normal engine. `composed` is experimental and intentionally fails on unsupported templates. `composed-instance` keeps composed clones anchored to the first generated instance instead of `<defs>`. |
 | `inline_icons_bbox_backend` | `query_all`, `shell_per_text` | Inline icon bbox measurement backend. Use `query_all` for normal work. `shell_per_text` is kept for investigation only. |
 | `inkscape_shell_workers` | integer >= 1 | Parallel Inkscape shell workers used during export. |
 | `split_svg_output` | `0`, `1` | Enables generated SVG parts. |

@@ -131,7 +131,7 @@ Example:
 tile_id.P{path_style [a 5c 79]}
 ```
 
-See [Paths](/dsl/paths/) for the complete token system.
+See [Paths](paths.md) for the complete token system.
 
 ## Recommended Usage
 
@@ -140,6 +140,6 @@ See [Paths](/dsl/paths/) for the complete token system.
 
 ## Related Pages
 
-- [Layout](/dsl/layout/)
-- [Marks](/dsl/marks/)
-- [Paths](/dsl/paths/)
+- [Layout](layout.md)
+- [Marks](marks.md)
+- [Paths](paths.md)

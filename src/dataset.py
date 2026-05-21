@@ -12,7 +12,7 @@ import net as NET
 
 import inkex
 import dsl as DSL
-import header_flags as HF
+import dataset_header as DH
 
 
 def strip_bom(s: str) -> str:
@@ -82,7 +82,7 @@ def _apply_inline_row_comments(cells: List[str]) -> List[str]:
             out[i] = s[:k2].rstrip()
     return out
 
-parse_template_header_cell = HF.parse_template_header_cell
+parse_template_header_cell = DH.parse_template_header_cell
 
 
 def _is_nontext_dataset_field(header_key: str) -> bool:
@@ -182,7 +182,7 @@ def _normalize_row_cells_for_headers(cells, headers_len: int, active_idx) -> Lis
 
 
 def _extract_template_columns(headers):
-    return HF.extract_template_columns(headers)
+    return DH.extract_template_columns(headers)
 
 
 def _matrix_to_datasets(matrix):

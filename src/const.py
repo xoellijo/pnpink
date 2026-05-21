@@ -71,10 +71,10 @@ CARD_SIZES_MM: Dict[str, Tuple[float, float]] = {
     "Counter34":    (19.05, 19.05),  # 3/4"
     "Counter1":     (25.4, 25.4),    # 1"
     "Dixit":        (80.0, 120.0),
-    # New: Credit card family (ISO/IEC 7810 ID-1, CR80)
-    "CreditCard":   (54.0, 85.6),
-    "CR80":         (54.0, 85.6),
-    "ID-1":         (54.0, 85.6),
+    # Credit card family (ISO/IEC 7810 ID-1, CR80), landscape by convention.
+    "CreditCard":   (85.6, 54.0),
+    "CR80":         (85.6, 54.0),
+    "ID-1":         (85.6, 54.0),
 }
 
 # --------- Canon & alias (accent/spacing-insensitive) ----------

@@ -1,0 +1,11 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200" id="docroot">
+  <g id="root">
+    <defs>
+      <g id="card"><rect x="0" y="0" width="40" height="60" fill="#ddd" stroke="#333"/></g>
+    </defs>
+    <rect x="0" y="0" width="200" height="200" fill="white"/>
+    <use href="#card" x="10" y="10" width="40" height="60"/>
+    <use href="#card" x="60" y="10" width="40" height="60"/>
+    <use href="#card" x="110" y="10" width="40" height="60"/>
+  </g>
+</svg>

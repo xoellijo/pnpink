@@ -196,6 +196,6 @@ If the style id points to a group, PnPInk generates one path per child path in t
 
 ## Related Pages
 
-- [Hexes](/dsl/hexes/)
-- [Layout](/dsl/layout/)
-- [Marks](/dsl/marks/)
+- [Hexes](hexes.md)
+- [Layout](layout.md)
+- [Marks](marks.md)

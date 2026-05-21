@@ -1687,22 +1687,35 @@ def render_phase(ctx):
     template_engine = prefs.get_template_engine("legacy") if hasattr(prefs, "get_template_engine") else "legacy"
     composed_plan_cache = {}
     composed_dynamic_ids = []
+
+    def _add_composed_dynamic_id(value: str) -> None:
+        v = str(value or "").strip()
+        if v and v not in composed_dynamic_ids:
+            composed_dynamic_ids.append(v)
+
     for _spec in compiled_apply_specs:
         _hk = _spec.get("hk") or {}
         for _tid in (_hk.get("target_ids") or [(_hk.get("target_id") or "")]):
             _tid = str(_tid or "").strip()
-            if _tid and not _is_id_wildcard_token(_tid):
-                composed_dynamic_ids.append(_tid)
+            if not _tid:
+                continue
+            if _is_id_wildcard_token(_tid):
+                for _expanded_tid in _expand_id_wildcard_in_scope(proto_root, _tid):
+                    _add_composed_dynamic_id(_expanded_tid)
+                continue
+            _add_composed_dynamic_id(_tid)
     for _bbox_id in [declared_bbox_id] + [
         (_tpl_entry or {}).get('bbox_id') or ''
         for _tpl_entry in list(overlay_templates or []) + list(back_templates or []) + list(page_templates or []) + list(page_back_templates or [])
     ]:
         _bbox_id = str(_bbox_id or '').strip()
-        if _bbox_id and _bbox_id not in composed_dynamic_ids:
-            composed_dynamic_ids.append(_bbox_id)
+        _add_composed_dynamic_id(_bbox_id)
+
+    composed_engine_enabled = template_engine in {"composed", "composed-instance"}
+    composed_static_source_mode = "first_instance" if template_engine == "composed-instance" else "defs"
 
     def _template_plan_for(template_root, label: str):
-        if template_engine != "composed" or template_root is None:
+        if not composed_engine_enabled or template_root is None:
             return None
         key = id(template_root)
         if key in composed_plan_cache:
@@ -1719,10 +1732,11 @@ def render_phase(ctx):
                 has_page_templates=False,
                 has_clone_fields=bool(compiled_clone_specs),
                 has_anchor_visibility=bool(compiled_rect_hks),
+                static_source_mode=composed_static_source_mode,
             )
             composed_plan_cache[key] = plan
             _l.i(
-                f"[templates.compose] enabled template={label} static_blocks={plan.static_blocks} "
+                f"[templates.compose] enabled template={label} static_source={plan.static_source_mode} static_blocks={plan.static_blocks} "
                 f"dynamic_roots={plan.dynamic_roots} dynamic_ids={len(plan.dynamic_ids)}"
             )
             return plan
@@ -1739,9 +1753,9 @@ def render_phase(ctx):
         target_index = SVG.uniquify_ids_and_build_target_index(inst, suffix, root.get_unique_id)
         return inst, target_index
 
-    if template_engine == "composed":
+    if composed_engine_enabled:
         _template_plan_for(proto_root, "main")
-        _l.i(f"[templates.compose] mode=composed plans={sum(1 for v in composed_plan_cache.values() if v is not None)}")
+        _l.i(f"[templates.compose] mode={template_engine} plans={sum(1 for v in composed_plan_cache.values() if v is not None)}")
     else:
         _l.i("[templates.compose] disabled template_engine=legacy")
 

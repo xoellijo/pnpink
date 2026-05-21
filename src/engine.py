@@ -20,6 +20,7 @@ import snippets as SNP
 import gradients as GRD
 import text as TXT
 import marks as MK
+import dataset_header as DHEAD
 
 import dataset as DS
 import gui as PROGRESS
@@ -114,6 +115,12 @@ def run(self, __version__):
         datasets = DS.load_datasets(self, _doc_path)
     if not datasets:
         raise inkex.AbortExtension("Dataset sin cabecera válida.")
+    try:
+        translated_headers = DHEAD.translate_datasets(datasets, root)
+        if translated_headers:
+            _l.i(f"[datasets] translated {translated_headers} header label alias(es) to SVG id(s)")
+    except Exception as ex:
+        _l.w(f"[datasets] header label alias translation skipped: {ex}")
     _l.s("DATASET: loaded")
 
     def _iter_comment_first_cells(dss):
@@ -862,6 +869,23 @@ def run(self, __version__):
         # detectar prototipo a partir de headers
         target_nodes: List[inkex.BaseElement] = []
         _seen_tn_ids = set()
+
+        def _wildcard_candidate_names(el):
+            names = []
+
+            def add(value):
+                v = (value or "").strip()
+                if v and v not in names:
+                    names.append(v)
+
+            cid = (el.get('id') or '').strip()
+            if cid:
+                add(cid)
+                add(SVG.strip_pnp_suffix(cid) or cid)
+            add(el.get('data-origid'))
+            add(el.get('data-field'))
+            return names
+
         for h in headers:
             tid = (re.match(r"^([^\[]+)", h).group(1) if re.match(r"^([^\[]+)", h) else "").strip()
             if not tid or tid.startswith("clone_"): continue
@@ -872,8 +896,10 @@ def run(self, __version__):
                     pref = tok[:-1]
                     try:
                         for _el in root.iter():
-                            _id = (_el.get('id') or '').strip()
-                            if _id and _id.startswith(pref) and _id not in _seen_tn_ids:
+                            if not any((_name or "").startswith(pref) for _name in _wildcard_candidate_names(_el)):
+                                continue
+                            _id = (_el.get('id') or f"@obj:{id(_el)}")
+                            if _id and _id not in _seen_tn_ids:
                                 target_nodes.append(_el)
                                 _seen_tn_ids.add(_id)
                     except Exception:

@@ -3,7 +3,7 @@
 The Marks module generates cut marks aligned to the **Layout grid slots** of the **main template** (first dataset column).
 Use it when output is intended for physical cutting and alignment consistency matters.
 
-`Marks` is a page/layout-level system. If you want local lines attached to individual hexes or tiles, use [Paths](/dsl/paths/) instead.
+`Marks` is a page/layout-level system. If you want local lines attached to individual hexes or tiles, use [Paths](paths.md) instead.
 
 Marks are defined in the **first header cell** (same place as `Page{}` and `Layout{}`), for example:
 
@@ -73,7 +73,7 @@ Rules:
 
 If the layout uses offsets (staggered grids), a scalar `len=3` is treated as `[3 3]` to keep internal marks visible.
 
-For hex-specific usage, including `hextiles` and lines inside/outside the shape, see [Hexes](/dsl/hexes/).
+For hex-specific usage, including `hextiles` and lines inside/outside the shape, see [Hexes](hexes.md).
 
 ## Distance to Card (d=)
 Distance is the gap between the card edge and the start of the external mark segment.

@@ -45,6 +45,108 @@ def progress_text(label: str, current: int, total: int, *, width: int = 50) -> s
     return f"{prefix}{current_i}/{total_i} [{bar}] {pct}%"
 
 
+class StatusBar:
+    """Segmented bottom status bar for long-running GUI work."""
+
+    def __init__(self, parent, *, textvariable=None):
+        try:
+            import tkinter as tk
+            from tkinter import ttk
+        except Exception:  # pragma: no cover
+            raise
+
+        self.tk = tk
+        self.ttk = ttk
+        self.main_var = textvariable if textvariable is not None else tk.StringVar(value="Ready")
+        self.phase_var = tk.StringVar(value="")
+        self.detail_var = tk.StringVar(value="")
+        self.retry_var = tk.StringVar(value="")
+        self.pulse_var = tk.StringVar(value="")
+
+        self.frame = ttk.Frame(parent)
+        self.frame.columnconfigure(0, minsize=130)
+        self.frame.columnconfigure(2, minsize=150)
+        self.frame.columnconfigure(4, weight=1, minsize=220)
+        self.frame.columnconfigure(6, minsize=120)
+        self.frame.columnconfigure(8, minsize=42)
+
+        self.main_label = ttk.Label(self.frame, textvariable=self.main_var, anchor="w")
+        self.main_label.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+
+        self._phase_sep = ttk.Separator(self.frame, orient="vertical")
+        self._phase_label = ttk.Label(self.frame, textvariable=self.phase_var, anchor="w")
+        self._detail_sep = ttk.Separator(self.frame, orient="vertical")
+        self._detail_label = ttk.Label(self.frame, textvariable=self.detail_var, anchor="w")
+        self._retry_sep = ttk.Separator(self.frame, orient="vertical")
+        self._retry_label = ttk.Label(self.frame, textvariable=self.retry_var, anchor="w")
+        self._pulse_sep = ttk.Separator(self.frame, orient="vertical")
+        self._pulse_label = ttk.Label(self.frame, textvariable=self.pulse_var, anchor="w")
+
+        self._segments = [
+            (self.phase_var, self._phase_sep, 1, self._phase_label, 2, (6, 6)),
+            (self.detail_var, self._detail_sep, 3, self._detail_label, 4, (6, 6)),
+            (self.retry_var, self._retry_sep, 5, self._retry_label, 6, (6, 6)),
+            (self.pulse_var, self._pulse_sep, 7, self._pulse_label, 8, (6, 6)),
+        ]
+
+        try:
+            self.sizegrip = ttk.Sizegrip(self.frame)
+            self.sizegrip.grid(row=0, column=9, sticky="e", padx=(6, 0))
+        except Exception:
+            self.sizegrip = None
+        self._refresh_segments()
+
+    def grid(self, *args, **kwargs):
+        return self.frame.grid(*args, **kwargs)
+
+    def pack(self, *args, **kwargs):
+        return self.frame.pack(*args, **kwargs)
+
+    def set_main(self, text: str) -> None:
+        self.main_var.set(str(text or "").strip() or "Ready")
+
+    def set_phase(self, text: str) -> None:
+        self.phase_var.set(self._short(text, 70))
+        self._refresh_segments()
+
+    def set_detail(self, text: str) -> None:
+        self.detail_var.set(self._short(text, 140))
+        self._refresh_segments()
+
+    def set_retry(self, text: str) -> None:
+        self.retry_var.set(self._short(text, 40))
+        self._refresh_segments()
+
+    def set_pulse(self, text: str) -> None:
+        self.pulse_var.set(self._short(text, 12))
+        self._refresh_segments()
+
+    def clear_activity(self) -> None:
+        self.set_phase("")
+        self.clear_detail()
+
+    def clear_detail(self) -> None:
+        self.set_detail("")
+        self.set_retry("")
+        self.set_pulse("")
+
+    def _refresh_segments(self) -> None:
+        for var, sep, sep_col, label, label_col, padx in self._segments:
+            if str(var.get() or "").strip():
+                sep.grid(row=0, column=sep_col, sticky="ns", padx=(0, 0))
+                label.grid(row=0, column=label_col, sticky="ew", padx=padx)
+            else:
+                sep.grid_remove()
+                label.grid_remove()
+
+    @staticmethod
+    def _short(text: str, limit: int) -> str:
+        s = " ".join(str(text or "").split())
+        if len(s) <= limit:
+            return s
+        return s[: max(0, int(limit) - 3)].rstrip() + "..."
+
+
 class Tooltip:
     """Small Tk tooltip with delayed entry."""
 

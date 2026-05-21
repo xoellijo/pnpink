@@ -13,6 +13,7 @@ import log as LOG
 _l = LOG
 import net as NET
 import osm as OSM
+import gui as GUI
 
 PNP_ASSETS_INDEX_URL = "https://xoellijo.github.io/pnpink-assets/assets-index.json"
 
@@ -667,6 +668,8 @@ class WebSources:
         except Exception:
             pass
         try:
+            _l.i(f"[sources.progress] wkmc fetch query='{query}' size='{size}'")
+            GUI.emit("mini_status", message=f"downloading wkmc://{query} size={size}", active=True)
             items = self._wkmc_fetch_items(query, size)
             urls = self._wkmc_items_to_urls(items, size)
             self._wkmc_write_cache(query, size, items, urls)
@@ -705,6 +708,8 @@ class WebSources:
         except Exception:
             pass
         try:
+            _l.i(f"[sources.progress] wkmc fetch query='{query}' size='{size}'")
+            GUI.emit("mini_status", message=f"downloading wkmc://{query} size={size}", active=True)
             items = self._wkmc_fetch_items(query, size)
             urls = self._wkmc_items_to_urls(items, size)
             self._wkmc_write_cache(query, size, items, urls)

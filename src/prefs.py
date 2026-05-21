@@ -52,6 +52,7 @@ _DEFAULTS = {
     "pdf_raster_mode":    "png",
     "export_dpi":         "300",
     "export_jpeg_quality": "90",
+    "image_preflight":     "0",
     "split_svg_output":   "0",
     "split_svg_mode":     "limits",
     "split_svg_parts":    "",
@@ -59,6 +60,7 @@ _DEFAULTS = {
     "split_svg_limit_records": "",
     "split_svg_chunk_mb": "64",
     "inkscape_shell_workers": "6",
+    "network_workers": "8",
     "inline_icons_bbox_backend": "query_all",
     "template_engine": "composed",
     "web_user_agent": "github.com/xoellijo/pnpink",
@@ -94,9 +96,11 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     ("export_png_background_opacity", ("Bitmap background opacity when applicable. Values: 0.0..1.0 or 1..255",)),
     ("export_dpi", ("Global Inkscape export DPI. Raster filters use export_dpi * 1.5. Values: integer >= 1",)),
     ("export_jpeg_quality", ("JPEG quality used by JPEG exports (including Pillow fallback conversions). Values: integer 70..95",)),
+    ("image_preflight", ("Generate an image DPI preflight report after SVG generation. Values: 0 | 1", "When enabled, writes *_output.image-preflight.txt and does not print the report in the GUI log.")),
     ("inkscape_shell_workers", ("Parallel Inkscape shell workers used during export. Values: integer >= 1",)),
+    ("network_workers", ("Parallel network workers for direct/Wikimedia web asset downloads. Values: integer 1..32", "Wikimedia may still be capped lower internally to avoid HTTP 429.")),
     ("inline_icons_bbox_backend", ("Inline icon bbox measurement backend. Values: query_all | shell_per_text",)),
-    ("template_engine", ("Template instantiation engine. Values: legacy | composed", "composed is the default; unsupported individual templates fall back to legacy.")),
+    ("template_engine", ("Template instantiation engine. Values: legacy | composed | composed-instance", "composed is the default; unsupported individual templates fall back to legacy.")),
     ("web_user_agent", ("User-Agent used for Wikimedia/direct web asset downloads. Empty = github.com/xoellijo/pnpink",)),
     ("split_svg_output", ("Split DM_output into SVG parts. Values: 0 | 1",)),
     ("split_svg_mode", ("SVG split mode. Values: parts | limits",)),
@@ -437,6 +441,14 @@ def set_export_jpeg_quality(value: int) -> None:
     set("export_jpeg_quality", str(max(70, min(out, 95))), save=True)
 
 
+def get_image_preflight(default: bool = False) -> bool:
+    return str(get("image_preflight", "1" if default else "0") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def set_image_preflight(flag: bool) -> None:
+    set("image_preflight", "1" if bool(flag) else "0", save=True)
+
+
 def get_split_svg_output(default: bool = False) -> bool:
     return str(get("split_svg_output", "1" if default else "0")).strip() == "1"
 
@@ -533,6 +545,22 @@ def set_inkscape_shell_workers(value: int) -> None:
     set("inkscape_shell_workers", str(max(1, min(out, 32))), save=True)
 
 
+def get_network_workers(default: int = 8) -> int:
+    try:
+        value = int(str(get("network_workers", default) or default).strip())
+    except Exception:
+        value = int(default)
+    return max(1, min(value, 32))
+
+
+def set_network_workers(value: int) -> None:
+    try:
+        out = int(value)
+    except Exception:
+        out = 8
+    set("network_workers", str(max(1, min(out, 32))), save=True)
+
+
 def get_inline_icons_bbox_backend(default: str = "query_all") -> str:
     value = str(get("inline_icons_bbox_backend", default) or default).strip().lower()
     if value not in {"query_all", "shell_per_text"}:
@@ -542,6 +570,6 @@ def get_inline_icons_bbox_backend(default: str = "query_all") -> str:
 
 def get_template_engine(default: str = "legacy") -> str:
     value = str(get("template_engine", default) or default).strip().lower()
-    if value not in {"legacy", "composed"}:
+    if value not in {"legacy", "composed", "composed-instance"}:
         return str(default or "legacy")
     return value

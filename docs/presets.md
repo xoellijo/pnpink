@@ -42,7 +42,7 @@ Use these identifiers in `Layout{shape=...}` / `L{s=...}` and related shape-awar
 | Counter34 | counter34, inch34 | 19.05 x 19.05 |
 | Counter1 | counter1, inch1 | 25.4 x 25.4 |
 | Dixit | - | 80 x 120 |
-| CreditCard | creditcard, cr80, id1, id-1 | 54 x 85.6 |
+| CreditCard | creditcard, cr80, id1, id-1 | 85.6 x 54 |
 
 Also accepted (normalization rules):
 

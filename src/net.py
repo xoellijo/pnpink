@@ -17,6 +17,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import log as LOG
 _l = LOG
+import gui as GUI
 
 try:
     import requests
@@ -143,6 +144,13 @@ def _retry_after_label(headers: Any) -> str:
     return f"retry-after={seconds:.1f}s"
 
 
+def _log_url_label(url: str) -> str:
+    text = str(url or "").strip().replace("'", "%27")
+    if len(text) > 180:
+        text = text[:177].rstrip() + "..."
+    return f"url='{text}'"
+
+
 def _url_host(url: str) -> str:
     try:
         return str(urllib.parse.urlparse(url).netloc or "").strip().lower()
@@ -169,10 +177,15 @@ def _host_mark_unverified_tls(url: str) -> bool:
 
 
 def max_workers_for_url(url: str, *, default: int = DEFAULT_HOST_WORKERS) -> int:
+    try:
+        import prefs
+        configured = prefs.get_network_workers(default)
+    except Exception:
+        configured = max(1, int(default or DEFAULT_HOST_WORKERS))
     host = _url_host(url)
     if host.endswith("wikimedia.org"):
-        return WIKIMEDIA_HOST_WORKERS
-    return max(1, int(default or DEFAULT_HOST_WORKERS))
+        return max(1, min(int(configured), WIKIMEDIA_HOST_WORKERS))
+    return max(1, int(configured))
 
 
 def _host_gate(url: str) -> _HostGate:
@@ -295,9 +308,10 @@ def fetch_bytes(
                         _host_apply_retry_after(url, getattr(resp, "headers", None))
                         if status in LOAD_SHEDDING_HTTP_STATUS:
                             delay_s, limit = _host_penalize_load(url)
-                            _l.w(f"{log_prefix} transient HTTP {status}; retry {attempt}/{retries}; {_retry_after_label(getattr(resp, 'headers', None))}; host delay={delay_s:.1f}s workers={limit}")
+                            _l.w(f"{log_prefix} transient HTTP {status}; retry {attempt}/{retries}; {_retry_after_label(getattr(resp, 'headers', None))}; {_log_url_label(url)}; host delay={delay_s:.1f}s workers={limit}")
+                            GUI.emit("mini_status", message=f"downloading {url} [{_retry_after_label(getattr(resp, 'headers', None)).replace('retry-after=', 'retry after = ')}]", active=True)
                         else:
-                            _l.w(f"{log_prefix} transient HTTP {status}; retry {attempt}/{retries}; {_retry_after_label(getattr(resp, 'headers', None))}")
+                            _l.w(f"{log_prefix} transient HTTP {status}; retry {attempt}/{retries}; {_retry_after_label(getattr(resp, 'headers', None))}; {_log_url_label(url)}")
                         _sleep_backoff(attempt)
                         continue
                     raw = resp.read()
@@ -312,9 +326,10 @@ def fetch_bytes(
                     _close_exc_response(ex)
                     if status in LOAD_SHEDDING_HTTP_STATUS:
                         delay_s, limit = _host_penalize_load(url)
-                        _l.w(f"{log_prefix} transient HTTP {status}; retry {attempt}/{retries}; {_retry_after_label(getattr(ex, 'headers', None))}; host delay={delay_s:.1f}s workers={limit}")
+                        _l.w(f"{log_prefix} transient HTTP {status}; retry {attempt}/{retries}; {_retry_after_label(getattr(ex, 'headers', None))}; {_log_url_label(url)}; host delay={delay_s:.1f}s workers={limit}")
+                        GUI.emit("mini_status", message=f"downloading {url} [{_retry_after_label(getattr(ex, 'headers', None)).replace('retry-after=', 'retry after = ')}]", active=True)
                     else:
-                        _l.w(f"{log_prefix} transient HTTP {status}; retry {attempt}/{retries}; {_retry_after_label(getattr(ex, 'headers', None))}")
+                        _l.w(f"{log_prefix} transient HTTP {status}; retry {attempt}/{retries}; {_retry_after_label(getattr(ex, 'headers', None))}; {_log_url_label(url)}")
                     _sleep_backoff(attempt)
                     continue
                 if _is_cert_verify_error(ex) and allow_unverified_tls and (not tls_unverified):
@@ -427,9 +442,10 @@ def requests_get(
                         pass
                     if r.status_code in LOAD_SHEDDING_HTTP_STATUS:
                         delay_s, limit = _host_penalize_load(url)
-                        _l.w(f"{log_prefix} transient HTTP {r.status_code}; retry {attempt}/{retries}; {_retry_after_label(getattr(r, 'headers', None))}; host delay={delay_s:.1f}s workers={limit}")
+                        _l.w(f"{log_prefix} transient HTTP {r.status_code}; retry {attempt}/{retries}; {_retry_after_label(getattr(r, 'headers', None))}; {_log_url_label(url)}; host delay={delay_s:.1f}s workers={limit}")
+                        GUI.emit("mini_status", message=f"downloading {url} [{_retry_after_label(getattr(r, 'headers', None)).replace('retry-after=', 'retry after = ')}]", active=True)
                     else:
-                        _l.w(f"{log_prefix} transient HTTP {r.status_code}; retry {attempt}/{retries}; {_retry_after_label(getattr(r, 'headers', None))}")
+                        _l.w(f"{log_prefix} transient HTTP {r.status_code}; retry {attempt}/{retries}; {_retry_after_label(getattr(r, 'headers', None))}; {_log_url_label(url)}")
                     _sleep_backoff(attempt)
                     continue
                 _host_relax_success(url)

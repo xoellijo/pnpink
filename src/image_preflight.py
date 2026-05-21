@@ -101,3 +101,63 @@ def effective_image_dpi_report(svg_path: str) -> dict:
     except Exception as ex:
         return {"ok": False, "error": str(ex), "count": 0, "rows": []}
 
+
+def default_report_path(svg_path: str) -> str:
+    p = Path(str(svg_path or ""))
+    if p.suffix:
+        return str(p.with_suffix(".image-preflight.txt"))
+    return str(p) + ".image-preflight.txt"
+
+
+def format_text_report(report: dict, *, source_svg: str = "") -> str:
+    lines: list[str] = []
+    lines.append("PnPInk image preflight")
+    if source_svg:
+        lines.append(f"Source SVG: {source_svg}")
+    lines.append("")
+    if not report.get("ok"):
+        lines.append(f"ERROR: {report.get('error') or 'unknown error'}")
+        return "\n".join(lines).rstrip() + "\n"
+
+    rows = list(report.get("rows") or [])
+    unresolved = int(report.get("unresolved") or 0)
+    unreadable = int(report.get("unreadable") or 0)
+    low = list(report.get("low") or [])
+    high = list(report.get("high") or [])
+    lines.append(f"Bitmap images: {len(rows)}")
+    lines.append(f"Unresolved references: {unresolved}")
+    lines.append(f"Unreadable files: {unreadable}")
+    if rows:
+        dpis = [float(r.get("dpi") or 0.0) for r in rows]
+        lines.append(f"Effective DPI: min={min(dpis):.0f}, median={dpis[len(dpis)//2]:.0f}, max={max(dpis):.0f}")
+    lines.append(f"Below 150 dpi: {len(low)}")
+    lines.append(f"Above 900 dpi: {len(high)}")
+    lines.append("")
+
+    if not rows:
+        lines.append("No linked bitmap images found.")
+        return "\n".join(lines).rstrip() + "\n"
+
+    lines.append("Images sorted by effective DPI:")
+    lines.append("dpi\tdpi_x\tdpi_y\tpixels\tplaced_mm\tid\tfile\tpath")
+    for item in rows:
+        px = item.get("px") or (0, 0)
+        mm = item.get("placed_mm") or (0.0, 0.0)
+        lines.append(
+            f"{float(item.get('dpi') or 0.0):.0f}\t"
+            f"{float(item.get('dpi_x') or 0.0):.0f}\t"
+            f"{float(item.get('dpi_y') or 0.0):.0f}\t"
+            f"{int(px[0])}x{int(px[1])}\t"
+            f"{float(mm[0]):.1f}x{float(mm[1]):.1f}\t"
+            f"{item.get('id') or ''}\t"
+            f"{item.get('file') or ''}\t"
+            f"{item.get('path') or ''}"
+        )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_text_report(svg_path: str, out_path: str | None = None) -> str:
+    report = effective_image_dpi_report(svg_path)
+    target = out_path or default_report_path(svg_path)
+    Path(target).write_text(format_text_report(report, source_svg=str(svg_path or "")), encoding="utf-8")
+    return str(target)

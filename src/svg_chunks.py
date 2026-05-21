@@ -21,6 +21,8 @@ URL_REF_RE = re.compile(r"url\(#([^)]+)\)")
 MATRIX_RE = re.compile(r"matrix\(\s*([^)]+?)\s*\)", re.IGNORECASE)
 TRANSLATE_RE = re.compile(r"translate\(\s*([^)]+?)\s*\)", re.IGNORECASE)
 LENGTH_UNIT_RE = re.compile(r"^\s*[-+]?(?:\d+(?:\.\d+)?|\.\d+)([A-Za-z%]+)?\s*$")
+COMPOSED_STATIC_ID_RE = re.compile(r"^pnp_tpl_.+_static_\d+$")
+XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
 
 
 @dataclass(frozen=True)
@@ -671,6 +673,86 @@ def _local_href(value: str) -> str | None:
     return None
 
 
+def _tag_local(node) -> str:
+    tag = str(getattr(node, "tag", "") or "")
+    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
+
+
+def _is_composed_static_id(value: str | None) -> bool:
+    return COMPOSED_STATIC_ID_RE.match(str(value or "").strip()) is not None
+
+
+def _use_href_id(node) -> str:
+    href = str(node.get("href") or node.get(XLINK_HREF) or "").strip()
+    return href[1:] if href.startswith("#") else ""
+
+
+def _index_composed_static_sources(root) -> dict[str, object]:
+    out: dict[str, object] = {}
+    try:
+        iterator = root.iter()
+    except Exception:
+        iterator = []
+    for el in iterator:
+        if _tag_local(el) != "g":
+            continue
+        node_id = str(el.get("id") or "").strip()
+        if _is_composed_static_id(node_id):
+            out.setdefault(node_id, el)
+    return out
+
+
+def _ensure_defs(root):
+    for child in list(root):
+        if _tag_local(child) == "defs":
+            return child
+    try:
+        import svg as SVG
+
+        root_tag = str(getattr(root, "tag", "") or "")
+        tag = root_tag.split("}", 1)[0] + "}defs" if root_tag.startswith("{") and "}" in root_tag else "defs"
+        defs = SVG.etree.Element(tag)
+    except Exception:
+        return None
+    root.insert(0, defs)
+    return defs
+
+
+def _ensure_missing_composed_static_defs(root, source_by_id: dict[str, object]) -> int:
+    if not source_by_id:
+        return 0
+    existing_ids: set[str] = set()
+    needed_ids: set[str] = set()
+    try:
+        iterator = list(root.iter())
+    except Exception:
+        iterator = []
+    for el in iterator:
+        node_id = str(el.get("id") or "").strip()
+        if node_id:
+            existing_ids.add(node_id)
+        if _tag_local(el) == "use":
+            href_id = _use_href_id(el)
+            if _is_composed_static_id(href_id):
+                needed_ids.add(href_id)
+    missing = [ref_id for ref_id in sorted(needed_ids) if ref_id not in existing_ids and ref_id in source_by_id]
+    if not missing:
+        return 0
+    defs = _ensure_defs(root)
+    if defs is None:
+        return 0
+    copied = 0
+    for ref_id in missing:
+        try:
+            defs.append(copy.deepcopy(source_by_id[ref_id]))
+            copied += 1
+        except Exception:
+            continue
+    if copied:
+        _l.i("[svg_chunks] composed-instance static defs copied=%d ids=%s", copied, ",".join(missing[:8]) + ("..." if len(missing) > 8 else ""))
+    return copied
+
+
 def _collect_ref_ids_from_value(value: str) -> set[str]:
     out = set()
     raw = str(value or "")
@@ -1085,6 +1167,7 @@ def normalize_output_doc(doc, *, source_svg_path: str, keep_pages: set[int] | No
     out_root, run_groups = _find_output_groups(root)
     if out_root is None:
         raise ValueError("No 'pnpink-output' group found in output SVG")
+    composed_static_sources = _index_composed_static_sources(root)
     pnpink_layer = _find_pnpink_layer(root)
     page_groups = _find_output_page_groups(out_root)
     page_layout = _build_output_page_layout(all_pages, page_groups, keep_pages)
@@ -1183,11 +1266,13 @@ def normalize_output_doc(doc, *, source_svg_path: str, keep_pages: set[int] | No
     root.set("width", f"{root_w:.6f}{width_unit}")
     root.set("height", f"{root_h:.6f}{height_unit}")
     root.set("viewBox", f"0 0 {root_w:.6f} {root_h:.6f}")
+    copied_static_defs = _ensure_missing_composed_static_defs(root, composed_static_sources)
     _l.i(
-        "[svg_chunks] normalize pages=%s grouped_mode=%s out_children=%d root=(%s x %s)",
+        "[svg_chunks] normalize pages=%s grouped_mode=%s out_children=%d static_defs=%d root=(%s x %s)",
         ",".join(str(int(page_no)) for page_no, _page in page_layout.selected),
         "page" if page_groups else "legacy",
         len([child for child in list(out_root) if isinstance(getattr(child, 'tag', None), str)]),
+        int(copied_static_defs),
         str(root.get("width") or ""),
         str(root.get("height") or ""),
     )
@@ -1202,6 +1287,7 @@ def normalize_output_doc(doc, *, source_svg_path: str, keep_pages: set[int] | No
         "root_width": str(root.get("width") or ""),
         "root_height": str(root.get("height") or ""),
         "root_viewbox": str(root.get("viewBox") or ""),
+        "composed_static_defs": int(copied_static_defs),
     }
 
 

@@ -33,6 +33,7 @@ import svg as SVG
 import const as CONST
 import sources_web as WEB
 import net as NET
+import gui as GUI
 
 # --------------------------------------------------------------------------------------
 # Iconify integration (icon://set/name)
@@ -490,7 +491,12 @@ class SourceManager:
         self.assets_dir = self._ensure_assets_dir()
         self.web = WEB.WebSources(self.assets_dir)
         self._dl_lock = threading.RLock()
-        self._dl_pool = ThreadPoolExecutor(max_workers=NET.DEFAULT_HOST_WORKERS, thread_name_prefix="pnpink-src")
+        try:
+            import prefs
+            network_workers = prefs.get_network_workers(NET.DEFAULT_HOST_WORKERS)
+        except Exception:
+            network_workers = NET.DEFAULT_HOST_WORKERS
+        self._dl_pool = ThreadPoolExecutor(max_workers=max(1, int(network_workers or 1)), thread_name_prefix="pnpink-src")
         self._dl_futures: Dict[str, Future] = {}
         self._dl_done: Dict[str, Optional[Path]] = {}
         self._virtual_futures: Dict[str, Future] = {}
@@ -624,6 +630,11 @@ class SourceManager:
             out0 = self._http_cache_path(url, ext_hint=ext_hint)
             if out0.is_file():
                 return out0.resolve()
+            log_url = str(url or "").strip().replace("'", "%27")
+            if len(log_url) > 240:
+                log_url = log_url[:237].rstrip() + "..."
+            _l.i(f"[sources.progress] web_download start url='{log_url}'")
+            GUI.emit("mini_status", message=f"downloading {log_url}", active=True)
             raw, hdrs, _status = NET.fetch_bytes(
                 url,
                 headers={
