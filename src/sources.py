@@ -494,9 +494,12 @@ class SourceManager:
         try:
             import prefs
             network_workers = prefs.get_network_workers(NET.DEFAULT_HOST_WORKERS)
+            network_workers_wkmc = prefs.get_network_workers_wkmc(network_workers)
         except Exception:
             network_workers = NET.DEFAULT_HOST_WORKERS
+            network_workers_wkmc = network_workers
         self._dl_pool = ThreadPoolExecutor(max_workers=max(1, int(network_workers or 1)), thread_name_prefix="pnpink-src")
+        self._wkmc_pool = ThreadPoolExecutor(max_workers=max(1, int(network_workers_wkmc or network_workers or 1)), thread_name_prefix="pnpink-wkmc")
         self._dl_futures: Dict[str, Future] = {}
         self._dl_done: Dict[str, Optional[Path]] = {}
         self._virtual_futures: Dict[str, Future] = {}
@@ -509,8 +512,16 @@ class SourceManager:
             "download_cached": 0,
             "download_failed": 0,
             "wkmc_resolved": 0,
+            "wkmc_unique_resolved": 0,
+            "wkmc_unique_cached": 0,
+            "wkmc_unique_downloaded": 0,
             "wkmc_failed": 0,
+            "wkmc_unique_failed": 0,
         }
+        self._wkmc_resolved_keys: Set[str] = set()
+        self._wkmc_cached_keys: Set[str] = set()
+        self._wkmc_downloaded_keys: Set[str] = set()
+        self._wkmc_failed_keys: Set[str] = set()
 
         # doc unit conversion helpers
         try:
@@ -541,22 +552,68 @@ class SourceManager:
             pass
         return assets
 
-    def resolve_wkmc_urls(self, expr: str) -> Optional[List[str]]:
-        urls = self.web.resolve_wkmc_urls(expr)
+    def _wkmc_stat_key(self, expr: str) -> str:
+        try:
+            p = self.web._parse_wkmc_expr(expr)
+            if p is not None:
+                query, size = p
+                return f"{str(query).strip()}|{str(size).strip()}"
+        except Exception:
+            pass
+        return str(expr or "").strip()
+
+    def _wkmc_cache_exists(self, expr: str) -> bool:
+        try:
+            p = self.web._parse_wkmc_expr(expr)
+            if p is None:
+                return False
+            query, size = p
+            raw = self.web._wkmc_read_cache(query, size)
+            return raw is not None and bool((raw or {}).get("fetched"))
+        except Exception:
+            return False
+
+    def _note_wkmc_result(self, expr: str, ok: bool, *, cached_before: bool = False) -> None:
+        key = self._wkmc_stat_key(expr)
+        if not key:
+            return
         with self._dl_lock:
-            if urls:
+            if ok:
                 self._web_stats["wkmc_resolved"] = int(self._web_stats.get("wkmc_resolved") or 0) + 1
-            elif urls == []:
+                if key not in self._wkmc_resolved_keys:
+                    self._wkmc_resolved_keys.add(key)
+                    self._web_stats["wkmc_unique_resolved"] = len(self._wkmc_resolved_keys)
+                if cached_before:
+                    if key not in self._wkmc_downloaded_keys:
+                        self._wkmc_cached_keys.add(key)
+                    self._web_stats["wkmc_unique_cached"] = len(self._wkmc_cached_keys)
+                else:
+                    self._wkmc_downloaded_keys.add(key)
+                    self._wkmc_cached_keys.discard(key)
+                    self._web_stats["wkmc_unique_downloaded"] = len(self._wkmc_downloaded_keys)
+                    self._web_stats["wkmc_unique_cached"] = len(self._wkmc_cached_keys)
+            else:
                 self._web_stats["wkmc_failed"] = int(self._web_stats.get("wkmc_failed") or 0) + 1
+                if key not in self._wkmc_failed_keys:
+                    self._wkmc_failed_keys.add(key)
+                    self._web_stats["wkmc_unique_failed"] = len(self._wkmc_failed_keys)
+
+    def resolve_wkmc_urls(self, expr: str) -> Optional[List[str]]:
+        cached_before = self._wkmc_cache_exists(expr)
+        urls = self.web.resolve_wkmc_urls(expr)
+        if urls:
+            self._note_wkmc_result(expr, True, cached_before=cached_before)
+        elif urls == []:
+            self._note_wkmc_result(expr, False)
         return urls
 
     def resolve_wkmc_items(self, expr: str):
+        cached_before = self._wkmc_cache_exists(expr)
         items = self.web.resolve_wkmc_items(expr)
-        with self._dl_lock:
-            if items:
-                self._web_stats["wkmc_resolved"] = int(self._web_stats.get("wkmc_resolved") or 0) + 1
-            elif items == []:
-                self._web_stats["wkmc_failed"] = int(self._web_stats.get("wkmc_failed") or 0) + 1
+        if items:
+            self._note_wkmc_result(expr, True, cached_before=cached_before)
+        elif items == []:
+            self._note_wkmc_result(expr, False)
         return items
 
     def resolve_pxby_urls(self, expr: str) -> Optional[List[str]]:
@@ -576,11 +633,12 @@ class SourceManager:
 
     def _register_first_valid_web_candidate(self, urls: List[str], *, hint_type: Optional[str], dpi=None,
                                             fragment: str = "", page: int = 0,
-                                            log_prefix: str = "[sources] web") -> Optional[SourceRef]:
+                                            log_prefix: str = "[sources] web",
+                                            wkmc_download: bool = False) -> Optional[SourceRef]:
         total = len(urls or [])
         for idx, u in enumerate([str(x).strip() for x in (urls or []) if str(x or "").strip()], start=1):
             try:
-                ref = self.register(u, hint_type=hint_type, dpi=dpi, fragment=fragment, page=page)
+                ref = self.register(u, hint_type=hint_type, dpi=dpi, fragment=fragment, page=page, wkmc_download=wkmc_download)
             except Exception as ex:
                 _l.w(f"{log_prefix} candidate {idx}/{total} failed: {ex}")
                 continue
@@ -669,7 +727,7 @@ class SourceManager:
             _l.w(f"[sources] web download failed '{url}': {ex}")
             return None
 
-    def _ensure_http_future(self, url: str) -> Future:
+    def _ensure_http_future(self, url: str, *, wkmc_download: bool = False) -> Future:
         u = (url or "").strip()
         with self._dl_lock:
             if u in self._dl_done:
@@ -687,11 +745,12 @@ class SourceManager:
                     self._dl_futures.pop(u, None)
                 return p
 
-            f = self._dl_pool.submit(_job)
+            pool = self._wkmc_pool if bool(wkmc_download) else self._dl_pool
+            f = pool.submit(_job)
             self._dl_futures[u] = f
             return f
 
-    def _resolve_http_cached_file(self, url: str, *, wait: bool) -> Optional[Path]:
+    def _resolve_http_cached_file(self, url: str, *, wait: bool, wkmc_download: bool = False) -> Optional[Path]:
         u = (url or "").strip()
         if not u:
             return None
@@ -709,7 +768,7 @@ class SourceManager:
                 self._web_stats["download_cached"] = int(self._web_stats.get("download_cached") or 0) + 1
             return p_any
 
-        f = self._ensure_http_future(u)
+        f = self._ensure_http_future(u, wkmc_download=wkmc_download)
         if not wait:
             if not f.done():
                 return None
@@ -859,7 +918,8 @@ class SourceManager:
                         self._virtual_futures.pop(raw, None)
                 return True
 
-            f = self._dl_pool.submit(_job)
+            pool = self._wkmc_pool if raw.lower().startswith("wkmc://") else self._dl_pool
+            f = pool.submit(_job)
             self._virtual_futures[raw] = f
             return f
 
@@ -927,8 +987,15 @@ class SourceManager:
                 stats["pending_direct"] = pending_direct
                 stats["pending_virtual"] = pending_virtual
             _l.i(
+                "[sources.progress] source_summary provider=wkmc downloaded=%d cached=%d failed=%d uses=%d",
+                int(stats.get("wkmc_unique_downloaded") or 0),
+                int(stats.get("wkmc_unique_cached") or 0),
+                int(stats.get("wkmc_unique_failed") or 0),
+                int(stats.get("wkmc_resolved") or 0),
+            )
+            _l.i(
                 "[sources.progress] web_sources final direct=%d virtual=%d wkmc=%d "
-                "downloaded=%d cached=%d download_failed=%d wkmc_resolved=%d wkmc_failed=%d pending=%d",
+                "downloaded=%d cached=%d download_failed=%d wkmc_resolved=%d wkmc_unique=%d wkmc_failed=%d wkmc_failed_unique=%d pending=%d",
                 int(stats.get("direct_scheduled") or 0),
                 int(stats.get("virtual_scheduled") or 0),
                 int(stats.get("wkmc_scheduled") or 0),
@@ -936,7 +1003,9 @@ class SourceManager:
                 int(stats.get("download_cached") or 0),
                 int(stats.get("download_failed") or 0),
                 int(stats.get("wkmc_resolved") or 0),
+                int(stats.get("wkmc_unique_resolved") or 0),
                 int(stats.get("wkmc_failed") or 0),
+                int(stats.get("wkmc_unique_failed") or 0),
                 int(stats.get("pending_direct") or 0) + int(stats.get("pending_virtual") or 0),
             )
         except Exception:
@@ -946,7 +1015,7 @@ class SourceManager:
 
     def register(self, uri_or_name: str, *, hint_type: Optional[str] = None,
                  dpi: Optional[float] = None, fragment: Optional[str] = None,
-                 page: Optional[int] = None) -> SourceRef:
+                 page: Optional[int] = None, wkmc_download: bool = False) -> SourceRef:
         """
         uri_or_name:
           - "file:/.../logo.png", "C:/images/logo.png", "img/logo", "tiles/t01", "data:..."
@@ -1072,7 +1141,8 @@ class SourceManager:
             if len(urls) > 1:
                 _l.w(f"[sources] wkmc produced {len(urls)} results; trying candidates in order")
             ref = self._register_first_valid_web_candidate(
-                urls, hint_type=hint_type, dpi=dpi, fragment=fragment, page=page, log_prefix="[sources] wkmc"
+                urls, hint_type=hint_type, dpi=dpi, fragment=fragment, page=page,
+                log_prefix="[sources] wkmc", wkmc_download=True
             )
             if ref is None:
                 sid, wh = _make_placeholder_symbol(self.defs, raw, "wkmc no valid candidate")
@@ -1230,7 +1300,7 @@ class SourceManager:
                 self._cache_hits += 1
                 return self._cache[key_url]
             self._cache_misses += 1
-            cached_file = self._resolve_http_cached_file(raw, wait=True)
+            cached_file = self._resolve_http_cached_file(raw, wait=True, wkmc_download=wkmc_download)
             if cached_file is None:
                 sid, wh = _make_placeholder_symbol(self.defs, raw, "web download failed")
                 ref = SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=key_url)
@@ -1863,10 +1933,12 @@ class SourceManager:
         # POSIX:   $HOME / ${HOME} / ~
         abspath = None
         src_for_path = str(src_raw or "").strip()
+        src_from_wkmc = False
         try:
             # Virtual web sources inside spritesheets: resolve to a concrete URL first.
             sl = src_for_path.lower()
             if sl.startswith("wkmc://"):
+                src_from_wkmc = True
                 urls = list(self.resolve_wkmc_urls(src_for_path) or [])
                 if urls:
                     if len(urls) > 1:
@@ -1900,7 +1972,7 @@ class SourceManager:
         try:
             # If it's a web URL, use the cached local file for spritesheet tiling.
             if re.match(r"^https?://", src_for_path, re.I):
-                abspath = self._resolve_http_cached_file(src_for_path, wait=True)
+                abspath = self._resolve_http_cached_file(src_for_path, wait=True, wkmc_download=src_from_wkmc)
             else:
                 src_fs = _expand_user_env(str(src_for_path or ""))
                 cand = Path(src_fs)

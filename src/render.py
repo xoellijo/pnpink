@@ -1572,10 +1572,11 @@ def render_phase(ctx):
         except Exception:
             ICON = None
 
-        def _scan_icon_tokens(rows) -> list:
+        def _scan_icon_tokens(rows) -> tuple[list, int]:
             out = set()
+            uses = 0
             if not rows:
-                return []
+                return [], 0
             # conservative tokenization: find "icon://" and stop on common DSL delimiters
             stop_chars = set(['}', ' ', '\t', '\n', '\r', ')', '(', '"', "'", ']', '[', ',', ';'])
             for r in rows:
@@ -1623,19 +1624,22 @@ def render_phase(ctx):
                             name = token.strip()
                         if prefix and name:
                             out.add((prefix, name))
-            return sorted(out)
+                            uses += 1
+            return sorted(out), uses
 
         if ICON is not None and hasattr(ICON, 'ensure_icon_symbols_parallel'):
             try:
-                icons = _scan_icon_tokens(rows_data)
+                icons, icon_uses = _scan_icon_tokens(rows_data)
                 if icons:
-                    # respect preferences for logging noisiness; workers is bounded.
+                    # Iconify is normal network I/O; use the global network worker
+                    # preference unless an advanced override exists.
                     try:
-                        mw = int(prefs.get('iconify_max_workers', 12) or 12)
+                        raw_mw = str(prefs.get('iconify_max_workers', '') or '').strip()
+                        mw = int(raw_mw) if raw_mw else int(prefs.get_network_workers(12))
                     except Exception:
                         mw = 12
                     mw = max(1, min(mw, 32))
-                    ICON.ensure_icon_symbols_parallel(root, icons, max_workers=mw)
+                    ICON.ensure_icon_symbols_parallel(root, icons, max_workers=mw, uses=icon_uses)
             except Exception as ex:
                 _l.w(f"[iconify] preload skipped/failed: {ex}")
         ctx._iconify_preloaded = True

@@ -881,9 +881,13 @@ def measure_to_mm(token, base_mm=None, default_unit="mm"):
     if not s:
         return 0.0
 
-    # Porcentaje: "10%"
+    # Porcentaje: "10%"; "%" is shorthand for "100%" and "-%" for "-100%".
     if s.endswith("%"):
         num = s[:-1].strip()
+        if num in ("", "+"):
+            num = "100"
+        elif num == "-":
+            num = "-100"
         try:
             p = float(num)
         except (TypeError, ValueError):

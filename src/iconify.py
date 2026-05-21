@@ -201,9 +201,10 @@ def ensure_icon_symbols_parallel(svgdoc,
                                  *,
                                  add_rect: bool = True,
                                  max_workers: int = 12,
+                                 uses: Optional[int] = None,
                                  session: Optional[requests.Session] = None) -> Dict[str, str]:
     if not icons:
-        return {"ok": "0", "placeholder": "0", "skip": "0"}
+        return {"ok": "0", "placeholder": "0", "skip": "0", "uses": str(int(uses or 0)), "workers": str(max_workers)}
 
     defs = SVG.ensure_defs(svgdoc)
     existing = set(el.get("id") for el in defs.xpath(".//svg:symbol[@id]", namespaces=SVG.NSS))
@@ -222,8 +223,15 @@ def ensure_icon_symbols_parallel(svgdoc,
         uniq.append((p, n, sid))
 
     todo = [(p, n, sid) for (p, n, sid) in uniq if sid not in existing]
+    skipped = len(uniq) - len(todo)
     if not todo:
-        return {"ok": "0", "placeholder": "0", "skip": str(len(uniq))}
+        _l.i(
+            "[sources.progress] source_summary provider=iconify downloaded=0 cached=%d failed=0 uses=%d workers=%d",
+            skipped,
+            int(uses if uses is not None else len(icons)),
+            int(max_workers),
+        )
+        return {"ok": "0", "placeholder": "0", "skip": str(skipped), "uses": str(int(uses or len(icons))), "workers": str(max_workers)}
 
     def _worker(p: str, n: str, sid: str):
         url = url_svg(p, n)
@@ -266,4 +274,18 @@ def ensure_icon_symbols_parallel(svgdoc,
 
             defs.append(symbol)
 
-    return {"ok": str(ok), "placeholder": str(placeholder), "skip": str(len(uniq) - len(todo))}
+    _l.i(
+        "[sources.progress] source_summary provider=iconify downloaded=%d cached=%d failed=%d uses=%d workers=%d",
+        int(ok),
+        int(skipped),
+        int(placeholder),
+        int(uses if uses is not None else len(icons)),
+        int(max_workers),
+    )
+    return {
+        "ok": str(ok),
+        "placeholder": str(placeholder),
+        "skip": str(skipped),
+        "uses": str(int(uses if uses is not None else len(icons))),
+        "workers": str(max_workers),
+    }

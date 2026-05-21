@@ -61,6 +61,7 @@ _DEFAULTS = {
     "split_svg_chunk_mb": "64",
     "inkscape_shell_workers": "6",
     "network_workers": "8",
+    "network_workers_wkmc": "0",
     "inline_icons_bbox_backend": "query_all",
     "template_engine": "composed",
     "web_user_agent": "github.com/xoellijo/pnpink",
@@ -98,7 +99,8 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     ("export_jpeg_quality", ("JPEG quality used by JPEG exports (including Pillow fallback conversions). Values: integer 70..95",)),
     ("image_preflight", ("Generate an image DPI preflight report after SVG generation. Values: 0 | 1", "When enabled, writes *_output.image-preflight.txt and does not print the report in the GUI log.")),
     ("inkscape_shell_workers", ("Parallel Inkscape shell workers used during export. Values: integer >= 1",)),
-    ("network_workers", ("Parallel network workers for direct/Wikimedia web asset downloads. Values: integer 1..32", "Wikimedia may still be capped lower internally to avoid HTTP 429.")),
+    ("network_workers", ("Parallel network workers for non-Wikimedia web asset downloads. Values: integer 1..32",)),
+    ("network_workers_wkmc", ("Parallel network workers for Wikimedia Commons (wkmc://) resolution/downloads. Values: 0 or empty = network_workers; otherwise integer 1..32.",)),
     ("inline_icons_bbox_backend", ("Inline icon bbox measurement backend. Values: query_all | shell_per_text",)),
     ("template_engine", ("Template instantiation engine. Values: legacy | composed | composed-instance", "composed is the default; unsupported individual templates fall back to legacy.")),
     ("web_user_agent", ("User-Agent used for Wikimedia/direct web asset downloads. Empty = github.com/xoellijo/pnpink",)),
@@ -559,6 +561,26 @@ def set_network_workers(value: int) -> None:
     except Exception:
         out = 8
     set("network_workers", str(max(1, min(out, 32))), save=True)
+
+
+def get_network_workers_wkmc(default: int | None = None) -> int:
+    fallback = get_network_workers(8 if default is None else int(default))
+    try:
+        raw = str(get("network_workers_wkmc", "0") or "0").strip()
+        value = int(raw) if raw else 0
+    except Exception:
+        value = 0
+    if value <= 0:
+        return fallback
+    return max(1, min(value, 32))
+
+
+def set_network_workers_wkmc(value: int) -> None:
+    try:
+        out = int(value)
+    except Exception:
+        out = 0
+    set("network_workers_wkmc", str(max(0, min(out, 32))), save=True)
 
 
 def get_inline_icons_bbox_backend(default: str = "query_all") -> str:

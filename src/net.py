@@ -177,14 +177,19 @@ def _host_mark_unverified_tls(url: str) -> bool:
 
 
 def max_workers_for_url(url: str, *, default: int = DEFAULT_HOST_WORKERS) -> int:
+    host = _url_host(url)
+    if host.endswith("wikimedia.org"):
+        try:
+            import prefs
+            configured = prefs.get_network_workers_wkmc(default)
+        except Exception:
+            configured = WIKIMEDIA_HOST_WORKERS
+        return max(1, int(configured))
     try:
         import prefs
         configured = prefs.get_network_workers(default)
     except Exception:
         configured = max(1, int(default or DEFAULT_HOST_WORKERS))
-    host = _url_host(url)
-    if host.endswith("wikimedia.org"):
-        return max(1, min(int(configured), WIKIMEDIA_HOST_WORKERS))
     return max(1, int(configured))
 
 

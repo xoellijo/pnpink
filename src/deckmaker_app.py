@@ -545,7 +545,11 @@ class DeckMakerApp:
             self.log_text.configure(state="normal")
             self._clear_live_activity_locked()
             prefix = f"[{stamp}] " if stamp != self._last_log_stamp else " " * 11
-            self.log_text.insert("end-1c", f"{prefix}{text}\n")
+            lines = text.splitlines() or [text]
+            continuation = " " * 11
+            rendered = [f"{prefix}{lines[0]}"]
+            rendered.extend(f"{continuation}{line}" for line in lines[1:])
+            self.log_text.insert("end-1c", "\n".join(rendered) + "\n")
             self._last_log_stamp = stamp
             self._apply_live_activity_locked()
             self.log_text.see("end")
@@ -811,7 +815,30 @@ class DeckMakerApp:
             "last_pdf_logged": 0,
             "last_png_logged": 0,
             "last_raster_logged": 0,
+            "source_summaries": {},
         }
+
+    def _source_provider_display_name(self, provider: str) -> str:
+        key = str(provider or "").strip().lower()
+        names = {
+            "icon": "Iconify",
+            "iconify": "Iconify",
+            "wkmc": "Wikimedia Commons",
+            "wikimedia": "Wikimedia Commons",
+            "wikimedia-commons": "Wikimedia Commons",
+            "pxby": "Pixabay",
+            "pixabay": "Pixabay",
+            "oclp": "Openclipart",
+            "openclipart": "Openclipart",
+            "osm": "OpenStreetMap",
+            "openstreetmap": "OpenStreetMap",
+            "ofm": "OpenFreeMap",
+            "openfreemap": "OpenFreeMap",
+            "pnp": "PnPInk Assets",
+            "web": "Direct Web",
+            "direct": "Direct Web",
+        }
+        return names.get(key, str(provider or "").strip() or "Unknown")
 
     def _start_web_activity_monitor(self):
         self._stop_web_activity_monitor()
@@ -821,6 +848,12 @@ class DeckMakerApp:
             self._queue_ui_activity(msg)
 
         def _set_progress(label: str, current: int, total: int):
+            if str(label or "").strip().lower() == "preparing web assets":
+                if int(total or 0) > 0:
+                    _set_mini(f"preparing web assets {int(current or 0)}/{int(total or 0)}")
+                else:
+                    _set_mini("preparing web assets")
+                return
             self._set_activity_progress(label, current, total)
 
         def _set_mini(msg: str, active: bool = True):
@@ -875,18 +908,15 @@ class DeckMakerApp:
             if "[sources] virtual prefetch scheduled:" in line:
                 m = re.search(r"virtual prefetch scheduled:\s*(\d+)\s*expr", line)
                 if m:
-                    _set_activity(f"Preparing {m.group(1)} web source expression(s)...")
                     _set_mini(f"resolving {m.group(1)} web source expression(s)")
                 return
             if "[sources] web prefetch scheduled:" in line:
                 m = re.search(r"web prefetch scheduled:\s*(\d+)\s*url", line)
                 if m:
-                    _set_activity(f"Preparing {m.group(1)} direct web download(s)...")
                     _set_mini(f"preparing {m.group(1)} direct web download(s)")
                 return
             if "[sources.progress] web_download start" in line:
                 url = _quoted_value("url", line)
-                _set_activity(f"Downloading {url or 'web asset'}...")
                 _set_mini(f"downloading {url or 'web asset'}")
                 return
             if "[sources.progress] wkmc fetch" in line:
@@ -895,7 +925,6 @@ class DeckMakerApp:
                 label = f"wkmc://{query}" if query else "Wikimedia"
                 if size:
                     label += f" size={size}"
-                _set_activity(f"Resolving {label}...")
                 _set_mini(f"downloading {label}")
                 return
             if "[sources.progress] web_sources discovered" in line:
@@ -966,6 +995,21 @@ class DeckMakerApp:
                     _set_activity("Remote service is rate-limiting downloads; retrying with backoff...")
                     _set_mini(f"downloading {url or 'remote asset'} [retrying]")
                 return
+            if "[sources.progress] source_summary" in line:
+                m = re.search(
+                    r"provider=([A-Za-z0-9_-]+)\s+downloaded=(\d+)\s+cached=(\d+)\s+failed=(\d+)\s+uses=(\d+)",
+                    line,
+                )
+                if m:
+                    summaries = self._web_activity_stats.setdefault("source_summaries", {})
+                    if isinstance(summaries, dict):
+                        summaries[str(m.group(1)).strip()] = {
+                            "downloaded": int(m.group(2)),
+                            "cached": int(m.group(3)),
+                            "failed": int(m.group(4)),
+                            "uses": int(m.group(5)),
+                        }
+                return
             if "[sources] wkmc fetch failed" in line:
                 self._web_activity_stats["wkmc_failed"] += 1
                 n = int(self._web_activity_stats["wkmc_failed"])
@@ -974,7 +1018,7 @@ class DeckMakerApp:
                 return
             if "[sources.progress] web_sources final" in line:
                 m = re.search(
-                    r"direct=(\d+)\s+virtual=(\d+)\s+wkmc=(\d+)\s+downloaded=(\d+)\s+cached=(\d+)\s+download_failed=(\d+)\s+wkmc_resolved=(\d+)\s+wkmc_failed=(\d+)\s+pending=(\d+)",
+                    r"direct=(\d+)\s+virtual=(\d+)\s+wkmc=(\d+)\s+downloaded=(\d+)\s+cached=(\d+)\s+download_failed=(\d+)\s+wkmc_resolved=(\d+)(?:\s+wkmc_unique=(\d+))?\s+wkmc_failed=(\d+)(?:\s+wkmc_failed_unique=(\d+))?\s+pending=(\d+)",
                     line,
                 )
                 if m:
@@ -982,16 +1026,40 @@ class DeckMakerApp:
                     cached = int(m.group(5))
                     download_failed = int(m.group(6))
                     wkmc_resolved = int(m.group(7))
-                    wkmc_failed = int(m.group(8))
-                    pending = int(m.group(9))
+                    wkmc_unique = int(m.group(8) or wkmc_resolved)
+                    wkmc_failed = int(m.group(9))
+                    wkmc_failed_unique = int(m.group(10) or wkmc_failed)
+                    pending = int(m.group(11))
                     total = int(self._web_activity_stats.get("web_sources_total") or 0)
                     done = max(downloaded + cached + wkmc_resolved + download_failed + wkmc_failed, total - pending)
                     if total > 0:
                         _set_progress("Preparing web assets", min(done, total), total)
-                    _set_activity(
-                        f"Web assets ready: downloaded={downloaded}, cached={cached}, Wikimedia={wkmc_resolved}, "
-                        f"failed={download_failed + wkmc_failed}, pending={pending}"
-                    )
+                    summaries = self._web_activity_stats.get("source_summaries")
+                    if not isinstance(summaries, dict):
+                        summaries = {}
+                    if "wkmc" not in summaries and (wkmc_unique or wkmc_resolved or wkmc_failed_unique):
+                        summaries["wkmc"] = {
+                            "downloaded": 0,
+                            "cached": wkmc_unique,
+                            "failed": wkmc_failed_unique,
+                            "uses": wkmc_resolved,
+                        }
+                    parts = []
+                    for provider in sorted(summaries.keys()):
+                        vals = summaries.get(provider) or {}
+                        if int(vals.get("uses") or 0) <= 0:
+                            continue
+                        provider_name = self._source_provider_display_name(provider)
+                        parts.append(
+                            f"{provider_name}: ({int(vals.get('downloaded') or 0)}, "
+                            f"{int(vals.get('cached') or 0)}, "
+                            f"{int(vals.get('failed') or 0)}, "
+                            f"{int(vals.get('uses') or 0)})"
+                        )
+                    if parts:
+                        self._queue_ui_log("Web assets ( downloaded, cached, failed, uses)")
+                        for part in parts:
+                            self._queue_ui_log(part)
                     _set_mini("", False)
                 return
             if "[raster] export-id png jobs=" in line:
