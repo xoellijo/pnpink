@@ -394,6 +394,7 @@ def _parse_token_attrs(s: Optional[str]) -> Dict[str,str]:
         out[k] = v
     return out
 
+
 def _extract_scale(tf_raw: Optional[str]) -> Tuple[float,float,Optional[str]]:
     if not tf_raw: return 1.0, 1.0, None
     m = _SCALE_RX.search(tf_raw)
@@ -882,26 +883,17 @@ def _query_inline_spacers_compact_query_all(tree, all_items: List[TokenItem]) ->
     ids_text = sorted({it.spacer_id for it in all_items if it.spacer_id})
     if not ids_text:
         return {}
-    doc_root = tree.getroot()
-    id_index = {str(n.get("id")): n for n in doc_root.xpath(".//*[@id]") if n.get("id")}
-    text_ids = []
-    seen_text_ids: Set[str] = set()
-    for it in all_items:
-        tid = str(it.text_id or "")
-        if not tid or tid in seen_text_ids:
-            continue
-        seen_text_ids.add(tid)
-        text_ids.append(tid)
-    text_els = [id_index[tid] for tid in text_ids if tid in id_index]
     t0 = time.perf_counter()
-    probe_tree = _inline_probe_tree_for_texts(doc_root, text_els, id_index)
+    # Measure directly on the live document tree to avoid geometry drift caused
+    # by compact probe reconstruction in complex transformed text hierarchies.
+    probe_tree = tree
     build_ms = (time.perf_counter() - t0) * 1000.0
     t1 = time.perf_counter()
     bbs = SVG.query_all(probe_tree, set(ids_text), minimize_for_ids=False)
     query_ms = (time.perf_counter() - t1) * 1000.0
     _l.i(
-        "[inline_icons.query_all_compact] texts=%d ids=%d bboxes=%d build_ms=%.1f query_ms=%.1f total_ms=%.1f",
-        len(text_els), len(ids_text), len(bbs), build_ms, query_ms, build_ms + query_ms,
+        "[inline_icons.query_all_live] ids=%d bboxes=%d build_ms=%.1f query_ms=%.1f total_ms=%.1f",
+        len(ids_text), len(bbs), build_ms, query_ms, build_ms + query_ms,
     )
     return bbs
 
@@ -1020,6 +1012,8 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
 
     if source_manager is None:
         source_manager = SRC.SourceManager(doc_root, doc_path, project_root=None)
+    pref_debug_rects = prefs.get_inline_icons_show_debug_rects(False)
+    show_debug_rects = bool(show_debug_rects or pref_debug_rects)
 
     def _inline_local_source_exists(src_uri: str) -> bool:
         s = (src_uri or "").strip()
@@ -1360,7 +1354,7 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
                 pass
 
         if show_debug_rects:
-            rect.set("style", "fill:none;stroke:red;stroke-width:0.4")
+            rect.set("style", "fill:none;stroke:#00bcd4;stroke-width:0.18")
 
     _l.i("inline_icons placed=%d", placed)
     _l.i("[inline_icons] stage=insert_use use_count=%d", placed)

@@ -46,6 +46,7 @@ _DEFAULTS = {
     "export_png":         "0",
     "export_other_format": "png",
     "export_other_pages": "",
+    "export_other_ids": "",
     "export_png_antialias": "2",
     "export_png_background": "#ffffff",
     "export_png_background_opacity": "0.0",
@@ -63,6 +64,7 @@ _DEFAULTS = {
     "network_workers": "8",
     "network_workers_wkmc": "0",
     "inline_icons_bbox_backend": "query_all",
+    "inline_icons_show_debug_rects": "0",
     "template_engine": "composed",
     "web_user_agent": "github.com/xoellijo/pnpink",
 
@@ -92,6 +94,7 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     ("export_png", ("Enable additional non-PDF export. Values: 0 | 1",)),
     ("export_other_format", ("Additional output format. Values: png | jpeg | jpeg2000 | pdf | svg | tiff | webp | ps | eps | emf | wmf",)),
     ("export_other_pages", ("Optional pages for additional output. Examples: 1,3-5,8. Empty = all pages",)),
+    ("export_other_ids", ("Optional object IDs for additional output. Comma-separated ids. If set, page selection is ignored and one file per ID is exported.",)),
     ("export_png_antialias", ("PNG antialias level used by png_alpha raster export. Values: 0 | 1 | 2 | 3",)),
     ("export_png_background", ("Bitmap matte/background color when applicable. Values: any valid SVG color string",)),
     ("export_png_background_opacity", ("Bitmap background opacity when applicable. Values: 0.0..1.0 or 1..255",)),
@@ -102,6 +105,7 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     ("network_workers", ("Parallel network workers for non-Wikimedia web asset downloads. Values: integer 1..32",)),
     ("network_workers_wkmc", ("Parallel network workers for Wikimedia Commons (wkmc://) resolution/downloads. Values: 0 or empty = network_workers; otherwise integer 1..32.",)),
     ("inline_icons_bbox_backend", ("Inline icon bbox measurement backend. Values: query_all | shell_per_text",)),
+    ("inline_icons_show_debug_rects", ("Show inline-icon hole debug rectangles. Values: 0 | 1",)),
     ("template_engine", ("Template instantiation engine. Values: legacy | composed | composed-instance", "composed is the default; unsupported individual templates fall back to legacy.")),
     ("web_user_agent", ("User-Agent used for Wikimedia/direct web asset downloads. Empty = github.com/xoellijo/pnpink",)),
     ("split_svg_output", ("Split DM_output into SVG parts. Values: 0 | 1",)),
@@ -353,6 +357,14 @@ def set_export_other_pages(value: str) -> None:
     set("export_other_pages", str(value or "").strip(), save=True)
 
 
+def get_export_other_ids(default: str = "") -> str:
+    return str(get("export_other_ids", default) or default).strip()
+
+
+def set_export_other_ids(value: str) -> None:
+    set("export_other_ids", str(value or "").strip(), save=True)
+
+
 def get_export_png_antialias(default: int = 2) -> int:
     try:
         value = int(str(get("export_png_antialias", default) or default).strip())
@@ -595,3 +607,7 @@ def get_template_engine(default: str = "legacy") -> str:
     if value not in {"legacy", "composed", "composed-instance"}:
         return str(default or "legacy")
     return value
+
+
+def get_inline_icons_show_debug_rects(default: bool = False) -> bool:
+    return str(get("inline_icons_show_debug_rects", "1" if default else "0")).strip() == "1"
