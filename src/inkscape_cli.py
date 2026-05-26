@@ -78,6 +78,16 @@ def executable_dir(exe: str | None) -> str | None:
     return os.path.dirname(str(exe or "")) if exe else None
 
 
+def shell_executable(exe: str | None) -> str | None:
+    """Prefer inkscape.com for --shell on Windows; inkscape.exe can hang on pipes."""
+    path = str(exe or "").strip()
+    if os.name == "nt" and path.lower().endswith("inkscape.exe"):
+        cand = os.path.join(os.path.dirname(path), "inkscape.com")
+        if os.path.isfile(cand):
+            return cand
+    return path or None
+
+
 def clean_launch_env(*, isolated_profile: bool = True) -> dict[str, str]:
     env = dict(os.environ)
     exact_keys = {
@@ -186,6 +196,7 @@ def run(
     exe_dir: str | None = None,
     env: dict[str, str] | None = None,
     on_output=None,
+    timeout_s: float | None = None,
 ) -> tuple[int, str]:
     try:
         _l.i("[inkscape_cli] run cwd='%s' argv=%s", exe_dir or "", " ".join(str(part) for part in (argv or [])))
@@ -203,7 +214,12 @@ def run(
     if os.name == "nt":
         kwargs["creationflags"] = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if on_output is None:
-        proc = subprocess.run(**kwargs)
+        try:
+            proc = subprocess.run(**kwargs, timeout=timeout_s if timeout_s and timeout_s > 0 else None)
+        except subprocess.TimeoutExpired as ex:
+            msg = ((ex.stdout or "") + ("\n" + ex.stderr if ex.stderr else "")).strip()
+            _l.w("[inkscape_cli] timeout after %.2fs msg=%s", float(timeout_s or 0), str(msg)[:1000])
+            return 124, msg or "timeout"
         msg = ((proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")).strip()
         rc = int(proc.returncode)
     else:
@@ -265,16 +281,19 @@ def run_shell_commands(
     exe_dir: str | None = None,
     env: dict[str, str] | None = None,
     on_output=None,
+    timeout_s: float | None = None,
+    shell_args: list[str] | None = None,
 ) -> tuple[int, str]:
     script = [str(cmd or "").strip() for cmd in (commands or []) if str(cmd or "").strip()]
     if not script:
         return 0, ""
+    exe = shell_executable(exe) or exe
     payload = "\n".join(script + ["quit"]) + "\n"
     _l.i("[inkscape_shell] start exe='%s' cwd='%s' commands=%d", exe, exe_dir or "", len(script))
     for idx, cmd in enumerate(script, start=1):
         _l.i("[inkscape_shell] cmd%02d %s", idx, cmd)
     kwargs = {
-        "args": [exe, "--shell"],
+        "args": [exe] + [str(arg) for arg in (shell_args or [])] + ["--shell"],
         "cwd": exe_dir or None,
         "env": env if env is not None else clean_launch_env(isolated_profile=True),
         "stdout": subprocess.PIPE,
@@ -315,26 +334,93 @@ def run_shell_commands(
         pass
 
     chunks: list[str] = []
-    while proc.poll() is None or any(reader.is_alive() for reader in readers) or not output_q.empty():
-        try:
-            line = output_q.get(timeout=0.05)
-        except queue.Empty:
-            continue
-        if line is None:
-            continue
-        chunks.append(line)
-        if on_output is not None:
+    deadline = time.perf_counter() + float(timeout_s) if timeout_s and timeout_s > 0 else None
+    timed_out = False
+    try:
+        while proc.poll() is None or any(reader.is_alive() for reader in readers) or not output_q.empty():
+            if deadline is not None and time.perf_counter() > deadline:
+                timed_out = True
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                try:
+                    proc.wait(timeout=2.0)
+                except Exception:
+                    pass
+                break
             try:
-                on_output(line)
-            except Exception:
-                pass
-    for reader in readers:
+                line = output_q.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            if line is None:
+                continue
+            chunks.append(line)
+            if on_output is not None:
+                try:
+                    on_output(line)
+                except Exception:
+                    pass
+    finally:
         try:
-            reader.join(timeout=0.2)
+            if proc.stdin is not None:
+                proc.stdin.close()
         except Exception:
             pass
-    rc = int(proc.returncode or 0)
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        try:
+            proc.wait(timeout=2.0)
+        except Exception:
+            pass
+        for reader in readers:
+            try:
+                reader.join(timeout=0.2)
+            except Exception:
+                pass
+        while not output_q.empty():
+            try:
+                line = output_q.get_nowait()
+            except queue.Empty:
+                break
+            if line is None:
+                continue
+            chunks.append(line)
+            if on_output is not None:
+                try:
+                    on_output(line)
+                except Exception:
+                    pass
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=2.0)
+            except Exception:
+                pass
+    try:
+        proc.wait(timeout=0.1)
+    except Exception:
+        pass
+    if proc.returncode is None:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=2.0)
+        except Exception:
+            pass
+    rc = 124 if timed_out else int(proc.returncode or 0)
     msg = "".join(chunks).strip()
+    if timed_out:
+        _l.w("[inkscape_shell] timeout after %.2fs msg=%s", float(timeout_s or 0), msg[:1000])
+        return rc, msg or "timeout"
     if rc == 0:
         _l.i("[inkscape_shell] ok rc=%d", int(proc.returncode))
     else:

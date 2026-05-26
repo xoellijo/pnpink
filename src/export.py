@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import shutil
 import time
+import glob
 from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -112,6 +113,17 @@ def _pillow_convert_image(src_png: str, dst_path: str, export_name: str, *, jpeg
         image.save(dst_path, format=fmt, **params)
 
 
+def _run_page_job_batch(page_jobs: list[tuple[int, str, list[str]]], exe_dir: str | None, env: dict[str, str]) -> tuple[int, str]:
+    msgs: list[str] = []
+    for _local_idx, _temp_path, argv in page_jobs:
+        rc, msg = INKSCAPE.run(argv, exe_dir=exe_dir, env=env)
+        if msg:
+            msgs.append(str(msg))
+        if int(rc) != 0:
+            return int(rc), "\n".join(msgs)
+    return 0, "\n".join(msgs)
+
+
 def paths_exist_with_size(paths: list[str]) -> bool:
     for path in paths:
         try:
@@ -154,6 +166,45 @@ def parse_page_spec(spec: str, *, max_page: int) -> list[int]:
             if 1 <= page_no <= int(max_page):
                 out.add(page_no)
     return sorted(out)
+
+
+def parse_id_spec(spec: str) -> list[str]:
+    text = str(spec or "").strip()
+    if not text:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in text.replace(";", ",").split(","):
+        item = str(raw or "").strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
+
+
+def _safe_id_stem(node_id: str) -> str:
+    raw = str(node_id or "").strip()
+    cleaned = "".join(ch if (ch.isalnum() or ch in {"-", "_", "."}) else "_" for ch in raw)
+    cleaned = cleaned.strip("._")
+    return cleaned or "id"
+
+
+def split_pages_and_ids_spec(spec: str) -> tuple[str, list[str], bool]:
+    tokens = [t.strip() for t in str(spec or "").replace(";", ",").split(",") if t.strip()]
+    page_tokens: list[str] = []
+    ids: list[str] = []
+    for token in tokens:
+        if token.isdigit():
+            page_tokens.append(token)
+            continue
+        if "-" in token:
+            a, b = token.split("-", 1)
+            if a.strip().isdigit() and b.strip().isdigit():
+                page_tokens.append(f"{int(a.strip())}-{int(b.strip())}")
+                continue
+        ids.append(token)
+    return ",".join(page_tokens), parse_id_spec(",".join(ids)), bool(page_tokens)
 
 
 def resolve_chunked_output_source(svg_path: str) -> dict:
@@ -372,10 +423,11 @@ def export_other_pages_via_inkscape(
     export_dpi: int = 300,
     jpeg_quality: int = 90,
     on_page_created=None,
+    on_id_created=None,
 ) -> tuple[bool, dict]:
+    page_spec_only, ids, has_page_tokens = split_pages_and_ids_spec(page_spec)
+
     export_name = _normalize_export_name(export_type)
-    if export_name == "png":
-        return export_png_pages_via_inkscape(svg_path, out_path, export_dpi=export_dpi, on_page_png_created=on_page_created)
     pillow_ok, pillow_reason = _pillow_format_status(export_name)
     use_png_intermediate = export_name in {"jpeg", "tiff", "jpeg2000", "webp"} and pillow_ok
     if export_name in {"tiff", "jpeg2000", "webp"} and not use_png_intermediate:
@@ -413,12 +465,32 @@ def export_other_pages_via_inkscape(
             **split_chunk_kwargs(),
         )
         chunks = list(chunk_plan.get("chunks") or [])
+        chunk_page_max = 0
+        for chunk in chunks:
+            for p in list(getattr(chunk, "pages", ()) or ()):
+                try:
+                    chunk_page_max = max(chunk_page_max, int(p))
+                except Exception:
+                    continue
         if page_count <= 0:
             page_count = sum(len(getattr(chunk, "pages", ()) or ()) for chunk in chunks)
-        selected_pages = parse_page_spec(page_spec, max_page=max(1, page_count))
-        if not selected_pages:
-            return False, {"error": f"No pages selected for export: {page_spec}"}
+        if chunk_page_max > page_count:
+            page_count = int(chunk_page_max)
+        run_pages = has_page_tokens or not ids
+        selected_pages = parse_page_spec(page_spec_only, max_page=max(1, page_count)) if run_pages else []
+        if run_pages and not selected_pages:
+            return False, {"error": f"No pages selected for export: {page_spec_only}"}
         selected_set = set(selected_pages)
+        if run_pages:
+            try:
+                stem, ext = os.path.splitext(DMPATHS.normalize(out_path))
+                for old in glob.glob(f"{stem}_p*{ext}"):
+                    try:
+                        os.remove(old)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
         fixed_images = int(chunk_plan.get("fixed_images") or 0)
         _l.i(
             "[export.%s] chunks_ready count=%d fixed_images=%d chunk_dir='%s' work_dir='%s' existing=%s selected_pages=%s",
@@ -435,7 +507,9 @@ def export_other_pages_via_inkscape(
             local_page_exports = []
             final_paths = []
             for local_idx, global_page in enumerate(chunk.pages, start=1):
-                if int(global_page) not in selected_set:
+                if run_pages and int(global_page) not in selected_set:
+                    continue
+                if not run_pages:
                     continue
                 final_path = DMPATHS.output_page(out_path, int(global_page)) if len(selected_pages) > 1 else DMPATHS.normalize(out_path)
                 temp_ext = "png" if use_png_intermediate else export_name
@@ -444,17 +518,22 @@ def export_other_pages_via_inkscape(
                 final_paths.append((temp_path, final_path))
             if not local_page_exports:
                 continue
-            commands = INKSCAPE.build_shell_page_export_commands(
-                chunk.svg_path,
-                local_page_exports,
-                export_type=_inkscape_export_type("png" if use_png_intermediate else export_name),
-                dpi=export_dpi,
-            )
+            page_jobs = []
+            for local_idx, temp_path in local_page_exports:
+                argv = INKSCAPE.build_page_export_argv(
+                    exe,
+                    chunk.svg_path,
+                    temp_path,
+                    export_type=_inkscape_export_type("png" if use_png_intermediate else export_name),
+                    page_selector=str(int(local_idx)),
+                    dpi=export_dpi,
+                )
+                page_jobs.append((int(local_idx), temp_path, argv))
             jobs.append({
                 "index": int(chunk.index),
                 "pages": [int(p) for p in chunk.pages if int(p) in selected_set],
                 "expected_paths": list(final_paths),
-                "commands": commands,
+                "page_jobs": page_jobs,
             })
 
         results = []
@@ -464,11 +543,10 @@ def export_other_pages_via_inkscape(
             for job in jobs:
                 job_started = time.perf_counter()
                 fut = pool.submit(
-                    INKSCAPE.run_shell_commands,
-                    exe,
-                    job["commands"],
-                    exe_dir=exe_dir,
-                    env=env,
+                    _run_page_job_batch,
+                    job["page_jobs"],
+                    exe_dir,
+                    env,
                 )
                 futs.append((job, job_started, fut))
             for job, job_started, fut in futs:
@@ -536,6 +614,34 @@ def export_other_pages_via_inkscape(
                 "chunk_dir": str(chunk_plan.get("chunk_dir") or ""),
                 "work_dir": str(chunk_plan.get("work_dir") or export_work_dir),
             }
+
+        id_info: dict = {"id_count": 0, "id_results": []}
+        if ids:
+            ok_ids, info_ids = export_other_ids_via_inkscape(
+                svg_path,
+                out_path,
+                export_type=export_type,
+                id_spec=",".join(ids),
+                export_dpi=export_dpi,
+                jpeg_quality=jpeg_quality,
+                on_id_created=on_id_created,
+            )
+            if not ok_ids:
+                return False, {
+                    "error": str((info_ids or {}).get("error") or "ID export failed"),
+                    "elapsed_s": total_elapsed,
+                    "results": results,
+                    "page_count": page_count,
+                    "selected_pages": selected_pages,
+                    "chunk_count": len(chunks),
+                    "fixed_images": fixed_images,
+                    "chunk_dir": str(chunk_plan.get("chunk_dir") or ""),
+                    "work_dir": str(chunk_plan.get("work_dir") or export_work_dir),
+                }
+            id_info = {
+                "id_count": int((info_ids or {}).get("id_count") or 0),
+                "id_results": list((info_ids or {}).get("results") or []),
+            }
         return True, {
             "elapsed_s": total_elapsed,
             "results": results,
@@ -547,6 +653,8 @@ def export_other_pages_via_inkscape(
             "chunk_dir": str(chunk_plan.get("chunk_dir") or ""),
             "work_dir": str(chunk_plan.get("work_dir") or export_work_dir),
             "used_parallel": len(chunks) > 1,
+            "id_count": int(id_info.get("id_count") or 0),
+            "id_results": list(id_info.get("id_results") or []),
         }
     except Exception as ex:
         _l.w("[export.%s] exception %s", export_name, str(ex))
@@ -560,3 +668,84 @@ def export_other_pages_via_inkscape(
             shutil.rmtree(export_work_dir, ignore_errors=True)
         except Exception:
             pass
+
+
+def export_other_ids_via_inkscape(
+    svg_path: str,
+    out_path: str,
+    *,
+    export_type: str,
+    id_spec: str = "",
+    export_dpi: int = 300,
+    jpeg_quality: int = 90,
+    on_id_created=None,
+) -> tuple[bool, dict]:
+    export_name = _normalize_export_name(export_type)
+    id_list = parse_id_spec(id_spec)
+    if not id_list:
+        return False, {"error": "No IDs selected for export"}
+    if not svg_path or not os.path.isfile(svg_path):
+        return False, {"error": f"SVG output not found: {svg_path}"}
+    exe = INKSCAPE.find_executable()
+    if not exe:
+        return False, {"error": "Inkscape executable not found"}
+    export_dpi = max(1, int(export_dpi or 300))
+    started = time.perf_counter()
+    _l.i("[export.%s.id] start svg='%s' out='%s' ids=%s", export_name, svg_path, out_path, ",".join(id_list))
+
+    stem, ext = os.path.splitext(DMPATHS.normalize(out_path))
+    if not ext:
+        ext = f".{export_name}"
+    env = INKSCAPE.clean_launch_env()
+    exe_dir = os.path.dirname(exe) or None
+    results: list[dict] = []
+    for node_id in id_list:
+        safe_id = _safe_id_stem(node_id)
+        target = os.path.normpath(f"{stem}_id_{safe_id}{ext}")
+        try:
+            if os.path.isfile(target):
+                os.remove(target)
+        except Exception:
+            pass
+        argv = [
+            exe,
+            svg_path,
+            f"--export-id={node_id}",
+            "--export-id-only",
+            f"--export-type={_inkscape_export_type(export_name)}",
+            f"--export-filename={target}",
+        ]
+        if export_name == "png":
+            argv.append(f"--export-dpi={int(export_dpi)}")
+        rc, msg = INKSCAPE.run(argv, exe_dir=exe_dir, env=env)
+        ok = paths_exist_with_size([target])
+        results.append({
+            "id": node_id,
+            "path": target,
+            "returncode": int(rc),
+            "message": str(msg or ""),
+            "ok": bool(ok),
+        })
+        if ok and on_id_created is not None:
+            try:
+                on_id_created(target, node_id)
+            except Exception:
+                pass
+    elapsed = time.perf_counter() - started
+    failed = [r for r in results if not bool(r.get("ok"))]
+    if failed:
+        first = failed[0]
+        return False, {
+            "error": f"Inkscape {export_name.upper()} export failed for id '{first.get('id')}'",
+            "elapsed_s": elapsed,
+            "results": results,
+            "id_count": len(id_list),
+            "chunk_count": 1,
+        }
+    return True, {
+        "elapsed_s": elapsed,
+        "results": results,
+        "id_count": len(id_list),
+        "chunk_count": 1,
+        "output_path": out_path,
+    }

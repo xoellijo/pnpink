@@ -367,10 +367,10 @@ class DeckMakerApp:
         )
         other_format_combo.grid(row=0, column=1, sticky="w")
         other_format_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_export_format_prefs_changed())
-        ttk.Label(format_box, text="Pages").grid(row=0, column=2, sticky="w", padx=(12, 8))
-        pages_entry = ttk.Entry(format_box, textvariable=self.other_export_pages_var, width=18)
+        ttk.Label(format_box, text="#Pages/IDs").grid(row=0, column=2, sticky="w", padx=(12, 8))
+        pages_entry = ttk.Entry(format_box, textvariable=self.other_export_pages_var, width=52)
         pages_entry.grid(row=0, column=3, sticky="w")
-        ttk.Label(format_box, text="e.g. 1,3-5,8 (empty = all)").grid(row=0, column=4, sticky="w", padx=(8, 0))
+        ttk.Label(format_box, text="e.g. 1,5,group2,card6,8-9 (empty = all pages)").grid(row=0, column=4, sticky="w", padx=(8, 0))
         pages_entry.bind("<FocusOut>", lambda _e: self._on_export_format_prefs_changed())
         pages_entry.bind("<Return>", lambda _e: self._on_export_format_prefs_changed())
 
@@ -949,9 +949,60 @@ class DeckMakerApp:
             m = re.search(rf"{re.escape(name)}='([^']*)'", line)
             return str(m.group(1) if m else "").strip()
 
+        def _int_stat(name: str) -> int:
+            return int(self._web_activity_stats.get(name) or 0)
+
+        def _inc_stat(name: str, step: int = 1) -> int:
+            self._web_activity_stats[name] = _int_stat(name) + int(step or 0)
+            return _int_stat(name)
+
+        def _advance_web_sources(fallback_msg: str, *, throttle_first: int = 3, throttle_every: int = 5) -> None:
+            total = _int_stat("web_sources_total")
+            if total > 0:
+                done = min(total, _int_stat("web_sources_done") + 1)
+                self._web_activity_stats["web_sources_done"] = done
+                _set_progress("Preparing web assets", done, total)
+            elif self._web_activity_stats.get("_last_counter", 0) <= throttle_first or (
+                throttle_every > 0 and int(self._web_activity_stats.get("_last_counter", 0)) % throttle_every == 0
+            ):
+                _set_activity(fallback_msg)
+
+        def _queue_dataset_source_summary(line: str) -> bool:
+            if "[datasets.source]" not in line or "effective=" not in line:
+                return False
+            if "effective=csv" in line:
+                self._queue_ui_log("Dataset source: local CSV")
+                return True
+            if "effective=gsheet" in line:
+                m_mode = re.search(r"mode=([A-Za-z0-9_-]+)", line)
+                mode = str(m_mode.group(1) if m_mode else "").strip() or "unknown"
+                self._queue_ui_log(f"Dataset source: Google Sheet ({mode})")
+                return True
+            return False
+
+        def _queue_web_asset_summary(summaries: dict) -> None:
+            parts = []
+            for provider in sorted((summaries or {}).keys()):
+                vals = summaries.get(provider) or {}
+                if int(vals.get("uses") or 0) <= 0:
+                    continue
+                provider_name = self._source_provider_display_name(provider)
+                parts.append(
+                    f"{provider_name}: ({int(vals.get('downloaded') or 0)}, "
+                    f"{int(vals.get('cached') or 0)}, "
+                    f"{int(vals.get('failed') or 0)}, "
+                    f"{int(vals.get('uses') or 0)})"
+                )
+            if parts:
+                self._queue_ui_log("Web assets ( downloaded, cached, failed, uses)")
+                for part in parts:
+                    self._queue_ui_log(part)
+
         def process_line(raw_line: str):
             line = str(raw_line or "").strip()
             if not line:
+                return
+            if _queue_dataset_source_summary(line):
                 return
             m = re.search(r"\[datasets\].*placed=(\d+)\s+cards; end_page=(\d+)", line)
             if m:
@@ -1027,44 +1078,24 @@ class DeckMakerApp:
                     _set_activity(f"Preparing Wikimedia assets ({wkmc})...")
                 return
             if "[sources] wkmc fetched query=" in line:
-                self._web_activity_stats["wkmc_fetched"] += 1
-                n = int(self._web_activity_stats["wkmc_fetched"])
-                total = int(self._web_activity_stats.get("web_sources_total") or 0)
-                if total > 0:
-                    self._web_activity_stats["web_sources_done"] = min(total, int(self._web_activity_stats.get("web_sources_done") or 0) + 1)
-                    _set_progress("Preparing web assets", int(self._web_activity_stats["web_sources_done"]), total)
-                elif n <= 3 or (n % 10) == 0:
-                    _set_activity(f"Wikimedia resolved {n} item(s)...")
+                n = _inc_stat("wkmc_fetched")
+                self._web_activity_stats["_last_counter"] = n
+                _advance_web_sources(f"Wikimedia resolved {n} item(s)...", throttle_every=10)
                 return
             if "[sources] wkmc cache hit query=" in line:
-                self._web_activity_stats["wkmc_fetched"] += 1
-                n = int(self._web_activity_stats["wkmc_fetched"])
-                total = int(self._web_activity_stats.get("web_sources_total") or 0)
-                if total > 0:
-                    self._web_activity_stats["web_sources_done"] = min(total, int(self._web_activity_stats.get("web_sources_done") or 0) + 1)
-                    _set_progress("Preparing web assets", int(self._web_activity_stats["web_sources_done"]), total)
-                elif n <= 3 or (n % 10) == 0:
-                    _set_activity(f"Using cached Wikimedia result(s): {n}")
+                n = _inc_stat("wkmc_fetched")
+                self._web_activity_stats["_last_counter"] = n
+                _advance_web_sources(f"Using cached Wikimedia result(s): {n}", throttle_every=10)
                 return
             if "[sources] web cached ->" in line:
-                self._web_activity_stats["web_cached"] += 1
-                n = int(self._web_activity_stats["web_cached"])
-                total = int(self._web_activity_stats.get("web_sources_total") or 0)
-                if total > 0:
-                    self._web_activity_stats["web_sources_done"] = min(total, int(self._web_activity_stats.get("web_sources_done") or 0) + 1)
-                    _set_progress("Preparing web assets", int(self._web_activity_stats["web_sources_done"]), total)
-                elif n <= 3 or (n % 5) == 0:
-                    _set_activity(f"Downloaded {n} web asset(s)...")
+                n = _inc_stat("web_cached")
+                self._web_activity_stats["_last_counter"] = n
+                _advance_web_sources(f"Downloaded {n} web asset(s)...")
                 return
             if "[sources] web cache hit ->" in line:
-                self._web_activity_stats["web_cached"] += 1
-                n = int(self._web_activity_stats["web_cached"])
-                total = int(self._web_activity_stats.get("web_sources_total") or 0)
-                if total > 0:
-                    self._web_activity_stats["web_sources_done"] = min(total, int(self._web_activity_stats.get("web_sources_done") or 0) + 1)
-                    _set_progress("Preparing web assets", int(self._web_activity_stats["web_sources_done"]), total)
-                elif n <= 3 or (n % 5) == 0:
-                    _set_activity(f"Using cached web asset(s): {n}")
+                n = _inc_stat("web_cached")
+                self._web_activity_stats["_last_counter"] = n
+                _advance_web_sources(f"Using cached web asset(s): {n}")
                 return
             if "transient HTTP 429" in line or "transient HTTP 503" in line:
                 m = re.search(r"transient HTTP\s+(\d+).*?(retry-after=[^;]+).*?host delay=([0-9.]+)s.*?workers=(\d+)", line, re.I)
@@ -1130,22 +1161,7 @@ class DeckMakerApp:
                             "failed": wkmc_failed_unique,
                             "uses": wkmc_resolved,
                         }
-                    parts = []
-                    for provider in sorted(summaries.keys()):
-                        vals = summaries.get(provider) or {}
-                        if int(vals.get("uses") or 0) <= 0:
-                            continue
-                        provider_name = self._source_provider_display_name(provider)
-                        parts.append(
-                            f"{provider_name}: ({int(vals.get('downloaded') or 0)}, "
-                            f"{int(vals.get('cached') or 0)}, "
-                            f"{int(vals.get('failed') or 0)}, "
-                            f"{int(vals.get('uses') or 0)})"
-                        )
-                    if parts:
-                        self._queue_ui_log("Web assets ( downloaded, cached, failed, uses)")
-                        for part in parts:
-                            self._queue_ui_log(part)
+                    _queue_web_asset_summary(summaries)
                     _set_mini("", False)
                 return
             if "[raster] export-id png jobs=" in line:
@@ -1312,6 +1328,8 @@ class DeckMakerApp:
         mode = str(explicit or "").strip().lower()
         template = _normalize_path(template)
         sheet_id = str(sheet_id or "").strip()
+        if mode == "local_csv":
+            return "local_csv"
         if sheet_id:
             if mode in {"public", "oauth"}:
                 return mode
@@ -1412,10 +1430,7 @@ class DeckMakerApp:
         template = _normalize_path(self.template_var.get())
         sheet_id = self.sheet_id_var.get().strip()
         source_mode = self._source_mode_value()
-        if sheet_id and source_mode == "local_csv":
-            self._refresh_source_mode(template, "")
-            source_mode = self._source_mode_value()
-        elif not source_mode:
+        if not source_mode:
             self._refresh_source_mode(template)
             source_mode = self._source_mode_value()
         self._schedule_auth_warmup()
@@ -2005,7 +2020,7 @@ class DeckMakerApp:
             f"pdf_raster_mode={options.pdf_raster_mode}, "
             f"dpi={int(options.export_dpi)}, "
             f"jpeg_quality={int(options.jpeg_quality)}, "
-            f"other_format={options.other_format}, pages={options.other_pages or 'all'}"
+            f"other_format={options.other_format}, pages_or_ids={options.other_pages or 'all pages'}"
         )
 
     def _export_clicked(self):
@@ -2134,9 +2149,13 @@ class DeckMakerApp:
             for export_type in other_formats:
                 out_path = DMPATHS.output_other(template, export_type)
                 self._queue_ui_activity(f"Preparing {export_type.upper()} export...")
-
                 def _page_other_created(path: str, label: str = export_type.upper()):
                     self.root.after(0, lambda path=path, label=label: self._log(f"Created page {label}: {os.path.basename(path)}"))
+
+                def _id_other_created(path: str, node_id: str, label: str = export_type.upper()):
+                    self.root.after(0, lambda path=path, node_id=node_id, label=label: self._log(
+                        f"Created ID {label}: {node_id} -> {os.path.basename(path)}"
+                    ))
 
                 ok, info = EXPORT.export_other_pages_via_inkscape(
                     svg_path,
@@ -2146,14 +2165,21 @@ class DeckMakerApp:
                     export_dpi=int(options.export_dpi or 300),
                     jpeg_quality=int(options.jpeg_quality or 90),
                     on_page_created=_page_other_created,
+                    on_id_created=_id_other_created,
                 )
                 if ok:
                     elapsed = float((info or {}).get("elapsed_s") or 0.0)
-                    page_count = int((info or {}).get("page_count") or 0)
                     used_chunks = int((info or {}).get("chunk_count") or 1)
-                    self.root.after(0, lambda elapsed=elapsed, page_count=page_count, used_chunks=used_chunks, export_type=export_type: self._log(
-                        f"{export_type.upper()} export done in {elapsed:.2f}s across {page_count} page(s) using {used_chunks} SVG part(s)"
-                    ))
+                    if int((info or {}).get("id_count") or 0) > 0:
+                        id_count = int((info or {}).get("id_count") or 0)
+                        self.root.after(0, lambda elapsed=elapsed, id_count=id_count, used_chunks=used_chunks, export_type=export_type: self._log(
+                            f"{export_type.upper()} export done in {elapsed:.2f}s across {id_count} id(s) using {used_chunks} SVG part(s)"
+                        ))
+                    else:
+                        page_count = int((info or {}).get("page_count") or 0)
+                        self.root.after(0, lambda elapsed=elapsed, page_count=page_count, used_chunks=used_chunks, export_type=export_type: self._log(
+                            f"{export_type.upper()} export done in {elapsed:.2f}s across {page_count} page(s) using {used_chunks} SVG part(s)"
+                        ))
                 else:
                     failures.append(export_type.upper())
                     err = str((info or {}).get("error") or f"{export_type.upper()} export failed")

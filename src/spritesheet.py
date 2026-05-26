@@ -13,6 +13,7 @@ import svg as SVG
 from inkex import Transform
 import svg
 import layouts
+import const as CONST
 import log as LOG
 _l = LOG
 from math import floor
@@ -243,9 +244,7 @@ class SpriteSheet(inkex.EffectExtension):
         # 7) Compute tile and rows/cols (all in doc-space px)
         if mode == "preset":
             name = self.options.card_preset or "Standard"
-            if name not in layouts.CARD_SIZES_MM:
-                name = "Standard"
-            cw_mm, ch_mm = layouts.CARD_SIZES_MM[name]
+            cw_mm, ch_mm = CONST.get_card_size_preset(name) or CONST.get_card_size_preset("Standard")
             tw = mm_to_px(cw_mm, svgdoc)
             th = mm_to_px(ch_mm, svgdoc)
             cols = max(0, floor((content_w + gh) / (tw + gh)))

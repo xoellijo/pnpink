@@ -522,6 +522,10 @@ class SourceManager:
         self._wkmc_cached_keys: Set[str] = set()
         self._wkmc_downloaded_keys: Set[str] = set()
         self._wkmc_failed_keys: Set[str] = set()
+        # Wikimedia keys that were missing cache at prefetch time in this run.
+        # If they later resolve with cache present, they still count as downloaded
+        # for this run because the cache was created during the same execution.
+        self._wkmc_prefetch_miss_keys: Set[str] = set()
 
         # doc unit conversion helpers
         try:
@@ -583,14 +587,16 @@ class SourceManager:
                 if key not in self._wkmc_resolved_keys:
                     self._wkmc_resolved_keys.add(key)
                     self._web_stats["wkmc_unique_resolved"] = len(self._wkmc_resolved_keys)
-                if cached_before:
-                    if key not in self._wkmc_downloaded_keys:
-                        self._wkmc_cached_keys.add(key)
-                    self._web_stats["wkmc_unique_cached"] = len(self._wkmc_cached_keys)
-                else:
+                # If prefetch had no cache for this key in this run, consider it
+                # downloaded even if resolve now sees a cache hit.
+                if (key in self._wkmc_prefetch_miss_keys) or (not cached_before):
                     self._wkmc_downloaded_keys.add(key)
                     self._wkmc_cached_keys.discard(key)
                     self._web_stats["wkmc_unique_downloaded"] = len(self._wkmc_downloaded_keys)
+                    self._web_stats["wkmc_unique_cached"] = len(self._wkmc_cached_keys)
+                elif cached_before:
+                    if key not in self._wkmc_downloaded_keys:
+                        self._wkmc_cached_keys.add(key)
                     self._web_stats["wkmc_unique_cached"] = len(self._wkmc_cached_keys)
             else:
                 self._web_stats["wkmc_failed"] = int(self._web_stats.get("wkmc_failed") or 0) + 1
@@ -949,6 +955,17 @@ class SourceManager:
             len(virtuals),
             len(wkmc_exprs),
         )
+        for expr in wkmc_exprs:
+            try:
+                p = self.web._parse_wkmc_expr(expr)
+                if p is None:
+                    continue
+                q0, s0 = p
+                raw0 = self.web._wkmc_read_cache(q0, s0)
+                if not (raw0 is not None and bool((raw0 or {}).get("fetched"))):
+                    self._wkmc_prefetch_miss_keys.add(self._wkmc_stat_key(expr))
+            except Exception:
+                pass
         batch_prefetched = 0
         if wkmc_exprs:
             try:

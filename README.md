@@ -58,12 +58,12 @@ One template and one dataset can produce hundreds of print-ready components in s
 - `Additional export formats`: page-based export to PNG, JPEG, JPEG2000, TIFF, WebP, PDF, SVG, PS, EPS, EMF, and WMF.
 - `Map sources`: on-demand SVG map generation using `osm://...` and `ofm://...` source expressions, usable like other PnPInk assets.
 - `Large-output handling`: optional SVG splitting into reusable parts so very large decks can be exported more reliably.
-- `VDP performance`: optimized generation paths for high-volume variable data printing, with measured throughput above 60K items/minute on suitable projects.
+- `VDP performance`: optimized generation paths for high-volume "Variable Data Printing", with measured throughput above 85K records/minute on suitable projects.
 - `Template optimization work`: generated outputs can reuse hoisted template images and shared text styles to reduce repeated SVG content.
 
-## Installation (Quick)
+## Installation
 
-1. Install Inkscape.
+1. Install [Inkscape](https://inkscape.org/release/) (container builds such as Flatpak are not supported).
 2. Download the latest installer ZIP directly: [pnpink_latest.zip](https://github.com/xoellijo/pnpink/releases/latest/download/pnpink_latest.zip).
    If that direct link does not work, open [All Releases](https://github.com/xoellijo/pnpink/releases) and download `pnpink_latest.zip` from the `Assets` section.
 3. Extract the ZIP.
@@ -75,10 +75,12 @@ One template and one dataset can produce hundreds of print-ready components in s
 
 ## First Recommended Run
 
-1. Build a template SVG with IDs (`title`, `cost`, `art`, etc.).
-2. Prepare a CSV/Sheet with matching columns.
-3. Run DeckMaker from `Extensions > PnPInk ...`.
-4. Regenerate as you iterate: tweak template or dataset settings, then compose again.
+1. Start by opening the examples from `Extensions > PnPInk > Deckmaker > About > Open examples folder`.
+2. Try the prepared SVG examples with their companion CSV datasets, or open `.PNP` files, which self-contain the SVG template and CSV dataset and auto-generate when opened.
+3. Build your own template SVG with IDs (`title`, `cost`, `art`, etc.).
+4. Prepare a CSV/Sheet with matching columns.
+5. Run DeckMaker from `Extensions > PnPInk ...`.
+6. Regenerate as you iterate: tweak template or dataset settings, then compose again.
 
 ## Documentation
 
@@ -90,8 +92,10 @@ One template and one dataset can produce hundreds of print-ready components in s
 
 ## Project Status
 
-This repository is currently in `alpha` release stage.
+This repository is currently in `beta` release stage.
+It has been widely tested with Inkscape 1.2 through 1.5 on Windows and Linux environments.
 Until stabilization is explicitly announced, DSL changes may break backward compatibility and older datasets/templates may require updates.
+
 Join the community on the BGG Guild to follow progress, share use cases, and influence the roadmap:
 
 - [`PnPInk BGG Guild`](https://boardgamegeek.com/guild/4569)

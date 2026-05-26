@@ -1809,9 +1809,10 @@ def run(self, __version__):
     except Exception as ex:
         _l.w(f"[deckmaker.text] inline_icons ONE-PASS failed: {ex}")
         _l.w("[deckmaker.text] traceback:\n" + _tb.format_exc())
-    try:
-        SM.log_web_summary()
-    except Exception:
-        pass
+    finally:
+        try:
+            SM.log_web_summary()
+        except Exception:
+            pass
 
     _l.s("END DeckMaker")

@@ -775,17 +775,43 @@ def load_datasets(effect, doc_path: Optional[str] = None):
         access_hint = "oauth" if mode_hint in {"oauth", "google_sheet_oauth"} else ""
         if mode_hint in {"public", "google_sheet_public"}:
             access_hint = "public"
+        _l.i(
+            f"[datasets.source] requested=gsheet mode_hint='{mode_hint or 'auto'}' "
+            f"sheet_id='{sheet_id}' selector='{range_a1 or ''}'"
+        )
         try:
             if not access_hint and doc_path:
                 rec = DSTATE.get_gsheet_for_svg(doc_path) or {}
                 sid0 = str(rec.get("sheet_id") or "").strip()
                 if sid0 and sid0 == sheet_id:
                     access_hint = str(rec.get("access_mode") or "").strip().lower()
+                    _l.i(f"[datasets.source] state_hint access_mode='{access_hint or ''}' for same sheet_id")
         except Exception:
             access_hint = ""
         matrix, used_access_mode = _fetch_gsheet_matrix(effect, sheet_id, range_a1, client_id, access_hint=access_hint)
         if used_access_mode:
             _l.i(f"[datasets] gsheet access mode='{used_access_mode}'")
+        try:
+            sel_kind, sel_val = _split_selector(range_a1)
+            if used_access_mode == "oauth":
+                eff_range = _choose_sheet_and_range(effect, sheet_id, range_a1)
+                _l.i(
+                    f"[datasets.source] effective=gsheet mode=oauth sheet_id='{sheet_id}' "
+                    f"selector_kind='{sel_kind or 'auto'}' selector='{sel_val or ''}' range='{eff_range}'"
+                )
+            elif used_access_mode == "public":
+                _l.i(
+                    f"[datasets.source] effective=gsheet mode=public sheet_id='{sheet_id}' "
+                    f"selector_kind='{sel_kind or 'auto'}' selector='{sel_val or ''}'"
+                )
+            else:
+                _l.i(
+                    f"[datasets.source] effective=gsheet mode=unknown sheet_id='{sheet_id}' "
+                    f"selector_kind='{sel_kind or 'auto'}' selector='{sel_val or ''}'"
+                )
+        except Exception:
+            pass
+        if used_access_mode:
             try:
                 setattr(options, "_dataset_access_mode", used_access_mode)
             except Exception:
@@ -803,6 +829,7 @@ def load_datasets(effect, doc_path: Optional[str] = None):
             base_dir = os.path.dirname(doc_path)
         svg_stem = os.path.splitext(os.path.basename(doc_path))[0]
         csv_path = resolve_csv(options, base_dir, svg_stem)
+        _l.i(f"[datasets.source] effective=csv path='{os.path.abspath(csv_path)}'")
         if not os.path.isfile(csv_path):
             raise inkex.AbortExtension(
                 f"CSV not found.\n  Tried: {csv_path}\nSet --csv_path or use Google Sheets."

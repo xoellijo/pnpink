@@ -1,0 +1,14 @@
+,,,,,,,,
+,,,,,,,,
+# :fig(i) = @{wkmc://File:${i}/1000}.T{s=10% f=image1-9-1}~[110%]8!,,,,,,,,
+,,,,,,,,
+rect1,image1-9,rect535,rect535-5,text485-2,text485-2-6,path4[stroke],text535,text485
+{A4^}.L{s=tarot}## [10..1] ##[3..1 2- 4..5 7..9 ?..12],,,,,,,,
+##,:fig(GouldBirdsEuropeIGriffonVulture.jpg),[@{pnp://egg3} @{pnp://egg3}~^12].L{2x1 g=-35}~6,@{pnp://tree2}~4,Buitre leonado,Gyps fulvus,b8a300ff,:Tb(Gain) 1:@{pnp://worm6}:,When Activated
+,:fig(GouldBirdsEuropeICinerousVulture.jpg),[1*@{pnp://egg3}~^8].L{g=-30}~6,@{pnp://tree2}~5,Buitre negro,Aegypius monachus,697678ff,:Tb(Draw) 1 card,End of Round
+,:fig(GouldBirdsEuropeIEgyptianVulture.jpg),[2*@{pnp://egg4}~^8].L{g=-30}~6,@{pnp://tree2}~6,Alimoche común,Neophron percnopterus,279fe1ff,:Tb(Gain) 1:@{pnp://berries11}: if in :Tb(wetland),Once Per Round
+,:fig(GouldBirdsEuropeIBearded Vulture.jpg),[2*@{pnp://egg5}~^8].L{g=-30}~6,@{pnp://tree2}~7,Quebrantahuesos,Gypaetus barbatus,697678ff,:Tb(Lay) 1:@{pnp://egg2}: per :Tb(water bird),End of Round
+,:fig(GouldBirdsEuropeIImperial Eagle.jpg),[2*@{pnp://egg1}~^8].L{g=-30}~6,@{pnp://tree2}~8,Águila imperial,Aquila heliaca,b8a300ff,:Tb(Lay) 1:@{pnp://egg2}: on :Tb(this card),When Activated
+,:fig(GouldBirdsEuropeIGolden Eagle.jpg),[2*@{pnp://egg2}~^8].L{g=-30}~6,@{pnp://tree2}~9,Águila real,Aquila chrysaetos,b8a300ff,:Tb(Draw) 1 card if you have :Tb(≥3 birds),When Activated
+,:fig(GouldBirdsEuropeIBonelli's Eagle.jpg),[2*@{pnp://egg3}~^8].L{g=-30}~6,@{pnp://tree3}~4,Águila perdicera,Aquila fasciata,524982ff,:Tb(Gain) 1:@{pnp://berries11}: if in :Tb(wetland),When Gain Food
+,:fig(GouldBirdsEuropeISpotted Eagle.jpg),[2*@{pnp://egg4}~^8].L{g=-30}~6,@{pnp://tree3}~5,Águila moteada,Clanga pomarina,279fe1ff,:Tb(Lay) 1:@{pnp://egg2}: per :Tb(water bird),Once Per Round

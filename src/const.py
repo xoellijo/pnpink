@@ -107,11 +107,7 @@ _CARD_ALIAS_RAW: Dict[str, str] = {
     "minichimera": "miniAsia",
     "chimeramini": "miniAsia",
     "baraja": "Spanish",
-    # counter / inch aliases
-    "counter12": "Counter12",
-    "counter38": "Counter38",
-    "counter34": "Counter34",
-    "counter1": "Counter1",
+    # inch aliases. Counter names resolve through CARD_SIZES_MM canonicalization.
     "inch12": "Counter12",
     "inch38": "Counter38",
     "inch34": "Counter34",

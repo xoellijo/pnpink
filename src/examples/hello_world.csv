@@ -1,0 +1,21 @@
+card_bbox,title,cost,art+,text
+{A4^ b=-5}.Layout{6x3 g=? s=miniasia},,,,
+,Tomatoes,1,tomato,Inline Icons. You win 1:tomato: and 1:brown-mushroom:
+,Mushrooms,X,brown-mushroom~[50%]i,Mushrooms (anchor=X)
+,Mushrooms,1,brown-mushroom~[50%]i1,Mushrooms (anchor=1)
+,Mushrooms,2,brown-mushroom~[50%]i2,Mushrooms (anchor=2)
+,Mushrooms,3,brown-mushroom~[50%]i3,Mushrooms (anchor=3)
+,Mushrooms,4,brown-mushroom~[50%]i4,Mushrooms (anchor=4)
+,Mushrooms,5,brown-mushroom~[50%]i5,"Mushrooms (anchor=5, default)"
+,Mushrooms,6,brown-mushroom~[50%]i6,Mushrooms (anchor=6)
+,Mushrooms,7,brown-mushroom~[50%]i7,Mushrooms (anchor=7)
+,Mushrooms,8,brown-mushroom~[50%]i8,Mushrooms (anchor=8)
+,Mushrooms,9,brown-mushroom~[50%]i9,Mushrooms (anchor=9)
+{},Lemons (inside),1,lemon~[%]i,Win 1 lemon for every tomato you own
+,Lemons (max/cover),1,lemon~[%]m,Win 1 lemon for every tomato you own
+,Lemons (original),1,lemon~o,Win 1 lemon for every tomato you own
+,Lemons x-stretch,1,lemon~[%]x,Win 1 lemon for every tomato you own
+,Lemons y-stretch,1,lemon~[%]y,Win 1 lemon for every tomato you own
+,Lemons all-stretch,1,lemon~[%]a,Win 1 ::Ic(lemon): for every tomato you own
+{} [2 - 3 4- 5],Banana,*[1..10],:Ic(banana)~[15x?],Win 1::Ic(monkey)~6^60[0 -30%]:per every:lemon: you own
+,potato,k,[12*:Ic(potato)]~i8[0 %],
