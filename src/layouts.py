@@ -258,6 +258,16 @@ def gaps6_to_px(seq: List[str], base_w_px: float, base_h_px: float, px_per_mm: f
     return (float(gx), float(gy), float(w1x), float(h1y), float(w2x), float(h2y))
 
 
+def grid_row_dx(row0: int, w1: float, w2: float) -> float:
+    k = int(row0) // 2
+    return k * (float(w1) + float(w2)) + (float(w1) if int(row0) % 2 else 0.0)
+
+
+def grid_col_dy(col0: int, h1: float, h2: float) -> float:
+    k = int(col0) // 2
+    return k * (float(h1) + float(h2)) + (float(h1) if int(col0) % 2 else 0.0)
+
+
 # ----------------------------- Resolve / apply --------------------------------
 
 def resolve(page: PageSpec, card: CardSpec, layout: LayoutSpec, gaps: GapsMM, doc_page_mm: Tuple[float, float]) -> Resolved:
@@ -542,35 +552,15 @@ def plan_grid(page_w_px, page_h_px, card_w_px, card_h_px, *,
     invert_cols = bool(getattr(layout, "invert_cols", False))
     invert_rows = bool(getattr(layout, "invert_rows", False))
 
-    def _row_dx_px(rr: int) -> float:
-        """Horizontal stagger offset as delta between consecutive rows: w1, w2, w1, w2..."""
-        if w1 == 0.0 and w2 == 0.0:
-            return 0.0
-        k = rr // 2
-        base_x = k * (w1 + w2)
-        if rr % 2 == 1:
-            base_x += w1
-        return base_x
-
-    def _col_dy_px(cc: int) -> float:
-        """Vertical stagger offset as delta between consecutive columns: h1, h2, h1, h2..."""
-        if h1 == 0.0 and h2 == 0.0:
-            return 0.0
-        k = cc // 2
-        base_y = k * (h1 + h2)
-        if cc % 2 == 1:
-            base_y += h1
-        return base_y
-
     # slots not centered yet, to measure real extents with offsets
     raw = []
     for r in range(rows):
         rr = (rows - 1 - r) if invert_rows else r
-        ox = _row_dx_px(rr)
+        ox = grid_row_dx(rr, w1, w2)
         for c in range(cols):
             cc = (cols - 1 - c) if invert_cols else c
             x = cc * (float(card_w_px) + gh) + ox
-            y = rr * (float(card_h_px) + gv) + _col_dy_px(cc)
+            y = rr * (float(card_h_px) + gv) + grid_col_dy(cc, h1, h2)
             raw.append((x, y, float(card_w_px), float(card_h_px)))
 
     minx = min(s[0] for s in raw)
@@ -599,12 +589,12 @@ def plan_grid(page_w_px, page_h_px, card_w_px, card_h_px, *,
     if sweep_rows_first:
         for r in range(rows):
             rr = (rows - 1 - r) if invert_rows else r
-            ox = _row_dx_px(rr)
+            ox = grid_row_dx(rr, w1, w2)
             for c in range(cols):
                 cc = (cols - 1 - c) if invert_cols else c
                 slots.append((
                     left + cc * (float(card_w_px) + gh) + ox,
-                    top + rr * (float(card_h_px) + gv) + _col_dy_px(cc),
+                    top + rr * (float(card_h_px) + gv) + grid_col_dy(cc, h1, h2),
                     float(card_w_px),
                     float(card_h_px),
                 ))
@@ -613,10 +603,10 @@ def plan_grid(page_w_px, page_h_px, card_w_px, card_h_px, *,
             cc = (cols - 1 - c) if invert_cols else c
             for r in range(rows):
                 rr = (rows - 1 - r) if invert_rows else r
-                ox = _row_dx_px(rr)
+                ox = grid_row_dx(rr, w1, w2)
                 slots.append((
                     left + cc * (float(card_w_px) + gh) + ox,
-                    top + rr * (float(card_h_px) + gv) + _col_dy_px(cc),
+                    top + rr * (float(card_h_px) + gv) + grid_col_dy(cc, h1, h2),
                     float(card_w_px),
                     float(card_h_px),
                 ))

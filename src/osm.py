@@ -2,7 +2,7 @@
 """Tile-backed OSM/OpenFreeMap map source resolver."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
 import hashlib
@@ -26,10 +26,13 @@ GeocodeResult = Tuple[float, float, float, float, float, float]
 @dataclass
 class OSMMapSource:
     assets_dir: Path
+    _tile_stats: dict = field(default_factory=dict, init=False, repr=False)
+    _map_uses: dict = field(default_factory=dict, init=False, repr=False)
 
     OSM_TILE_TEMPLATE = "https://vector.openstreetmap.org/shortbread_v1/{z}/{x}/{y}.mvt"
     OFM_TILE_TEMPLATE = "https://tiles.openfreemap.org/planet/20260401_001001_pt/{z}/{x}/{y}.pbf"
     PROVIDER_MAX_ZOOM = {"osm": 14, "ofm": 14}
+    PROVIDER_MAX_TILE_GRID = {"osm": 4, "ofm": 4}
     NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
     OUTPUT_WIDTH_PX = 1400
     MIN_OUTPUT_HEIGHT_PX = 200
@@ -45,18 +48,44 @@ class OSMMapSource:
         ext = self._tile_ext_for_provider(provider_l)
         return self._maptiles_dir() / f"{provider_l}_{int(z)}_{int(x)}_{int(y)}{ext}"
 
+    def _provider_summary_key(self, provider: str) -> str:
+        return "openfreemap" if str(provider or "").strip().lower() == "ofm" else "openstreetmap"
+
+    def _inc_tile_stat(self, provider: str, name: str, step: int = 1) -> None:
+        key = self._provider_summary_key(provider)
+        stats = self._tile_stats.setdefault(key, {"downloaded": 0, "cached": 0, "failed": 0})
+        stats[name] = int(stats.get(name) or 0) + int(step or 0)
+
+    def _emit_source_summary(self, provider: str) -> None:
+        key = self._provider_summary_key(provider)
+        vals = self._tile_stats.get(key) or {}
+        _l.i(
+            "[sources.progress] source_summary provider=%s downloaded=%d cached=%d failed=%d uses=%d",
+            key,
+            int(vals.get("downloaded") or 0),
+            int(vals.get("cached") or 0),
+            int(vals.get("failed") or 0),
+            int(self._map_uses.get(key) or 0),
+        )
+
     def _fetch_tile_bytes(self, provider: str, z: int, x: int, y: int, template: str) -> bytes:
         cfile = self._tile_cache_file(provider, z, x, y)
         try:
             if cfile.is_file():
                 raw = cfile.read_bytes()
+                self._inc_tile_stat(provider, "cached")
                 _l.i(f"[sources] {provider} tile cache hit z={z} x={x} y={y} file={cfile.name}")
                 return raw
         except Exception:
             pass
 
         url = template.format(z=z, x=x, y=y)
-        raw, _headers, _status = NET.fetch_bytes(url, timeout=30, retries=4, log_prefix=f"[sources] {provider} tile")
+        try:
+            raw, _headers, _status = NET.fetch_bytes(url, timeout=30, retries=4, log_prefix=f"[sources] {provider} tile")
+            self._inc_tile_stat(provider, "downloaded")
+        except Exception:
+            self._inc_tile_stat(provider, "failed")
+            raise
         try:
             cfile.parent.mkdir(parents=True, exist_ok=True)
             cfile.write_bytes(raw)
@@ -105,12 +134,39 @@ class OSMMapSource:
             return None
         return provider, body, forced_zoom
 
-    def _geocode_cache_file(self, provider: str, query: str) -> Path:
-        key = hashlib.sha256(f"{provider}|{query}".encode("utf-8")).hexdigest()
-        return self._maptiles_dir() / f"nominatim_{provider}_{key}.json"
+    def _geocode_cache_file(self, provider: str, query: str, feature_type: str = "") -> Path:
+        seed = f"v2|{str(query or '').strip().lower()}|{str(feature_type or '').strip().lower()}"
+        key = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+        return self._maptiles_dir() / f"nominatim_{key}.json"
 
-    def geocode_place(self, provider: str, query: str) -> Optional[GeocodeResult]:
-        cache = self._geocode_cache_file(provider, query)
+    @staticmethod
+    def _geocode_bbox_area(row: dict) -> float:
+        try:
+            south, north, west, east = [float(v) for v in (row.get("boundingbox") or [])]
+            return max(0.0, east - west) * max(0.0, north - south)
+        except Exception:
+            return float("inf")
+
+    @classmethod
+    def _choose_geocode_row(cls, query: str, rows: list) -> Optional[dict]:
+        good = [r for r in rows if isinstance(r, dict) and r.get("boundingbox") and r.get("lat") and r.get("lon")]
+        if not good:
+            return None
+        return sorted(good, key=lambda r: (cls._geocode_bbox_area(r), -float(r.get("importance") or 0.0)))[0]
+
+    @staticmethod
+    def _is_broad_admin(row: dict) -> bool:
+        try:
+            return (
+                str(row.get("category") or "") == "boundary"
+                and str(row.get("type") or "") == "administrative"
+                and int(row.get("place_rank") or 0) <= 10
+            )
+        except Exception:
+            return False
+
+    def _load_geocode_rows(self, provider: str, query: str, feature_type: str = "") -> Optional[list]:
+        cache = self._geocode_cache_file(provider, query, feature_type)
         data = None
         if cache.is_file():
             try:
@@ -118,11 +174,14 @@ class OSMMapSource:
             except Exception:
                 data = None
         if data is None:
-            url = f"{self.NOMINATIM_SEARCH_URL}?" + urllib.parse.urlencode({
+            params = {
                 "q": query,
                 "format": "jsonv2",
-                "limit": "1",
-            })
+                "limit": "10",
+            }
+            if feature_type:
+                params["featureType"] = feature_type
+            url = f"{self.NOMINATIM_SEARCH_URL}?" + urllib.parse.urlencode(params)
             try:
                 data = NET.fetch_json(
                     url,
@@ -138,14 +197,27 @@ class OSMMapSource:
             except Exception as ex:
                 _l.w(f"[sources] nominatim geocode failed '{query}': {ex}")
                 return None
-        rows = list(data or [])
+        return list(data or [])
+
+    def geocode_place(self, provider: str, query: str) -> Optional[GeocodeResult]:
+        rows = self._load_geocode_rows(provider, query) or []
         if not rows:
+            _l.w(f"[sources] nominatim no candidates query='{query}'")
             return None
-        row = rows[0] or {}
+        row = self._choose_geocode_row(query, rows) or {}
+        if row and self._is_broad_admin(row) and "," not in str(query or ""):
+            city_rows = self._load_geocode_rows(provider, query, "city") or []
+            city_row = self._choose_geocode_row(query, city_rows)
+            if city_row:
+                row = city_row
+        if not row:
+            _l.w(f"[sources] nominatim no valid bbox query='{query}' candidates={len(rows)}")
+            return None
         try:
             south, north, west, east = [float(v) for v in (row.get("boundingbox") or [])]
             lat = float(row.get("lat"))
             lon = float(row.get("lon"))
+            _l.i(f"[sources] nominatim selected query='{query}' display='{row.get('display_name') or ''}' bbox={west:.6f},{south:.6f},{east:.6f},{north:.6f}")
             return west, south, east, north, lon, lat
         except Exception:
             return None
@@ -167,13 +239,24 @@ class OSMMapSource:
         return min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)
 
     @classmethod
-    def choose_zoom_for_bbox(cls, provider: str, west: float, south: float, east: float, north: float, *, max_tiles: int = 4) -> int:
+    def choose_zoom_for_bbox(
+        cls,
+        provider: str,
+        west: float,
+        south: float,
+        east: float,
+        north: float,
+        *,
+        max_tile_grid: Optional[int] = None,
+    ) -> int:
+        if max_tile_grid is None:
+            max_tile_grid = int(cls.PROVIDER_MAX_TILE_GRID.get(provider, 4))
         zmax = int(cls.PROVIDER_MAX_ZOOM.get(provider, 14))
         for z in range(zmax, -1, -1):
             xmin, ymin, xmax, ymax = cls.tile_span_for_bbox(west, south, east, north, z)
             nx = xmax - xmin + 1
             ny = ymax - ymin + 1
-            if nx <= 2 and ny <= 2 and (nx * ny) <= max_tiles:
+            if nx <= max_tile_grid and ny <= max_tile_grid:
                 return z
         return 0
 
@@ -187,17 +270,21 @@ class OSMMapSource:
         west, south, east, north = bbox
         z = max(0, min(self.PROVIDER_MAX_ZOOM.get(provider, 14), int(z)))
         xmin, ymin, xmax, ymax = self.tile_span_for_bbox(west, south, east, north, z)
+        count = (xmax - xmin + 1) * (ymax - ymin + 1)
+        _l.i(
+            "[sources] map tiles provider=%s z=%d count=%d span=%d,%d..%d,%d bbox=%.6f,%.6f,%.6f,%.6f",
+            provider, z, count, xmin, ymin, xmax, ymax, west, south, east, north,
+        )
         template = self.tile_template_for_provider(provider)
         specs: List[Tuple[bytes, int, int, int]] = []
         for x in range(xmin, xmax + 1):
             for y in range(ymin, ymax + 1):
                 raw = self._fetch_tile_bytes(provider, z, x, y, template)
                 specs.append((raw, z, x, y))
-        _l.i(f"[sources] {provider} bbox tiles z={z} count={len(specs)} span={xmin},{ymin}..{xmax},{ymax}")
         return z, specs
 
     def fetch_vector_tiles(self, provider: str, bbox: BBox) -> Tuple[int, List[Tuple[bytes, int, int, int]]]:
-        z = self.choose_zoom_for_bbox(provider, *bbox, max_tiles=4)
+        z = self.choose_zoom_for_bbox(provider, *bbox)
         return self.fetch_vector_tiles_at_zoom(provider, bbox, z)
 
     @staticmethod
@@ -231,10 +318,17 @@ class OSMMapSource:
         if not resolved:
             return None
         provider, bbox, forced_zoom = resolved
-        if forced_zoom is None:
-            z, tile_specs = self.fetch_vector_tiles(provider, bbox)
-        else:
-            z, tile_specs = self.fetch_vector_tiles_at_zoom(provider, bbox, forced_zoom)
+        key = self._provider_summary_key(provider)
+        self._map_uses[key] = int(self._map_uses.get(key) or 0) + 1
+        try:
+            if forced_zoom is None:
+                z, tile_specs = self.fetch_vector_tiles(provider, bbox)
+            else:
+                z, tile_specs = self.fetch_vector_tiles_at_zoom(provider, bbox, forced_zoom)
+        except Exception:
+            self._emit_source_summary(provider)
+            raise
+        self._emit_source_summary(provider)
         width_px, height_px = self._output_size_for_bbox(bbox, self.OUTPUT_WIDTH_PX)
         root = MVT.build_debug_svg_multi(
             tile_specs,

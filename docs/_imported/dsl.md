@@ -153,7 +153,7 @@ ID.Fit{ inside anchor=7 }
 This places the element defined by ID inside its anchor rect, anchored at position 7 (top-left).
 
 ### 4.1. Syntax
-ID.Fit{ border fitmode anchor shift clip rotate mirror }
+ID.Fit{ border fitmode anchor shift clip }
 
 List elements are space-separated.
 
@@ -270,25 +270,15 @@ Cuts off everything outside the original (without border adjustments) anchor rec
 Can be shortened to !.\
 Double !! means clipping relative to the final rect (after border adjustments).
 
-### 4.7. Rotate (r= or ^)
-Rotates the target element (default 90°).\
-Shortcut: ^. Examples:
+### 4.7. Rotate / Mirror
+Rotate and mirror belong to Transform.
+The compact `~` suffix can still contain them:
 
-ID.Fit{rotate=-42.4}
+ID~^^^
 
-ID~^^^ → rotates -90° before fitting
-
-ID~^-45i7 → rotates -45°, fits inside, anchored top-left
-
-### 4.8. Mirror (m= or \|)
-Mirrors the target.\
-Default is horizontal (across vertical axis).\
-Shortcuts: \| (horizontal), \|\| (vertical).
-
-ID.Fit{mirror=v}
+ID~^-45i7
 
 ID~\|\|
-
 ## 5. Layout Module (L{})
 Defines how a group of elements are arranged in a grid (e.g. cards on pages).
 

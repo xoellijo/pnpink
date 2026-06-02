@@ -44,6 +44,12 @@ def _row_is_eof_comment(cells: List[str]) -> bool:
     c0 = str(cells[0] or "")
     return c0.lstrip().startswith("####")
 
+
+def _warn_commented_source_row(cells: List[str], row_num: Optional[int] = None) -> None:
+    if any("@{" in str(c or "") for c in (cells or [])):
+        where = f" row {row_num}" if row_num is not None else ""
+        _l.w(f"[datasets]{where}: source row ignored because column A starts with '##'")
+
 def _strip_cell_trailing_comment(text: str, enable: bool = True, marker: str = "##") -> str:
     """Cell-level comment marker: '##' comments out the rest of the cell."""
     if text is None:
@@ -184,6 +190,15 @@ def _normalize_row_cells_for_headers(cells, headers_len: int, active_idx) -> Lis
 def _extract_template_columns(headers):
     return DH.extract_template_columns(headers)
 
+def _decl_split_enabled(decl: dict) -> bool:
+    vals = list((decl or {}).get("split") or [])
+    if not vals:
+        return False
+    v = str(vals[0]).strip().lower()
+    if v in ("", "0", "false", "no", "off"):
+        return False
+    return True
+
 
 def _matrix_to_datasets(matrix):
     """
@@ -276,13 +291,14 @@ def _matrix_to_datasets(matrix):
         # Preserve comment/directive rows before first marker, and attach
         # directive rows inside active datasets to current.comments.
         pending_comments: List[List[str]] = []
-        for r in (matrix or []):
+        for i, r in enumerate(matrix or []):
             if r is None or len(r) == 0:
                 continue
             raw_cells = [_norm_cell(c) for c in r]
             if _row_is_eof_comment(raw_cells):
                 break
             if _row_is_hard_comment(raw_cells):
+                _warn_commented_source_row(raw_cells, i + 1)
                 continue
             if _row_is_comment(raw_cells):
                 rc = _apply_inline_row_comments(raw_cells)
@@ -319,6 +335,7 @@ def _matrix_to_datasets(matrix):
                         "y declara templates adicionales con columnas de header {t=OTRO_BBOX_ID}."
                     )
                 main_bbox_id = templates_bbox_ids[0] if templates_bbox_ids else None
+                split_enabled = _decl_split_enabled(decl)
 
                 # Extra DSL tail after the dataset marker row (column A) is allowed:
                 #   {{t=MAIN}} {A4}.L{...}.M{...}
@@ -343,6 +360,7 @@ def _matrix_to_datasets(matrix):
                 current = {
                     "meta": {
                         "templates_bbox_ids": ([main_bbox_id] if main_bbox_id else []),
+                        "split_enabled": bool(split_enabled),
                         "template_cols": template_cols,
                         # Legacy (slot-anchored overlays, front pass): kept for older code paths.
                         "overlay_template_cols": [c for c in (template_cols or []) if not (set(c.get('mods') or []) & {'@page','@back'})],
@@ -416,6 +434,7 @@ def _matrix_to_datasets(matrix):
         if _row_is_eof_comment(raw_cells):
             break
         if _row_is_hard_comment(raw_cells):
+            _warn_commented_source_row(raw_cells, i + 1)
             continue
         if _row_is_comment(raw_cells):
             rc = _apply_inline_row_comments(raw_cells)
@@ -438,6 +457,7 @@ def _matrix_to_datasets(matrix):
     c0 = str(header_row[0]).strip() if len(header_row) > 0 else ""
     decl = DSL.parse_dataset_decl(c0, allow_bare=True) or {}
     templates_bbox_ids = list((decl or {}).get("template_bbox") or [])
+    split_enabled = _decl_split_enabled(decl)
 
     # Robustness: if user uses the simplest shorthand (A1="id") and for any reason
     # the DSL decl parser doesn't recognize it, still treat it as template_bbox.
@@ -464,6 +484,7 @@ def _matrix_to_datasets(matrix):
     ds = {
         "meta": {
             "templates_bbox_ids": ([main_bbox_id] if main_bbox_id else []),
+            "split_enabled": bool(split_enabled),
             "template_cols": template_cols,
             "overlay_template_cols": [c for c in (template_cols or []) if not (set(c.get('mods') or []) & {'@page','@back'})],
             "overlay_templates_bbox_ids": [c.get('bbox_id') for c in (template_cols or []) if not (set(c.get('mods') or []) & {'@page','@back'})],
@@ -474,13 +495,14 @@ def _matrix_to_datasets(matrix):
     }
 
     # Parse data rows after header
-    for r in (matrix or [])[header_idx + 1:]:
+    for row_num, r in enumerate((matrix or [])[header_idx + 1:], start=header_idx + 2):
         if r is None or len(r) == 0:
             continue
         raw_cells = [_norm_cell(c) for c in r]
         if _row_is_eof_comment(raw_cells):
             break
         if _row_is_hard_comment(raw_cells):
+            _warn_commented_source_row(raw_cells, row_num)
             continue
         if _row_is_comment(raw_cells):
             ds.setdefault("comments", []).append(_apply_inline_row_comments(raw_cells))

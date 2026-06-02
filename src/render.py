@@ -23,7 +23,6 @@ TEXT_LIKE = set(getattr(SVG, "TEXT_LIKE", ()))
 import layouts as LYT
 import dsl as DSL
 import fit_anchor as FA
-import geometry_registry as GREG
 import paths as PATHS
 import transform_fx as TFX
 import render_apply as RAP
@@ -125,6 +124,7 @@ def render_phase(ctx):
     page_templates = getattr(ctx, 'page_templates', None)
     page_back_templates = getattr(ctx, 'page_back_templates', None)
     declared_bbox_node = getattr(ctx, 'declared_bbox_node', None)
+    measured_template_bbox = getattr(ctx, 'measured_template_bbox', None)
 
     def _mark_generated(node):
         if node is not None and dm_tag:
@@ -816,6 +816,10 @@ def render_phase(ctx):
                     ops_norm = _normalize_ops_chain(_ops_v or "")
                     tmods = ""
                     if s_tr_spec is not None:
+                        if getattr(s_tr_spec, "rotate", None) not in (None, 0, 0.0):
+                            tmods += f".T{{r={getattr(s_tr_spec, 'rotate')}}}"
+                        if getattr(s_tr_spec, "mirror", None):
+                            tmods += f".T{{m={getattr(s_tr_spec, 'mirror')}}}"
                         if getattr(s_tr_spec, "opacity", None):
                             tmods += f".T{{o={getattr(s_tr_spec, 'opacity')}}}"
                         if getattr(s_tr_spec, "filter_ref", None):
@@ -1079,6 +1083,8 @@ def render_phase(ctx):
                 if isinstance(r.get('cells'), list):
                     r['cells'] = list(r.get('cells') or [])
                 r['_i'] = _i
+                if _i == 0 and holes_list:
+                    r['__dm_holes_before__'] = int(holes_list.count(0))
                 if holes_list:
                     r['__dm_holes_after__'] = int(holes_list.count(_i + 1))
                 if _i > 0 and '__dm_page__' in r:
@@ -1133,6 +1139,8 @@ def render_phase(ctx):
                     transform_jobs=transform_jobs
                 )
 
+    deferred_fa_styles = {}
+
     def _exec_use_fa_paths(inst_node, use_jobs, fa_jobs, path_jobs, transform_jobs, *, warn_tag: str, owner_group=None):
         """Center <use> elements, execute deferred Fit/Anchor jobs, then Paths jobs."""
         def _apply_fa(scope_node, base_id, r_id, ops_full, place_mode, rect_elem):
@@ -1157,11 +1165,21 @@ def render_phase(ctx):
             except Exception as ex:
                 _l.w(f"{warn_tag} deferred transform failed target='{(u.get('id') if u is not None else '')}': {ex}")
         _fa_remove_later = []
-        for (base_id, r_id, ops_full, place_mode, placeholder_to_remove, rect_elem, tr_spec) in (fa_jobs or []):
+        for _fa_idx, (base_id, r_id, ops_full, place_mode, placeholder_to_remove, rect_elem, tr_spec) in enumerate(fa_jobs or []):
             try:
-                _placed = _apply_fa(inst_node, base_id, r_id, ops_full, place_mode, rect_elem)
+                try:
+                    ops_fit, ops_tr = DSL.split_ops_fit_transform(ops_full)
+                    tr_spec = TFX.merge_specs([ops_tr, tr_spec])
+                except Exception:
+                    ops_fit = ops_full
+                _styles = deferred_fa_styles.get((id(fa_jobs), int(_fa_idx))) or []
+                if _styles and str(place_mode or "").strip().lower() == "clone":
+                    place_mode = "copy"
+                _placed = _apply_fa(inst_node, base_id, r_id, ops_fit, place_mode, rect_elem)
                 if tr_spec is not None and _placed is not None:
                     TFX.apply_transform_spec(root, _placed, tr_spec)
+                for _prop, _value in _styles:
+                    _apply_style_to_node(_placed, _prop, _value)
                 if placeholder_to_remove is not None:
                     _fa_remove_later.append(placeholder_to_remove)
             except Exception as ex:
@@ -1174,6 +1192,28 @@ def render_phase(ctx):
     # --- end dedup helpers ---
 
     def _queue_paths(page_index: int, path_jobs, *, owner_group=None):
+        gaps_px6 = None
+        try:
+            toks = LYT.layout_gaps_tokens(planner.current.layout)
+            if toks and getattr(planner, 'local_slots', None):
+                _sx0, _sy0, sw0, sh0 = planner.local_slots[int(getattr(planner, 'slot_index', 0) or 0)]
+                gaps_px6 = LYT.gaps6_to_px(toks, float(sw0), float(sh0), float(getattr(planner, 'px_per_mm', 1.0) or 1.0))
+        except Exception:
+            gaps_px6 = None
+        grid_ctx = None
+        try:
+            r0, c0 = _slot_index_to_rc(int(slot_within_for_record), planner.plan, planner.current.layout)
+            if gaps_px6 is not None and getattr(planner, 'local_slots', None):
+                _sx0, _sy0, sw0, sh0 = planner.local_slots[int(getattr(planner, 'slot_index', 0) or 0)]
+                grid_ctx = {
+                    'row0': int(r0),
+                    'col0': int(c0),
+                    'cell_w': float(sw0),
+                    'cell_h': float(sh0),
+                    'gaps_px6': gaps_px6,
+                }
+        except Exception:
+            grid_ctx = None
         for (target_el, paths_spec_raw, orient_hint) in (path_jobs or []):
             deferred_path_jobs.append({
                 'page_index': int(page_index),
@@ -1181,31 +1221,67 @@ def render_phase(ctx):
                 'paths_spec_raw': paths_spec_raw,
                 'orient_hint': orient_hint,
                 'owner_group': owner_group,
+                'grid_ctx': grid_ctx,
             })
 
     def _flush_deferred_paths(*, warn_tag: str):
         if not deferred_path_jobs:
             return
-        for job in list(deferred_path_jobs):
+        grouped = {}
+        for seq, job in enumerate(list(deferred_path_jobs)):
             try:
                 _pi = int(job.get('page_index', 0) or 0)
-                PATHS.render_paths_for_target(
-                    geom_registry,
+                owner = job.get('owner_group')
+                key = (_pi, id(owner) if owner is not None else id(job.get('target_el')))
+                grouped.setdefault(key, {
+                    'page_index': _pi,
+                    'owner_group': owner,
+                    'items': [],
+                })
+                items = PATHS.build_path_items_for_target(
                     job.get('target_el'),
                     job.get('paths_spec_raw') or '',
-                    page_index=_pi,
                     orient_hint=job.get('orient_hint'),
                     style_scope_node=root,
-                    insert_parent=_page_group_for(_pi),
-                    insert_after_elem=job.get('owner_group'),
+                    grid_ctx=job.get('grid_ctx'),
                 )
+                grouped[key]['items'].extend((order, seq, local, elem) for order, local, elem in items)
             except Exception as ex:
                 _l.w(f"{warn_tag} deferred paths failed target='{(job.get('target_el').get('id') if job.get('target_el') is not None else '')}': {ex}")
+        for group in grouped.values():
+            items = group.get('items') or []
+            if not items:
+                continue
+            _pi = int(group.get('page_index', 0) or 0)
+            parent = _page_group_for(_pi)
+            owner = group.get('owner_group')
+            layer = inkex.Group()
+            try:
+                owner_id = owner.get('id') if owner is not None else ''
+            except Exception:
+                owner_id = ''
+            try:
+                layer_id = root.get_unique_id(f"{owner_id or 'card'}_paths")
+            except Exception:
+                layer_id = f"{owner_id or 'card'}_paths"
+            layer.set('id', layer_id)
+            layer.set(inkex.addNS('label', 'inkscape'), f"paths:{owner_id or layer_id}")
+            for _order, _job_seq, _local, elem in sorted(items, key=lambda item: (item[0], item[1], item[2])):
+                layer.append(elem)
+            try:
+                if owner is not None and owner.getparent() is parent:
+                    parent.insert(parent.index(owner) + 1, layer)
+                else:
+                    parent.append(layer)
+            except Exception:
+                parent.append(layer)
         deferred_path_jobs.clear()
 
     marks_current = getattr(ctx, 'header_marks_current', None)
     if marks_current is None:
         marks_current = None
+    ds_meta = getattr(ctx, 'ds_meta', {}) or {}
+    split_boards_enabled = bool((ds_meta or {}).get('split_enabled', False))
     placed = 0
     split_boards_used = False
     # Slot bookkeeping for extra passes (@back, @page)
@@ -1214,7 +1290,6 @@ def render_phase(ctx):
     pending_page_req = {}       # slot_no -> list[dict]  (@page)
     pending_page_back_req = {}  # slot_no -> list[dict]  (@page @back)
     skipped_back_instances = 0
-    geom_registry = GREG.GridGeometryRegistry()
     deferred_path_jobs = []
 
     def _parse_slot_selector(sel_raw: str):
@@ -1960,6 +2035,14 @@ def render_phase(ctx):
             slot_x, slot_y, _slot_w_target, _slot_h_target = sg
             slot_within_for_record = int(target_within)
         else:
+            try:
+                n_before = int(row.get('__dm_holes_before__', 0) or 0)
+            except Exception:
+                n_before = 0
+            if n_before > 0:
+                for _ in range(n_before):
+                    planner.commit_slot()
+                _l.d(f"[holes] leading slots={n_before} row={idx}")
             slot_x, slot_y = _get_or_advance_slot(planner)
             _slot_w_target = _slot_h_target = None
             slot_within_for_record = int(planner.slot_index)
@@ -2065,6 +2148,44 @@ def render_phase(ctx):
                 'overlay_ops': ctrl_val,
             })
         _profile["clone_ms"] += (time.perf_counter() - _profile_phase_t0) * 1000.0
+        deferred_fa_styles = {}
+
+        def _normalize_style_value(_prop, _raw):
+            s = str(_raw or "").strip()
+            if _prop not in ("fill", "stroke"):
+                return s, None, None
+            h = s.lstrip("#")
+            if re.fullmatch(r"[0-9A-Fa-f]{3,8}", h):
+                s = f"#{h}"
+            m4 = re.fullmatch(r"#([0-9A-Fa-f]{4})", s)
+            if m4:
+                hx = m4.group(1)
+                op_key = "fill-opacity" if _prop == "fill" else "stroke-opacity"
+                return f"#{hx[0]}{hx[0]}{hx[1]}{hx[1]}{hx[2]}{hx[2]}", op_key, f"{(int(hx[3] + hx[3], 16) / 255.0):.4f}".rstrip("0").rstrip(".")
+            m8 = re.fullmatch(r"#([0-9A-Fa-f]{8})", s)
+            if m8:
+                hx = m8.group(1)
+                op_key = "fill-opacity" if _prop == "fill" else "stroke-opacity"
+                return f"#{hx[0:6]}", op_key, f"{(int(hx[6:8], 16) / 255.0):.4f}".rstrip("0").rstrip(".")
+            return s, None, None
+
+        def _apply_style_to_node(node, prop, value):
+            if node is None:
+                return
+            prop = str(prop or "").strip().lower()
+            v, op_key, op_val = _normalize_style_value(prop, value)
+            if not prop or v == "":
+                return
+            for el in node.iter():
+                tag = str(getattr(el, "tag", "") or "")
+                if tag.endswith("defs") or tag.endswith("clipPath") or tag.endswith("mask"):
+                    continue
+                smap = SVG.style_map(el)
+                smap[prop] = v
+                if op_key:
+                    smap[op_key] = op_val
+                SVG.style_set(el, smap)
+
         def _apply_field_any(spec, raw):
             key = spec.get("key") if isinstance(spec, dict) else str(spec or "")
             hk = spec.get("hk") if isinstance(spec, dict) else None
@@ -2088,12 +2209,13 @@ def render_phase(ctx):
                             SVG.replace_text(tgt, value)
                         _profile["fields_fast_ms"] += (time.perf_counter() - _field_t0) * 1000.0
                         _profile["fields_fast_count"] += 1
-                        return 1, "text"
+                        return 1, "text", j, None
                 # If the indexed fast path cannot find the target, fall through
                 # to the generic handler so missing/renamed ids keep producing
                 # the same diagnostics and behavior as complex fields.
             _field_t0 = time.perf_counter()
             for j in inst_jobs:
+                _fa_before = len(j.get('fa_jobs') or [])
                 cnt, st = apply_field_in_clone(
                     j['node'], key, raw, row_map,
                     root_doc=root, use_jobs=j['use_jobs'], fa_jobs=j['fa_jobs'], path_jobs=j['path_jobs'],
@@ -2105,10 +2227,12 @@ def render_phase(ctx):
                 if st != 'miss':
                     _profile["fields_generic_ms"] += (time.perf_counter() - _field_t0) * 1000.0
                     _profile["fields_generic_count"] += 1
-                    return cnt, st
+                    _fa_after = len(j.get('fa_jobs') or [])
+                    _fa_idx = (_fa_after - 1) if st == 'fa' and _fa_after > _fa_before else None
+                    return cnt, st, j, _fa_idx
             _profile["fields_generic_ms"] += (time.perf_counter() - _field_t0) * 1000.0
             _profile["fields_generic_count"] += 1
-            return 0, 'miss'
+            return 0, 'miss', None, None
 
         # Phase-1: per-row keep-visible set for rect anchors (populated by parse_header_key on headers with '+').
         # We reset it once per placed card so visibility decisions are deterministic and do not leak across rows.
@@ -2129,10 +2253,23 @@ def render_phase(ctx):
             _i = int(_spec.get("index") or 0)
             _raw = _cells_for_fields[_i] if _i < len(_cells_for_fields) else ""
             _apply_field_any(_spec, "" if _raw is None else str(_raw))
+        last_fa_by_target = {}
         for _spec in compiled_apply_specs:
             _i = int(_spec.get("index") or 0)
             _raw = _cells_for_fields[_i] if _i < len(_cells_for_fields) else ""
-            _apply_field_any(_spec, "" if _raw is None else str(_raw))
+            _raw_s = "" if _raw is None else str(_raw)
+            _hk = _spec.get("hk") or {}
+            _targets = list(_hk.get("target_ids") or [(_hk.get("target_id") or "")])
+            _target = _targets[0] if len(_targets) == 1 else ""
+            _prop = str(_hk.get("prop") or "text").strip().lower()
+            if _prop != "text" and _target and _raw_s.strip() and _target in last_fa_by_target:
+                _j, _fa_idx = last_fa_by_target.get(_target)
+                if _j is not None and _fa_idx is not None:
+                    deferred_fa_styles.setdefault((id(_j.get('fa_jobs') or []), int(_fa_idx)), []).append((_prop, _raw_s))
+                    continue
+            _cnt, _st, _j, _fa_idx = _apply_field_any(_spec, _raw_s)
+            if _st == "fa" and _j is not None and _fa_idx is not None and _target:
+                last_fa_by_target[_target] = (_j, _fa_idx)
         _profile["fields_ms"] += (time.perf_counter() - _profile_phase_t0) * 1000.0
         if len(inst_jobs) > 1 and declared_bbox_id:
             rid_main = SVG.resolve_local_id(inst_main, declared_bbox_id)
@@ -2190,7 +2327,9 @@ def render_phase(ctx):
         _profile_phase_t0 = time.perf_counter()
         _log_row_stage(idx, "place card")
         placed_node = None
-        if template_declared_bbox is not None:
+        if measured_template_bbox is not None:
+            bx, by, bw, bh = [float(v) for v in measured_template_bbox]
+        elif template_declared_bbox is not None:
             bx, by, bw, bh = template_declared_bbox
         elif declared_bbox_node is not None and declared_bbox_id:
             rid = SVG.resolve_local_id(inst_main, declared_bbox_id)
@@ -2211,16 +2350,13 @@ def render_phase(ctx):
             bb = an.bounding_box()
             bx, by, bw, bh = float(bb.left), float(bb.top), float(bb.width), float(bb.height)
         _profile["bbox_ms"] += (time.perf_counter() - _profile_phase_t0) * 1000.0
-        # Split boards when template bbox exceeds page inner frame.
+        # Split boards only when explicitly enabled via dataset marker (e.g. {{t=id @split}} / {{id!}}).
         inner_rect_now = _page_inner_rect_elem_for(int(planner.page_index))
         split_boards = False
         use_swap = False
         page_w_px, page_h_px = planner.page_size_px()
         ppm = float(getattr(planner, 'px_per_mm', 1.0) or 1.0)
-        try:
-            mg = SVG.coerce_margins_mm(planner.current.page.margins_mm())
-        except Exception:
-            mg = SVG.coerce_margins_mm((0, 0, 0, 0))
+        mg = SVG.coerce_margins_mm(planner.current.page.margins_mm())
 
         def _inner_dims_for(pw, ph):
             cw = float(pw) - (float(mg.left) + float(mg.right)) * ppm
@@ -2228,11 +2364,11 @@ def render_phase(ctx):
             return cw, ch
 
         piw, pih = _inner_dims_for(page_w_px, page_h_px)
-        if inner_rect_now is not None:
-            try:
-                split_boards = (bw > piw + 1e-6) or (bh > pih + 1e-6)
-            except Exception:
-                split_boards = False
+        split_boards = (
+            split_boards_enabled
+            and inner_rect_now is not None
+            and ((bw > piw + 1e-6) or (bh > pih + 1e-6))
+        )
 
         if split_boards and inner_rect_now is not None:
             split_boards_used = True
@@ -2362,9 +2498,9 @@ def render_phase(ctx):
         if (_slot_w_target is not None) and (_slot_h_target is not None):
             slot_w, slot_h = _slot_w_target, _slot_h_target
         else:
-            try:
-                _, _, slot_w, slot_h = planner.local_slots[planner.slot_index]
-            except Exception:
+            if 0 <= int(planner.slot_index) < len(planner.local_slots):
+                _, _, slot_w, slot_h = planner.local_slots[int(planner.slot_index)]
+            else:
                 slot_w, slot_h = bw, bh
         _sub_t = time.perf_counter()
         _profile["fit_slot_ms"] += (_sub_t - _profile_phase_t0) * 1000.0
@@ -2388,7 +2524,6 @@ def render_phase(ctx):
         _sub_t2 = time.perf_counter()
         _profile["fit_transform_ms"] += (_sub_t2 - _sub_t) * 1000.0
         _sub_t = _sub_t2
-        geom_registry.add_group(int(planner.page_index), card_group)
         _sub_t2 = time.perf_counter()
         _profile["fit_geom_ms"] += (_sub_t2 - _sub_t) * 1000.0
         _sub_t = _sub_t2
@@ -2752,7 +2887,11 @@ def render_phase(ctx):
                     transform_jobs = []
                     _fill_instance_fields(inst, row, row_map, use_jobs, fa_jobs, path_jobs, transform_jobs, clone_first=False)
 
-                    _fa_remove_later = _exec_use_fa_paths(inst, use_jobs, fa_jobs, path_jobs, transform_jobs, warn_tag='[@back]')
+                    _fa_remove_later = _exec_use_fa_paths(
+                        inst, use_jobs, fa_jobs, path_jobs, transform_jobs,
+                        warn_tag='[@back]',
+                        owner_group=card_group,
+                    )
                     for _ph in list(dict.fromkeys(_fa_remove_later)):
                         try:
                             par = _ph.getparent()
@@ -2806,7 +2945,6 @@ def render_phase(ctx):
                     card_group.set('id', back_unique_name)
                     card_group.set(inkex.addNS('label', 'inkscape'), back_name)
                     card_group.set('transform', str(T_fit @ curT))
-                    geom_registry.add_group(int(planner.page_index), card_group)
                     placed_back += 1
 # Any remaining pending @page requests that referenced slots beyond the placed range are ignored.
     _flush_deferred_paths(warn_tag='[@back]')

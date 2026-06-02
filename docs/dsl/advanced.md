@@ -24,14 +24,14 @@ Then reference by index:
 ## Source Suffixes
 Suffixes are useful when source resolution and fit behavior must be expressed in one token.
 
-Source expressions support both long Fit and shorthand ops:
+Source expressions support long Fit and compact `~` ops:
 
 ```txt
 @{assets/token.svg}.Fit{mode=i anchor=5}
 @{assets/token.svg}~i5^15|
 ```
 
-This applies the same Fit/Anchor logic used for normal SVG IDs.
+The compact form can mix Fit and Transform: `i5` is Fit/Anchor, while `^15|` is Transform.
 
 ## Page Cursor Control (`at`)
 Use cursor control when output must start at a specific page position.

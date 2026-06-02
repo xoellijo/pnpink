@@ -3,17 +3,20 @@
 
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 
 import deckmaker_paths as DMPATHS
 
 
 class EngineEffect:
-    def __init__(self, template: str, sheet_id: str, sheet_range: str, log_level: str, dataset_source_mode: str = ""):
+    def __init__(self, template: str, sheet_id: str, sheet_range: str, log_level: str, dataset_source_mode: str = "", snapshot_path: str = ""):
         import inkex
 
         self._template = DMPATHS.normalize(template)
-        with open(self._template, "rb") as fh:
+        self._snapshot_path = DMPATHS.normalize(snapshot_path) if str(snapshot_path or "").strip() else ""
+        load_path = self._snapshot_path if self._snapshot_path and os.path.isfile(self._snapshot_path) else self._template
+        with open(load_path, "rb") as fh:
             raw = fh.read()
         self.document = inkex.load_svg(raw)
         self.svg = self.document.getroot()

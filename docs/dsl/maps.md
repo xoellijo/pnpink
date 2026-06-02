@@ -68,3 +68,13 @@ Downloaded tiles and place lookups are cached automatically in `assets/maptiles/
 The generated SVG is layered and grouped, so it can contain examples such as water, rivers, roads, landcover, parks, labels, places, and mountain peaks depending on provider and zoom.
 
 This makes it practical to style or edit parts of the map later inside Inkscape.
+
+## Default Style
+
+The built-in vector map style lives in:
+
+```txt
+src/map_style.jsonc
+```
+
+It controls layer order, label language priority, zoom bands, feature filters, SVG styles, label styles, and label offsets. JSONC comments (`// ...`) are allowed.

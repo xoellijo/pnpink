@@ -8,36 +8,53 @@ Use this module when you want deterministic pagination and slot planning.
 Layout{ p=nxm g=[x y] o=[w1 h1 w2 h2] shape=... } or L{nxm g=... o=... s=...}
 ```
 
-Can be applied to any object:
+Layout is used in three places:
+
+In the first dataset column, Page/Layout settings are inherited by following rows until another first-column cell changes them.
 
 ```txt
-rect.L{}
+{A4}.L{p=5x8 s=hexgrid}       ## Page module: impose dataset rows into page slots
 ```
 
-```txt
-[rect1 rect2 ...].L{}
-```
+Inside any cell, Layout can place a set of objects in a grid, using the placeholder rectangle defined by that dataset column header:
 
 ```txt
-{A4}.L{p=5x8 s=hexgrid}
+placeholder_rect
+[obj1 obj2 ...].L{}           ## local array layout inside placeholder_rect (dataset header)
+```
+
+For spritesheet definitions, usually declared in comment lines before the dataset, Layout works like the inverse of page imposition: it cuts pieces from an image, page, PDF, etc.
+
+```txt
+# @cards = @{cards.png}.L{p=4x3 g=2}   ## split image source into a 4 columns x 3 rows spritesheet
+```
+
+Then frames can be referenced as source objects, fitted, or transformed:
+
+```txt
+@cards[2][3]                  ## frame at column 2, row 3
 ```
 
 ## Pattern (p=)
 `p` is the structural core of layout.
-It defines how many slots exist per page before page breaks occur.
+It defines how elements are arranged inside a rectangular space, or how many slots exist per page before page breaks occur when applied to a Page module.
 
-`p=` (or positional token) defines columns x rows.
+`p=` defines columns x rows. It is the default layout parameter, so `p=` can be omitted.
+
+Default pattern is `0x0` (equivalent to `?x?`).
+`0` and `?` are equivalent in pattern: auto-fit based on available area.
 
 ```txt
-p=3x2
-p=0x0
-p=3x?
-p=?x4
-p=-?x-?
+p=3x2        ## left-to-right, top-to-bottom (default)
+              -> A B C
+                 D E F
+3x2          ## same as p=3x2
+p=0x0        ## as many columns and rows as fit
+p=?x?        ## same as p=0x0
+p=3x?        ## 3 columns and as many rows as fit
+p=?x4        ## as many columns as fit and 4 rows
+p=-?x-?      ## auto-fit, reversed: right-to-left and bottom-to-top
 ```
-
-`0x0` means auto-fit based on available area.
-`?` is also accepted as auto, so `0` and `?` are equivalent in pattern.
 
 ### Order and Flips
 Order and flips matter when instance numbering and print order must follow a specific physical workflow.
@@ -45,14 +62,16 @@ Order and flips matter when instance numbering and print order must follow a spe
 The grid token supports modifiers:
 
 - `^` switches order to top-to-bottom, then left-to-right.
-- `|` flips the axis (use after the number you want to flip).
-- Negative numbers also flip that axis.
+- `|` or negative numbers flip the axis (use after the number you want to flip).
 
 Examples:
 
 ```txt
-p=3x2        -> left-to-right, top-to-bottom
-p=3x2^       -> top-to-bottom first
+p=3x2        ## left-to-right, top-to-bottom (default)
+p=3x2^       ## top-to-bottom first (like a rotation)
+              > A D
+                B E
+                C F
 p=3|x2       -> flip columns
 p=3x-2       -> flip rows
 p=-3x-2      -> flip both axes
@@ -71,26 +90,25 @@ g=?
 
 Rules:
 
-- 1 value means `x=y`.
 - 2 values mean `x` (horizontal) and `y` (vertical).
-- Units and percentages are allowed.
+- 1 value means `x=y`; brackets can be omitted.
+- Units, percentages, and mixed expressions are allowed, e.g. `g=[2+3% 0]`.
 - `?` means auto gap (distribute remaining space evenly to fit the final content area on that axis).
 
 Examples:
 
 ```txt
-g=2
-g=[2 3]
-g=[1% 3%]
-g=[2 ?]
-g=[? ?]   # same as g=[?] and g=?
+g=2             ## same horizontal and vertical gap
+g=[2 3]         ## 2 mm horizontal, 3 mm vertical
+g=[2+3% 0]      ## expressions can mix absolute values and percentages
+g=?             ## auto-distribute remaining space on both axes
 ```
 
 Percentages require a known card size (shape preset or template size).
 
 ## Offset (o=)
-Offsets are useful for staggered layouts, including hex-like placement.
-They modify slot position patterns, not slot dimensions.
+Offsets shift each row/column relative to the previous one.
+They modify slot positions, not slot dimensions.
 
 `o=` (or `offset=`) defines staggered offsets for alternating slots.
 
@@ -100,10 +118,22 @@ o=[w1 h1 w2 h2]
 
 Notes:
 
+- `w1` shifts every second row horizontally relative to the previous row.
+- `h1` shifts every second column vertically relative to the previous column.
+- `w2` and `h2` define the next alternating shift.
 - If only `w1 h1` are provided, `w2 h2` defaults to `-w1 -h1`.
-- Offsets are applied after slot sizing and before final placement.
+- As with gaps, absolute values, percentages, and mixed expressions are allowed.
 
-This is how hex-like or staggered grids are achieved without changing card size.
+Examples:
+
+```txt
+o=[50% 0]       ## each odd row starts half a slot to the right
+o=[0 50%]       ## each odd column starts half a slot down
+o=[2+25% 0]     ## offsets can combine absolute and percentage values
+```
+
+`hexgrid` and `hextiles` are built from automatically calculated offsets.
+You can still add explicit offsets to a hex layout; they are added on top of the generated hex offsets.
 
 ## Shape (s=)
 Shape presets provide normalized card/tile sizes so layouts remain consistent across projects.

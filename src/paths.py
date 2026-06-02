@@ -5,13 +5,13 @@ from __future__ import annotations
 
 import math
 import re
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import inkex
 
 import log as LOG
 _l = LOG
-import geometry_registry as GREG
+import layouts as LYT
 import svg as SVG
 import prefs
 
@@ -43,6 +43,135 @@ def _is_path(node) -> bool:
     return isinstance(t, str) and t.endswith('path')
 
 
+def _pt_mid(a: _PT, b: _PT) -> _PT:
+    return ((a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5)
+
+
+def _angle_diff_deg(a: float, b: float) -> float:
+    d = float(a) - float(b)
+    while d <= -180.0:
+        d += 360.0
+    while d > 180.0:
+        d -= 360.0
+    return abs(d)
+
+
+def _detect_hex_orientation(target_el, orient_hint: Optional[str] = None) -> str:
+    orient = str(orient_hint or '').strip().lower()
+    if orient in ('pointy', 'flat'):
+        return orient
+    try:
+        if _is_path(target_el):
+            pts = SVG.path_characteristic_points(target_el.get('d') or '', SVG.composed_transform(target_el))
+            if pts and len(pts) == 6:
+                ang = SVG.base_angle_deg(pts)
+                if ang is not None:
+                    if abs(ang) <= 5.0:
+                        return 'flat'
+                    if abs(abs(ang) - 30.0) <= 5.0:
+                        return 'pointy'
+    except Exception:
+        pass
+    return 'pointy'
+
+
+def _label_hex_points_by_angle(raw_pts: List[_PT], orient: str, cx: float, cy: float) -> Optional[Dict[str, _PT]]:
+    if not raw_pts or len(raw_pts) != 6:
+        return None
+    if orient == 'flat':
+        targets = {'8': -120.0, '9': -60.0, '3': 0.0, '2': 60.0, '1': 120.0, '7': 180.0}
+    else:
+        targets = {'8': -90.0, '9': -30.0, '3': 30.0, '2': 90.0, '1': 150.0, '7': -150.0}
+    remaining = list(raw_pts)
+    out: Dict[str, _PT] = {}
+    for lab, want in targets.items():
+        best = None
+        best_idx = None
+        best_d = None
+        for i, p in enumerate(remaining):
+            ang = math.degrees(math.atan2(float(p[1]) - cy, float(p[0]) - cx))
+            dd = _angle_diff_deg(ang, want)
+            if best is None or dd < best_d:
+                best = p
+                best_idx = i
+                best_d = dd
+        if best is None:
+            return None
+        out[lab] = best
+        remaining.pop(best_idx)
+    return out
+
+
+def hex_geometry_for_target(target_el, orient_hint: Optional[str] = None) -> Optional[dict]:
+    orient = _detect_hex_orientation(target_el, orient_hint)
+    pts = None
+    geom_source = None
+    x0 = y0 = x1 = y1 = cx = cy = None
+    try:
+        if _is_path(target_el):
+            raw_pts = SVG.path_characteristic_points(target_el.get('d') or '', SVG.composed_transform(target_el))
+            if raw_pts and len(raw_pts) == 6:
+                xs = [float(p[0]) for p in raw_pts]
+                ys = [float(p[1]) for p in raw_pts]
+                x0 = min(xs)
+                y0 = min(ys)
+                x1 = max(xs)
+                y1 = max(ys)
+                cx = (x0 + x1) * 0.5
+                cy = (y0 + y1) * 0.5
+                pts = _label_hex_points_by_angle(raw_pts, orient, cx, cy)
+                if pts:
+                    geom_source = 'path'
+    except Exception:
+        pts = None
+    if not pts:
+        bb = SVG.visual_bbox(target_el)
+        if not bb:
+            return None
+        x, y, w, h = bb
+        x0 = float(x)
+        y0 = float(y)
+        x1 = x0 + float(w)
+        y1 = y0 + float(h)
+        cx = x0 + float(w) * 0.5
+        cy = y0 + float(h) * 0.5
+        if orient == 'flat':
+            pts = {
+                '8': (cx - float(w) * 0.25, y0),
+                '9': (cx + float(w) * 0.25, y0),
+                '3': (x1, cy),
+                '2': (cx + float(w) * 0.25, y1),
+                '1': (cx - float(w) * 0.25, y1),
+                '7': (x0, cy),
+            }
+        else:
+            pts = {
+                '8': (cx, y0),
+                '9': (x1, cy - float(h) * 0.25),
+                '3': (x1, cy + float(h) * 0.25),
+                '2': (cx, y1),
+                '1': (x0, cy + float(h) * 0.25),
+                '7': (x0, cy - float(h) * 0.25),
+            }
+        geom_source = 'bbox'
+    pts['5'] = (cx, cy)
+    sides = {}
+    for s, (pa, pb) in _SIDE_POINTS.items():
+        a = pts[pa]
+        b = pts[pb]
+        m = _pt_mid(a, b)
+        sides[s] = {'a': a, 'b': b, 'mid': m, 'inward': _norm(cx - m[0], cy - m[1])}
+    return {
+        'orient': orient,
+        'points': pts,
+        'sides': sides,
+        'center': (cx, cy),
+        'bbox': (x0, y0, float(x1 - x0), float(y1 - y0)),
+        'source': geom_source,
+        'el': target_el,
+    }
+
+
 def resolve_style_templates(root, style_id: Optional[str]):
     """Resolve a style template id into one or more path template elements.
 
@@ -69,6 +198,18 @@ def resolve_style_templates(root, style_id: Optional[str]):
     return [el] if _is_path(el) else []
 
 
+def _document_order_index(root, node) -> int:
+    if root is None or node is None:
+        return 10**9
+    try:
+        for i, el in enumerate(root.iter()):
+            if el is node:
+                return i
+    except Exception:
+        pass
+    return 10**9
+
+
 def instantiate_styled_path(template_el, d_attr: str):
     """Create a new <path> with style cloned from template_el and geometry d_attr."""
     p = SVG.etree.Element(inkex.addNS('path', 'svg'))
@@ -85,6 +226,62 @@ def instantiate_styled_path(template_el, d_attr: str):
             pass
     p.set('d', d_attr)
     return p
+
+
+def build_path_items_for_target(
+    target_el,
+    paths_spec_raw: str,
+    *,
+    orient_hint: Optional[str] = None,
+    style_scope_node=None,
+    grid_ctx=None,
+):
+    """Build (document_order, local_order, path) tuples for a target."""
+    geom = hex_geometry_for_target(target_el, orient_hint)
+    if not geom:
+        _l.w(f"[paths] target id='{target_el.get('id') if target_el is not None else ''}' has no usable bbox")
+        return []
+    blocks = parse_paths_block(paths_spec_raw)
+    built = []
+    seq = 0
+    style_scope = style_scope_node
+    for blk in blocks:
+        layers = resolve_style_templates(style_scope, blk.get('style_id'))
+        if not layers:
+            _l.w(f"[paths] style '{blk.get('style_id')}' produced no path templates")
+            continue
+        for tok in (blk.get('tokens') or []):
+            d_attr = token_to_path_d(tok, geom, target_el=target_el, grid_ctx=grid_ctx)
+            if not d_attr:
+                try:
+                    _l.d(f"[paths] empty d token='{tok}' target='{target_el.get('id') if target_el is not None else ''}'")
+                except Exception:
+                    pass
+                continue
+            for lay in layers:
+                built.append((_document_order_index(style_scope, lay), seq, instantiate_styled_path(lay, d_attr)))
+                seq += 1
+    return built
+
+
+def build_paths_for_target(
+    target_el,
+    paths_spec_raw: str,
+    *,
+    orient_hint: Optional[str] = None,
+    style_scope_node=None,
+    grid_ctx=None,
+):
+    """Build styled path elements for a target, sorted by template document order."""
+    built = build_path_items_for_target(
+        target_el,
+        paths_spec_raw,
+        orient_hint=orient_hint,
+        style_scope_node=style_scope_node,
+        grid_ctx=grid_ctx,
+    )
+    built.sort(key=lambda item: (item[0], item[1]))
+    return [p for _, _, p in built]
 
 
 def _default_marks_style_template():
@@ -195,42 +392,6 @@ def _line_intersection(p1: _PT, d1: _PT, p2: _PT, d2: _PT) -> Optional[_PT]:
     return (x1 + t * dx1, y1 + t * dy1)
 
 
-def _cross_z(a: _PT, b: _PT) -> float:
-    return float(a[0]) * float(b[1]) - float(a[1]) * float(b[0])
-
-
-def _path_arc(a: _PT, b: _PT, center: _PT) -> str:
-    r = _dist(a, center)
-    if r <= 1e-9:
-        return _path_line(a, b)
-    ax = float(a[0]) - float(center[0])
-    ay = float(a[1]) - float(center[1])
-    bx = float(b[0]) - float(center[0])
-    by = float(b[1]) - float(center[1])
-    a0 = math.atan2(ay, ax)
-    a1 = math.atan2(by, bx)
-    # Shortest signed sweep, so the curve stays on the intended circular solution.
-    da = a1 - a0
-    while da <= -math.pi:
-        da += 2.0 * math.pi
-    while da > math.pi:
-        da -= 2.0 * math.pi
-    # Single cubic approximation of the circular arc segment.
-    k = (4.0 / 3.0) * math.tan(da / 4.0)
-    c1 = (
-        float(a[0]) + (-ay) * k,
-        float(a[1]) + (ax) * k,
-    )
-    c2 = (
-        float(b[0]) - (-by) * k,
-        float(b[1]) - (bx) * k,
-    )
-    return (
-        f"M {a[0]:.6f},{a[1]:.6f} "
-        f"C {c1[0]:.6f},{c1[1]:.6f} {c2[0]:.6f},{c2[1]:.6f} {b[0]:.6f},{b[1]:.6f}"
-    )
-
-
 def _path_cubic_tangent(a: _PT, c1: _PT, c2: _PT, b: _PT) -> str:
     return (
         f"M {a[0]:.6f},{a[1]:.6f} "
@@ -298,7 +459,81 @@ def _split_poly_refs(token: str) -> List[str]:
     return out
 
 
-def _resolve_ref_point(ref: str, registry, target_el, geom: dict):
+def _translate_geom(geom: dict, dx: float, dy: float) -> dict:
+    pts = {k: (float(p[0]) + dx, float(p[1]) + dy) for k, p in (geom.get('points') or {}).items()}
+    sides = {}
+    for k, s in (geom.get('sides') or {}).items():
+        sides[k] = {
+            'a': (float(s['a'][0]) + dx, float(s['a'][1]) + dy),
+            'b': (float(s['b'][0]) + dx, float(s['b'][1]) + dy),
+            'mid': (float(s['mid'][0]) + dx, float(s['mid'][1]) + dy),
+            'inward': s.get('inward'),
+        }
+    bx, by, bw, bh = geom.get('bbox') or (0.0, 0.0, 0.0, 0.0)
+    cx, cy = geom.get('center') or pts.get('5') or (0.0, 0.0)
+    out = dict(geom)
+    out['points'] = pts
+    out['sides'] = sides
+    out['center'] = (float(cx) + dx, float(cy) + dy)
+    out['bbox'] = (float(bx) + dx, float(by) + dy, float(bw), float(bh))
+    return out
+
+
+def _virtual_neighbor_geom(geom: dict, side: str) -> Optional[dict]:
+    try:
+        c = geom.get('center')
+        mid = (geom.get('sides') or {}).get(side, {}).get('mid')
+        if c is None or mid is None:
+            return None
+        return _translate_geom(geom, 2.0 * (float(mid[0]) - float(c[0])), 2.0 * (float(mid[1]) - float(c[1])))
+    except Exception:
+        return None
+
+
+def _grid_translate_for_chain(geom: dict, chain: str, grid_ctx) -> tuple[float, float] | None:
+    if not grid_ctx or geom.get('orient') != 'pointy':
+        return None
+    try:
+        gx, gy, w1, h1, w2, h2 = [float(x or 0.0) for x in (grid_ctx.get('gaps_px6') or [])]
+        cell_w = float(grid_ctx.get('cell_w') or (geom.get('bbox') or (0, 0, 0, 0))[2])
+        cell_h = float(grid_ctx.get('cell_h') or (geom.get('bbox') or (0, 0, 0, 0))[3])
+        row = int(grid_ctx.get('row0') or 0)
+        col = int(grid_ctx.get('col0') or 0)
+        row0 = row
+        col0 = col
+        for side in str(chain or '').lower():
+            if side == 'b':
+                col += 1
+            elif side == 'e':
+                col -= 1
+            elif side in 'ac':
+                col += 1 if row % 2 else 0
+                row += -1 if side == 'a' else 1
+            elif side in 'df':
+                col -= 0 if row % 2 else 1
+                row += -1 if side == 'f' else 1
+        x0 = col0 * (cell_w + gx) + LYT.grid_row_dx(row0, w1, w2)
+        y0 = row0 * (cell_h + gy) + LYT.grid_col_dy(col0, h1, h2)
+        x1 = col * (cell_w + gx) + LYT.grid_row_dx(row, w1, w2)
+        y1 = row * (cell_h + gy) + LYT.grid_col_dy(col, h1, h2)
+        return x1 - x0, y1 - y0
+    except Exception:
+        return None
+
+
+def _geom_for_chain(geom: dict, chain: str, grid_ctx=None):
+    vec = _grid_translate_for_chain(geom, chain, grid_ctx)
+    if vec is not None:
+        return _translate_geom(geom, vec[0], vec[1])
+    cur_geom = geom
+    for side in str(chain or '').lower():
+        cur_geom = _virtual_neighbor_geom(cur_geom, side)
+        if cur_geom is None:
+            return None
+    return cur_geom
+
+
+def _resolve_ref_point(ref: str, target_el, geom: dict, grid_ctx=None):
     t = str(ref or '').strip()
     if not t:
         return None, target_el, geom
@@ -315,38 +550,26 @@ def _resolve_ref_point(ref: str, registry, target_el, geom: dict):
         return None, target_el, geom
     chain = m.group(1).lower()
     tail = m.group(2)
-    cur_el = target_el
-    cur_geom = geom
-    if registry is None or target_el is None:
-        return None
-    for side in chain:
-        neigh = registry.neighbor_for(cur_el, side)
-        if neigh is None:
-            try:
-                _l.d(f"[paths] ref miss ref='{t}' at step='{side.upper()}' from='{target_el.get('id') if target_el is not None else ''}'")
-            except Exception:
-                pass
-            return None, target_el, geom
-        cur_el = neigh['el']
-        cur_geom = neigh['geom']
+    cur_geom = _geom_for_chain(geom, chain, grid_ctx)
+    if cur_geom is None:
+        return None, target_el, geom
     if tail == '5':
-        return cur_geom['points']['5'], cur_el, cur_geom
+        return cur_geom['points']['5'], target_el, cur_geom
     if tail in '1235789':
-        return cur_geom['points'].get(tail), cur_el, cur_geom
+        return cur_geom['points'].get(tail), target_el, cur_geom
     if tail in 'abcdef':
-        return cur_geom['sides'][tail]['mid'], cur_el, cur_geom
+        return cur_geom['sides'][tail]['mid'], target_el, cur_geom
     return None, target_el, geom
 
 
-def _path_poly_refs(token: str, registry, target_el, geom: dict) -> str:
+def _path_poly_refs(token: str, target_el, geom: dict, grid_ctx=None) -> str:
     refs = _split_poly_refs(token)
     if len(refs) < 2:
         return ''
     pts: List[_PT] = []
-    cur_el = target_el
     cur_geom = geom
     for ref in refs:
-        p, cur_el, cur_geom = _resolve_ref_point(ref, registry, cur_el, cur_geom)
+        p, _, cur_geom = _resolve_ref_point(ref, target_el, cur_geom, grid_ctx)
         if p is None:
             try:
                 _l.d(f"[paths] poly ref unresolved token='{token}' ref='{ref}' target='{target_el.get('id') if target_el is not None else ''}'")
@@ -364,7 +587,7 @@ def _path_poly_refs(token: str, registry, target_el, geom: dict) -> str:
     return _path_poly(pts)
 
 
-def token_to_path_d(token: str, geom: dict, *, target_el=None, registry=None) -> str:
+def token_to_path_d(token: str, geom: dict, *, target_el=None, grid_ctx=None) -> str:
     t = str(token or '').strip()
     if not t:
         return ''
@@ -382,9 +605,9 @@ def token_to_path_d(token: str, geom: dict, *, target_el=None, registry=None) ->
         side = m.group(1).lower()
         local_mid = sides[side]['mid']
         pts_poly = [center, local_mid]
-        neigh = registry.neighbor_for(target_el, side) if (registry is not None and target_el is not None) else None
-        if neigh is not None:
-            pts_poly.append(neigh['geom']['center'])
+        neigh_geom = _geom_for_chain(geom, side, grid_ctx)
+        if neigh_geom is not None:
+            pts_poly.append(neigh_geom['center'])
         return _path_poly(pts_poly)
     m = re.fullmatch(r'([127893])([127893])', t)
     if m:
@@ -404,54 +627,36 @@ def token_to_path_d(token: str, geom: dict, *, target_el=None, registry=None) ->
             return _path_side_arc(sides, s1, s2, center)
         return ''
     if any(ch in t for ch in 'ABCDEF') or len(t) >= 3:
-        return _path_poly_refs(t, registry, target_el, geom)
+        return _path_poly_refs(t, target_el, geom, grid_ctx)
     return ''
 
 
 def render_paths_for_target(
-    registry,
     target_el,
     paths_spec_raw: str,
     *,
-    page_index: int = 0,
     orient_hint: Optional[str] = None,
     style_scope_node=None,
     insert_parent=None,
     insert_after_elem=None,
+    grid_ctx=None,
 ) -> int:
-    geom = GREG.hex_geometry_for_target(target_el, orient_hint)
-    if not geom:
-        _l.w(f"[paths] target id='{target_el.get('id') if target_el is not None else ''}' has no usable bbox")
-        return 0
     parent = insert_parent if insert_parent is not None else target_el.getparent()
     if parent is None:
         return 0
-    if registry is not None:
-        registry.ensure_cluster_for(int(page_index), target_el, orient_hint)
-    blocks = parse_paths_block(paths_spec_raw)
     try:
         anchor = insert_after_elem if (insert_after_elem is not None and insert_after_elem.getparent() is parent) else target_el
         insert_at = parent.index(anchor) + 1
     except Exception:
         insert_at = len(parent)
-    created = 0
-    style_scope = style_scope_node
-    for blk in blocks:
-        layers = resolve_style_templates(style_scope, blk.get('style_id'))
-        if not layers:
-            _l.w(f"[paths] style '{blk.get('style_id')}' produced no path templates")
-            continue
-        for tok in (blk.get('tokens') or []):
-            d_attr = token_to_path_d(tok, geom, target_el=target_el, registry=registry)
-            if not d_attr:
-                try:
-                    _l.d(f"[paths] empty d token='{tok}' target='{target_el.get('id') if target_el is not None else ''}'")
-                except Exception:
-                    pass
-                continue
-            for lay in layers:
-                p = instantiate_styled_path(lay, d_attr)
-                parent.insert(insert_at, p)
-                insert_at += 1
-                created += 1
-    return created
+    created = build_paths_for_target(
+        target_el,
+        paths_spec_raw,
+        orient_hint=orient_hint,
+        style_scope_node=style_scope_node,
+        grid_ctx=grid_ctx,
+    )
+    for p in created:
+        parent.insert(insert_at, p)
+        insert_at += 1
+    return len(created)

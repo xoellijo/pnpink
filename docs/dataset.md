@@ -332,9 +332,27 @@ Combining both modifiers is common for back-page backgrounds and page-level back
 This places a page-anchored element on back pages, aligned to the front page sequence.
 
 ## Advanced: Split Boards
-This mode is activated automatically when template dimensions exceed target page inner size.
+This mode is **not automatic**.
 
-If the template is larger than the target page, the engine switches to split-board mode:
+Enable it explicitly in the dataset marker:
+
+```txt
+{{t=board_bbox @split}}
+```
+
+Alias (short form):
+
+```txt
+{{t=board_bbox!}}
+```
+
+Then define page/layout/marks in the first cell as usual, for example:
+
+```txt
+{letter}.L{0x0 b=-10}.M{}
+```
+
+When split mode is enabled and the template is larger than the target page, the engine:
 
 - the template is cut into tiles,
 - each tile is placed on a page,

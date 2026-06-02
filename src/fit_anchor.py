@@ -232,10 +232,9 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
     anchor_key = getattr(fs, "anchor", None) or 5
     ax, ay = svg.keypad_to_anchor(anchor_key)
 
-    rot_deg = float(getattr(fs, "rotate", 0.0) or 0.0)
-    mir = getattr(fs, "mirror", None)
-    mir_h = (mir == "h")
-    mir_v = (mir == "v")
+    rot_deg = 0.0
+    mir_h = False
+    mir_v = False
     # mirror induced by border WxH (negative width/height) composes with explicit mirror via XOR
     mir_h = bool(mir_h) ^ bool(border_mir_h)
     mir_v = bool(mir_v) ^ bool(border_mir_v)

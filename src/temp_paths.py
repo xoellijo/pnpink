@@ -46,6 +46,9 @@ def reset_named_dir(kind: str, *, stem: str = "") -> str:
 
 def cleanup_old_runs(*, max_age_hours: int = 36, keep_paths: list[str] | tuple[str, ...] | None = None) -> int:
     keep = {os.path.normcase(os.path.normpath(p)) for p in (keep_paths or []) if str(p or "").strip()}
+    def is_kept(path: str) -> bool:
+        norm = os.path.normcase(os.path.normpath(path))
+        return norm in keep or any(k.startswith(norm + os.sep) for k in keep)
     cutoff = time.time() - max(1, int(max_age_hours or 1)) * 3600
     removed = 0
     root = root_dir()
@@ -63,8 +66,7 @@ def cleanup_old_runs(*, max_age_hours: int = 36, keep_paths: list[str] | tuple[s
         except Exception:
             continue
         for path in entries:
-            norm = os.path.normcase(os.path.normpath(path))
-            if norm in keep:
+            if is_kept(path):
                 continue
             try:
                 mtime = os.path.getmtime(path)
@@ -85,6 +87,9 @@ def cleanup_old_runs(*, max_age_hours: int = 36, keep_paths: list[str] | tuple[s
 
 def cleanup_runs_now(*, keep_paths: list[str] | tuple[str, ...] | None = None) -> int:
     keep = {os.path.normcase(os.path.normpath(p)) for p in (keep_paths or []) if str(p or "").strip()}
+    def is_kept(path: str) -> bool:
+        norm = os.path.normcase(os.path.normpath(path))
+        return norm in keep or any(k.startswith(norm + os.sep) for k in keep)
     removed = 0
     root = root_dir()
     try:
@@ -101,8 +106,7 @@ def cleanup_runs_now(*, keep_paths: list[str] | tuple[str, ...] | None = None) -
         except Exception:
             continue
         for path in entries:
-            norm = os.path.normcase(os.path.normpath(path))
-            if norm in keep:
+            if is_kept(path):
                 continue
             try:
                 if os.path.isdir(path):

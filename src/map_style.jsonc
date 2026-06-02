@@ -1,0 +1,263 @@
+{
+  // Label language priority. The first existing feature property wins.
+  // Put local "name" last if you prefer Latin/English labels when available.
+  "label_languages": ["name_en", "name:en", "name:latin", "name_int", "name"],
+
+  // Named zoom bands used by include/style rules.
+  // z is the vector tile zoom chosen automatically or forced with /zN.
+  "zoom_bands": {
+    "low": { "max": 9 },
+    "medium": { "min": 10, "max": 11 },
+    "high": { "min": 12 }
+  },
+
+  // Higher values are drawn later.
+  "layer_order": {
+    "ocean": 0,
+    "landcover": 2,
+    "park": 3,
+    "landuse": 5,
+    "land": 5,
+    "water": 6,
+    "water_polygons": 6,
+    "waterway": 7,
+    "water_lines": 7,
+    "aeroway": 12,
+    "transportation": 20,
+    "streets": 20,
+    "building": 30,
+    "buildings": 30,
+    "water_name": 90,
+    "water_polygons_labels": 90,
+    "transportation_name": 92,
+    "street_labels": 92,
+    "mountain_peak": 94,
+    "place": 96,
+    "place_labels": 96
+  },
+
+  // Fallback SVG attributes by geometry type.
+  "base_style": {
+    "polygon": { "fill": "#ddd", "stroke": "#666", "stroke-width": "0.4" },
+    "line": { "fill": "none", "stroke": "#444", "stroke-width": "0.7" },
+    "point": { "fill": "#000", "stroke": "#fff", "stroke-width": "0.8" }
+  },
+
+  // Per-layer rules. "include" keeps a feature if any rule matches.
+  // Supported match keys: zoom, kind, class, subclass, rail, rank_min/max, ele_min/max.
+  "features": {
+    "ocean": {
+      "include": [ { "always": true } ],
+      "style": { "polygon": [ { "attrs": { "fill": "#b9d8f2", "stroke": "none" } } ] }
+    },
+
+    "water": {
+      "include": [ { "kind": ["ocean", "lake"] } ],
+      "style": {
+        "polygon": [
+          { "kind": "ocean", "attrs": { "fill": "#b9d8f2", "stroke": "none" } },
+          { "attrs": { "fill": "#8ec4e8", "stroke": "#6baed6", "stroke-width": "0.35" } }
+        ]
+      }
+    },
+
+    "water_name": {
+      "include": [ { "zoom": ["medium", "high"], "kind": ["bay", "lake", "ocean"] } ],
+      "label_style": { "default": { "font-size": "9" } }
+    },
+
+    "waterway": {
+      "include": [ { "kind": "river" } ],
+      "style": { "line": [ { "attrs": { "fill": "none", "stroke": "#6fb2e4", "stroke-width": "0.8" } } ] }
+    },
+
+    "water_polygons": {
+      "include": [ { "kind": ["water", "river", "reservoir", "basin", "lagoon"] } ],
+      "style": {
+        "polygon": [
+          { "kind": "river", "attrs": { "fill": "#9fcfee", "stroke": "#79b4db", "stroke-width": "0.35" } },
+          { "attrs": { "fill": "#8ec4e8", "stroke": "#6baed6", "stroke-width": "0.35" } }
+        ]
+      }
+    },
+
+    "water_lines": {
+      "include": [ { "zoom": ["medium", "high"], "kind": "river" } ],
+      "style": { "line": [ { "attrs": { "fill": "none", "stroke": "#6fb2e4", "stroke-width": "0.8" } } ] }
+    },
+
+    "water_polygons_labels": { "include": [] },
+    "boundary": { "include": [] },
+    "boundaries": { "include": [] },
+
+    "mountain_peak": {
+      "include": [
+        { "kind": "saddle", "zoom": "high", "rank_max": 3 },
+        { "kind": "peak", "zoom": "low", "rank_max": 2, "ele_min": 300 },
+        { "kind": "peak", "zoom": "medium", "rank_max": 3, "ele_min": 120 },
+        { "kind": "peak", "zoom": "high", "rank_max": 4, "ele_min": 50 }
+      ],
+      "labels": false,
+      "point_shape": { "default": "triangle" },
+      "point_size": { "default": 2.2 },
+      "style": {
+        "point": [
+          { "kind": "saddle", "attrs": { "fill": "#7c6855", "stroke": "#fff", "stroke-width": "0.8" } },
+          { "attrs": { "fill": "#5f5244", "stroke": "#fff", "stroke-width": "0.8" } }
+        ]
+      },
+      "label_style": { "default": { "font-size": "8" } },
+      "label_offset": [4.0, -4.0]
+    },
+
+    "park": {
+      "include": [ { "zoom": ["medium", "high"] } ],
+      "style": { "polygon": [ { "attrs": { "fill": "#c6ddb0", "stroke": "#9fbe83", "stroke-width": "0.22" } } ] }
+    },
+
+    "landcover": {
+      "include": [ { "kind": ["wood", "grass", "wetland"] } ],
+      "style": {
+        "polygon": [
+          { "kind": "wood", "attrs": { "fill": "#c9ddb2", "stroke": "#a7c08a", "stroke-width": "0.2" } },
+          { "kind": "grass", "attrs": { "fill": "#d9e7bf", "stroke": "#bccf95", "stroke-width": "0.18" } },
+          { "kind": "wetland", "attrs": { "fill": "#cddfb3", "stroke": "#9ab88a", "stroke-width": "0.18" } }
+        ]
+      }
+    },
+
+    "landuse": {
+      "include": [ { "zoom": ["medium", "high"], "kind": ["industrial", "commercial", "university", "school", "hospital", "quarry", "military", "railway", "residential"] } ],
+      "style": {
+        "polygon": [
+          { "kind": ["industrial", "railway", "quarry", "military"], "attrs": { "fill": "#d0d0d0", "stroke": "#9b9b9b", "stroke-width": "0.18" } },
+          { "kind": "commercial", "attrs": { "fill": "#d7c5b6", "stroke": "#aa9583", "stroke-width": "0.18" } },
+          { "kind": ["university", "school", "hospital"], "attrs": { "fill": "#ece8ce", "stroke": "#cfcaa1", "stroke-width": "0.18" } },
+          { "kind": "residential", "attrs": { "fill": "#ffd19b", "stroke": "none" } }
+        ]
+      }
+    },
+
+    "land": {
+      "include": [
+        { "zoom": "low", "kind": "forest" },
+        { "zoom": ["medium", "high"], "kind": ["forest", "park", "grass", "grassland", "meadow", "garden", "golf_course", "orchard", "farmland", "farmyard", "beach", "industrial", "commercial", "brownfield", "bare_rock", "heath", "allotments", "greenfield", "greenhouse_horticulture", "garages"] }
+      ],
+      "style": {
+        "polygon": [
+          { "kind": ["forest", "park", "grass", "grassland", "meadow", "garden", "golf_course", "orchard"], "attrs": { "fill": "#c9ddb2", "stroke": "#a7c08a", "stroke-width": "0.25" } },
+          { "kind": ["farmland", "farmyard", "allotments", "greenhouse_horticulture"], "attrs": { "fill": "#d8dfb0", "stroke": "#b7c184", "stroke-width": "0.22" } },
+          { "kind": "beach", "attrs": { "fill": "#ecd8aa", "stroke": "#d7bf8a", "stroke-width": "0.2" } },
+          { "kind": ["industrial", "commercial", "brownfield", "garages", "greenfield"], "attrs": { "fill": "#d8d4cf", "stroke": "#bbb2aa", "stroke-width": "0.2" } },
+          { "kind": ["bare_rock", "heath"], "attrs": { "fill": "#d2c6b6", "stroke": "#b9ab99", "stroke-width": "0.2" } },
+          { "attrs": { "fill": "#d8d2bd", "stroke": "#c4bba8", "stroke-width": "0.18" } }
+        ]
+      }
+    },
+
+    "place_labels": {
+      "include": [
+        { "zoom": "low", "kind": ["city", "town", "suburb","village"] },
+        { "zoom": "medium", "kind": ["city", "suburb", "village", "island"] },
+        { "zoom": "high", "kind": ["city", "town", "suburb", "village", "island"] }
+      ],
+      "label_style": {
+        "city": { "font-size": "12" },
+        "town": { "font-size": "11" },
+        "island": { "fill": "#9b7a4f", "font-size": "=clamp((34-rank)/2,7,10)" }
+      },
+      "point_shape": { "island": "none" }
+    },
+
+    "place": {
+      "include": [
+        { "zoom": "low", "kind": ["city", "town", "suburb", "village", "island"], "rank_max": 15 },
+        { "zoom": "medium", "kind": ["city", "town", "suburb", "village", "island"], "rank_max": 18 },
+        { "zoom": "high", "kind": ["city", "town", "suburb", "village", "hamlet", "island"], "rank_max": 20 }
+      ],
+      "label_style": {
+        "city": { "font-size": "13" },
+        "town": { "font-size": "11" },
+        "suburb": { "font-size": "10" },        
+        "village": { "font-size": "9" },
+        "island": { "fill": "#9b7a4f", "font-size": "=clamp((34-rank)/2,7,10)" }
+      },
+      "point_shape": { "island": "none" }
+    },
+
+    "streets": {
+      "include": [
+        { "zoom": "low", "rail": 1 },
+        { "zoom": "low", "kind": ["motorway", "trunk", "primary", "narrow_gauge", "rail"] },
+        { "zoom": ["medium", "high"], "rail": 1 },
+        { "zoom": ["medium", "high"], "kind": ["motorway", "trunk", "primary", "secondary", "tertiary", "narrow_gauge", "rail"] }
+      ],
+      "style": {
+        "line": [
+          { "rail": 1, "attrs": { "fill": "none", "stroke": "#555", "stroke-width": "0.8" } },
+          { "kind": ["rail", "narrow_gauge"], "attrs": { "fill": "none", "stroke": "#555", "stroke-width": "0.8" } },
+          { "kind": "motorway", "attrs": { "fill": "none", "stroke": "#b76e3a", "stroke-width": "1.15" } },
+          { "kind": "trunk", "attrs": { "fill": "none", "stroke": "#c58a57", "stroke-width": "0.95" } },
+          { "kind": "primary", "attrs": { "fill": "none", "stroke": "#d6ab76", "stroke-width": "0.75" } },
+          { "kind": "secondary", "attrs": { "fill": "none", "stroke": "#e0bf92", "stroke-width": "0.55" } },
+          { "kind": "tertiary", "attrs": { "fill": "none", "stroke": "#e9d4b2", "stroke-width": "0.4" } }
+        ]
+      }
+    },
+
+    "transportation": {
+      "include": [ { "kind": ["motorway", "trunk", "primary", "secondary", "tertiary", "rail"] } ],
+      "style": {
+        "line": [
+          { "kind": "rail", "attrs": { "fill": "none", "stroke": "#555", "stroke-width": "0.8" } },
+          { "subclass": "rail", "attrs": { "fill": "none", "stroke": "#555", "stroke-width": "0.8" } },
+          { "kind": "motorway", "attrs": { "fill": "none", "stroke": "#b76e3a", "stroke-width": "1.15" } },
+          { "kind": "trunk", "attrs": { "fill": "none", "stroke": "#c58a57", "stroke-width": "0.95" } },
+          { "kind": "primary", "attrs": { "fill": "none", "stroke": "#d6ab76", "stroke-width": "0.75" } },
+          { "kind": "secondary", "attrs": { "fill": "none", "stroke": "#e0bf92", "stroke-width": "0.55" } },
+          { "kind": "tertiary", "attrs": { "fill": "none", "stroke": "#e9d4b2", "stroke-width": "0.4" } }
+        ]
+      }
+    },
+
+    "transportation_name": {
+      "include": [ { "kind": ["motorway", "trunk", "primary", "rail"] } ],
+      "point_shape": { "default": "none" },
+      "style": {
+        "line": [
+          { "kind": "motorway", "attrs": { "fill": "none", "stroke": "#a55f31", "stroke-width": "0.9" } },
+          { "kind": ["trunk", "primary"], "attrs": { "fill": "none", "stroke": "#b58457", "stroke-width": "0.7" } },
+          { "attrs": { "fill": "none", "stroke": "#555", "stroke-width": "0.7" } }
+        ]
+      }
+    },
+
+    "street_labels": {
+      "include": [ { "zoom": ["medium", "high"], "kind": ["motorway", "rail", "funicular"] } ],
+      "point_shape": { "default": "none" },
+      "style": {
+        "line": [
+          { "kind": "motorway", "attrs": { "fill": "none", "stroke": "#a55f31", "stroke-width": "1.0" } },
+          { "attrs": { "fill": "none", "stroke": "#555", "stroke-width": "0.7" } }
+        ]
+      }
+    }
+  },
+
+  // Default text style for generated labels. Per-layer label_style entries above override it.
+  "label_style": {
+    "default": {
+      "font-size": "10",
+      "font-family": "Segoe UI, sans-serif",
+      "fill": "#111",
+      "stroke": "#fff",
+      "stroke-width": "1.2",
+      "paint-order": "stroke fill",
+      "stroke-linejoin": "round"
+    }
+  },
+
+  "label_offset": {
+    "default": [4.0, -2.0]
+  }
+}

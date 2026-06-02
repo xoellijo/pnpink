@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 """Resident DeckMaker launcher app.
 
-This is intentionally small: the Inkscape extension only sends the current SVG
-template to this process, and the process runs the existing engine on demand.
+This is intentionally small: the Inkscape extension sends the saved SVG path and,
+when available, a snapshot of the active unsaved SVG document.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ _l = LOG
 
 _normalize_path = DMPATHS.normalize
 
-APP_VERSION = "Deckmaker v0.49"
+APP_VERSION = "Deckmaker v0.50"
 DOCS_INTRO_URL = "https://xoellijo.github.io/pnpink/intro/"
 DOCS_GUIDE_URL = "https://xoellijo.github.io/pnpink/quickstart/"
 OTHER_EXPORT_FORMATS = ("png", "jpeg", "jpeg2000", "pdf", "svg", "tiff", "webp", "ps", "eps", "emf", "wmf")
@@ -54,16 +54,17 @@ SOURCE_MODE_VALUE_TO_LABEL = {value: label for label, value in SOURCE_MODE_LABEL
 
 def notify_or_launch(
     template: str,
+    snapshot_path: str = "",
     sheet_id: str = "",
     sheet_range: str = "",
     log_level: str = "global",
     dataset_source_mode: str = "",
 ) -> bool:
     try:
-        TEMPPATHS.cleanup_runs_now()
+        TEMPPATHS.cleanup_runs_now(keep_paths=[snapshot_path] if str(snapshot_path or "").strip() else None)
     except Exception:
         pass
-    return IPC.notify_or_launch(__file__, template, sheet_id, sheet_range, log_level, dataset_source_mode)
+    return IPC.notify_or_launch(__file__, template, snapshot_path, sheet_id, sheet_range, log_level, dataset_source_mode)
 
 
 class DeckMakerApp:
@@ -145,8 +146,9 @@ class DeckMakerApp:
         self._suppress_source_change = False
         self._generated_output_ready = False
         self._dataset_source_invalid = False
+        self._snapshot_path = _normalize_path(initial.snapshot_path) if initial and initial.snapshot_path else ""
         try:
-            TEMPPATHS.cleanup_runs_now()
+            TEMPPATHS.cleanup_runs_now(keep_paths=[self._snapshot_path] if self._snapshot_path else None)
         except Exception:
             pass
 
@@ -269,6 +271,7 @@ class DeckMakerApp:
         self.log_text.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
         try:
             self.log_text.tag_configure("live_activity", foreground="#555555")
+            self.log_text.tag_configure("warning", foreground="#b00020")
         except Exception:
             pass
 
@@ -622,7 +625,7 @@ class DeckMakerApp:
         except Exception:
             self._icon_image = None
 
-    def _log(self, message: str):
+    def _log(self, message: str, tag: str = ""):
         text = str(message or "").strip()
         if not text:
             return
@@ -635,7 +638,10 @@ class DeckMakerApp:
             continuation = " " * 11
             rendered = [f"{prefix}{lines[0]}"]
             rendered.extend(f"{continuation}{line}" for line in lines[1:])
+            start = self.log_text.index("end-1c")
             self.log_text.insert("end-1c", "\n".join(rendered) + "\n")
+            if tag:
+                self.log_text.tag_add(tag, start, self.log_text.index("end-1c"))
             self._last_log_stamp = stamp
             self._apply_live_activity_locked()
             self.log_text.see("end")
@@ -1118,14 +1124,27 @@ class DeckMakerApp:
                     line,
                 )
                 if m:
+                    provider = str(m.group(1)).strip()
                     summaries = self._web_activity_stats.setdefault("source_summaries", {})
                     if isinstance(summaries, dict):
-                        summaries[str(m.group(1)).strip()] = {
+                        summaries[provider] = {
                             "downloaded": int(m.group(2)),
                             "cached": int(m.group(3)),
                             "failed": int(m.group(4)),
                             "uses": int(m.group(5)),
                         }
+                        if provider.lower() in {"osm", "ofm", "openstreetmap", "openfreemap"}:
+                            _queue_web_asset_summary({provider: summaries[provider]})
+                return
+            if "[sources] map tiles provider=" in line:
+                msg = line.split("[sources] map tiles", 1)[-1].strip()
+                if msg:
+                    self._queue_ui_log(f"Map tiles: {msg}")
+                return
+            if "[map.debug]" in line:
+                msg = line.split("[map.debug]", 1)[-1].strip()
+                if msg:
+                    self._queue_ui_log(f"Map debug: {msg}")
                 return
             if "[sources] wkmc fetch failed" in line:
                 self._web_activity_stats["wkmc_failed"] += 1
@@ -1754,6 +1773,7 @@ class DeckMakerApp:
                     if not req.dataset_source_mode:
                         req = AppRequest(
                             template=req.template,
+                            snapshot_path=req.snapshot_path,
                             sheet_id=sheet_id,
                             sheet_range=sheet_range,
                             log_level=req.log_level,
@@ -1764,11 +1784,14 @@ class DeckMakerApp:
             self.sheet_id_var.set(sheet_id)
             self.sheet_range_var.set(sheet_range)
             self._refresh_source_mode(req.template, req.dataset_source_mode)
+            self._snapshot_path = _normalize_path(req.snapshot_path) if req.snapshot_path else ""
         finally:
             self._suppress_source_change = False
         self._dataset_source_invalid = False
         self.status_var.set("Template received")
         self._log(f"Template: {os.path.basename(_normalize_path(req.template))}")
+        if self._snapshot_path and os.path.isfile(self._snapshot_path):
+            self._log("Using current unsaved Inkscape document snapshot")
         if sheet_id:
             detail = f" range={sheet_range}" if sheet_range else ""
             self._log(f"Google Sheets source ready{detail}")
@@ -1879,8 +1902,13 @@ class DeckMakerApp:
         template = _normalize_path(self.template_var.get())
         if not template or not os.path.isfile(template):
             self.status_var.set("Save/open a template SVG first")
-            self._log("Save/open a template SVG first")
+            self._log("Save/open a template SVG first", "warning")
             return
+        snapshot_path = self._snapshot_path if (self._snapshot_path and os.path.isfile(self._snapshot_path)) else ""
+        if snapshot_path:
+            self._log("Template source: current Inkscape document snapshot")
+        else:
+            self._log("WARNING: template source is the saved SVG on disk; no current Inkscape snapshot is available.", "warning")
         if not self._can_generate(template):
             self.status_var.set("Choose CSV or Google Sheet source")
             if self._dataset_source_invalid:
@@ -1893,6 +1921,7 @@ class DeckMakerApp:
         sheet_id = "" if source_mode == "local_csv" else self.sheet_id_var.get().strip()
         req = AppRequest(
             template=template,
+            snapshot_path=snapshot_path,
             sheet_id=sheet_id,
             sheet_range=self.sheet_range_var.get().strip(),
             dataset_source_mode=source_mode,
@@ -1922,7 +1951,7 @@ class DeckMakerApp:
             self._start_web_activity_monitor()
             self._queue_ui_activity("Loading template and dataset...")
             self._queue_ui_log("Loading template and dataset...")
-            effect = RUNNER.EngineEffect(req.template, req.sheet_id, req.sheet_range, req.log_level, req.dataset_source_mode)
+            effect = RUNNER.EngineEffect(req.template, req.sheet_id, req.sheet_range, req.log_level, req.dataset_source_mode, snapshot_path=req.snapshot_path)
             self._queue_ui_activity("Rendering output SVG...")
             self._queue_ui_log("Rendering output SVG...")
             ENG.run(effect, APP_VERSION)
@@ -2222,6 +2251,7 @@ class DeckMakerApp:
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--template", default="")
+    ap.add_argument("--snapshot-path", default="")
     ap.add_argument("--sheet-id", default="")
     ap.add_argument("--sheet-range", default="")
     ap.add_argument("--dataset-source-mode", default="")
@@ -2232,6 +2262,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if ns.template:
         initial = AppRequest(
             template=_normalize_path(ns.template),
+            snapshot_path=_normalize_path(ns.snapshot_path) if ns.snapshot_path else "",
             sheet_id=ns.sheet_id,
             sheet_range=ns.sheet_range,
             dataset_source_mode=ns.dataset_source_mode,

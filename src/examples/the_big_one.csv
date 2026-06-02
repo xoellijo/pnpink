@@ -15,7 +15,7 @@
 ,00,Example: Get 12:@{icon://coin}: at the end of your turn.You loose 1::Ic(cat)~^: from your board.,,,,,pizzakkk~x2,"fitmode=x (x-stretch)
 anchor=2 (bottom-center)
 :Tf(""↔ & ↓"" size=36)",,00,,,,#VALUE! (The default output of this reference is a single cell in the same column but a matching value could not be found. To get the values for the entire range use the ARRAYFORMULA function.)
-,1,"<tspan font-style='italic'>Hello</tspan> <tspan font-weight=""bold"">world</tspan>\n  <tspan font-family=""Noto Color Emoji"">😀</tspan>.\n(End)\n[span version]",ficha~3,,,@{icon://billed-cap}.Fit{i a=7 rotate=180},pizzakkk~y3,"anchor=3 (bottom-right)
+,1,"<tspan font-style='italic'>Hello</tspan> <tspan font-weight=""bold"">world</tspan>\n  <tspan font-family=""Noto Color Emoji"">😀</tspan>.\n(End)\n[span version]",ficha~3,,,@{icon://billed-cap}~i7^180,pizzakkk~y3,"anchor=3 (bottom-right)
 :Tf(""↕ & ↘"" size=36)",,1,,,,
 {},2,:Ti(Hello) :Tb(world)\n  :Te(😀).\n(End)\n[snippet version],clone_ficha~m7,,:Tb(Get) 2:diamante:for you,:Ic(parrot)~i|,@{icon://cat}~[70%]7 @{icon://cat-face}~[20%]8 @{icon://cat}~[20%]9| :Ic(monkey)~[30%]1 :Ic(monkey-face)~[30%]2^25 :Ic(monkey)~[10%]3|^,,,2,,,,
 ,3,":Tb(:Tc(Get red)) 2:diamante:for you, & 1 great:picas:[dy=-80% transform=""scale(2) rotate(75)""]",clone_ficha~i9,,y :Tc(mas green blue 20),:Ic(tiger)~i,copa~[0.05x0.2]5,anchor=5 (center = default),,3,,,,
@@ -27,7 +27,7 @@ rotate 45º
 {A3 b=[-10 -10]}.L{ pattern=-3x-4 g=[2 2] o=[10% 0] shape=tarot},7,Change layout to {A3 b=[-10 -10]}.L{ pattern=-3x-4 g=[2 2] o=[10% 0] shape=tarot},@{assets/bola_rosa.png}~m,,,ficha~[2x2]7,copa~9,anchor=6 (center-right),,7,,,,
 ,8,"icon is from external image source, rotated and scaled inside rect",@{assets/bola_rosa.png}~i3^82,,,ficha~8,copa~i,fitmode=i (inside),,8,,,,
 ,9,Here a icon from inet directly inside the text!!!,@{assets/bola_rosa.png}.Fit{mode=inside anchor=7},,,ficha~9,copa~a,fitmode=a (all-stretch or xy-stretch),,9,,,,
-,10,nada,@{bola_rosa.png}.Fit{mode=inside mirror=vertical},,,,copa~m,fitmode=m (cover),,10,,,,
+,10,nada,@{bola_rosa.png}~i||,,,,copa~m,fitmode=m (cover),,10,,,,
 3,J,Three J,@{icon://cat}~i^,,,,pizza_g~1,,,J,,,,
 2,Q,2 Q,:Ic(cat)~i||,,,,pizza_g~m3!,,,Q,,,,
 {A4 b=[-3 ]}.L{p=3x2},a,,,,,,@sp2[6]~a,,,,,,,

@@ -23,6 +23,8 @@ Examples of `Fit` concerns:
 
 Examples of `Transform` concerns:
 
+- rotate
+- mirror
 - opacity
 - soft edges
 - later, other visual effects such as blur, color adjustments or shadows
@@ -30,6 +32,7 @@ Examples of `Transform` concerns:
 ## Syntax
 
 ```txt
+object_id.T{rotate=15 mirror=h}
 object_id.T{opacity=50% soft=12%}
 object_id.T{o=50% s=12%}
 object_id.T{f=myFilter}
@@ -46,9 +49,31 @@ object_id.T{f=image1-9-1 s=8%}
 
 Current parameters are:
 
+- `rotate` or `r`
+- `mirror` or `m`
 - `opacity` or `o`
 - `soft` or `s`
 - `filter` or `f`
+
+## Rotate and Mirror
+
+```txt
+.T{rotate=15}
+.T{r=-42.4}
+.T{mirror=h}
+.T{mirror=v}
+```
+
+Compact `~` can still carry the same operations:
+
+```txt
+object_id~^15
+object_id~^^
+object_id~|
+object_id~||
+```
+
+In compact form, `^` means rotate and `|` / `||` mean horizontal / vertical mirror.
 
 ## Opacity
 

@@ -13,6 +13,7 @@ class AppRequest:
     sheet_range: str = ""
     dataset_source_mode: str = ""
     log_level: str = "global"
+    snapshot_path: str = ""
 
 
 @dataclass(frozen=True)

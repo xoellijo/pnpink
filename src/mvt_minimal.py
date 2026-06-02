@@ -16,11 +16,14 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from collections import Counter, defaultdict
 import math
+import re
 import struct
 import xml.etree.ElementTree as ET
 
+import log as LOG
 import map_style as MAP_STYLE
 
+_l = LOG
 
 WIRE_VARINT = 0
 WIRE_64BIT = 1
@@ -355,6 +358,40 @@ def _feature_anchor_point(points: List[List[Tuple[float, float]]]) -> Optional[T
     return sx / n, sy / n
 
 
+def _geom_name(geom_type: int) -> str:
+    if geom_type == GEOM_POINT:
+        return "point"
+    if geom_type == GEOM_LINESTRING:
+        return "line"
+    if geom_type == GEOM_POLYGON:
+        return "polygon"
+    return "unknown"
+
+
+def _label_key(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "").strip().lower())
+
+
+def _dedupe_labels(
+    items: List[Tuple[str, float, float, Dict[str, str], str]],
+    *,
+    min_distance: float = 42.0,
+) -> List[Tuple[str, float, float, Dict[str, str], str]]:
+    kept: List[Tuple[str, float, float, Dict[str, str], str]] = []
+    seen: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
+    limit2 = float(min_distance) * float(min_distance)
+    for item in items:
+        _label_id, x, y, _style, text = item
+        key = _label_key(text)
+        if key:
+            too_close = any(((x - px) * (x - px) + (y - py) * (y - py)) <= limit2 for px, py in seen[key])
+            if too_close:
+                continue
+            seen[key].append((x, y))
+        kept.append(item)
+    return kept
+
+
 def export_debug_svg(
     raw_tile: bytes,
     z: int,
@@ -420,11 +457,25 @@ def build_debug_svg_multi(
     allowed = {str(v) for v in include_layers} if include_layers else None
     layer_groups: Dict[str, ET.Element] = {}
     feature_id_counters: Dict[str, int] = {}
+    layer_seen: Dict[str, int] = {}
+    layer_included: Dict[str, int] = {}
+    layer_labeled: Dict[str, int] = {}
+    layer_kind_seen: Dict[str, Counter] = defaultdict(Counter)
+    layer_kind_included: Dict[str, Counter] = defaultdict(Counter)
+    layer_kind_geom_seen: Dict[str, Counter] = defaultdict(Counter)
+    layer_kind_geom_included: Dict[str, Counter] = defaultdict(Counter)
+    label_items: List[Tuple[str, float, float, Dict[str, str], str]] = []
     for raw_tile, tz, tx, ty in tile_specs:
         tile = decode_tile(raw_tile)
         for layer in sorted(tile.layers, key=lambda lyr: (MAP_STYLE.layer_order(lyr.name), lyr.name)):
             if allowed is not None and layer.name not in allowed:
                 continue
+            layer_seen[layer.name] = layer_seen.get(layer.name, 0) + len(layer.features)
+            if "place" in layer.name.lower():
+                for feat in layer.features:
+                    kind = MAP_STYLE.feature_kind(feat) or "(empty)"
+                    layer_kind_seen[layer.name][kind] += 1
+                    layer_kind_geom_seen[layer.name][f"{kind}/{_geom_name(feat.type)}"] += 1
             g = layer_groups.get(layer.name)
             if g is None:
                 g = ET.SubElement(scene, "g", {"id": layer.name})
@@ -432,6 +483,11 @@ def build_debug_svg_multi(
             for feat in layer.features:
                 if allowed is None and not MAP_STYLE.include_feature(layer.name, feat, z):
                     continue
+                layer_included[layer.name] = layer_included.get(layer.name, 0) + 1
+                if "place" in layer.name.lower():
+                    kind = MAP_STYLE.feature_kind(feat) or "(empty)"
+                    layer_kind_included[layer.name][kind] += 1
+                    layer_kind_geom_included[layer.name][f"{kind}/{_geom_name(feat.type)}"] += 1
                 elem_id = MAP_STYLE.feature_id(layer.name, feat, feature_id_counters)
                 pts = feature_to_viewbox_points(feat, layer, tz, tx, ty, bbox, width, height)
                 path_d = feature_to_svg_path(feat, layer, tz, tx, ty, bbox, width, height)
@@ -439,33 +495,56 @@ def build_debug_svg_multi(
                     if not path_d:
                         continue
                     style = {"d": path_d, "id": elem_id}
-                    style.update(MAP_STYLE.feature_style(layer.name, feat, feat.type))
+                    style.update(MAP_STYLE.feature_style(layer.name, feat, feat.type, z))
                     ET.SubElement(g, "path", style)
                 elif feat.type == GEOM_POINT:
                     anchor = _feature_anchor_point(pts)
                     if not anchor:
                         continue
                     cx, cy = anchor
-                    if layer.name == "mountain_peak":
-                        tri = f"M {cx:.2f},{cy - 3.4:.2f} L {cx - 3.0:.2f},{cy + 2.4:.2f} L {cx + 3.0:.2f},{cy + 2.4:.2f} Z"
-                        ET.SubElement(g, "path", {"id": elem_id, "d": tri, **MAP_STYLE.feature_style(layer.name, feat, feat.type)})
-                    else:
-                        ET.SubElement(g, "circle", {"id": elem_id, "cx": f"{cx:.2f}", "cy": f"{cy:.2f}", "r": "2.2", **MAP_STYLE.feature_style(layer.name, feat, feat.type)})
-                    label = MAP_STYLE.feature_label_text(feat)
+                    shape = MAP_STYLE.point_shape(layer.name, feat, z)
+                    size = MAP_STYLE.point_size(layer.name, feat, z)
+                    if shape == "triangle":
+                        tri = f"M {cx:.2f},{cy - size * 1.55:.2f} L {cx - size * 1.35:.2f},{cy + size * 1.10:.2f} L {cx + size * 1.35:.2f},{cy + size * 1.10:.2f} Z"
+                        ET.SubElement(g, "path", {"id": elem_id, "d": tri, **MAP_STYLE.feature_style(layer.name, feat, feat.type, z)})
+                    elif shape not in {"none", "hidden", "off", "label"}:
+                        ET.SubElement(g, "circle", {"id": elem_id, "cx": f"{cx:.2f}", "cy": f"{cy:.2f}", "r": f"{size:.2f}", **MAP_STYLE.feature_style(layer.name, feat, feat.type, z)})
+                    label = MAP_STYLE.feature_label_text(feat) if MAP_STYLE.labels_enabled(layer.name) else None
                     if label:
+                        layer_labeled[layer.name] = layer_labeled.get(layer.name, 0) + 1
                         dx, dy = MAP_STYLE.label_offset(layer.name, feat)
-                        text_style = MAP_STYLE.label_style(layer.name, feat)
-                        t = ET.SubElement(
-                            g,
-                            "text",
-                            {
-                                "id": f"{elem_id}_label",
-                                "x": f"{cx + dx:.2f}",
-                                "y": f"{cy + dy:.2f}",
-                                **text_style,
-                            },
-                        )
-                        t.text = label
+                        text_style = MAP_STYLE.label_style(layer.name, feat, z)
+                        label_items.append((f"{elem_id}_label", cx + dx, cy + dy, text_style, label))
+    if label_items:
+        labels_g = ET.SubElement(scene, "g", {"id": "map-labels"})
+        for label_id, lx, ly, text_style, label in _dedupe_labels(label_items):
+            t = ET.SubElement(
+                labels_g,
+                "text",
+                {"id": label_id, "x": f"{lx:.2f}", "y": f"{ly:.2f}", **text_style},
+            )
+            t.text = label
+    for lname in sorted(name for name in layer_seen if "place" in name.lower()):
+        _l.i(
+            "[map.debug] layer=%s z=%d features=%d included=%d labels=%d",
+            lname,
+            z,
+            layer_seen.get(lname, 0),
+            layer_included.get(lname, 0),
+            layer_labeled.get(lname, 0),
+        )
+        _l.i(
+            "[map.debug] layer=%s kinds=%s included_kinds=%s",
+            lname,
+            ",".join(f"{k}:{v}" for k, v in layer_kind_seen[lname].most_common(12)),
+            ",".join(f"{k}:{v}" for k, v in layer_kind_included[lname].most_common(12)),
+        )
+        _l.i(
+            "[map.debug] layer=%s kind_geom=%s included_kind_geom=%s",
+            lname,
+            ",".join(f"{k}:{v}" for k, v in layer_kind_geom_seen[lname].most_common(16)),
+            ",".join(f"{k}:{v}" for k, v in layer_kind_geom_included[lname].most_common(16)),
+        )
     return root
 
 

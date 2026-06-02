@@ -1,3 +1,6 @@
+[0.50]
+- inicio ciclo v0.50
+
 [0.13]
 - limpieza svg.py (NS/NSS/NSMAP)
 - optimizaciones pipeline

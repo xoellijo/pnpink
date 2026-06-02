@@ -13,7 +13,7 @@ __all__ = [
     "parse", "maybe_parse",
     "tokenize_chain", "parse_chain", "maybe_parse_chain",
     "is_source_expr", "split_source_token", "normalize_ops_suffix",
-    "ops_from_fit_spec", "fit_spec_from_ops",
+    "ops_from_fit_spec", "fit_spec_from_ops", "split_ops_fit_transform",
     "parse_copies_page_tail", "parse_index_selector_1based", "measure_to_mm",
     "parse_dataset_decl"
 ]
@@ -69,6 +69,8 @@ class FitSpec:
 
 @dataclass
 class TransformSpec:
+    rotate: Optional[float] = None
+    mirror: Optional[str] = None     # 'h'|'v'|'none'
     opacity: Optional[str] = None
     soft: Optional[List[str]] = None
     filter_ref: Optional[str] = None
@@ -288,8 +290,10 @@ def _parse_brace_dict(body: str) -> Dict[str, Any]:
 # Grammar (Column A):
 #   - "{{t=[id1 id2 ...]}}"
 #   - "{{t=id}}"
-#   - "{{id}}"  (shorthand, t is default parameter)
-#   - "id"      (bare form, only when allow_bare=True)
+#   - "{{id}}"              (shorthand, t is default parameter)
+#   - "{{id @split}}"       (explicit split mode)
+#   - "{{id!}}"             (split shorthand alias)
+#   - "id"                  (bare form, only when allow_bare=True)
 #
 # This parser returns a minimal dict[str, list[str]] where keys are canonical
 # parameter names (e.g. "template_bbox"). It performs only syntactic parsing;
@@ -298,6 +302,8 @@ def _parse_brace_dict(body: str) -> Dict[str, Any]:
 _DATASET_KEY_ALIASES = {
     "t": "template_bbox",
     "template_bbox": "template_bbox",
+    "split": "split",
+    "@split": "split",
 }
 
 def _canon_dataset_key(k: str) -> Optional[str]:
@@ -341,15 +347,38 @@ def parse_dataset_decl(cellA: str, *, allow_bare: bool = False) -> Optional[Dict
 
     out: Dict[str, List[str]] = {}
 
-    # Shorthand: "{{id}}" or bare "id" → template_bbox=id
+    split_flags = {"@split", "split", "!"}
+
+    # Shorthand: "{{id}}" / "{{id!}}" / bare "id"
     if len(toks) == 1 and _find_top_level_equal(toks[0]) < 0:
-        out["template_bbox"] = [toks[0].strip()]
+        tok0 = toks[0].strip()
+        if tok0 in split_flags:
+            out["split"] = ["1"]
+            return out
+        if tok0.endswith("!") and tok0 != "!":
+            out["template_bbox"] = [tok0[:-1].strip()]
+            out["split"] = ["1"]
+            return out
+        out["template_bbox"] = [tok0]
         return out
 
     for t in toks:
         idx = _find_top_level_equal(t)
         if idx < 0:
-            # For now, treat additional bare tokens as syntactic error.
+            tt = t.strip()
+            # Explicit split mode as standalone token (e.g. "{{t=id @split}}").
+            if tt in split_flags:
+                out["split"] = ["1"]
+                continue
+            # Alias: "{{id!}}"
+            if tt.endswith("!") and tt != "!" and "template_bbox" not in out:
+                out["template_bbox"] = [tt[:-1].strip()]
+                out["split"] = ["1"]
+                continue
+            # Additional shorthand token for template id (e.g. "{{id @split}}").
+            if "template_bbox" not in out:
+                out["template_bbox"] = [tt]
+                continue
             raise DSLError(f"Invalid token in dataset marker: '{t}'")
 
         k = t[:idx].strip()
@@ -579,13 +608,10 @@ def _fit_from_dict(args: Dict[str, Any]) -> FitSpec:
     # 't' is reserved for tile mode (boolean flag), never for shift.
     if "t" in args and args.get("t") is not True:
         raise DSLError("t is reserved for tile mode; use shift=[dx dy]")
-    if "rotate" in args:
-        fs.rotate = _try_float(args.get("rotate"))
-    if "r" in args and fs.rotate is None:
-        fs.rotate = _try_float(args.get("r"))
+    if "rotate" in args or "r" in args:
+        raise DSLError("rotate belongs to Transform; use .T{rotate=...} or shorthand ~^")
     if "mirror" in args:
-        mv = str(args["mirror"]).lower()
-        if mv in ("h","v","none"): fs.mirror = mv
+        raise DSLError("mirror belongs to Transform; use .T{mirror=...} or shorthand ~|")
     if "clip" in args or args.get("c") is True:
         v = args.get("clip", True)
         fs.clip = True
@@ -596,6 +622,18 @@ def _fit_from_dict(args: Dict[str, Any]) -> FitSpec:
 
 def _transform_from_dict(args: Dict[str, Any]) -> TransformSpec:
     ts = TransformSpec()
+    if "rotate" in args:
+        ts.rotate = _try_float(args.get("rotate"))
+    if "r" in args and ts.rotate is None:
+        ts.rotate = _try_float(args.get("r"))
+    if "mirror" in args:
+        mv = str(args["mirror"]).lower()
+        if mv in ("h", "v", "none"):
+            ts.mirror = mv
+    if "m" in args and ts.mirror is None:
+        mv = str(args["m"]).lower()
+        if mv in ("h", "v", "none"):
+            ts.mirror = mv
     if "opacity" in args:
         ts.opacity = str(args.get("opacity") or "").strip()
     if "o" in args and not ts.opacity:
@@ -789,6 +827,20 @@ def ops_from_fit_spec(fs: FitSpec) -> str:
         fs.mode = 'i'
     return f"~{{ {inblock} }}{suffix}"
 
+def split_ops_fit_transform(ops: str) -> Tuple[str, Optional[TransformSpec]]:
+    fs = fit_spec_from_ops(ops)
+    ts = TransformSpec()
+    has_transform = False
+    if fs.rotate not in (None, 0, 0.0):
+        ts.rotate = fs.rotate
+        has_transform = True
+    if fs.mirror in ('h', 'v'):
+        ts.mirror = fs.mirror
+        has_transform = True
+    fs.rotate = None
+    fs.mirror = None
+    return ops_from_fit_spec(fs), (ts if has_transform else None)
+
 def fit_spec_from_ops(ops: str) -> FitSpec:
     s = (ops or "").strip()
     if s.startswith("~"):
@@ -965,7 +1017,7 @@ def _parse_gaps_v2(val: Union[str, List[Any]]) -> List[Union[float, str]]:
             out.append(t)
 
     if out:
-        out = _normalize_short_list(out, name="gaps", allowed=(1, 2))
+        out = _normalize_short_list(out, name="gaps", allowed=(1, 2), duplicate_1_to_2=True)
 
     return out
 
@@ -1583,6 +1635,7 @@ def parse_copies_page_tail(cell0):
     # sequence [N H- N H- ...] at the end:
     #   - plain number "N" adds cards
     #   - "H-" adds H empty slots after the current accumulated copy
+    #     (at the beginning, before the first copy)
     #   - "-" (or "---") adds 1 (or many) empty slots
     #   - when ranges are present ("A..B"), numbers/ranges select iterator
     #     positions and hole markers still apply after the accumulated selected run
@@ -1601,16 +1654,14 @@ def parse_copies_page_tail(cell0):
             run = 0
             for t in toks:
                 if re.fullmatch(r"-+", t):
-                    if run > 0:
-                        for _ in range(len(t)):
-                            holes.append(run)
+                    for _ in range(len(t)):
+                        holes.append(run)
                     continue
                 m_h = re.fullmatch(r"(\d+)-", t)
                 if m_h:
-                    if run > 0:
-                        n_holes = int(m_h.group(1))
-                        for _ in range(max(0, n_holes)):
-                            holes.append(run)
+                    n_holes = int(m_h.group(1))
+                    for _ in range(max(0, n_holes)):
+                        holes.append(run)
                     continue
                 m_r = re.fullmatch(r"(\d+)\s*\.\.\s*(\d+)", t)
                 if m_r:
@@ -1628,16 +1679,14 @@ def parse_copies_page_tail(cell0):
             run = 0
             for t in toks:
                 if re.fullmatch(r"-+", t):
-                    if run > 0:
-                        for _ in range(len(t)):
-                            holes.append(run)  # empty slot(s) AFTER copy 'run'
+                    for _ in range(len(t)):
+                        holes.append(run)  # run=0 means before first copy
                     continue
                 m_h = re.fullmatch(r"(\d+)-", t)
                 if m_h:
-                    if run > 0:
-                        n_holes = int(m_h.group(1))
-                        for _ in range(max(0, n_holes)):
-                            holes.append(run)  # empty slot(s) AFTER copy 'run'
+                    n_holes = int(m_h.group(1))
+                    for _ in range(max(0, n_holes)):
+                        holes.append(run)  # run=0 means before first copy
                     continue
                 if t.isdigit():
                     run += int(t)

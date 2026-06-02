@@ -29,6 +29,8 @@ Typical Fit-Anchor concerns are:
 
 Typical Transform concerns are:
 
+- rotate
+- mirror
 - opacity
 - soft edges
 - later, other visual effects applied directly to the object
@@ -66,7 +68,7 @@ Fit-Anchor follows the same DSL conventions as other modules:
 Long form:
 
 ```txt
-object_id.Fit{ border fitmode anchor shift clip rotate mirror }
+object_id.Fit{ border fitmode anchor shift clip }
 ```
 
 Compact form:
@@ -87,7 +89,7 @@ Read it left to right:
 - `[10%]` -> border (resize context around placeholder),
 - `i` -> fit mode `inside`,
 - `7` -> anchor top-left,
-- `^^` -> rotate 180 deg,
+- `^^` -> Transform rotate 180 deg,
 - `[-50% 0]` -> shift left by half placeholder width,
 - `!` -> clip to the placeholder shape.
 
@@ -212,26 +214,6 @@ Notes:
 - mixed expressions are valid (`shift=[25%+2 0]`).
 - shift uses the original placeholder frame as reference.
 
-### Rotate (`r=` / `^`)
-Rotates the target object.
-
-```txt
-object_id.Fit{rotate=-42.4}
-object_id~^^^
-object_id~^-45i7
-```
-
-### Mirror (`m=` / `|`)
-Mirrors the target.
-
-- `|` horizontal,
-- `||` vertical.
-
-```txt
-object_id.Fit{mirror=v}
-object_id~||
-```
-
 ### Clip (`c` / `!`)
 Clips outside the original placeholder shape.
 
@@ -249,8 +231,8 @@ When using shorthand `~`, tokens are parsed in this order:
 2. Fit mode + anchor (`i7`, `m5`, `a9`, etc.)
 3. Optional shift list (`[dx dy]`)
 4. Optional clip (`!`)
-5. Optional rotation (`^deg`, `^^`, `^^^`)
-6. Optional mirror (`|`, `||`)
+5. Optional Transform rotation (`^deg`, `^^`, `^^^`)
+6. Optional Transform mirror (`|`, `||`)
 
 ## Priority and Overrides
 When multiple Fit-Anchor layers apply, use this precedence:
@@ -284,6 +266,9 @@ This section intentionally groups compact real-life patterns.
 This section consolidates the compact syntax details that usually cause confusion.
 
 ### With `~` and without `~`
+`~` is a compact suffix for the main Fit and Transform operations.
+It is not an exact shorthand for `Fit{}` only: `^` and `|` belong to `Transform`.
+
 For simple rotate/mirror/clip operations, `~` can be omitted:
 
 - `id~^15` and `id^15` are equivalent.
@@ -291,7 +276,7 @@ For simple rotate/mirror/clip operations, `~` can be omitted:
 - `id~|` and `id|` are equivalent.
 - `id~||` and `id||` are equivalent.
 
-Use the `~` form when you want the full compact chain in one expression (`border + fit/anchor + shift + clip + rotate + mirror`).
+Use the `~` form when you want the full compact chain in one expression (`border + fit/anchor + shift + clip + transform rotate/mirror`).
 
 ### Combined compact operations
 You can combine these operators in one token, for example:

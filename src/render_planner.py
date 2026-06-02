@@ -127,38 +127,6 @@ class CardPlanner:
             raise inkex.AbortExtension("No caben cartas en la página con el preset/layout actual.")
         _l.d("planner.init", {"slots_per_page": self.plan.per_page})
 
-    def _ensure_fallback_plan_for_split(self):
-        if getattr(self.plan, "per_page", 0) > 0:
-            return
-        try:
-            mg = SVG.coerce_margins_mm(self.current.page.margins_mm())
-            ppm = float(self.px_per_mm or 1.0)
-            page_w_px = float(self.pages[self.page_index]["w"])
-            page_h_px = float(self.pages[self.page_index]["h"])
-            cx = float(mg.left) * ppm
-            cy = float(mg.top) * ppm
-            cw = page_w_px - (float(mg.left) + float(mg.right)) * ppm
-            ch = page_h_px - (float(mg.top) + float(mg.bottom)) * ppm
-            if cw <= 0 or ch <= 0:
-                _l.w(f"[split_boards] fallback slot invalid content size cw={cw:.2f} ch={ch:.2f}")
-                return
-        except Exception as ex:
-            _l.w(f"[split_boards] fallback slot prep failed: {ex}")
-            return
-        try:
-            self.plan.slots = [(0.0, 0.0, float(cw), float(ch))]
-            self.plan.cols = 1
-            self.plan.rows = 1
-            self.plan.per_page = 1
-            self.plan.content_x = float(cx)
-            self.plan.content_y = float(cy)
-            self.plan.left = 0.0
-            self.plan.top = 0.0
-            self.local_slots = [(0.0, 0.0, float(cw), float(ch))]
-            _l.i("[split_boards] fallback slot enabled (plan.per_page=0)")
-        except Exception:
-            return
-
     def slots_per_page(self) -> int:
         return int(self.plan.per_page)
 
@@ -184,8 +152,6 @@ class CardPlanner:
         )
         pw, ph = self.page_size_px()
         self.plan, self.local_slots = self._compute_plan_for(self.current, pw, ph)
-        if self.plan.per_page <= 0:
-            self._ensure_fallback_plan_for_split()
         _l.d("planner.jump_page", {"page": self.page_index + 1, "slots_per_page": self.plan.per_page})
 
     def apply_preset(self, new_resolved):
@@ -219,8 +185,6 @@ class CardPlanner:
             )
         pw, ph = self.page_size_px()
         self.plan, self.local_slots = self._compute_plan_for(self.current, pw, ph)
-        if self.plan.per_page <= 0:
-            self._ensure_fallback_plan_for_split()
         if self.plan.per_page <= 0:
             raise inkex.AbortExtension("No caben cartas con el nuevo preset/layout.")
         _l.d("planner.apply_preset", {"page": self.page_index + 1, "slots_per_page": self.plan.per_page})

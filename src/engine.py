@@ -114,7 +114,7 @@ def run(self, __version__):
     else:
         datasets = DS.load_datasets(self, _doc_path)
     if not datasets:
-        raise inkex.AbortExtension("Dataset sin cabecera válida.")
+        raise inkex.AbortExtension("Dataset has no valid header.")
     try:
         translated_headers = DHEAD.translate_datasets(datasets, root)
         if translated_headers:
@@ -637,16 +637,16 @@ def run(self, __version__):
                         try:
                             cells[ci] = SNP.expand_snippets_in_text(str(v), snip_reg, variables=wkmcc_vars)
                         except Exception as ex:
-                            _l.w(f"[snippets] fallo expand row#{ridx} cell[{ci}]: {ex}")
+                            _l.w(f"[snippets] expand failed row#{ridx} cell[{ci}]: {ex}")
                 # Meta fields (keep behavior conservative)
                 for k in ('__dm_layout__','__dm_marks__'):
                     if isinstance(row, dict) and k in row and row.get(k) is not None:
                         try:
                             row[k] = SNP.expand_snippets_in_text(str(row.get(k)), snip_reg, variables=wkmcc_vars)
                         except Exception as ex:
-                            _l.w(f"[snippets] fallo expand row#{ridx} meta '{k}': {ex}")
+                            _l.w(f"[snippets] expand failed row#{ridx} meta '{k}': {ex}")
         else:
-            _l.i("[snippets] sin definiciones; no hay expansión")
+            _l.i("[snippets] no definitions; expansion skipped")
 
         # ---- WEB SOURCES PREFETCH (http/https) ----
         # Schedule downloads in background so render can proceed in parallel.
@@ -693,7 +693,7 @@ def run(self, __version__):
 
         _l.s("PROTOTYPE: detect")
 
-        # Output container (inocuo): keep all generated content under a dedicated root-level container.
+        # Output container: keep all generated content under a dedicated root-level container.
         #
         # User preference: the outer container should be a *layer* (not a generic <g>),
         # while the "Output" bucket can be a normal group inside that layer.
@@ -730,7 +730,7 @@ def run(self, __version__):
         # --- templates (main + declared columns) ---
         templates_bbox_ids = []
         template_cols = []
-        overlay_template_cols = []  # legacy
+        overlay_template_cols = []
         try:
             templates_bbox_ids = list((ds_meta or {}).get('templates_bbox_ids') or [])
             template_cols = list((ds_meta or {}).get('template_cols') or [])
@@ -746,82 +746,105 @@ def run(self, __version__):
         declared_template_root = None
         declared_bbox_node = None
         declared_bbox_id = None
-        overlay_templates = []  # list of {bbox_id, template_root, bbox_node, control_key}
+        overlay_templates = []
+
+        def _parent_of(node):
+            try:
+                return node.getparent()
+            except Exception:
+                return None
+
+        def _is_non_layer_group(node) -> bool:
+            tag = str(getattr(node, 'tag', '') or '')
+            return tag.endswith('g') and node.get(CONST.INK_GROUPMODE) != 'layer'
+
+        def _node_child_text(node, local_name: str) -> str:
+            for ch in list(node or []):
+                if str(getattr(ch, 'tag', '') or '').endswith(local_name):
+                    return str(ch.text or '').strip()
+            return ''
+
+        def _find_node_by_template_ref(ref: str):
+            """Resolve dataset template refs by id, Inkscape label, SVG title, or SVG desc."""
+            needle = str(ref or '').strip()
+            if not needle:
+                return None
+            n = SVG.find_id(root, needle, include_defs=False)
+            if n is not None:
+                return n
+            nodes = list(root.iter())
+            for n in nodes:
+                try:
+                    if str(n.get(inkex.addNS('label', 'inkscape')) or '').strip() == needle:
+                        return n
+                except Exception:
+                    pass
+            for n in nodes:
+                if _node_child_text(n, 'title') == needle:
+                    return n
+                if _node_child_text(n, 'desc') == needle:
+                    return n
+            return None
 
         def _find_template_root_for_bbox(bid: str):
             if not bid:
-                return None, None
-            n = root.find(".//*[@id='%s']" % bid)
+                return None, None, None
+            n = _find_node_by_template_ref(bid)
             if n is None:
-                return None, None
+                return None, None, None
+            resolved_id = (n.get('id') or str(bid or '')).strip()
 
             # If the bbox is ungrouped (direct child of <svg>), do NOT scale it to the full document.
             # Treat it as a single-element template (the bbox itself). This avoids hangs.
-            try:
-                if n.getparent() is root:
-                    _l.w(
-                        f"[templates] bbox id '{bid}' está en root (no pertenece a un <g> de primer nivel). "
-                        "PnPInk lo tratará como template de un único elemento. Consejo: agrupa el template con Ctrl+G "
-                        "para evitar errores."
-                    )
-                    return n, n
-            except Exception:
-                pass
+            if _parent_of(n) is root:
+                _l.w(
+                    f"[templates] bbox ref '{bid}' is a root-level element. "
+                    "PnPInk will treat it as a single-element template; group the template with Ctrl+G to avoid this."
+                )
+                return n, n, resolved_id
 
             # Find the template root (<g>) under the "stop boundary" (root or layer)
             cur = n
             tmpl = None
             while cur is not None:
-                try:
-                    par = cur.getparent()
-                except Exception:
-                    par = None
+                par = _parent_of(cur)
+
+                if _is_non_layer_group(cur):
+                    tmpl = cur
 
                 if par is None:
                     break
                 if par is root:
                     break
-                try:
-                    if (
-                        hasattr(par, 'tag') and isinstance(par.tag, str) and par.tag.endswith('g')
-                        and (par.get(CONST.INK_GROUPMODE) == 'layer')
-                    ):
-                        break
-                except Exception:
-                    pass
+                if str(getattr(par, 'tag', '') or '').endswith('g') and par.get(CONST.INK_GROUPMODE) == 'layer':
+                    break
 
-                if hasattr(cur, 'tag') and isinstance(cur.tag, str) and cur.tag.endswith('g'):
-                    tmpl = cur
                 cur = par
 
             if tmpl is None:
-                try:
-                    par = n.getparent()
-                except Exception:
-                    par = None
-                if par is not None and hasattr(par, 'tag') and isinstance(par.tag, str) and par.tag.endswith('g'):
-                    if par.get(CONST.INK_GROUPMODE) != 'layer':
-                        tmpl = par
+                par = _parent_of(n)
+                if _is_non_layer_group(par):
+                    tmpl = par
 
-            return tmpl, n
+            return tmpl, n, resolved_id
 
         # 1) Resolve main template (if declared)
         if main_bbox_id:
-            tmpl, n = _find_template_root_for_bbox(main_bbox_id)
+            tmpl, n, resolved_bbox_id = _find_template_root_for_bbox(main_bbox_id)
             if tmpl is None or n is None:
-                _l.w(f"[templates] main bbox id '{main_bbox_id}' not found in SVG or not under any <g>")
+                _l.w(f"[templates] main bbox ref '{main_bbox_id}' not found in SVG or not under any <g>")
             else:
                 declared_template_root = tmpl
                 declared_bbox_node = n
-                declared_bbox_id = main_bbox_id
-                _l.i(f"[templates] main template_root='{tmpl.get('id') or '<noid>'}' bbox_id='{main_bbox_id}'")
+                declared_bbox_id = resolved_bbox_id
+                _l.i(f"[templates] main template_root='{tmpl.get('id') or '<noid>'}' bbox_ref='{main_bbox_id}' bbox_id='{declared_bbox_id}'")
 
         # 2) Resolve declared templates from header columns (left-to-right order)
-        # If template_cols is missing (older dataset loader), fall back to legacy overlay_template_cols.
+        # Compatibility for datasets loaded by older code paths.
         if not template_cols and overlay_template_cols:
             template_cols = [dict(c, mods=[]) for c in (overlay_template_cols or [])]
 
-        overlay_templates = []       # slot-anchored, front pass (legacy behavior)
+        overlay_templates = []       # slot-anchored, front pass
         back_templates = []          # slot-anchored, back pass
         page_templates = []          # page-anchored, front pass
         page_back_templates = []     # page-anchored, back pass
@@ -832,19 +855,20 @@ def run(self, __version__):
             ckey = (col or {}).get('key')
             if not bid:
                 continue
-            tmpl, n = _find_template_root_for_bbox(bid)
+            tmpl, n, resolved_bbox_id = _find_template_root_for_bbox(bid)
             if tmpl is None or n is None:
-                _l.w(f"[templates] overlay bbox id '{bid}' not found in SVG or not under any <g>")
+                _l.w(f"[templates] overlay bbox ref '{bid}' not found in SVG or not under any <g>")
                 continue
             tid = tmpl.get('id') or '<noid>'
             if tid in seen_templates:
-                _l.w(f"[templates] bbox id '{bid}' cae en template '{tid}' ya seleccionado; se descarta")
+                _l.w(f"[templates] bbox ref '{bid}' resolves to already selected template '{tid}'; skipped")
                 continue
             seen_templates.add(tid)
 
             mods = set((col or {}).get('mods') or [])
             entry = {
-                'bbox_id': bid,
+                'bbox_id': resolved_bbox_id,
+                'bbox_ref': bid,
                 'bbox_node': n,
                 'template_root': tmpl,
                 'control_key': ckey,
@@ -866,7 +890,7 @@ def run(self, __version__):
 
         # Note: layout is always computed with the main template. Overlays are placed on top by default (~5).
 
-        # detectar prototipo a partir de headers
+        # Detect prototype from header targets.
         target_nodes: List[inkex.BaseElement] = []
         _seen_tn_ids = set()
 
@@ -953,12 +977,12 @@ def run(self, __version__):
             if proto_root is None and cand_groups:
                 proto_root = cand_groups[0]
             if proto_root is None:
-                raise inkex.AbortExtension("Agrupa los elementos de la carta bajo un mismo grupo.")
+                raise inkex.AbortExtension("Group card template elements under a single group.")
 
 
 
         # If a template was declared via {{t=...}}, it takes precedence over header-based prototype detection.
-        # IMPORTANT (inocuo): do not move/reparent/mutate any user element.
+        # IMPORTANT: do not move/reparent/mutate any user element.
         if declared_template_root is not None:
             proto_root = declared_template_root
 
@@ -968,7 +992,7 @@ def run(self, __version__):
         # we build a synthetic in-memory wrapper that absorbs:
         #   - the main bbox, and
         #   - HEADER ids that are also in root,
-        # excluyendo bboxes declarados en columnas de templates (overlays/@back/@page).
+        # excluding bboxes declared by template columns (overlays/@back/@page).
         _main_bbox_in_root = False
         try:
             _main_bbox_in_root = (declared_bbox_node is not None and declared_bbox_node.getparent() is root)
@@ -1042,9 +1066,9 @@ def run(self, __version__):
 
                 absorbed_list = [n.get('id') for n in ordered if n is not None and n.get('id')]
                 _l.w(
-                    "[templates] bbox principal desagrupado: elementos del HEADER sueltos en root absorbidos "
-                    f"en el template principal: {absorbed_list}. "
-                    "Consejo: agrupa con Ctrl+G para evitar este warning."
+                    "[templates] root-level main bbox: absorbed root-level header elements "
+                    f"into the synthetic main template: {absorbed_list}. "
+                    "Group the template with Ctrl+G to avoid this warning."
                 )
 
         # Externalize embedded data: images once into <defs> so repeated template instances
@@ -1102,9 +1126,70 @@ def run(self, __version__):
             _l.i(f"[templates] prepared template roots={_prep_flatten} absolutized_images={_prep_absolutize}")
         except Exception as _ex:
             _l.w(f"[templates] template preparation failed: {_ex}")
-        # medir carta base
+        # Measure base card/template size.
         template_anchor_x = None
         template_anchor_y = None
+
+        def _visual_bbox_with_inherited_transform(node):
+            tag = str(getattr(node, "tag", "") or "")
+            if tag.endswith("rect") or tag.endswith("image"):
+                x = float(node.get("x") or 0.0)
+                y = float(node.get("y") or 0.0)
+                w = float(node.get("width") or 0.0)
+                h = float(node.get("height") or 0.0)
+                T = SVG.composed_transform(node)
+                pts = [
+                    T.apply_to_point((x, y)),
+                    T.apply_to_point((x + w, y)),
+                    T.apply_to_point((x, y + h)),
+                    T.apply_to_point((x + w, y + h)),
+                ]
+                xs = [float(p[0]) for p in pts]
+                ys = [float(p[1]) for p in pts]
+                return min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+            bb = node.bounding_box()
+            return float(bb.left), float(bb.top), float(bb.width), float(bb.height)
+
+        def _safe_node_id(node):
+            try:
+                return node.get('id') if hasattr(node, 'get') else None
+            except Exception:
+                return None
+
+        def _measure_flattened_template_bbox(template_root_node, bbox_id=None):
+            temp = deepcopy(template_root_node)
+            REN._flatten_group_transform(temp)
+            try:
+                SVG.uniquify_all_ids_in_scope(temp, "_dmM", root.get_unique_id)
+            except Exception:
+                pass
+
+            measure_layer = self._find_or_create_layer(root, "_DeckMaker Measuring")
+            measure_layer.append(temp)
+            try:
+                target = None
+                if bbox_id:
+                    target = temp.find(".//*[@data-origid='%s']" % bbox_id)
+                    if target is None:
+                        target = temp.find(".//*[@id='%s']" % bbox_id)
+                if target is None:
+                    target = SVG.pick_anchor_in(temp)
+                    bb = target.bounding_box()
+                    bbox = (float(bb.left), float(bb.top), float(bb.width), float(bb.height))
+                else:
+                    bbox = _visual_bbox_with_inherited_transform(target)
+                return bbox, target
+            finally:
+                try:
+                    measure_layer.remove(temp)
+                except Exception:
+                    pass
+                try:
+                    if len(measure_layer) == 0 and measure_layer.getparent() is not None:
+                        measure_layer.getparent().remove(measure_layer)
+                except Exception:
+                    pass
+
         if declared_bbox_node is not None:
             bbox_id = declared_bbox_node.get('id')
 
@@ -1112,87 +1197,33 @@ def run(self, __version__):
             # original document. If we measure a wrapper with text, pick_anchor_in() may choose a <text>
             # and collapse size (grid "clumped").
             if _main_bbox_in_root:
-                bbm = declared_bbox_node.bounding_box()
-                aw, ah = float(bbm.width), float(bbm.height)
-                template_anchor_x, template_anchor_y = float(bbm.left), float(bbm.top)
+                template_anchor_x, template_anchor_y, aw, ah = _visual_bbox_with_inherited_transform(declared_bbox_node)
 
-                try:
-                    anc_id = declared_bbox_node.get('id') if hasattr(declared_bbox_node, 'get') else None
-                except Exception:
-                    anc_id = None
+                anc_id = _safe_node_id(declared_bbox_node)
                 _l.i(
                     f"[templates] measured_bbox_node_id='{anc_id}' aw_px={aw:.2f} ah_px={ah:.2f} "
                     f"left_px={template_anchor_x:.2f} top_px={template_anchor_y:.2f} (root_bbox_direct)"
                 )
 
             else:
-                # IMPORTANT:
-                #   The instance cloning path flattens proto_root's group transform into children (see inst creation below).
-                #   If we measure bbox on the original SVG node without applying the same flattening, anchor coords will differ
-                #   and placement will drift (typically by a constant offset, sometimes a whole page).
-                #
-                # Therefore, measure on a temporary deep-copied + flattened proto_root, and locate the bbox element by id
-                # inside that temp instance.
-                temp = deepcopy(proto_root)
-                REN._flatten_group_transform(temp)
-
-                # IMPORTANT:
-                # Inkex bbox resolution can become non-deterministic if duplicate IDs exist in the live document.
-                # Because we temporarily append this clone into the SVG to measure it, we MUST uniquify IDs
-                # inside the measuring clone. We keep a stable lookup via data-origid.
-                try:
-                    SVG.uniquify_all_ids_in_scope(temp, "_dmM", root.get_unique_id)
-                except Exception:
-                    pass
-
-                measure_layer = self._find_or_create_layer(root, "_DeckMaker Measuring")
-                measure_layer.append(temp)
-
-                temp_bbox = None
-                if bbox_id:
-                    # Prefer data-origid mapping (survives uniquify)
-                    try:
-                        temp_bbox = temp.find(".//*[@data-origid='%s']" % bbox_id)
-                    except Exception:
-                        temp_bbox = None
-                    if temp_bbox is None:
-                        # Fallback: raw id lookup (if uniquify failed)
-                        try:
-                            temp_bbox = temp.find(".//*[@id='%s']" % bbox_id)
-                        except Exception:
-                            temp_bbox = None
-
-                if temp_bbox is None:
-                    # Fallback: measure whole temp (should not happen in normal use)
-                    temp_anchor = SVG.pick_anchor_in(temp)
-                else:
-                    temp_anchor = SVG.pick_anchor_in(temp_bbox)
-
-                bbm = temp_anchor.bounding_box()
-                aw, ah = float(bbm.width), float(bbm.height)
-                template_anchor_x, template_anchor_y = float(bbm.left), float(bbm.top)
-
-                # DEBUG: log which node/group we actually measured for template sizing
-                try:
-                    anc_id = temp_anchor.get('id') if hasattr(temp_anchor, 'get') else None
-                except Exception:
-                    anc_id = None
+                # Measure exactly like generated instances: on a flattened, uniquified copy.
+                (template_anchor_x, template_anchor_y, aw, ah), temp_anchor = _measure_flattened_template_bbox(proto_root, bbox_id)
+                anc_id = _safe_node_id(temp_anchor)
                 _l.i(
                     f"[templates] measured_bbox_node_id='{anc_id}' aw_px={aw:.2f} ah_px={ah:.2f} "
                     f"left_px={template_anchor_x:.2f} top_px={template_anchor_y:.2f}"
                 )
-                # Also log the bbox of the highest template group in the original SVG (may include text/filters)
                 try:
                     if declared_template_root is not None:
                         gbb = declared_template_root.bounding_box()
-                        gid = declared_template_root.get('id') if hasattr(declared_template_root, 'get') else None
+                        gid = _safe_node_id(declared_template_root)
                         _l.i(
                             f"[templates] template_root_bbox id='{gid}' w_px={float(gbb.width):.2f} h_px={float(gbb.height):.2f} "
                             f"left_px={float(gbb.left):.2f} top_px={float(gbb.top):.2f}"
                         )
                     if declared_bbox_node is not None:
                         nbb = declared_bbox_node.bounding_box()
-                        nid = declared_bbox_node.get('id') if hasattr(declared_bbox_node, 'get') else None
+                        nid = _safe_node_id(declared_bbox_node)
                         _l.i(
                             f"[templates] declared_bbox_node_bbox id='{nid}' w_px={float(nbb.width):.2f} h_px={float(nbb.height):.2f} "
                             f"left_px={float(nbb.left):.2f} top_px={float(nbb.top):.2f}"
@@ -1200,48 +1231,21 @@ def run(self, __version__):
                 except Exception as e:
                     _l.w(f"[templates] bbox debug failed: {e}")
 
-                # cleanup
-                try:
-                    measure_layer.remove(temp)
-                except Exception:
-                    pass
-                if len(measure_layer) == 0 and measure_layer.getparent() is not None:
-                    measure_layer.getparent().remove(measure_layer)
-
             _l.d(
                 f"card_size aw={aw:.2f}px ah={ah:.2f}px (templates_bbox='{bbox_id}', "
                 f"anchor=({template_anchor_x:.2f},{template_anchor_y:.2f}))"
             )
         else:
-            temp = deepcopy(proto_root)
-            REN._flatten_group_transform(temp)
-
-            # Same rationale as above: avoid duplicate IDs while measuring.
-            try:
-                SVG.uniquify_all_ids_in_scope(temp, "_dmM", root.get_unique_id)
-            except Exception:
-                pass
-            measure_layer = self._find_or_create_layer(root, "_DeckMaker Measuring")
-            measure_layer.append(temp)
-            temp_anchor = SVG.pick_anchor_in(temp)
-            bbm = temp_anchor.bounding_box()
-            aw, ah = float(bbm.width), float(bbm.height)
-            measure_layer.remove(temp)
-
-            try:
-                anc_id = temp_anchor.get('id') if hasattr(temp_anchor, 'get') else None
-            except Exception:
-                anc_id = None
-            _l.i(f"[templates] measured_bbox_node_id='{anc_id}' aw_px={aw:.2f} ah_px={ah:.2f} (fallback_whole_template)")
+            (template_anchor_x, template_anchor_y, aw, ah), temp_anchor = _measure_flattened_template_bbox(proto_root)
+            anc_id = _safe_node_id(temp_anchor)
+            _l.i(f"[templates] measured_bbox_node_id='{anc_id}' aw_px={aw:.2f} ah_px={ah:.2f} (whole_template)")
             try:
                 if declared_template_root is not None:
                     gbb = declared_template_root.bounding_box()
-                    gid = declared_template_root.get('id') if hasattr(declared_template_root, 'get') else None
+                    gid = _safe_node_id(declared_template_root)
                     _l.i(f"[templates] template_root_bbox id='{gid}' w_px={float(gbb.width):.2f} h_px={float(gbb.height):.2f} left_px={float(gbb.left):.2f} top_px={float(gbb.top):.2f}")
             except Exception as e:
-                _l.w(f"[templates] bbox debug failed (fallback): {e}")
-            if len(measure_layer) == 0 and measure_layer.getparent() is not None:
-                measure_layer.getparent().remove(measure_layer)
+                _l.w(f"[templates] bbox debug failed: {e}")
             _l.d(f"card_size aw={aw:.2f}px ah={ah:.2f}px (anchor='{temp_anchor.get('id') or temp_anchor.tag}')")
 
         _l.s("PROTOTYPE: measured")
@@ -1306,29 +1310,6 @@ def run(self, __version__):
         # complete occupancy map.
         # ---------------------------------------------------------------
         _marks_pending_by_page = {}  # page_index -> list[job]
-
-        def _slot_index_to_rc(within: int, plan_obj, layout_obj):
-            """Map slot_index within page to (r,c) in the logical grid."""
-            cols = int(getattr(plan_obj, 'cols', 0) or 0)
-            rows = int(getattr(plan_obj, 'rows', 0) or 0)
-            if cols <= 0 or rows <= 0:
-                return 0, 0
-            sweep_rows_first = bool(getattr(layout_obj, 'sweep_rows_first', True))
-            if sweep_rows_first:
-                r0 = within // cols
-                c0 = within % cols
-            else:
-                c0 = within // rows
-                r0 = within % rows
-
-            # apply inversions to get physical adjacency correct
-            if bool(getattr(layout_obj, 'invert_rows', False)):
-                r0 = (rows - 1) - r0
-            if bool(getattr(layout_obj, 'invert_cols', False)):
-                c0 = (cols - 1) - c0
-            return int(r0), int(c0)
-
-        _gaps_has_offsets = LYT.gaps_has_offsets
 
         def _flush_marks_for_page(page_idx: int):
             jobs = _marks_pending_by_page.get(int(page_idx)) or []
@@ -1420,7 +1401,7 @@ def run(self, __version__):
             cw = page_w_px  - (mg.left + mg.right) * px_per_mm
             ch = page_h_px  - (mg.top  + mg.bottom) * px_per_mm
 
-            # carta (px)
+            # Card size in px.
             if resolved.card and (resolved.card.name or resolved.card.width_mm or resolved.card.height_mm):
                 cw_px, ch_px = LYT.resolve_card_size_px(resolved.card, aw, ah, px_per_mm)
             else:
@@ -1455,18 +1436,15 @@ def run(self, __version__):
             if getattr(plan, 'per_page', 0) <= 0:
                 oversize = (cw_px > cw + 1e-6) or (ch_px > ch + 1e-6)
                 if oversize:
-                    _l.i("[split_boards] plan fallback: oversize card -> 1 slot")
-                    try:
-                        plan.slots = [(0.0, 0.0, float(cw), float(ch))]
-                        plan.cols = 1
-                        plan.rows = 1
-                        plan.per_page = 1
-                        plan.content_x = float(cx)
-                        plan.content_y = float(cy)
-                        plan.left = 0.0
-                        plan.top = 0.0
-                    except Exception:
-                        pass
+                    _l.i("[layout] plan fallback: oversize card -> 1 unscaled slot")
+                    # Keep the requested card/template size. Using the page inner
+                    # size here would force non-uniform scaling in render.py.
+                    slot_x = float(cx) + (float(cw) - float(cw_px)) * 0.5
+                    slot_y = float(cy) + (float(ch) - float(ch_px)) * 0.5
+                    plan.slots = [(slot_x, slot_y, float(cw_px), float(ch_px))]
+                    plan.cols = 1
+                    plan.rows = 1
+                    plan.per_page = 1
             slots = [(x, y, w, h) for (x, y, w, h) in plan.slots]
             return plan, slots
 
@@ -1531,6 +1509,15 @@ def run(self, __version__):
             if delta_tok.startswith(("+", "-")):
                 return f"{base_tok}{delta_tok}"
             return f"{base_tok}+{delta_tok}"
+
+        def _half_abs_gap(tok: str) -> str:
+            s = _tok_str(tok)
+            if not s or '%' in s:
+                return '0'
+            try:
+                return _tok_str(float(SVG.measure_to_mm(s, base_mm=None)) * 0.5)
+            except Exception:
+                return '0'
 
         def _detect_hex_orientation(proto_root_node, bbox_node):
             """Return 'flat' | 'pointy' if we can detect a hex in the template."""
@@ -1640,11 +1627,11 @@ def run(self, __version__):
                     if orient == 'flat':
                         # a += -25%, d += +50%
                         seq4[0] = _expr_add(seq4[0], '-25%')
-                        seq4[3] = _expr_add(seq4[3], '+50%')
+                        seq4[3] = _expr_add(_expr_add(seq4[3], '+50%'), _half_abs_gap(seq4[1]))
                     else:
                         # b += -25%, c += +50%
                         seq4[1] = _expr_add(seq4[1], '-25%')
-                        seq4[2] = _expr_add(seq4[2], '+50%')
+                        seq4[2] = _expr_add(_expr_add(seq4[2], '+50%'), _half_abs_gap(seq4[0]))
                     layout_obj.gaps = seq4[:2]
                     layout_obj.offset = seq4[2:4]
 
@@ -1755,7 +1742,6 @@ def run(self, __version__):
             ensure_page_for_fn=REN.ensure_page_for,
             plan_fn=_compute_plan_for
         )
-        planner.sync_page_attrs()
         # Multi-dataset: start this dataset on the current global page cursor.
         if start_page_index > 0:
             planner.page_index = int(start_page_index)
@@ -1765,6 +1751,8 @@ def run(self, __version__):
                                  planner.doc_page_mm, planner.page_gap_px, planner.px_per_mm)
             pw, ph = planner.page_size_px()
             planner.plan, planner.local_slots = planner._compute_plan_for(planner.current, pw, ph)
+            planner.sync_page_attrs()
+        else:
             planner.sync_page_attrs()
         _l.s("PLANNER: init")
         _l.i(f"Grid {planner.plan.cols}x{planner.plan.rows}, gaps {planner.current.gaps.h}×{planner.current.gaps.v} mm; slots/page {planner.slots_per_page()}")
@@ -1784,6 +1772,7 @@ def run(self, __version__):
             page_back_templates=page_back_templates,
             declared_template_root=declared_template_root,
             declared_bbox_node=declared_bbox_node,
+            measured_template_bbox=(template_anchor_x, template_anchor_y, aw, ah),
             # Legacy core locals used by the render tail. These must exist to preserve the original
             # control-flow/side-effects when render logic was extracted into render.py.
             page=page, card=card, layout=layout, gaps=gaps, doc_page_mm=doc_page_mm,

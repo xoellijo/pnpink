@@ -25,6 +25,7 @@ def send_request(req: AppRequest, timeout: float = 0.35) -> bool:
     payload = {
         "cmd": "open",
         "template": req.template,
+        "snapshot_path": req.snapshot_path,
         "sheet_id": req.sheet_id,
         "sheet_range": req.sheet_range,
         "dataset_source_mode": req.dataset_source_mode,
@@ -72,6 +73,7 @@ def candidate_python_launchers() -> list[str]:
 def notify_or_launch(
     app_script: str,
     template: str,
+    snapshot_path: str = "",
     sheet_id: str = "",
     sheet_range: str = "",
     log_level: str = "global",
@@ -79,6 +81,7 @@ def notify_or_launch(
 ) -> bool:
     req = AppRequest(
         template=DMPATHS.normalize(template),
+        snapshot_path=DMPATHS.normalize(snapshot_path) if str(snapshot_path or "").strip() else "",
         sheet_id=str(sheet_id or "").strip(),
         sheet_range=str(sheet_range or "").strip(),
         dataset_source_mode=str(dataset_source_mode or "").strip().lower(),
@@ -92,6 +95,7 @@ def notify_or_launch(
     args_tail = [
         script,
         "--template", req.template,
+        "--snapshot-path", req.snapshot_path,
         "--sheet-id", req.sheet_id,
         "--sheet-range", req.sheet_range,
         "--dataset-source-mode", req.dataset_source_mode,
@@ -159,6 +163,7 @@ def start_server(request_queue, stop_event) -> threading.Thread:
                             continue
                         request_queue.put(AppRequest(
                             template=DMPATHS.normalize(msg.get("template") or ""),
+                            snapshot_path=DMPATHS.normalize(msg.get("snapshot_path") or "") if str(msg.get("snapshot_path") or "").strip() else "",
                             sheet_id=str(msg.get("sheet_id") or "").strip(),
                             sheet_range=str(msg.get("sheet_range") or "").strip(),
                             dataset_source_mode=str(msg.get("dataset_source_mode") or "").strip().lower(),

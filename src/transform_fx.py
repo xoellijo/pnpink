@@ -23,6 +23,10 @@ def merge_specs(specs: Iterable[object]) -> object | None:
         return items[-1]
     out = DSL.TransformSpec()
     for sp in items:
+        if getattr(sp, "rotate", None) not in (None, 0, 0.0):
+            out.rotate = (out.rotate or 0.0) + float(getattr(sp, "rotate") or 0.0)
+        if getattr(sp, "mirror", None):
+            out.mirror = str(getattr(sp, "mirror") or "").strip().lower()
         if getattr(sp, "opacity", None):
             out.opacity = str(getattr(sp, "opacity") or "").strip()
         if getattr(sp, "soft", None):
@@ -132,6 +136,43 @@ def _resolve_fx_rect(target) -> tuple[float, float, float, float] | None:
     except Exception:
         return None
     return None
+
+
+def _apply_visual_matrix(node, *, rotate=None, mirror=None) -> bool:
+    if node is None:
+        return False
+    rot = float(rotate or 0.0)
+    mir = str(mirror or "").strip().lower()
+    if rot == 0.0 and mir not in ("h", "v"):
+        return False
+    parent = node.getparent() if hasattr(node, "getparent") else None
+    if parent is None:
+        return False
+    try:
+        x, y, w, h = SVG.visual_bbox(node)
+    except Exception:
+        return False
+    if w <= 0.0 or h <= 0.0:
+        return False
+    try:
+        inv_parent = parent.composed_transform().inverse()
+    except Exception:
+        inv_parent = inkex.Transform()
+    cx, cy = inv_parent.apply_to_point((float(x) + float(w) * 0.5, float(y) + float(h) * 0.5))
+    L = inkex.Transform()
+    if mir == "h":
+        L = L @ inkex.Transform("scale(-1,1)")
+    elif mir == "v":
+        L = L @ inkex.Transform("scale(1,-1)")
+    if rot:
+        L = L @ inkex.Transform(f"rotate({rot})")
+    extra = inkex.Transform(f"translate({cx},{cy})") @ L @ inkex.Transform(f"translate({-cx},{-cy})")
+    try:
+        old = inkex.Transform(node.get("transform") or "")
+    except Exception:
+        old = inkex.Transform()
+    node.set("transform", str(extra @ old))
+    return True
 
 
 def _ensure_soft_gradients(root) -> dict[str, str]:
@@ -274,6 +315,12 @@ def apply_transform_spec(root, node, spec) -> bool:
         soft_target = node
         filter_target = node
     changed = False
+
+    try:
+        if _apply_visual_matrix(opacity_target, rotate=getattr(spec, "rotate", None), mirror=getattr(spec, "mirror", None)):
+            changed = True
+    except Exception as ex:
+        _l.w(f"[transform] rotate/mirror failed on id='{opacity_target.get('id') or ''}': {ex}")
 
     try:
         if getattr(spec, "opacity", None):

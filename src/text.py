@@ -29,6 +29,7 @@ import log as LOG
 import dsl as DSL
 import sources as SRC
 import fit_anchor as FA
+import transform_fx as TFX
 import inkscape_cli as INKSCAPE
 import prefs
 _l = LOG
@@ -231,6 +232,7 @@ class TokenItem:
     intrinsic_wh: Optional[Tuple[float,float]] = None
     hole_fit: Optional["DSL.FitSpec"] = None    # only border/shift used
     icon_fit: Optional["DSL.FitSpec"] = None    # border/shift stripped; used by fit_anchor
+    icon_transform: Optional["DSL.TransformSpec"] = None
     hole_pad_trbl: Optional[Tuple[float,float,float,float]] = None  # (t,r,b,l) in doc uu
     hole_wh_doc: Optional[Tuple[float,float]] = None               # (W,H) in doc uu
     hole_wh_base_doc: Optional[Tuple[float,float]] = None          # (W,H) before padding, doc uu
@@ -1096,8 +1098,12 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
         # 2) split hole (border/shift) vs icon fit
         hole_fs = DSL.FitSpec(border=getattr(fs_all, "border", None), shift=getattr(fs_all, "shift", None))
         icon_fs = copy.deepcopy(fs_all)
+        icon_tr = DSL.TransformSpec(rotate=getattr(icon_fs, "rotate", None), mirror=getattr(icon_fs, "mirror", None))
         icon_fs.border = None
         icon_fs.shift = None
+        icon_fs.rotate = None
+        icon_fs.mirror = None
+        it.icon_transform = icon_tr if (icon_tr.rotate not in (None, 0, 0.0) or icon_tr.mirror in ("h", "v")) else None
         if icon_fs.mode is None:
             icon_fs.mode = "i"
         if icon_fs.anchor is None:
@@ -1341,7 +1347,9 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
 
         # Apply FitAnchor to insert the icon inside the rect
         try:
-            FA.apply_to_by_ids(doc_root, it.symbol_id, "", it.icon_fit, rect_elem=rect, parent_elem=g, place_mode="clone")
+            placed_icon = FA.apply_to_by_ids(doc_root, it.symbol_id, "", it.icon_fit, rect_elem=rect, parent_elem=g, place_mode="clone")
+            if getattr(it, "icon_transform", None) is not None and placed_icon is not None:
+                TFX.apply_transform_spec(doc_root, placed_icon, it.icon_transform)
         except Exception as ex:
             _l.w(f"[inline_icons] fit_anchor failed for {it.src_expr!r}: {ex}")
 
