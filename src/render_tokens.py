@@ -10,6 +10,106 @@ import transform_fx as TFX
 
 _l = LOG
 
+
+def excel_col_to_num(s: str):
+    txt = str(s or "").strip().upper()
+    if not txt:
+        return None
+    n = 0
+    for ch in txt:
+        if not ("A" <= ch <= "Z"):
+            return None
+        n = n * 26 + (ord(ch) - 64)
+    return n
+
+
+def cell_ref_to_rc(ref: str):
+    m = re.fullmatch(r"([A-Za-z]+)([1-9]\d*)", str(ref or "").strip())
+    if not m:
+        return None
+    c = excel_col_to_num(m.group(1))
+    return (int(c), int(m.group(2))) if c is not None else None
+
+
+def grid_rc_to_index_1based(c1: int, r1: int, cols: int, rows: int, *, sweep_rows_first=True, invert_cols=False, invert_rows=False):
+    cols = int(cols or 0)
+    rows = int(rows or 0)
+    c0 = int(c1) - 1
+    r0 = int(r1) - 1
+    if cols <= 0 or rows <= 0 or not (0 <= c0 < cols and 0 <= r0 < rows):
+        return None
+    if invert_rows:
+        r0 = (rows - 1) - r0
+    if invert_cols:
+        c0 = (cols - 1) - c0
+    return (r0 * cols + c0 + 1) if sweep_rows_first else (c0 * rows + r0 + 1)
+
+
+def expand_cell_selector(selector: str, *, cols: int, rows: int, sweep_rows_first=True, invert_cols=False, invert_rows=False):
+    body = str(selector or "").strip()
+    if body.startswith("[") and body.endswith("]"):
+        body = body[1:-1].strip()
+    if not body:
+        return []
+
+    def idx_of(cell: str):
+        rc = cell_ref_to_rc(cell)
+        if rc is None:
+            return None
+        c1, r1 = rc
+        return grid_rc_to_index_1based(
+            c1, r1, cols, rows,
+            sweep_rows_first=sweep_rows_first,
+            invert_cols=invert_cols,
+            invert_rows=invert_rows,
+        )
+
+    out = []
+    toks = [t for t in re.split(r"[\s,]+", body) if t]
+    for t in toks:
+        if t == "*":
+            out.extend(range(1, int(cols or 0) * int(rows or 0) + 1))
+            continue
+        m = re.fullmatch(r"([A-Za-z]+[1-9]\d*)\s*\.\.\s*([A-Za-z]+[1-9]\d*)", t)
+        if m:
+            a = idx_of(m.group(1))
+            b = idx_of(m.group(2))
+            if a is None or b is None:
+                continue
+            step = 1 if b >= a else -1
+            out.extend(range(a, b + step, step))
+            continue
+        m = re.fullmatch(r"([A-Za-z]+[1-9]\d*)\s*:\s*([A-Za-z]+[1-9]\d*)", t)
+        if m:
+            a = cell_ref_to_rc(m.group(1))
+            b = cell_ref_to_rc(m.group(2))
+            if a is None or b is None:
+                continue
+            c1a, r1a = a
+            c1b, r1b = b
+            cells = []
+            for r1 in range(min(r1a, r1b), max(r1a, r1b) + 1):
+                for c1 in range(min(c1a, c1b), max(c1a, c1b) + 1):
+                    ix = grid_rc_to_index_1based(
+                        c1, r1, cols, rows,
+                        sweep_rows_first=sweep_rows_first,
+                        invert_cols=invert_cols,
+                        invert_rows=invert_rows,
+                    )
+                    if ix is not None:
+                        cells.append(ix)
+            out.extend(sorted(cells))
+            continue
+        rc = cell_ref_to_rc(t)
+        if rc is not None:
+            ix = idx_of(t)
+            if ix is not None:
+                out.append(ix)
+            continue
+        if re.fullmatch(r"\d+", t):
+            out.append(int(t))
+    return list(out)
+
 _ALIAS_TOKEN_RE = re.compile(
     r"^@(?P<name>[A-Za-z][\w\-\.]*)((?:\[[^\]]+\])+)"
     r"(?:(?:~(?P<ops_tilde>.*))|(?P<ops_compact>[\^!\|].*))?$"
@@ -62,12 +162,18 @@ def parse_sprite_alias_token(raw_token: str):
     name = m.group("name")
     idxs_raw = m.group(2) or ""
     ops = (m.group("ops_tilde") or m.group("ops_compact") or "").strip()
+    if "][" in idxs_raw:
+        _l.w(f"[spritesheets] token '{raw_token}': multi-bracket selectors are no longer supported; use @alias[B3]")
+        return None
     inner = idxs_raw[1:-1]
     chunks = inner.split("][") if inner else []
     dims = []
     for ch in chunks:
         try:
-            dims.append(expand_index_expr(ch))
+            if re.search(r"[A-Za-z]+[1-9]\d*", ch or ""):
+                dims.append([t for t in re.split(r"[\s,]+", ch.strip()) if t])
+            else:
+                dims.append(expand_index_expr(ch))
         except Exception as ex:
             _l.w(f"[spritesheets] token '{raw_token}': invalid index expression '[{ch}]' ({ex})")
             return None

@@ -100,7 +100,7 @@ class ShapeSpec:
     kind: Optional[str] = None
     preset: Optional[str] = None
     args: Optional[List[str]] = None
-    swap: bool = False
+    rotation_steps: Optional[int] = None
 
 @dataclass
 class LayoutSpec:
@@ -397,6 +397,9 @@ def parse_dataset_decl(cellA: str, *, allow_bare: bool = False) -> Optional[Dict
                 vv = vv[1:-1]
             if vv.startswith('"') and vv.endswith('"'):
                 vv = vv[1:-1]
+            if ck == "template_bbox" and vv.endswith("!") and vv != "!":
+                vv = vv[:-1].strip()
+                out["split"] = ["1"]
             out[ck] = [vv] if vv else []
 
     # Default parameter: if template_bbox wasn't explicitly provided but a keyless
@@ -486,7 +489,7 @@ def normalize_ops_suffix(ops: str) -> str:
         mir = "|"; ops = ops[:-1]
     rots: List[str] = []
     rem = ops
-    rx = re.compile(r"\^(-?\d+(?:\.\d+)?)")
+    rx = re.compile(r"\^(-?\d+(?:\.\d+)?)|\^{1,3}(?!\^)")
     while True:
         m = rx.search(rem)
         if not m: break
@@ -905,6 +908,10 @@ def fit_spec_from_ops(ops: str) -> FitSpec:
         mrot = re.search(r"\^(-?\d+(?:\.\d+)?)", tail)
         if mrot:
             fs.rotate = float(mrot.group(1))
+        else:
+            mcarets = re.search(r"(\^{1,3})(?!\^)", tail)
+            if mcarets:
+                fs.rotate = float(len(mcarets.group(1)) * 90)
         if tail.endswith("||"):
             fs.mirror = 'v'
         elif tail.endswith("|"):
@@ -1125,22 +1132,26 @@ _shape_size_re = re.compile(r"^\s*\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?(?:[a-z%]+)?\
 
 def _parse_shape_v2(val: str) -> ShapeSpec:
     v = (val or "").strip()
-    swap = False
-    if v.endswith("^"):
-        swap = True
-        v = v[:-1].strip()
+    rotation_steps = None
+    mrot = re.search(r"(\^+)$", v)
+    if mrot:
+        n = len(mrot.group(1))
+        if n > 3:
+            raise DSLError("shape rotation supports only ^, ^^ or ^^^")
+        rotation_steps = n % 4
+        v = v[:mrot.start()].strip()
     # size like "55x77" (with or without units)
     if _shape_size_re.match(v):
-        return ShapeSpec(kind="rect", args=[v], swap=swap)
+        return ShapeSpec(kind="rect", args=[v], rotation_steps=rotation_steps)
     # rect<...> / hex<...> / polygon<[...]>
     if v.startswith("rect<"):
-        return ShapeSpec(kind="rect", args=[v[v.find('<'):]], swap=swap)
+        return ShapeSpec(kind="rect", args=[v[v.find('<'):]], rotation_steps=rotation_steps)
     if v.startswith("hex<"):
-        return ShapeSpec(kind="hex", args=[v[v.find('<'):]], swap=swap)
+        return ShapeSpec(kind="hex", args=[v[v.find('<'):]], rotation_steps=rotation_steps)
     if v.startswith("polygon<"):
-        return ShapeSpec(kind="polygon", args=[v[v.find('<'):]], swap=swap)
+        return ShapeSpec(kind="polygon", args=[v[v.find('<'):]], rotation_steps=rotation_steps)
     # preset
-    return ShapeSpec(kind="preset", preset=v, swap=swap)
+    return ShapeSpec(kind="preset", preset=v, rotation_steps=rotation_steps)
 
 def _parse_layout_v2(layout_cmd: str) -> LayoutSpec:
     m = re.match(r"^\s*(?:[A-Za-z][\w\-.]*\s*)?\.(?:Layout|L)\s*(\{.*\})\s*$", layout_cmd)
@@ -1628,9 +1639,14 @@ def parse_copies_page_tail(cell0):
         if not bb:
             return False
         toks = [t for t in re.split(r"[\s,]+", bb) if t]
-        if len(toks) <= 1:
+        if len(toks) < 2:
             return False
-        return any(re.fullmatch(r"[A-Za-z]+[1-9]\d*", t) for t in toks)
+        if not re.fullmatch(r"[A-Za-z]+[1-9]\d*", toks[0]):
+            return False
+        later_cells = [t for t in toks[1:] if re.fullmatch(r"[A-Za-z]+[1-9]\d*", t)]
+        if later_cells:
+            return False
+        return any(re.fullmatch(r"\d+|\d+-|-+", t) for t in toks[1:])
 
     # sequence [N H- N H- ...] at the end:
     #   - plain number "N" adds cards
@@ -1646,7 +1662,10 @@ def parse_copies_page_tail(cell0):
     if m_seq:
         seq_body = m_seq.group(1).strip()
         toks = [t for t in re.split(r"[\s,]+", seq_body) if t]
-        if _looks_like_slot_selector_body(seq_body):
+        if _looks_like_slot_selector_proc(seq_body):
+            slot_select_raw = seq_body
+            slot_select_mode = "procedural"
+        elif _looks_like_slot_selector_body(seq_body):
             slot_select_raw = seq_body
             slot_select_mode = "declarative"
         elif any(".." in t for t in toks):

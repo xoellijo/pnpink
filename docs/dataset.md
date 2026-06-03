@@ -28,6 +28,7 @@ Marker mode is the robust format for production datasets and multi-section files
 
 A dataset marker exists **only in column A** and uses `{{...}}`.
 The marker row is also the header row. Headers start in column B.
+Split-board datasets may omit headers when they only need the template plus a leading-cell Page/Layout/Marks row.
 
 Examples (equivalent):
 
@@ -214,15 +215,16 @@ Rules are global (same behavior everywhere; no inside/outside distinction).
 
 - `#` at line start (first non-space char in column A): comment/directive row.
 - `##` at line start: full comment row (not a directive).
-- `####` at line start: EOF marker, stops parsing the rest of the file/sheet.
+- `####` at line start: starts/ends a disabled block. A single `####` still disables everything until EOF.
 - `##` inside a cell: comments out the rest of that cell.
 - `###` inside a row (not line start): comments out the rest of that cell and all cells to the right (rest of line).
 - Single `#` inside a cell is normal text (not a comment).
 
-Header disabling still works:
+Header comments work similarly:
 
-- `##header` disables that column.
+- `##header` disables all that column.
 - `###header` disables that column and all columns to the right.
+- `###first_header` at the beginning of the header row disables the entire dataset.
 
 ## Leading Cell (column A in data rows)
 Leading-cell directives are row-level controls, not regular data fields.

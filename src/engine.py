@@ -572,7 +572,7 @@ def run(self, __version__):
         rows_data = ds0.get("rows", []) or []
         comment_lines = ds0.get("comments", []) or []
 
-        if not headers:
+        if not headers and not bool((ds_meta or {}).get("split_enabled", False)):
             _l.w(f"[datasets] #{ds_idx}: no valid header; skipping.")
             continue
         if not rows_data:

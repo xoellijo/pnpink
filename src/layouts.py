@@ -84,7 +84,7 @@ class CardSpec:
     width_mm: Optional[float] = None
     height_mm: Optional[float] = None
     landscape: bool = False
-    swap: bool = False
+    rotation_steps: Optional[int] = None
 
 
 @dataclass
@@ -289,9 +289,6 @@ def resolve(page: PageSpec, card: CardSpec, layout: LayoutSpec, gaps: GapsMM, do
         sz = CONST.get_card_size_preset(card.name)
         if sz and (card.width_mm is None or card.height_mm is None):
             card.width_mm, card.height_mm = sz
-    if getattr(card, "swap", False) and card.width_mm is not None and card.height_mm is not None:
-        card.width_mm, card.height_mm = card.height_mm, card.width_mm
-
     # basic gaps: gaps+offset (if present) wins
     _seq = layout_gaps_tokens(layout)
     if _seq:
@@ -467,24 +464,23 @@ def apply_layout_spec(state_tuple, ls):
             if sp in ("hexgrid", "hextile", "hextiles"):
                 layout.smart_shape = sp
                 # Do NOT touch card sizing.
+                card.rotation_steps = None
             else:
                 layout.smart_shape = None
                 card.name = str(preset)
                 card.width_mm = None
                 card.height_mm = None
-                card.swap = bool(getattr(shape, "swap", False))
+                card.rotation_steps = getattr(shape, "rotation_steps", None)
         elif getattr(shape, "kind", None) == "rect" and getattr(shape, "args", None):
             m = re.match(r"^\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)", str(shape.args[0]), re.I)
             if m:
                 card.name = None
                 w = float(m.group(1))
                 h = float(m.group(2))
-                if bool(getattr(shape, "swap", False)):
-                    w, h = h, w
                 card.width_mm = w
                 card.height_mm = h
                 card.landscape = False
-                card.swap = False
+                card.rotation_steps = getattr(shape, "rotation_steps", None)
                 layout.smart_shape = None
 
     return page, card, layout, gaps

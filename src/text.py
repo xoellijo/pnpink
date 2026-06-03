@@ -311,6 +311,7 @@ def _apply_inverted_affine(M6, x, y):
     inv_f = -(inv_b*e + inv_d*f)
     return float(inv_a*x + inv_c*y + inv_e), float(inv_b*x + inv_d*y + inv_f)
 
+
 # ----------------- unidades ----------
 def _uu_per_px(doc_root: SVG.etree._Element) -> float:
     try:
@@ -1086,24 +1087,24 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
     for it in all_items:
         # 1) parse Fit/ops suffixes from token
         fs_all = DSL.FitSpec()
+        tr_all = None
         try:
             if it.suffix and getattr(it.suffix, "kind", None) == "fit":
                 fs_all = it.suffix.fit or DSL.FitSpec()
             elif it.suffix and getattr(it.suffix, "kind", None) == "ops":
-                fs_all = DSL._parse_fit_shorthand(it.suffix.ops or "")
+                ops_fit, tr_all = DSL.split_ops_fit_transform(it.suffix.ops or "")
+                fs_all = DSL.fit_spec_from_ops(ops_fit)
         except Exception as ex:
             _l.w(f"[inline_icons] fit suffix parse failed for {it.src_expr!r}: {ex}")
             fs_all = DSL.FitSpec()
+            tr_all = None
 
         # 2) split hole (border/shift) vs icon fit
         hole_fs = DSL.FitSpec(border=getattr(fs_all, "border", None), shift=getattr(fs_all, "shift", None))
         icon_fs = copy.deepcopy(fs_all)
-        icon_tr = DSL.TransformSpec(rotate=getattr(icon_fs, "rotate", None), mirror=getattr(icon_fs, "mirror", None))
         icon_fs.border = None
         icon_fs.shift = None
-        icon_fs.rotate = None
-        icon_fs.mirror = None
-        it.icon_transform = icon_tr if (icon_tr.rotate not in (None, 0, 0.0) or icon_tr.mirror in ("h", "v")) else None
+        it.icon_transform = tr_all
         if icon_fs.mode is None:
             icon_fs.mode = "i"
         if icon_fs.anchor is None:
@@ -1347,9 +1348,17 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
 
         # Apply FitAnchor to insert the icon inside the rect
         try:
-            placed_icon = FA.apply_to_by_ids(doc_root, it.symbol_id, "", it.icon_fit, rect_elem=rect, parent_elem=g, place_mode="clone")
+            placed_res = FA.apply_to_by_ids(
+                doc_root, it.symbol_id, "", it.icon_fit,
+                rect_elem=rect, parent_elem=g, place_mode="clone",
+                return_bbox=(getattr(it, "icon_transform", None) is not None),
+            )
+            if isinstance(placed_res, tuple) and len(placed_res) == 2:
+                placed_icon, placed_bbox = placed_res
+            else:
+                placed_icon, placed_bbox = placed_res, None
             if getattr(it, "icon_transform", None) is not None and placed_icon is not None:
-                TFX.apply_transform_spec(doc_root, placed_icon, it.icon_transform)
+                TFX.apply_transform_spec(doc_root, placed_icon, it.icon_transform, bbox=placed_bbox)
         except Exception as ex:
             _l.w(f"[inline_icons] fit_anchor failed for {it.src_expr!r}: {ex}")
 

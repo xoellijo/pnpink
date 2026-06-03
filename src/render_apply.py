@@ -434,12 +434,33 @@ def _normalize_source_token(raw_token: str, sm=None, ss_registry=None):
         if parsed:
             a_name, dims, ops_tail = parsed
             if a_name in ss_registry:
+                ss_def = ss_registry.get(a_name)
                 frame = None
                 page = 1
                 col = None
                 row_i = None
                 _l.i(f"[spritesheet] token seen in render: '{token}'")
                 try:
+                    if len(dims) == 1 and any(isinstance(x, str) and re.search(r"[A-Za-z]+\d+", x) for x in (dims[0] or [])):
+                        frames = RTK.expand_cell_selector(
+                            " ".join(str(x) for x in (dims[0] or [])),
+                            cols=int(getattr(ss_def, "cols", 0) or 0),
+                            rows=int(getattr(ss_def, "rows", 0) or 0),
+                            sweep_rows_first=bool(getattr(ss_def, "sweep_rows_first", True)),
+                            invert_cols=bool(getattr(ss_def, "invert_cols", False)),
+                            invert_rows=bool(getattr(ss_def, "invert_rows", False)),
+                        )
+                        ids = []
+                        for fr in frames:
+                            sref = sm.register_spritesheet_frame(a_name, frame=int(fr), page=page)
+                            if sref is not None:
+                                ids.append(sref.symbol_id)
+                        if ids:
+                            symbol_id = ids[0] if len(ids) == 1 else None
+                            token = (ids[0] if len(ids) == 1 else "[" + " ".join(ids) + "]") + (f"~{ops_tail}" if ops_tail else "")
+                            normalized = True
+                            _l.d(f"[spritesheets] normalized cell selector '@{a_name}[...]' -> '{token}'")
+                            return token, normalized, symbol_id
                     if len(dims) == 1:
                         frame = next((x for x in dims[0] if isinstance(x, int)), None)
                         if frame is None:

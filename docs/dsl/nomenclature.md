@@ -104,7 +104,7 @@ target[2]      -> item 2
 target[2..4]   -> items 2, 3, 4
 target[A..ZZ]  -> A B C ... Z AA AB .. ZZ
 target[*]      -> all items
-target[2][3]   -> chained selector for nested/indexed structures
+target[B3]     -> spreadsheet-style selector for grid/spritesheet structures
 ```
 
 Note that `target[*]` (selector) and `*[ ... ]` (iterator) are not the same operation.

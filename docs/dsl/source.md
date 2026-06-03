@@ -270,9 +270,10 @@ Then, you can reference any frame in the dataset as:
 
 ```txt
 @sp1[14] -> frame 14 (third page, second row)
-@sp1[2][1][3] -> page 2, column 1, row 3
-@sp1[1..6] -> range selector
-@sp1[1 4 7] -> explicit list selector
+@sp1[B3] -> column B, row 3
+@sp1[B3:C5] -> rectangular range
+@sp1[B4..C6] -> linear walk following the spritesheet layout order
+@sp1[A4 B2 A1] -> explicit unordered list selector
 ```
 
 (`^` in the grid reverses numbering direction: first rows, then columns.)

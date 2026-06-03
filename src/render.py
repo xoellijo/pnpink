@@ -499,6 +499,11 @@ def render_phase(ctx):
                         _l.w(f"[slots] invalid anchor '{t}'")
                         continue
                     cursor = int(s1)
+                    if 1 <= cursor <= n:
+                        out.append(int(cursor))
+                    else:
+                        _l.w(f"[slots] procedural cursor out of range: {cursor} (size={n})")
+                    cursor += 1
                     continue
                 if re.fullmatch(r'\d+', t):
                     k = int(t)
@@ -1143,15 +1148,15 @@ def render_phase(ctx):
 
     def _exec_use_fa_paths(inst_node, use_jobs, fa_jobs, path_jobs, transform_jobs, *, warn_tag: str, owner_group=None):
         """Center <use> elements, execute deferred Fit/Anchor jobs, then Paths jobs."""
-        def _apply_fa(scope_node, base_id, r_id, ops_full, place_mode, rect_elem):
+        def _apply_fa(scope_node, base_id, r_id, ops_full, place_mode, rect_elem, *, return_bbox=False):
             try:
-                return FA.apply_to_by_ids(scope_node, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem)
+                return FA.apply_to_by_ids(scope_node, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem, return_bbox=return_bbox)
             except Exception as ex:
                 msg = str(ex or "")
                 # Back/template passes can run on detached clones where defs are not reachable
                 # through the local scope. Retry against document root.
                 if "base id=" in msg and "not found" in msg:
-                    return FA.apply_to_by_ids(root, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem)
+                    return FA.apply_to_by_ids(root, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem, return_bbox=return_bbox)
                 raise
 
         for placeholder, u, tr_spec in (use_jobs or []):
@@ -1175,9 +1180,14 @@ def render_phase(ctx):
                 _styles = deferred_fa_styles.get((id(fa_jobs), int(_fa_idx))) or []
                 if _styles and str(place_mode or "").strip().lower() == "clone":
                     place_mode = "copy"
-                _placed = _apply_fa(inst_node, base_id, r_id, ops_fit, place_mode, rect_elem)
+                _placed_bbox = None
+                _placed_res = _apply_fa(inst_node, base_id, r_id, ops_fit, place_mode, rect_elem, return_bbox=(tr_spec is not None))
+                if isinstance(_placed_res, tuple) and len(_placed_res) == 2:
+                    _placed, _placed_bbox = _placed_res
+                else:
+                    _placed = _placed_res
                 if tr_spec is not None and _placed is not None:
-                    TFX.apply_transform_spec(root, _placed, tr_spec)
+                    TFX.apply_transform_spec(root, _placed, tr_spec, bbox=_placed_bbox)
                 for _prop, _value in _styles:
                     _apply_style_to_node(_placed, _prop, _value)
                 if placeholder_to_remove is not None:
@@ -2009,7 +2019,7 @@ def render_phase(ctx):
                     _l.w(f"marks tail invÃ¡lido '{row_marks}': {ex}")
         # Control-only row: apply Page/Layout/Marks but do not create an instance
         # when all payload cells (columns B+) are empty.
-        if (row_page or row_layout or row_marks):
+        if (row_page or row_layout or row_marks) and not split_boards_enabled:
             has_payload = False
             for v in _row_cells(row):
                 if str(v or "").strip() != "":
@@ -2516,11 +2526,46 @@ def render_phase(ctx):
         _profile["fit_append_ms"] += (_sub_t2 - _sub_t) * 1000.0
         _sub_t = _sub_t2
         placed_node = card_group
-        sx = (float(slot_w) / float(bw)) if bw else 1.0
-        sy = (float(slot_h) / float(bh)) if bh else 1.0
-        tx = float(slot_x) - (float(bx) * sx)
-        ty = float(slot_y) - (float(by) * sy)
-        card_group.set('transform', f"matrix({sx:.12g} 0 0 {sy:.12g} {tx:.12g} {ty:.12g})")
+
+        def _orient_of(w, h) -> int:
+            try:
+                w = float(w); h = float(h)
+            except Exception:
+                return 0
+            if w <= 1e-9 or h <= 1e-9:
+                return 0
+            if abs(w - h) <= max(w, h) * 1e-6:
+                return 0
+            return -1 if w > h else 1
+
+        def _shape_rotation_deg(card_obj, tmpl_w, tmpl_h, dst_w, dst_h) -> float:
+            steps = getattr(card_obj, "rotation_steps", None)
+            if steps is not None:
+                return {0: 0.0, 1: 90.0, 2: 180.0, 3: -90.0}.get(int(steps) % 4, 0.0)
+            src_o = _orient_of(tmpl_w, tmpl_h)
+            dst_o = _orient_of(dst_w, dst_h)
+            if src_o == 0 or dst_o == 0 or src_o == dst_o:
+                return 0.0
+            return -90.0 if src_o == 1 and dst_o == -1 else 90.0
+
+        rot_deg = _shape_rotation_deg(planner.current.card, bw, bh, slot_w, slot_h)
+        rot_quarter = int(round(float(rot_deg) / 90.0)) % 4 if rot_deg else 0
+        src_w = float(bh) if rot_quarter in (1, 3) else float(bw)
+        src_h = float(bw) if rot_quarter in (1, 3) else float(bh)
+        sx = (float(slot_w) / src_w) if src_w else 1.0
+        sy = (float(slot_h) / src_h) if src_h else 1.0
+        if rot_deg:
+            T_fit = SVG.build_fit_transform(
+                bx=float(bx), by=float(by), bw=float(bw), bh=float(bh),
+                target_x=float(slot_x), target_y=float(slot_y),
+                sx=sx, sy=sy, rot_deg=rot_deg,
+                anchor=(0.0, 0.0),
+            )
+            card_group.set('transform', str(T_fit))
+        else:
+            tx = float(slot_x) - (float(bx) * sx)
+            ty = float(slot_y) - (float(by) * sy)
+            card_group.set('transform', f"matrix({sx:.12g} 0 0 {sy:.12g} {tx:.12g} {ty:.12g})")
         _sub_t2 = time.perf_counter()
         _profile["fit_transform_ms"] += (_sub_t2 - _sub_t) * 1000.0
         _sub_t = _sub_t2

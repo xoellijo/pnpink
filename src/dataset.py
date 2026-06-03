@@ -29,7 +29,7 @@ def _row_is_comment(cells: List[str]) -> bool:
 
 
 def _row_is_hard_comment(cells: List[str]) -> bool:
-    """Line-start hard comment row: '##...' (but not '####...' EOF)."""
+    """Line-start hard comment row: '##...' (but not '####...' block markers)."""
     if not cells:
         return False
     c0 = str(cells[0] or "")
@@ -38,11 +38,29 @@ def _row_is_hard_comment(cells: List[str]) -> bool:
 
 
 def _row_is_eof_comment(cells: List[str]) -> bool:
-    """EOF marker row: '####...' at line start, stops further parsing."""
+    """Block/EOF comment marker row: '####...' at line start."""
     if not cells:
         return False
     c0 = str(cells[0] or "")
     return c0.lstrip().startswith("####")
+
+
+def _apply_block_comments(matrix):
+    """Remove ####...#### blocks; an unmatched #### keeps the old EOF behavior."""
+    out = []
+    in_block = False
+    for r in (matrix or []):
+        cells = ["" if c is None else str(c) for c in (r or [])]
+        if _row_is_eof_comment(cells):
+            if in_block:
+                in_block = False
+                continue
+            in_block = True
+            continue
+        if in_block:
+            continue
+        out.append(r)
+    return out
 
 
 def _warn_commented_source_row(cells: List[str], row_num: Optional[int] = None) -> None:
@@ -132,6 +150,8 @@ def _apply_header_disabling(headers_raw):
         hs = str(h or "").strip()
         if disable_all_right:
             continue
+        if not hs:
+            continue
         if hs.startswith("###"):
             disable_all_right = True
             continue
@@ -219,6 +239,8 @@ def _matrix_to_datasets(matrix):
       - This function intentionally drops the old legacy-v1 dataset layout where
         column A was part of the header/data. User has opted out of that format.
     """
+    matrix = _apply_block_comments(matrix)
+
     def _norm_cell(c):
         return "" if c is None else str(c)
 
@@ -273,8 +295,6 @@ def _matrix_to_datasets(matrix):
         if not r:
             continue
         raw_cells = [_norm_cell(c) for c in r]
-        if _row_is_eof_comment(raw_cells):
-            break
         if _row_is_hard_comment(raw_cells) or _row_is_comment(raw_cells):
             continue
         cells = _apply_inline_row_comments(raw_cells)
@@ -288,6 +308,12 @@ def _matrix_to_datasets(matrix):
     # --- Marker mode: multiple datasets in one sheet ---
     if has_markers:
         current = None
+
+        def _append_current_dataset():
+            if current is not None and (current.get("headers") or current.get("rows")):
+                current.pop("_active_idx", None)
+                datasets.append(current)
+
         # Preserve comment/directive rows before first marker, and attach
         # directive rows inside active datasets to current.comments.
         pending_comments: List[List[str]] = []
@@ -295,8 +321,6 @@ def _matrix_to_datasets(matrix):
             if r is None or len(r) == 0:
                 continue
             raw_cells = [_norm_cell(c) for c in r]
-            if _row_is_eof_comment(raw_cells):
-                break
             if _row_is_hard_comment(raw_cells):
                 _warn_commented_source_row(raw_cells, i + 1)
                 continue
@@ -324,8 +348,7 @@ def _matrix_to_datasets(matrix):
             decl = DSL.parse_dataset_decl(c0, allow_bare=False)
             if decl is not None:
                 # close previous dataset
-                if current is not None and current.get("headers"):
-                    datasets.append(current)
+                _append_current_dataset()
                 # open new dataset
                 templates_bbox_ids = list((decl or {}).get("template_bbox") or [])
                 if len(templates_bbox_ids) > 1:
@@ -374,17 +397,19 @@ def _matrix_to_datasets(matrix):
                     "headers": headers_norm,
                     "rows": [],
                     "comments": list(pending_comments),
+                    "_active_idx": list(active_idx),
                 }
                 pending_comments = []
                 continue
 
             # normal data row
-            if current is None or not current.get("headers"):
+            if current is None:
                 # ignore junk until first marker/header row
                 continue
 
             headers = current["headers"]
-            cells = _normalize_row_cells_for_headers(cells, len(headers), active_idx)
+            active_idx_current = list(current.get("_active_idx") or [])
+            cells = _normalize_row_cells_for_headers(cells, len(headers), active_idx_current)
 
             # Apply per-cell comments (##) uniformly.
             cells[0] = _strip_cell_trailing_comment(cells[0], enable=True, marker="##")
@@ -398,7 +423,7 @@ def _matrix_to_datasets(matrix):
                 continue
 
             # Row payload is positional (cells aligned with headers). Headers may repeat.
-            base = {"cells": [cells[i + 1] for i in active_idx]}
+            base = {"cells": [cells[i + 1] for i in active_idx_current]}
             base["__dm_copies__"] = copies
             base["__dm_copies_explicit__"] = bool(copies_explicit)
             base["__dm_holes__"] = holes
@@ -415,15 +440,14 @@ def _matrix_to_datasets(matrix):
 
             current["rows"].append(base)
 
-        if current is not None and current.get("headers"):
-            datasets.append(current)
+        _append_current_dataset()
 
         return datasets
 
     # --- Shorthand single dataset mode (no markers) ---
     # Find first non-blank, non-comment row as header row.
     # Keep '#...' rows as directives/comments before header.
-    # '##...' rows are ignored. '####' stops parsing.
+    # '##...' rows are ignored. '####' blocks were removed before parsing.
     header_row = None
     header_idx = None
     comments_shorthand: List[List[str]] = []
@@ -431,8 +455,6 @@ def _matrix_to_datasets(matrix):
         if r is None:
             continue
         raw_cells = [_norm_cell(c) for c in r]
-        if _row_is_eof_comment(raw_cells):
-            break
         if _row_is_hard_comment(raw_cells):
             _warn_commented_source_row(raw_cells, i + 1)
             continue
@@ -499,8 +521,6 @@ def _matrix_to_datasets(matrix):
         if r is None or len(r) == 0:
             continue
         raw_cells = [_norm_cell(c) for c in r]
-        if _row_is_eof_comment(raw_cells):
-            break
         if _row_is_hard_comment(raw_cells):
             _warn_commented_source_row(raw_cells, row_num)
             continue
@@ -876,8 +896,16 @@ def load_datasets(effect, doc_path: Optional[str] = None):
             datasets[0]["comments"] = ini_comments + main_comments
             _l.i(f"[datasets] merged {len(ini_comments)} default comment lines from pnpink_ini.csv")
 
-    # 4) Validate datasets (must have at least one non-empty header in columns B+)
-    valid = [ds for ds in datasets if _headers_are_valid(ds.get('headers'))]
+    # 4) Validate datasets (normal datasets need headers; split marker-only datasets do not).
+    valid = [
+        ds for ds in datasets
+        if _headers_are_valid(ds.get('headers'))
+        or (
+            bool((ds.get("meta") or {}).get("split_enabled", False))
+            and bool((ds.get("meta") or {}).get("templates_bbox_ids"))
+            and bool(ds.get("rows"))
+        )
+    ]
     if not valid:
         _l.e("Dataset has no valid header.")
         return []

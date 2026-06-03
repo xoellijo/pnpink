@@ -32,7 +32,7 @@ For spritesheet definitions, usually declared in comment lines before the datase
 Then frames can be referenced as source objects, fitted, or transformed:
 
 ```txt
-@cards[2][3]                  ## frame at column 2, row 3
+@cards[B3]                    ## frame at column B, row 3
 ```
 
 ## Pattern (p=)
@@ -55,6 +55,17 @@ p=3x?        ## 3 columns and as many rows as fit
 p=?x4        ## as many columns as fit and 4 rows
 p=-?x-?      ## auto-fit, reversed: right-to-left and bottom-to-top
 ```
+
+## Slot Selectors
+Layout slots can be addressed with spreadsheet-style cell references.
+
+```txt
+{A4}.L{4x3} [A3 B2 7]      ## explicit unordered slot list
+{A4}.L{4x3} [A3 7]         ## place A3, then 7 more slots in layout order
+{A4}.L{4x3} [A6 2- 5]      ## place A6, skip 2 slots, then place 5 more
+```
+
+Use `:` for rectangular ranges and `..` for linear walks following layout order.
 
 ### Order and Flips
 Order and flips matter when instance numbering and print order must follow a specific physical workflow.
@@ -151,11 +162,23 @@ s=hex<24x33>
 s=polygon<[5 23x32]>
 ```
 
-Append `^` to swap width and height for a shape size or preset:
+Shape suffixes rotate the placed item; they do not swap preset width/height.
+
+Explicit item rotation:
 
 ```txt
-s=creditcard   -> 85.6 x 54
-s=creditcard^  -> 54 x 85.6
+s=poker^       ## rotate item +90 degrees
+s=poker^^      ## rotate item 180 degrees
+s=poker^^^     ## rotate item -90 degrees (270)
+```
+
+Without an explicit suffix, PnPInk compares the template bbox orientation with the destination shape orientation and rotates only when it reduces deformation.
+
+```txt
+s=creditcard   ## portrait template -> landscape shape: auto-rotate -90 degrees
+s=poker        ## landscape template -> portrait shape: auto-rotate +90 degrees
+s=square       ## square template or square shape: no auto-rotation
+s=55.3x77.1^   ## explicit rotation disables auto-rotation
 ```
 
 See the Presets page for the full list of named sizes.
@@ -168,6 +191,8 @@ Smart shapes adjust gaps and offsets without changing card size:
 
 - `s=hexgrid` for maps, boards, overlays.
 - `s=hextiles` for cuttable tiles with shared edges.
+
+Shape item rotation does not apply to these smart hex shape modes.
 
 Inkscape tip: use `Tools > Stars and Polygons` (Shift+F9), set corners to 6,
 and hold Ctrl while resizing to keep alignment.

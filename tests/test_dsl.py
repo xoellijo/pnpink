@@ -24,6 +24,7 @@ from dsl import (
     normalize_ops_suffix,
     ops_from_fit_spec,
     fit_spec_from_ops,
+    parse_dataset_decl,
 
     # Marks
     MarksSpec,
@@ -39,6 +40,13 @@ def _is_id(x, name):
 
 def _is_src(x, tail): 
     return isinstance(x, SourceRef) and x.src.endswith(tail)
+
+
+def test_dataset_split_shorthand_bang():
+    assert parse_dataset_decl("{{template!}}") == {"template_bbox": ["template"], "split": ["1"]}
+    assert parse_dataset_decl("{{template!}") is None
+    assert parse_dataset_decl("{{t=template!}}") == {"template_bbox": ["template"], "split": ["1"]}
+    assert parse_dataset_decl("{{template @split}}") == {"template_bbox": ["template"], "split": ["1"]}
 
 # -------------------------
 # maybe_parse detection

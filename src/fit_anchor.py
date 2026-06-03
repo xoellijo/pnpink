@@ -13,6 +13,7 @@ import inkex
 import svg
 import dsl as DSL
 import log as LOG
+import transform_fx as TFX
 _l = LOG
 LOG_PREFIX = "[fit_anchor]"
 
@@ -32,6 +33,15 @@ def _fa_find_in(scope, root, elem_id):
     if n is None:
         n = root.find(".//*[@id='%s']" % elem_id)
     return n
+
+
+def _is_long_fit_ops(ops: str) -> bool:
+    s = (ops or "").strip()
+    return bool(
+        s.startswith(".Fit")
+        or re.match(r"^[A-Za-z][\w\-.]*\s*\.Fit\s*\{", s)
+        or (s.startswith("{") and s.endswith("}"))
+    )
 
 
 def _rect_intersection(a, b):
@@ -102,9 +112,11 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
     # overrides used by DeckMaker (overlays): parent/insert_after
     parent_elem = kwargs.get('parent_elem')
     insert_after_elem = kwargs.get('insert_after_elem')
+    return_bbox = bool(kwargs.get('return_bbox', False))
 
     root = _fa_root_of(scope)
     svgdoc = root
+    local_transform_spec = None
 
     # 1) resolver base
     base = _fa_find_in(scope, root, base_id)
@@ -139,6 +151,8 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
     else:
         ops_s = (ops_full or "").strip()
         try:
+            if not _is_long_fit_ops(ops_s):
+                ops_s, local_transform_spec = DSL.split_ops_fit_transform(ops_s)
             # cases with .Fit{...}
             if ops_s.startswith(".Fit"):
                 cmd = DSL.parse(f"{base_id}{ops_s}")
@@ -351,7 +365,10 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
             insert_after=(insert_after_elem if insert_after_elem is not None else rect),
             mode=place,
         )
-        return placed
+        placed_bbox = (target_x_world - ax * fitted_w, target_y_world - ay * fitted_h, fitted_w, fitted_h)
+        if local_transform_spec is not None and placed is not None:
+            TFX.apply_transform_spec(root, placed, local_transform_spec, bbox=placed_bbox)
+        return (placed, placed_bbox) if return_bbox else placed
 
     # ======== CLIP path ('!'): <g> wrapper + local clip ========
     # In this mode we avoid applying clipPath directly to a transformed <use> (translate/matrix),
@@ -717,5 +734,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
         f"sx={sx_l:.4f} sy={sy_l:.4f} rot={rot_deg}"
     )
 
-    return placed
+    if local_transform_spec is not None and placed is not None:
+        TFX.apply_transform_spec(root, placed, local_transform_spec)
+    return (placed, None) if return_bbox else placed
 

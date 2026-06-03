@@ -138,7 +138,19 @@ def _resolve_fx_rect(target) -> tuple[float, float, float, float] | None:
     return None
 
 
-def _apply_visual_matrix(node, *, rotate=None, mirror=None) -> bool:
+def _normalize_bbox(bbox) -> tuple[float, float, float, float] | None:
+    try:
+        if bbox is None or len(bbox) != 4:
+            return None
+        x, y, w, h = [float(v) for v in bbox]
+        if w > 0.0 and h > 0.0:
+            return (x, y, w, h)
+    except Exception:
+        return None
+    return None
+
+
+def _apply_visual_matrix(node, *, rotate=None, mirror=None, bbox=None) -> bool:
     if node is None:
         return False
     rot = float(rotate or 0.0)
@@ -148,10 +160,13 @@ def _apply_visual_matrix(node, *, rotate=None, mirror=None) -> bool:
     parent = node.getparent() if hasattr(node, "getparent") else None
     if parent is None:
         return False
-    try:
-        x, y, w, h = SVG.visual_bbox(node)
-    except Exception:
-        return False
+    bb = _normalize_bbox(bbox)
+    if bb is None:
+        try:
+            bb = SVG.visual_bbox(node)
+        except Exception:
+            return False
+    x, y, w, h = bb
     if w <= 0.0 or h <= 0.0:
         return False
     try:
@@ -281,7 +296,7 @@ def _ensure_soft_mask(root, geom_node, soft_vals: tuple[float, float, float, flo
     return mid
 
 
-def apply_transform_spec(root, node, spec) -> bool:
+def apply_transform_spec(root, node, spec, *, bbox=None) -> bool:
     if root is None or node is None or spec is None:
         return False
     opacity_target = node
@@ -317,7 +332,7 @@ def apply_transform_spec(root, node, spec) -> bool:
     changed = False
 
     try:
-        if _apply_visual_matrix(opacity_target, rotate=getattr(spec, "rotate", None), mirror=getattr(spec, "mirror", None)):
+        if _apply_visual_matrix(opacity_target, rotate=getattr(spec, "rotate", None), mirror=getattr(spec, "mirror", None), bbox=bbox):
             changed = True
     except Exception as ex:
         _l.w(f"[transform] rotate/mirror failed on id='{opacity_target.get('id') or ''}': {ex}")
