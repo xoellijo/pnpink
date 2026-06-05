@@ -38,6 +38,7 @@ The DSL is designed to match how designers think, not how programmers write code
 - Front/back workflows (`@back`) for duplex cards and mirrored layouts.
 - Built-in bleed and margin controls for print-safe compositions.
 - Cutting and registration marks (`Marks`) generated directly from layout logic.
+- Cut-only plotter templates for Cricut and Silhouette Cameo workflows.
 - Reusable presets for page, grid, and component sizing.
 - Inline text icons: type icon names in text flow and render vector icons in-place.
 - Source catalogs: resolve assets by name from the dataset, including large free libraries (200K+ icons and 2M+ images, depending on source).
@@ -56,6 +57,7 @@ One template and one dataset can produce hundreds of print-ready components in s
 - `DeckMaker GUI`: a dedicated window for dataset selection, generation, SVG opening, export configuration, progress reporting, and throughput feedback in records/min.
 - `Export module`: professional PDF output with presets (`default`, `screen`, `ebook`, `printer`, `prepress`), PDF/X CMYK export, ICC selection, pure-black text handling, filter rasterization modes, parallel Inkscape shell workers, and chunk-aware processing for large SVG outputs.
 - `Additional export formats`: page-based export to PNG, JPEG, JPEG2000, TIFF, WebP, PDF, SVG, PS, EPS, EMF, and WMF.
+- `Cutting-plotter templates`: cut-only SVG/DXF/PNG templates for Cricut, Silhouette Cameo, and raster fallback workflows.
 - `Map sources`: on-demand SVG map generation using `osm://...` and `ofm://...` source expressions, usable like other PnPInk assets.
 - `Large-output handling`: optional SVG splitting into reusable parts so very large decks can be exported more reliably.
 - `VDP performance`: optimized generation paths for high-volume "Variable Data Printing", with measured throughput above 85K records/minute on suitable projects.

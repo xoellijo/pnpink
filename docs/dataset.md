@@ -211,16 +211,31 @@ Template columns are rendered as additional instances; they do not replace the m
 
 ## Comments and Directives (#)
 Comments are processed **before any other operation**.
-Rules are global (same behavior everywhere; no inside/outside distinction).
+Rules are global: same behavior everywhere, with no inside/outside dataset distinction.
 
 - `#` at line start (first non-space char in column A): comment/directive row.
-- `##` at line start: full comment row (not a directive).
-- `####` at line start: starts/ends a disabled block. A single `####` still disables everything until EOF.
+- `##` at line start: comments out the entire row, for example to disable a directive or dataset row.
 - `##` inside a cell: comments out the rest of that cell.
 - `###` inside a row (not line start): comments out the rest of that cell and all cells to the right (rest of line).
-- Single `#` inside a cell is normal text (not a comment).
+- `####` at line start: starts/ends a disabled block.
+- Single `#` inside a cell is normal text, for example color values like `#ffccbb`.
 
-Header comments work similarly:
+Disabled block:
+
+```csv
+####
+disabled rows here
+####
+```
+
+If the block is not closed, it disables everything until the end of the file/sheet (EOF):
+
+```csv
+####
+disabled rows until the end of the file/sheet
+```
+
+Comments inside the dataset header row work slightly differently:
 
 - `##header` disables all that column.
 - `###header` disables that column and all columns to the right.

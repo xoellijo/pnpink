@@ -1302,6 +1302,13 @@ def render_phase(ctx):
     skipped_back_instances = 0
     deferred_path_jobs = []
 
+    def _set_cut_template_attrs(node, x, y, w, h, shape_id=""):
+        if node is None:
+            return
+        node.set('data-pnpink-cut-bbox', f"{float(x):.6f} {float(y):.6f} {float(w):.6f} {float(h):.6f}")
+        if shape_id:
+            node.set('data-pnpink-cut-shape-id', str(shape_id))
+
     def _parse_slot_selector(sel_raw: str):
         """Parse a @page selector cell.
 
@@ -2466,22 +2473,23 @@ def render_phase(ctx):
                     # No scaling: just translate so tile is centered in the page inner rect.
                     tx = dx + (dw - tile_w) * 0.5 - src_x
                     ty = dy + (dh - tile_h) * 0.5 - src_y
+                    cut_x = dx + (dw - tile_w) * 0.5
+                    cut_y = dy + (dh - tile_h) * 0.5
                     try:
                         curT = inkex.Transform(part.get('transform') or "")
                     except Exception:
                         curT = inkex.Transform()
                     T_split = inkex.Transform(f"translate({tx},{ty})")
                     part.set('transform', str(T_split @ curT))
+                    _set_cut_template_attrs(part, cut_x, cut_y, tile_w, tile_h, declared_bbox_id)
 
                     if marks_current is not None:
                         try:
-                            mx = dx + (dw - tile_w) * 0.5
-                            my = dy + (dh - tile_h) * 0.5
                             jobs = _marks_pending_by_page.setdefault(int(planner.page_index), [])
                             jobs.append({
                                 'ms': marks_current,
                                 'parent': _page_group_for(int(planner.page_index)),
-                                'bbox': (float(mx), float(my), float(tile_w), float(tile_h)),
+                                'bbox': (float(cut_x), float(cut_y), float(tile_w), float(tile_h)),
                                 'within': 0,
                                 'r': 0,
                                 'c': 0,
@@ -2566,6 +2574,7 @@ def render_phase(ctx):
             tx = float(slot_x) - (float(bx) * sx)
             ty = float(slot_y) - (float(by) * sy)
             card_group.set('transform', f"matrix({sx:.12g} 0 0 {sy:.12g} {tx:.12g} {ty:.12g})")
+        _set_cut_template_attrs(card_group, slot_x, slot_y, slot_w, slot_h, declared_bbox_id)
         _sub_t2 = time.perf_counter()
         _profile["fit_transform_ms"] += (_sub_t2 - _sub_t) * 1000.0
         _sub_t = _sub_t2
@@ -2990,6 +2999,7 @@ def render_phase(ctx):
                     card_group.set('id', back_unique_name)
                     card_group.set(inkex.addNS('label', 'inkscape'), back_name)
                     card_group.set('transform', str(T_fit @ curT))
+                    _set_cut_template_attrs(card_group, slot_x, slot_y, slot_w, slot_h, bbid)
                     placed_back += 1
 # Any remaining pending @page requests that referenced slots beyond the placed range are ignored.
     _flush_deferred_paths(warn_tag='[@back]')

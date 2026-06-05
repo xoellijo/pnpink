@@ -47,6 +47,8 @@ _DEFAULTS = {
     "export_other_format": "png",
     "export_other_pages": "",
     "export_other_ids": "",
+    "export_cut_template": "0",
+    "export_cut_template_format": "svg",
     "export_png_antialias": "2",
     "export_png_background": "#ffffff",
     "export_png_background_opacity": "0.0",
@@ -95,6 +97,8 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     ("export_other_format", ("Additional output format. Values: png | jpeg | jpeg2000 | pdf | svg | tiff | webp | ps | eps | emf | wmf",)),
     ("export_other_pages", ("Optional pages for additional output. Examples: 1,3-5,8. Empty = all pages",)),
     ("export_other_ids", ("Optional object IDs for additional output. Comma-separated ids. If set, page selection is ignored and one file per ID is exported.",)),
+    ("export_cut_template", ("Export plotter cut templates from generated instance bboxes. Values: 0 | 1",)),
+    ("export_cut_template_format", ("Cut template output format. Values: svg | png | dxf",)),
     ("export_png_antialias", ("PNG antialias level used by png_alpha raster export. Values: 0 | 1 | 2 | 3",)),
     ("export_png_background", ("Bitmap matte/background color when applicable. Values: any valid SVG color string",)),
     ("export_png_background_opacity", ("Bitmap background opacity when applicable. Values: 0.0..1.0 or 1..255",)),
@@ -363,6 +367,24 @@ def get_export_other_ids(default: str = "") -> str:
 
 def set_export_other_ids(value: str) -> None:
     set("export_other_ids", str(value or "").strip(), save=True)
+
+
+def get_export_cut_template(default: bool = False) -> bool:
+    return str(get("export_cut_template", "1" if default else "0")).strip() == "1"
+
+
+def set_export_cut_template(flag: bool) -> None:
+    set("export_cut_template", "1" if flag else "0", save=True)
+
+
+def get_export_cut_template_format(default: str = "svg") -> str:
+    value = str(get("export_cut_template_format", default) or default).strip().lower()
+    return value if value in {"svg", "png", "dxf"} else "svg"
+
+
+def set_export_cut_template_format(value: str) -> None:
+    item = str(value or "svg").strip().lower()
+    set("export_cut_template_format", item if item in {"svg", "png", "dxf"} else "svg", save=True)
 
 
 def get_export_png_antialias(default: int = 2) -> int:

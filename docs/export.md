@@ -68,6 +68,20 @@ Use the `Pages` field to restrict export to specific pages. Syntax examples:
 
 JPEG, TIFF, JPEG2000, and WebP can use a PNG intermediate plus Pillow conversion when that is the most reliable path for the current system.
 
+## Cutting-plotter templates
+
+Enable `Cutting-plotter template` to export cut-only files from the final instance bbox shapes.
+
+Formats:
+
+| Format | Notes |
+| --- | --- |
+| `svg (vector, cricut)` | Preferred vector output when supported. |
+| `dxf (vector, cameo)` | Vector output for Silhouette/Cameo. In Silhouette Studio, use `Simplify` before cutting if imported curves look segmented. |
+| `png (raster, all)` | Raster preview/fallback for tools that do not import vectors well. |
+
+The page border is exported in gray for positioning. Cut bbox shapes are exported in red.
+
 ## SVG parts
 
 Large generated SVG files can be split into smaller SVG parts. This is configured in the Preferences tab:

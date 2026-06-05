@@ -26,6 +26,7 @@ import image_preflight as PREFLIGHT
 import deckmaker_paths as DMPATHS
 import deckmaker_ipc as IPC
 import export as EXPORT
+import export_cut as EXPORTCUT
 import export_pdf as EXPORTPDF
 import inkscape_cli as INKSCAPE
 import prefs
@@ -42,6 +43,11 @@ APP_VERSION = "Deckmaker v0.50"
 DOCS_INTRO_URL = "https://xoellijo.github.io/pnpink/intro/"
 DOCS_GUIDE_URL = "https://xoellijo.github.io/pnpink/quickstart/"
 OTHER_EXPORT_FORMATS = ("png", "jpeg", "jpeg2000", "pdf", "svg", "tiff", "webp", "ps", "eps", "emf", "wmf")
+CUT_TEMPLATE_FORMATS = {
+    "svg": "svg (vector, cricut)",
+    "dxf": "dxf (vector, cameo)",
+    "png": "png (raster, all)",
+}
 SOURCE_MODE_LABELS = ("(empty)", "local CSV", "google sheet oauth", "google sheet public")
 SOURCE_MODE_LABEL_TO_VALUE = {
     "(empty)": "",
@@ -113,6 +119,8 @@ class DeckMakerApp:
         self.export_png_var = tk.BooleanVar(value=prefs.get_export_png())
         self.other_export_format_var = tk.StringVar(value=prefs.get_export_other_format())
         self.other_export_pages_var = tk.StringVar(value=prefs.get_export_other_pages())
+        self.export_cut_template_var = tk.BooleanVar(value=prefs.get_export_cut_template())
+        self.cut_template_format_var = tk.StringVar(value=self._cut_format_label_from_value(prefs.get_export_cut_template_format()))
         self.pdf_raster_mode_var = tk.StringVar(value=prefs.get_pdf_raster_mode())
         self.export_dpi_var = tk.StringVar(value=str(prefs.get_export_dpi()))
         self.export_jpeg_quality_var = tk.StringVar(value=str(prefs.get_export_jpeg_quality()))
@@ -351,14 +359,19 @@ class DeckMakerApp:
                 command=self._on_pdf_export_prefs_changed,
             ).grid(row=0, column=idx, sticky="w", padx=(0, 10))
 
+        formats_row = ttk.Frame(pdf_tab)
+        formats_row.grid(row=3, column=0, sticky="ew", pady=(0, 12))
+        formats_row.columnconfigure(0, weight=1)
+        formats_row.columnconfigure(1, weight=1)
+
         other_toggle = ttk.Checkbutton(
-            pdf_tab,
+            formats_row,
             text="Other formats",
             variable=self.export_png_var,
             command=self._on_export_format_prefs_changed,
         )
-        format_box = ttk.LabelFrame(pdf_tab, labelwidget=other_toggle, padding=8)
-        format_box.grid(row=3, column=0, sticky="ew", pady=(0, 12))
+        format_box = ttk.LabelFrame(formats_row, labelwidget=other_toggle, padding=8)
+        format_box.grid(row=0, column=0, sticky="ew", padx=(0, 6))
         format_box.columnconfigure(3, weight=1)
         ttk.Label(format_box, text="Format").grid(row=0, column=0, sticky="w", padx=(0, 8))
         other_format_combo = ttk.Combobox(
@@ -370,12 +383,36 @@ class DeckMakerApp:
         )
         other_format_combo.grid(row=0, column=1, sticky="w")
         other_format_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_export_format_prefs_changed())
-        ttk.Label(format_box, text="#Pages/IDs").grid(row=0, column=2, sticky="w", padx=(12, 8))
-        pages_entry = ttk.Entry(format_box, textvariable=self.other_export_pages_var, width=52)
-        pages_entry.grid(row=0, column=3, sticky="w")
-        ttk.Label(format_box, text="e.g. 1,5,group2,card6,8-9 (empty = all pages)").grid(row=0, column=4, sticky="w", padx=(8, 0))
+        pages_label = ttk.Label(format_box, text="#Pages/IDs")
+        pages_label.grid(row=0, column=2, sticky="w", padx=(12, 8))
+        GUI.attach_tooltip(pages_label, "e.g. 1,5,group2,card6,8-9 (empty = all pages)")
+        pages_entry = ttk.Entry(format_box, textvariable=self.other_export_pages_var, width=42)
+        pages_entry.grid(row=0, column=3, sticky="ew")
         pages_entry.bind("<FocusOut>", lambda _e: self._on_export_format_prefs_changed())
         pages_entry.bind("<Return>", lambda _e: self._on_export_format_prefs_changed())
+
+        cut_toggle = ttk.Checkbutton(
+            formats_row,
+            text="Cutting-plotter template",
+            variable=self.export_cut_template_var,
+            command=self._on_export_format_prefs_changed,
+        )
+        GUI.attach_tooltip(cut_toggle, "Create one cut-only template per page-layout pattern, using the final bbox shapes.")
+        cut_box = ttk.LabelFrame(formats_row, labelwidget=cut_toggle, padding=8)
+        cut_box.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        cut_box.columnconfigure(1, weight=1)
+        cut_format_label = ttk.Label(cut_box, text="Format")
+        cut_format_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        GUI.attach_tooltip(cut_format_label, "Vector formats are preferred. For DXF/Cameo, use Simplify in Silhouette Studio before cutting.")
+        cut_format_combo = ttk.Combobox(
+            cut_box,
+            textvariable=self.cut_template_format_var,
+            values=list(CUT_TEMPLATE_FORMATS.values()),
+            state="readonly",
+            width=24,
+        )
+        cut_format_combo.grid(row=0, column=1, sticky="ew")
+        cut_format_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_export_format_prefs_changed())
 
         export_options_box = ttk.LabelFrame(pdf_tab, text="Export Options", padding=8)
         export_options_box.grid(row=4, column=0, sticky="ew", pady=(0, 12))
@@ -1337,6 +1374,18 @@ class DeckMakerApp:
         return "3"
 
     @staticmethod
+    def _cut_format_label_from_value(value: str) -> str:
+        return CUT_TEMPLATE_FORMATS.get(str(value or "svg").strip().lower(), CUT_TEMPLATE_FORMATS["svg"])
+
+    @staticmethod
+    def _cut_format_value_from_label(value: str) -> str:
+        item = str(value or "svg").strip().lower()
+        for key, label in CUT_TEMPLATE_FORMATS.items():
+            if item == key or item == label:
+                return key
+        return "svg"
+
+    @staticmethod
     def _source_mode_label(value: str) -> str:
         return SOURCE_MODE_VALUE_TO_LABEL.get(str(value or "").strip().lower(), "(empty)")
 
@@ -1414,7 +1463,7 @@ class DeckMakerApp:
         template = _normalize_path(self.template_var.get())
         can_generate = (not busy) and self._can_generate(template)
         can_open = (not busy) and self._can_open_output(template)
-        can_export = (not busy) and self._template_exists(template) and bool(self._selected_export_formats())
+        can_export = (not busy) and self._template_exists(template) and bool(self._selected_export_outputs())
         try:
             self.run_btn.configure(state="normal" if can_generate else "disabled")
             self.open_btn.configure(state="normal" if can_open else "disabled")
@@ -1593,6 +1642,12 @@ class DeckMakerApp:
             out.append(str(self.other_export_format_var.get() or "png").strip().lower() or "png")
         return out
 
+    def _selected_export_outputs(self) -> list[str]:
+        out = list(self._selected_export_formats())
+        if bool(self.export_cut_template_var.get()):
+            out.append(f"cut-{self._cut_format_value_from_label(self.cut_template_format_var.get())}")
+        return out
+
     def _refresh_export_button_state(self):
         self._refresh_action_button_state()
 
@@ -1624,6 +1679,8 @@ class DeckMakerApp:
             jpeg_quality=self._export_jpeg_quality_value(),
             other_format=str(self.other_export_format_var.get() or "png").strip().lower(),
             other_pages=str(self.other_export_pages_var.get() or "").strip(),
+            export_cut_template=bool(self.export_cut_template_var.get()),
+            cut_template_format=self._cut_format_value_from_label(self.cut_template_format_var.get()),
         )
 
     def _on_export_format_prefs_changed(self):
@@ -1633,6 +1690,8 @@ class DeckMakerApp:
         prefs.set_pdfx_version(self._pdfx_value_from_label(self.pdfx_version_var.get()))
         prefs.set_export_other_format(self.other_export_format_var.get())
         prefs.set_export_other_pages(self.other_export_pages_var.get())
+        prefs.set_export_cut_template(bool(self.export_cut_template_var.get()))
+        prefs.set_export_cut_template_format(self._cut_format_value_from_label(self.cut_template_format_var.get()))
         labels = []
         if self.export_pdf_var.get():
             labels.append("PDF")
@@ -1640,6 +1699,8 @@ class DeckMakerApp:
             labels.append("PDF/X")
         if self.export_png_var.get():
             labels.append(str(self.other_export_format_var.get() or "png").upper())
+        if self.export_cut_template_var.get():
+            labels.append(f"CUT-{self._cut_format_value_from_label(self.cut_template_format_var.get()).upper()}")
         self._refresh_export_button_state()
         self._log(f"Preference saved: output formats = {', '.join(labels) if labels else 'none'}")
 
@@ -1995,7 +2056,7 @@ class DeckMakerApp:
         if self._post_create_busy:
             return
         auto_open = bool(self.auto_open_var.get())
-        auto_export = bool(self.auto_export_var.get()) and bool(self._selected_export_formats())
+        auto_export = bool(self.auto_export_var.get()) and bool(self._selected_export_outputs())
         if not auto_open and not auto_export:
             self._refresh_action_button_state()
             return
@@ -2032,7 +2093,10 @@ class DeckMakerApp:
         self.pdf_btn.configure(state="disabled")
         self.progress.start(10)
         formats = list(options.formats)
-        label = ", ".join(fmt.upper() for fmt in formats)
+        output_labels = list(formats)
+        if bool(options.export_cut_template):
+            output_labels.append(f"cut-{options.cut_template_format}")
+        label = ", ".join(fmt.upper() for fmt in output_labels)
         self._set_base_status(f"Exporting {label}...")
         self._clear_mini_status()
         self._set_activity("Preparing export...")
@@ -2040,7 +2104,7 @@ class DeckMakerApp:
         _l.i(
             "[export.ui] start auto=%s formats=%s profiles=%s",
             "yes" if auto else "no",
-            ",".join(formats),
+            ",".join(output_labels),
             ",".join(self._selected_pdf_profiles_for_export(options)),
         )
         self._log(
@@ -2049,11 +2113,12 @@ class DeckMakerApp:
             f"pdf_raster_mode={options.pdf_raster_mode}, "
             f"dpi={int(options.export_dpi)}, "
             f"jpeg_quality={int(options.jpeg_quality)}, "
-            f"other_format={options.other_format}, pages_or_ids={options.other_pages or 'all pages'}"
+            f"other_format={options.other_format}, pages_or_ids={options.other_pages or 'all pages'}, "
+            f"cut_template={'on' if options.export_cut_template else 'off'}:{options.cut_template_format}"
         )
 
     def _export_clicked(self):
-        if not self._selected_export_formats():
+        if not self._selected_export_outputs():
             self.status_var.set("No export outputs selected")
             self._log("No export outputs selected")
             return
@@ -2218,6 +2283,32 @@ class DeckMakerApp:
                         self._queue_ui_log(f"{export_type.upper()} export failed after {elapsed:.2f}s")
                     self._queue_ui_log(err)
                     _l.w("[export.worker] detail %s: %s", export_type.upper(), err)
+
+            if bool(options.export_cut_template):
+                cut_format = str(options.cut_template_format or "svg").strip().lower()
+                self._queue_ui_activity(f"Preparing CUT-{cut_format.upper()} export...")
+                ok, info = EXPORTCUT.export_cut_templates(
+                    svg_path,
+                    DMPATHS.output_svg(template),
+                    export_format=cut_format,
+                    export_dpi=int(options.export_dpi or 300),
+                )
+                if ok:
+                    outputs = list((info or {}).get("outputs") or [])
+                    elapsed = float((info or {}).get("elapsed_s") or 0.0)
+                    for path in outputs:
+                        self.root.after(0, lambda path=path, cut_format=cut_format: self._log(
+                            f"Created CUT-{cut_format.upper()}: {os.path.basename(path)}"
+                        ))
+                    self.root.after(0, lambda elapsed=elapsed, count=len(outputs), cut_format=cut_format: self._log(
+                        f"CUT-{cut_format.upper()} export done in {elapsed:.2f}s across {count} layout pattern(s)"
+                    ))
+                else:
+                    failures.append(f"CUT-{cut_format.upper()}")
+                    err = str((info or {}).get("error") or "Cut template export failed")
+                    failure_details.append(f"CUT-{cut_format.upper()}: {err}")
+                    self._queue_ui_log(err)
+                    _l.w("[export.worker] detail CUT-%s: %s", cut_format.upper(), err)
 
             total_elapsed = time.perf_counter() - started
             if failures:

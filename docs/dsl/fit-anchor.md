@@ -45,30 +45,31 @@ An object can be:
 - a multivalue object list in one cell: `id1~7 id2~9 id3~3`,
 - an explicit object array: `[id1 id2 id3]` (optionally with local array layout).
 
-Representative examples:
+Representative examples of dataset cells:
 
 ```txt
-main_art-8
-heart_icon
-@{assets/picture.png}~i5
-@sp1[14]~m5
-@{wkmc://File:Example.svg/svg#nodeX}~i5
-id1~7 id2~9 id3~3
-[id_a id_b id_c].L{3x1 g=2}~i5
+main_art-placeholder                  ## header cell: placeholder id
+heart_icon                            ## place object heart_icon inside main_art-placeholder
+@{assets/picture.png}~i5              ## place a local image file, scaled proportionally to fit inside and centered
+@sp1[A4]~m5                           ## place frame A4 from spritesheet sp1, scaled to cover the placeholder and centered
+@{wkmc://File:Example.svg/svg#nodeX}~i5 ## download this SVG from Wikimedia Commons, extract nodeX, and place it inside the placeholder
+id1~7 id2~9 id3~3                     ## place 3 objects using different anchors: top-left, top-right, and bottom-left
+[id_a id_b id_c].L{3x1 g=2}~i5        ## arrange 3 objects in a 3x1 local grid with 2mm gaps, then fit the whole block inside the placeholder
 ```
 
 ## Syntax and Style
 Fit-Anchor follows the same DSL conventions as other modules:
 
-- `Module{ key=value ... }` long form,
-- short aliases (`a`, `b`, `s`, etc.),
-- default parameters can be omitted,
-- compact shorthand with `~` is available and heavily used in real datasets.
+- `Module{ key1=value1 key2=value2 ... }` long form.
+- Short aliases using the first letter are allowed, for example `.F{b=2}`.
+- Default keys can omit the key name.
+- Compact shorthand with `~` is available for the most common Fit-Anchor operations.
 
 Long form:
 
 ```txt
 object_id.Fit{ border fitmode anchor shift clip }
+object_id.F{ b= f= a= s= c }          ## first-letter aliases
 ```
 
 Compact form:
@@ -161,15 +162,12 @@ object_id~i
 |----|----|----|
 | i | inside / contain | Scales proportionally to fit entirely within the rect (default). |
 | o | original / none | Keeps original size. |
-| w | width-fit | Scales proportionally to match rect width. |
-| h | height-fit | Scales proportionally to match rect height. |
-| m | max / cover | Scales proportionally until it covers the rect, possibly overflowing. |
-| x | x-stretch | Stretches width to match rect (non-proportional). |
-| y | y-stretch | Stretches height to match rect (non-proportional). |
+| w / h | width-fit / height-fit | Scales proportionally to match rect width / height. |
+| m / c | max / cover | Scales proportionally until it completely covers the placeholder, possibly overflowing. |
+| x / y | x-stretch / y-stretch | Stretches width / height to match rect (non-proportional). |
 | a | all-stretch | Scales independently in X/Y to fill rect exactly. |
-| t | tile | Tiles the object as a pattern within the rect. |
-| b | best-fit | Smart mode that mixes m, a, and clipping for balance. |
-| ? | auto-fit | Alias of `b` (best-fit). |
+| t | tile | Tiles the object as a pattern within the rect (not implemented). |
+| ? / b | auto-fit / best-fit | Smart mode that mixes `m`, `a`, and clipping for balance. |
 
 ### Anchor
 Anchor selects the reference point used to align an object to the placeholder.
