@@ -335,17 +335,41 @@ def feature_to_svg_path(
     height: float,
 ) -> Optional[str]:
     geoms = feature_to_viewbox_points(feature, layer, z, x, y, bbox, width, height)
+    return viewbox_points_to_svg_path(geoms, feature.type)
+
+
+def viewbox_points_to_svg_path(geoms: List[List[Tuple[float, float]]], geom_type: int) -> Optional[str]:
     if not geoms:
         return None
     parts: List[str] = []
     for ring in geoms:
+        if not ring:
+            continue
         cmds = [f"M {ring[0][0]:.2f},{ring[0][1]:.2f}"]
         for px, py in ring[1:]:
             cmds.append(f"L {px:.2f},{py:.2f}")
-        if feature.type == GEOM_POLYGON:
+        if geom_type == GEOM_POLYGON:
             cmds.append("Z")
         parts.append(" ".join(cmds))
     return " ".join(parts) if parts else None
+
+
+def _points_overlap_viewbox(points: List[List[Tuple[float, float]]], width: float, height: float) -> bool:
+    flat = [p for ring in (points or []) for p in (ring or [])]
+    if not flat:
+        return False
+    minx = min(p[0] for p in flat)
+    maxx = max(p[0] for p in flat)
+    miny = min(p[1] for p in flat)
+    maxy = max(p[1] for p in flat)
+    return not (maxx < 0.0 or maxy < 0.0 or minx > float(width) or miny > float(height))
+
+
+def _prune_empty_groups(node: ET.Element) -> bool:
+    for child in list(node):
+        if _prune_empty_groups(child):
+            node.remove(child)
+    return node.tag == "g" and len(list(node)) == 0
 
 
 def _feature_anchor_point(points: List[List[Tuple[float, float]]]) -> Optional[Tuple[float, float]]:
@@ -373,15 +397,15 @@ def _label_key(text: str) -> str:
 
 
 def _dedupe_labels(
-    items: List[Tuple[str, float, float, Dict[str, str], str]],
+    items: List[Tuple[ET.Element, str, float, float, Dict[str, str], str]],
     *,
     min_distance: float = 42.0,
-) -> List[Tuple[str, float, float, Dict[str, str], str]]:
-    kept: List[Tuple[str, float, float, Dict[str, str], str]] = []
+) -> List[Tuple[ET.Element, str, float, float, Dict[str, str], str]]:
+    kept: List[Tuple[ET.Element, str, float, float, Dict[str, str], str]] = []
     seen: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
     limit2 = float(min_distance) * float(min_distance)
     for item in items:
-        _label_id, x, y, _style, text = item
+        _parent, _label_id, x, y, _style, text = item
         key = _label_key(text)
         if key:
             too_close = any(((x - px) * (x - px) + (y - py) * (y - py)) <= limit2 for px, py in seen[key])
@@ -411,9 +435,17 @@ def export_debug_svg_multi(
     width: int = 1024,
     height: int = 1024,
     include_layers: Optional[Iterable[str]] = None,
+    view_filter: Optional[Dict[str, object]] = None,
     bbox_override: Optional[Tuple[float, float, float, float]] = None,
 ) -> Path:
-    root = build_debug_svg_multi(tile_specs, width=width, height=height, include_layers=include_layers, bbox_override=bbox_override)
+    root = build_debug_svg_multi(
+        tile_specs,
+        width=width,
+        height=height,
+        include_layers=include_layers,
+        view_filter=view_filter,
+        bbox_override=bbox_override,
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     ET.ElementTree(root).write(out_path, encoding="utf-8", xml_declaration=True)
     return out_path
@@ -425,6 +457,7 @@ def build_debug_svg_multi(
     width: int = 1024,
     height: int = 1024,
     include_layers: Optional[Iterable[str]] = None,
+    view_filter: Optional[Dict[str, object]] = None,
     bbox_override: Optional[Tuple[float, float, float, float]] = None,
 ) -> ET.Element:
     if not tile_specs:
@@ -452,10 +485,10 @@ def build_debug_svg_multi(
     defs = ET.SubElement(root, "defs")
     clip = ET.SubElement(defs, "clipPath", {"id": "map-clip"})
     ET.SubElement(clip, "rect", {"x": "0", "y": "0", "width": str(width), "height": str(height)})
-    scene = ET.SubElement(root, "g", {"clip-path": "url(#map-clip)"})
+    scene = ET.SubElement(root, "g", {"id": "map_group", "clip-path": "url(#map-clip)"})
     ET.SubElement(scene, "rect", {"x": "0", "y": "0", "width": str(width), "height": str(height), "fill": "#eee6d1"})
     allowed = {str(v) for v in include_layers} if include_layers else None
-    layer_groups: Dict[str, ET.Element] = {}
+    label_groups: Dict[Tuple[str, str], ET.Element] = {}
     feature_id_counters: Dict[str, int] = {}
     layer_seen: Dict[str, int] = {}
     layer_included: Dict[str, int] = {}
@@ -464,39 +497,79 @@ def build_debug_svg_multi(
     layer_kind_included: Dict[str, Counter] = defaultdict(Counter)
     layer_kind_geom_seen: Dict[str, Counter] = defaultdict(Counter)
     layer_kind_geom_included: Dict[str, Counter] = defaultdict(Counter)
-    label_items: List[Tuple[str, float, float, Dict[str, str], str]] = []
+    label_items: List[Tuple[ET.Element, str, float, float, Dict[str, str], str]] = []
+
+    def _debug_layer(name: str) -> bool:
+        lname = str(name or "").lower()
+        return any(part in lname for part in ("place", "boundar", "admin"))
+
+    labels_group = ET.SubElement(scene, "g", {"id": "labels_group"})
+
+    def _tile_group(tz: int, tx: int, ty: int) -> ET.Element:
+        lon_w, lat_s, lon_e, lat_n = tile_bounds_mercator(tz, tx, ty)
+        x0, y0 = _lonlat_to_viewbox(lon_w, lat_n, bbox, width, height)
+        x1, y1 = _lonlat_to_viewbox(lon_e, lat_s, bbox, width, height)
+        rx, ry = min(x0, x1), min(y0, y1)
+        rw, rh = abs(x1 - x0), abs(y1 - y0)
+        clip_id = f"clip_z{tz}x{tx}y{ty}"
+        clip_node = ET.SubElement(defs, "clipPath", {"id": clip_id})
+        ET.SubElement(clip_node, "rect", {"x": f"{rx:.2f}", "y": f"{ry:.2f}", "width": f"{rw:.2f}", "height": f"{rh:.2f}"})
+        return ET.SubElement(scene, "g", {"id": f"tile_z{tz}x{tx}y{ty}_group", "clip-path": f"url(#{clip_id})"})
+
+    def _label_group_for(layer_name: str, kind_name: str) -> ET.Element:
+        key = (str(layer_name or ""), str(kind_name or "label"))
+        hit = label_groups.get(key)
+        if hit is not None:
+            return hit
+        label_gid = f"label_{str(kind_name or 'label')}_group"
+        hit = ET.SubElement(labels_group, "g", {"id": label_gid})
+        label_groups[key] = hit
+        return hit
+
     for raw_tile, tz, tx, ty in tile_specs:
         tile = decode_tile(raw_tile)
+        tile_parent = _tile_group(tz, tx, ty)
         for layer in sorted(tile.layers, key=lambda lyr: (MAP_STYLE.layer_order(lyr.name), lyr.name)):
             if allowed is not None and layer.name not in allowed:
                 continue
+            if not MAP_STYLE.view_allows_layer(view_filter, layer.name):
+                continue
             layer_seen[layer.name] = layer_seen.get(layer.name, 0) + len(layer.features)
-            if "place" in layer.name.lower():
+            if _debug_layer(layer.name):
                 for feat in layer.features:
                     kind = MAP_STYLE.feature_kind(feat) or "(empty)"
                     layer_kind_seen[layer.name][kind] += 1
                     layer_kind_geom_seen[layer.name][f"{kind}/{_geom_name(feat.type)}"] += 1
-            g = layer_groups.get(layer.name)
-            if g is None:
-                g = ET.SubElement(scene, "g", {"id": layer.name})
-                layer_groups[layer.name] = g
+            g = ET.SubElement(tile_parent, "g", {"id": f"{layer.name}_group"})
+            kind_groups: Dict[str, ET.Element] = {}
             for feat in layer.features:
+                if not MAP_STYLE.view_allows_feature(view_filter, layer.name, feat):
+                    continue
                 if allowed is None and not MAP_STYLE.include_feature(layer.name, feat, z):
                     continue
                 layer_included[layer.name] = layer_included.get(layer.name, 0) + 1
-                if "place" in layer.name.lower():
+                if _debug_layer(layer.name):
                     kind = MAP_STYLE.feature_kind(feat) or "(empty)"
                     layer_kind_included[layer.name][kind] += 1
                     layer_kind_geom_included[layer.name][f"{kind}/{_geom_name(feat.type)}"] += 1
                 elem_id = MAP_STYLE.feature_id(layer.name, feat, feature_id_counters)
+                draw_group = g
+                kind_group = MAP_STYLE.feature_kind(feat)
+                if kind_group and kind_group != str(layer.name or "").lower():
+                    draw_group = kind_groups.get(kind_group)
+                    if draw_group is None:
+                        draw_group = ET.SubElement(g, "g", {"id": f"{kind_group}_group"})
+                        kind_groups[kind_group] = draw_group
                 pts = feature_to_viewbox_points(feat, layer, tz, tx, ty, bbox, width, height)
-                path_d = feature_to_svg_path(feat, layer, tz, tx, ty, bbox, width, height)
+                if not _points_overlap_viewbox(pts, width, height):
+                    continue
                 if feat.type in (GEOM_POLYGON, GEOM_LINESTRING):
+                    path_d = viewbox_points_to_svg_path(pts, feat.type)
                     if not path_d:
                         continue
                     style = {"d": path_d, "id": elem_id}
                     style.update(MAP_STYLE.feature_style(layer.name, feat, feat.type, z))
-                    ET.SubElement(g, "path", style)
+                    ET.SubElement(draw_group, "path", style)
                 elif feat.type == GEOM_POINT:
                     anchor = _feature_anchor_point(pts)
                     if not anchor:
@@ -506,25 +579,29 @@ def build_debug_svg_multi(
                     size = MAP_STYLE.point_size(layer.name, feat, z)
                     if shape == "triangle":
                         tri = f"M {cx:.2f},{cy - size * 1.55:.2f} L {cx - size * 1.35:.2f},{cy + size * 1.10:.2f} L {cx + size * 1.35:.2f},{cy + size * 1.10:.2f} Z"
-                        ET.SubElement(g, "path", {"id": elem_id, "d": tri, **MAP_STYLE.feature_style(layer.name, feat, feat.type, z)})
+                        ET.SubElement(draw_group, "path", {"id": elem_id, "d": tri, **MAP_STYLE.feature_style(layer.name, feat, feat.type, z)})
                     elif shape not in {"none", "hidden", "off", "label"}:
-                        ET.SubElement(g, "circle", {"id": elem_id, "cx": f"{cx:.2f}", "cy": f"{cy:.2f}", "r": f"{size:.2f}", **MAP_STYLE.feature_style(layer.name, feat, feat.type, z)})
-                    label = MAP_STYLE.feature_label_text(feat) if MAP_STYLE.labels_enabled(layer.name) else None
+                        ET.SubElement(draw_group, "circle", {"id": elem_id, "cx": f"{cx:.2f}", "cy": f"{cy:.2f}", "r": f"{size:.2f}", **MAP_STYLE.feature_style(layer.name, feat, feat.type, z)})
+                    label = MAP_STYLE.feature_label_text(feat) if (MAP_STYLE.labels_enabled(layer.name) and MAP_STYLE.view_allows_label(view_filter, layer.name)) else None
                     if label:
                         layer_labeled[layer.name] = layer_labeled.get(layer.name, 0) + 1
                         dx, dy = MAP_STYLE.label_offset(layer.name, feat)
                         text_style = MAP_STYLE.label_style(layer.name, feat, z)
-                        label_items.append((f"{elem_id}_label", cx + dx, cy + dy, text_style, label))
+                        label_parent = _label_group_for(layer.name, kind_group or layer.name)
+                        label_items.append((label_parent, f"label_{elem_id}", cx + dx, cy + dy, text_style, label))
     if label_items:
-        labels_g = ET.SubElement(scene, "g", {"id": "map-labels"})
-        for label_id, lx, ly, text_style, label in _dedupe_labels(label_items):
+        for label_parent, label_id, lx, ly, text_style, label in _dedupe_labels(label_items):
             t = ET.SubElement(
-                labels_g,
+                label_parent,
                 "text",
                 {"id": label_id, "x": f"{lx:.2f}", "y": f"{ly:.2f}", **text_style},
             )
             t.text = label
-    for lname in sorted(name for name in layer_seen if "place" in name.lower()):
+    if labels_group in list(scene):
+        scene.remove(labels_group)
+        scene.append(labels_group)
+    _prune_empty_groups(scene)
+    for lname in sorted(name for name in layer_seen if _debug_layer(name)):
         _l.i(
             "[map.debug] layer=%s z=%d features=%d included=%d labels=%d",
             lname,

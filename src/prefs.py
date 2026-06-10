@@ -49,6 +49,7 @@ _DEFAULTS = {
     "export_other_ids": "",
     "export_cut_template": "0",
     "export_cut_template_format": "svg",
+    "export_cut_dxf_cameo_scale_fix": "1",
     "export_png_antialias": "2",
     "export_png_background": "#ffffff",
     "export_png_background_opacity": "0.0",
@@ -65,6 +66,10 @@ _DEFAULTS = {
     "inkscape_shell_workers": "6",
     "network_workers": "8",
     "network_workers_wkmc": "0",
+    "map_osm_max_zoom": "14",
+    "map_ofm_max_zoom": "14",
+    "map_osm_max_tile_grid": "4",
+    "map_ofm_max_tile_grid": "4",
     "inline_icons_bbox_backend": "query_all",
     "inline_icons_show_debug_rects": "0",
     "template_engine": "composed",
@@ -99,6 +104,7 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     ("export_other_ids", ("Optional object IDs for additional output. Comma-separated ids. If set, page selection is ignored and one file per ID is exported.",)),
     ("export_cut_template", ("Export plotter cut templates from generated instance bboxes. Values: 0 | 1",)),
     ("export_cut_template_format", ("Cut template output format. Values: svg | png | dxf",)),
+    ("export_cut_dxf_cameo_scale_fix", ("Compensate Silhouette Studio DXF import scale. Values: 0 | 1",)),
     ("export_png_antialias", ("PNG antialias level used by png_alpha raster export. Values: 0 | 1 | 2 | 3",)),
     ("export_png_background", ("Bitmap matte/background color when applicable. Values: any valid SVG color string",)),
     ("export_png_background_opacity", ("Bitmap background opacity when applicable. Values: 0.0..1.0 or 1..255",)),
@@ -108,6 +114,10 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     ("inkscape_shell_workers", ("Parallel Inkscape shell workers used during export. Values: integer >= 1",)),
     ("network_workers", ("Parallel network workers for non-Wikimedia web asset downloads. Values: integer 1..32",)),
     ("network_workers_wkmc", ("Parallel network workers for Wikimedia Commons (wkmc://) resolution/downloads. Values: 0 or empty = network_workers; otherwise integer 1..32.",)),
+    ("map_osm_max_zoom", ("Default maximum vector-tile zoom for osm:// maps. Values: integer 0..22",)),
+    ("map_ofm_max_zoom", ("Default maximum vector-tile zoom for ofm:// maps. Values: integer 0..22",)),
+    ("map_osm_max_tile_grid", ("Default maximum tile grid per axis for automatic osm:// zoom selection. Values: integer >= 1",)),
+    ("map_ofm_max_tile_grid", ("Default maximum tile grid per axis for automatic ofm:// zoom selection. Values: integer >= 1",)),
     ("inline_icons_bbox_backend", ("Inline icon bbox measurement backend. Values: query_all | shell_per_text",)),
     ("inline_icons_show_debug_rects", ("Show inline-icon hole debug rectangles. Values: 0 | 1",)),
     ("template_engine", ("Template instantiation engine. Values: legacy | composed | composed-instance", "composed is the default; unsupported individual templates fall back to legacy.")),
@@ -387,6 +397,10 @@ def set_export_cut_template_format(value: str) -> None:
     set("export_cut_template_format", item if item in {"svg", "png", "dxf"} else "svg", save=True)
 
 
+def get_export_cut_dxf_cameo_scale_fix(default: bool = True) -> bool:
+    return str(get("export_cut_dxf_cameo_scale_fix", "1" if default else "0")).strip() == "1"
+
+
 def get_export_png_antialias(default: int = 2) -> int:
     try:
         value = int(str(get("export_png_antialias", default) or default).strip())
@@ -615,6 +629,29 @@ def set_network_workers_wkmc(value: int) -> None:
     except Exception:
         out = 0
     set("network_workers_wkmc", str(max(0, min(out, 32))), save=True)
+
+
+def _map_provider_key(provider: str, suffix: str) -> str:
+    p = str(provider or "").strip().lower()
+    if p not in ("osm", "ofm"):
+        p = "osm"
+    return f"map_{p}_{suffix}"
+
+
+def get_map_max_zoom(provider: str, default: int = 14) -> int:
+    try:
+        value = int(str(get(_map_provider_key(provider, "max_zoom"), default) or default).strip())
+    except Exception:
+        value = int(default)
+    return max(0, min(value, 22))
+
+
+def get_map_max_tile_grid(provider: str, default: int = 4) -> int:
+    try:
+        value = int(str(get(_map_provider_key(provider, "max_tile_grid"), default) or default).strip())
+    except Exception:
+        value = int(default)
+    return max(1, min(value, 32))
 
 
 def get_inline_icons_bbox_backend(default: str = "query_all") -> str:

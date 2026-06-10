@@ -416,9 +416,14 @@ def parse_source_like_token(raw_token: str):
                 cmd = None
             if cmd and getattr(cmd, "name", None) == "Source" and getattr(cmd, "target", None) is not None:
                 try:
-                    src_val = cmd.target.args.get("src") if hasattr(cmd.target, "args") else None
+                    args = dict(getattr(cmd.target, "args", {}) or {}) if hasattr(cmd.target, "args") else {}
+                    src_val = args.get("src")
                     if not src_val:
                         src_val = getattr(cmd.target, "src", None)
+                    if src_val and str(src_val).lower().startswith(("osm://", "ofm://")):
+                        view_val = args.get("view") if args.get("view") not in (None, "") else args.get("v")
+                        if view_val not in (None, ""):
+                            src_val = f"{src_val} view={view_val}"
                 except Exception:
                     src_val = None
         if not src_val:

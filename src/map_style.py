@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 import json
 import re
+import time
 
 
 GEOM_UNKNOWN = 0
@@ -30,7 +31,7 @@ _FALLBACK_CONFIG: Dict[str, Any] = {
     "layer_order": {},
     "base_style": {
         "polygon": {"fill": "#ddd", "stroke": "#666", "stroke-width": "0.4"},
-        "line": {"fill": "none", "stroke": "#444", "stroke-width": "0.7"},
+        "line": {"fill": "none", "stroke": "#444", "stroke-width": "0.7", "stroke-linejoin": "round", "stroke-linecap": "round"},
         "point": {"fill": "#000", "stroke": "#fff", "stroke-width": "0.8"},
     },
     "features": {},
@@ -98,8 +99,12 @@ def _merge_dict(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     return out
 
 
+def _config_path() -> Path:
+    return Path(__file__).with_name("map_style.jsonc")
+
+
 def _load_config() -> Dict[str, Any]:
-    path = Path(__file__).with_name("map_style.jsonc")
+    path = _config_path()
     try:
         raw = path.read_text(encoding="utf-8-sig")
         data = json.loads(_strip_jsonc(raw))
@@ -111,6 +116,27 @@ def _load_config() -> Dict[str, Any]:
 
 
 _CONFIG = _load_config()
+try:
+    _CONFIG_MTIME = _config_path().stat().st_mtime
+except Exception:
+    _CONFIG_MTIME = None
+_CONFIG_NEXT_CHECK = 0.0
+
+
+def _config() -> Dict[str, Any]:
+    global _CONFIG, _CONFIG_MTIME, _CONFIG_NEXT_CHECK
+    now = time.monotonic()
+    if now < _CONFIG_NEXT_CHECK:
+        return _CONFIG
+    _CONFIG_NEXT_CHECK = now + 0.5
+    try:
+        mtime = _config_path().stat().st_mtime
+    except Exception:
+        mtime = None
+    if mtime != _CONFIG_MTIME:
+        _CONFIG = _load_config()
+        _CONFIG_MTIME = mtime
+    return _CONFIG
 
 
 def _props(feature: Any) -> Dict[str, object]:
@@ -123,6 +149,153 @@ def _as_list(value: Any) -> list:
     if isinstance(value, (list, tuple, set)):
         return list(value)
     return [value]
+
+
+def _split_view_expr(expr: str) -> list[tuple[str, str]]:
+    text = str(expr or "").strip()
+    out: list[tuple[str, str]] = []
+    if not text:
+        return out
+    sign = "+"
+    token = []
+    depth = 0
+    for i, ch in enumerate(text):
+        if ch == "[":
+            depth += 1
+            token.append(ch)
+            continue
+        if ch == "]":
+            depth = max(0, depth - 1)
+            token.append(ch)
+            continue
+        if depth == 0 and ch in "+-" and i > 0:
+            value = "".join(token).strip()
+            if value:
+                out.append((sign, value))
+            sign = ch
+            token = []
+            continue
+        if depth == 0 and ch in "+-" and i == 0:
+            sign = ch
+            continue
+        token.append(ch)
+    value = "".join(token).strip()
+    if value:
+        out.append((sign, value))
+    return out
+
+
+def _parse_view_item(raw: str) -> tuple[str, Optional[set[str]]]:
+    item = str(raw or "").strip()
+    m = re.fullmatch(r"([A-Za-z_][\w\-]*)\s*\[\s*([^\]]*)\s*\]", item)
+    if m:
+        values = [v for v in re.split(r"\s+", str(m.group(2) or "").strip()) if v]
+        return m.group(1).lower(), {str(v).strip().lower() for v in values if str(v).strip()}
+    return item.lower(), None
+
+
+def _view_layers(name: str) -> Optional[list[str]]:
+    value = (_config().get("views") or {}).get(str(name or "").lower())
+    if value is None:
+        return None
+    if value == "*":
+        return ["*"]
+    return [str(v).strip().lower() for v in _as_list(value) if str(v).strip()]
+
+
+def resolve_view_filter(expr: str) -> Optional[Dict[str, Any]]:
+    tokens = _split_view_expr(expr)
+    if not tokens:
+        return None
+    include_all = False
+    include_layers: set[str] = set()
+    include_kinds: Dict[str, set[str]] = {}
+    exclude_layers: set[str] = set()
+    exclude_kinds: Dict[str, set[str]] = {}
+    labels_disabled = False
+    labels_enabled_layers: set[str] = set()
+
+    def apply_item(sign: str, raw_item: str) -> None:
+        nonlocal include_all, labels_disabled
+        name, kinds = _parse_view_item(raw_item)
+        preset_layers = None if kinds is not None else _view_layers(name)
+        if preset_layers is not None:
+            if name in {"label", "labels"}:
+                labels_disabled = sign == "-"
+            layers = [str(v).lower() for v in preset_layers]
+        else:
+            layers = [name]
+        for layer in layers:
+            if layer == "*":
+                include_all = sign == "+"
+                continue
+            if kinds is None:
+                if sign == "+":
+                    include_layers.add(layer)
+                    exclude_layers.discard(layer)
+                    if layer.endswith("_name") or layer.endswith("_labels"):
+                        labels_enabled_layers.add(layer)
+                else:
+                    exclude_layers.add(layer)
+                    include_layers.discard(layer)
+                continue
+            target = include_kinds if sign == "+" else exclude_kinds
+            target.setdefault(layer, set()).update(kinds)
+            if sign == "+":
+                exclude_layers.discard(layer)
+                if layer.endswith("_name") or layer.endswith("_labels"):
+                    labels_enabled_layers.add(layer)
+
+    for sign, item in tokens:
+        apply_item(sign, item)
+
+    return {
+        "include_all": include_all,
+        "include_layers": include_layers,
+        "include_kinds": include_kinds,
+        "exclude_layers": exclude_layers,
+        "exclude_kinds": exclude_kinds,
+        "labels_disabled": labels_disabled,
+        "labels_enabled_layers": labels_enabled_layers,
+        "raw": str(expr or "").strip(),
+    }
+
+
+def view_allows_layer(view_filter: Optional[Dict[str, Any]], layer_name: str) -> bool:
+    if not view_filter:
+        return True
+    layer = str(layer_name or "").lower()
+    if layer in (view_filter.get("exclude_layers") or set()):
+        return False
+    return (
+        bool(view_filter.get("include_all"))
+        or layer in (view_filter.get("include_layers") or set())
+        or layer in (view_filter.get("include_kinds") or {})
+    )
+
+
+def view_allows_feature(view_filter: Optional[Dict[str, Any]], layer_name: str, feature: Any) -> bool:
+    if not view_allows_layer(view_filter, layer_name):
+        return False
+    if not view_filter:
+        return True
+    layer = str(layer_name or "").lower()
+    kind = feature_kind(feature)
+    if kind and kind in (view_filter.get("exclude_kinds") or {}).get(layer, set()):
+        return False
+    include_kinds = view_filter.get("include_kinds") or {}
+    if layer in include_kinds and layer not in (view_filter.get("include_layers") or set()):
+        return kind in include_kinds.get(layer, set())
+    return True
+
+
+def view_allows_label(view_filter: Optional[Dict[str, Any]], layer_name: str) -> bool:
+    if not view_filter:
+        return True
+    layer = str(layer_name or "").lower()
+    if layer in (view_filter.get("labels_enabled_layers") or set()):
+        return True
+    return not bool(view_filter.get("labels_disabled"))
 
 
 def _to_int(value: Any, default: int = 0) -> int:
@@ -151,7 +324,7 @@ def feature_kind(feature: Any) -> str:
 
 def feature_label_text(feature: Any) -> Optional[str]:
     props = _props(feature)
-    for key in _as_list(_CONFIG.get("label_languages")):
+    for key in _as_list(_config().get("label_languages")):
         value = props.get(str(key))
         if isinstance(value, str) and value.strip():
             return value.strip()
@@ -167,19 +340,21 @@ def _slug(value: object) -> str:
 
 def feature_id(layer_name: str, feature: Any, counters: Dict[str, int]) -> str:
     layer_slug = _slug(layer_name)
-    kind_slug = _slug(feature_kind(feature))
+    kind_slug = _slug(feature_kind(feature) or layer_slug)
     key = f"{layer_slug}:{kind_slug}"
     counters[key] = counters.get(key, 0) + 1
+    counters["__uid__"] = counters.get("__uid__", 0) + 1
     numeric_id = getattr(feature, "id", None)
+    suffix = f"_u{counters['__uid__']}"
     if numeric_id is not None:
-        return f"{kind_slug}_{numeric_id}"
-    return f"{kind_slug}_{counters[key]}"
+        return f"{kind_slug}{numeric_id}{suffix}"
+    return f"{kind_slug}{counters[key]}{suffix}"
 
 
 def _band_matches(rule_zoom: Any, z: int) -> bool:
     if rule_zoom in (None, "", "all", "*"):
         return True
-    bands = _CONFIG.get("zoom_bands") or {}
+    bands = _config().get("zoom_bands") or {}
     for name in _as_list(rule_zoom):
         if isinstance(name, (int, float)):
             if int(name) == int(z):
@@ -201,6 +376,12 @@ def _value_matches(actual: Any, expected: Any) -> bool:
     return actual_s in expected_values
 
 
+_RULE_CONTROL_KEYS = {
+    "always", "zoom", "attrs",
+    "rank_min", "rank_max", "ele_min", "ele_max",
+}
+
+
 def _rule_matches(rule: Dict[str, Any], feature: Any, z: int) -> bool:
     if not isinstance(rule, dict):
         return False
@@ -210,6 +391,11 @@ def _rule_matches(rule: Dict[str, Any], feature: Any, z: int) -> bool:
         return False
     for key in ("kind", "class", "subclass"):
         if key in rule and not _value_matches(_feature_value(feature, key), rule.get(key)):
+            return False
+    for key, expected in rule.items():
+        if key in _RULE_CONTROL_KEYS or key in ("kind", "class", "subclass", "rail"):
+            continue
+        if not _value_matches(_feature_value(feature, key), expected):
             return False
     if "rail" in rule and _to_int(_feature_value(feature, "rail"), 0) != _to_int(rule.get("rail"), 0):
         return False
@@ -227,7 +413,7 @@ def _rule_matches(rule: Dict[str, Any], feature: Any, z: int) -> bool:
 
 
 def _feature_cfg(layer_name: str) -> Dict[str, Any]:
-    return dict((_CONFIG.get("features") or {}).get(str(layer_name or "").lower()) or {})
+    return dict((_config().get("features") or {}).get(str(layer_name or "").lower()) or {})
 
 
 def include_feature(layer_name: str, feature: Any, z: int) -> bool:
@@ -287,7 +473,7 @@ def _style_value(value: Any, feature: Any, z: int) -> str:
 
 def feature_style(layer_name: str, feature: Any, geom_type: int, z: int = 0) -> Dict[str, str]:
     geom_name = _GEOM_NAMES.get(geom_type, "point")
-    base = dict(((_CONFIG.get("base_style") or {}).get(geom_name)) or {})
+    base = dict(((_config().get("base_style") or {}).get(geom_name)) or {})
     cfg = _feature_cfg(layer_name)
     layer_style = cfg.get("style") or {}
     styled = _style_for_rules(layer_style.get(geom_name), feature, z)
@@ -298,7 +484,7 @@ def feature_style(layer_name: str, feature: Any, geom_type: int, z: int = 0) -> 
 
 def label_style(layer_name: str, feature: Any, z: int = 0) -> Dict[str, str]:
     kind = feature_kind(feature)
-    root = _CONFIG.get("label_style") or {}
+    root = _config().get("label_style") or {}
     style = dict(root.get("default") or {})
     cfg = _feature_cfg(layer_name)
     layer_labels = cfg.get("label_style") or {}
@@ -341,7 +527,7 @@ def label_offset(layer_name: str, feature: Any) -> tuple[float, float]:
     cfg = _feature_cfg(layer_name)
     val = cfg.get("label_offset")
     if val is None:
-        val = ((_CONFIG.get("label_offset") or {}).get("default") or [4.0, -2.0])
+        val = ((_config().get("label_offset") or {}).get("default") or [4.0, -2.0])
     vals = _as_list(val)
     try:
         return float(vals[0]), float(vals[1])
@@ -350,4 +536,4 @@ def label_offset(layer_name: str, feature: Any) -> tuple[float, float]:
 
 
 def layer_order(layer_name: str) -> int:
-    return _to_int((_CONFIG.get("layer_order") or {}).get(str(layer_name or "").lower()), 50)
+    return _to_int((_config().get("layer_order") or {}).get(str(layer_name or "").lower()), 50)

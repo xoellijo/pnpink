@@ -2405,6 +2405,17 @@ def strip_pnp_suffix(id_str: str) -> str:
     m = _PNP_SUFFIX_RX.match(id_str)
     return m.group('base') if m else id_str
 
+def strip_source_map_prefix(id_str: str) -> str:
+    """Remove temporary source-map prefixes/collision tails from final map ids."""
+    value = str(id_str or "")
+    if value.startswith("srcmap_"):
+        value = value[len("srcmap_"):]
+    if value.endswith("_group"):
+        return value
+    if "_group-" in value:
+        return value.split("_group-", 1)[0] + "_group"
+    return value
+
 def scan_max_pnp_suffix(svg_root) -> int:
     """Scan generated ids and return the max numeric item suffix (0 if none)."""
     maxn = 0
@@ -2447,7 +2458,9 @@ def uniquify_all_ids_in_scope(scope, suffix: str, get_unique_id):
         cur = el.get('id')
         if not cur:
             continue
-        base = strip_pnp_suffix(cur)
+        base = strip_source_map_prefix(str(el.get("data-origid") or "").strip())
+        if not base:
+            base = strip_source_map_prefix(strip_pnp_suffix(cur))
         if el.get('data-origid') is None:
             el.set('data-origid', base)
         proposed = _generated_id_from_suffix(el, base, suffix)
@@ -2534,10 +2547,47 @@ def _semanticize_ids_in_scope(scope, prefix: str = "af"):
     except Exception:
         root = None
 
-    try:
-        get_unique_id = getattr(root, "get_unique_id", None)
-    except Exception:
-        get_unique_id = None
+    fast_plain_ids = prefix == ""
+    get_unique_id = None
+    existing_ids = set()
+    if fast_plain_ids:
+        try:
+            for el in root.iter():
+                eid = str(el.get("id") or "").strip()
+                if eid:
+                    existing_ids.add(eid)
+        except Exception:
+            existing_ids = set()
+        try:
+            for el in scope.iter():
+                eid = str(el.get("id") or "").strip()
+                if eid:
+                    existing_ids.discard(eid)
+        except Exception:
+            pass
+    else:
+        try:
+            get_unique_id = getattr(root, "get_unique_id", None)
+        except Exception:
+            get_unique_id = None
+
+    def _local_unique(proposed: str) -> str:
+        if not fast_plain_ids:
+            try:
+                return get_unique_id(proposed) if callable(get_unique_id) else proposed
+            except Exception:
+                return proposed
+        base = proposed or "item"
+        if base not in existing_ids:
+            existing_ids.add(base)
+            return base
+        i = 2
+        while True:
+            candidate = f"{base}_u{i}"
+            if candidate not in existing_ids:
+                existing_ids.add(candidate)
+                return candidate
+            i += 1
 
     id_map = {}
     for el in scope.iter():
@@ -2546,17 +2596,15 @@ def _semanticize_ids_in_scope(scope, prefix: str = "af"):
         cur = str(el.get("id") or "").strip()
         if not cur:
             continue
-        base = strip_pnp_suffix(cur)
-        if el.get("data-origid") is None:
+        base = strip_source_map_prefix(str(el.get("data-origid") or "").strip())
+        if not base:
+            base = strip_source_map_prefix(strip_pnp_suffix(cur))
             try:
                 el.set("data-origid", base)
             except Exception:
                 pass
         proposed = f"{prefix}_{base}" if prefix else base
-        try:
-            unique = get_unique_id(proposed) if callable(get_unique_id) else proposed
-        except Exception:
-            unique = proposed
+        unique = _local_unique(proposed)
         id_map[cur] = unique
         if base != cur:
             id_map[base] = unique

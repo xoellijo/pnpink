@@ -140,9 +140,11 @@ PnPInk also supports dedicated map sources:
 @{ ofm://[...] }
 @{ osm://madrid }
 @{ ofm://spain/z4 }
+@{ ofm://shikoku/t1 }
+@{ ofm://shikoku/z8/t1 view=all-labels+water_name[bay lake] }
 ```
 
-These sources generate maps from simple URLs. See [Maps](./maps.md) for the map syntax and examples.
+These sources generate maps from simple URLs. Map sources support `/zN` to force zoom and `/tN` to limit the automatic tile grid per axis. Use `view=` to choose rendered layers/features. See [Maps](./maps.md) for details.
 
 Placed sources can also be adjusted afterwards with [Transform](./transform.md), for example to reduce opacity or soften edges.
 

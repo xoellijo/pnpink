@@ -15,12 +15,15 @@ import xml.etree.ElementTree as ET
 import log as LOG
 import net as NET
 import mvt_minimal as MVT
+import map_style as MAP_STYLE
+import prefs
 
 _l = LOG
 
 
 BBox = Tuple[float, float, float, float]
 GeocodeResult = Tuple[float, float, float, float, float, float]
+MapResolveResult = Tuple[str, BBox, Optional[int], Optional[int]]
 
 
 @dataclass
@@ -31,11 +34,64 @@ class OSMMapSource:
 
     OSM_TILE_TEMPLATE = "https://vector.openstreetmap.org/shortbread_v1/{z}/{x}/{y}.mvt"
     OFM_TILE_TEMPLATE = "https://tiles.openfreemap.org/planet/20260401_001001_pt/{z}/{x}/{y}.pbf"
-    PROVIDER_MAX_ZOOM = {"osm": 14, "ofm": 14}
-    PROVIDER_MAX_TILE_GRID = {"osm": 4, "ofm": 4}
+    DEFAULT_PROVIDER_MAX_ZOOM = {"osm": 14, "ofm": 14}
+    DEFAULT_PROVIDER_MAX_TILE_GRID = {"osm": 4, "ofm": 4}
     NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
     OUTPUT_WIDTH_PX = 1400
     MIN_OUTPUT_HEIGHT_PX = 200
+
+    @staticmethod
+    def _split_top(text: str) -> list[str]:
+        out = []
+        token = []
+        depth = 0
+        quote = ""
+        for ch in str(text or ""):
+            if quote:
+                token.append(ch)
+                if ch == quote:
+                    quote = ""
+                continue
+            if ch in ("'", '"'):
+                quote = ch
+                token.append(ch)
+                continue
+            if ch == "[":
+                depth += 1
+                token.append(ch)
+                continue
+            if ch == "]":
+                depth = max(0, depth - 1)
+                token.append(ch)
+                continue
+            if ch.isspace() and depth == 0:
+                if token:
+                    out.append("".join(token))
+                    token = []
+                continue
+            token.append(ch)
+        if token:
+            out.append("".join(token))
+        return out
+
+    @classmethod
+    def _split_map_source_args(cls, expr: str) -> Tuple[str, dict]:
+        tokens = cls._split_top(str(expr or "").strip())
+        if not tokens:
+            return "", {}
+        url = tokens[0]
+        args = {}
+        for tok in tokens[1:]:
+            if "=" not in tok:
+                continue
+            key, val = tok.split("=", 1)
+            key = key.strip().lower()
+            val = val.strip()
+            if key in {"view", "v"}:
+                args["view"] = val
+            else:
+                args[key] = val
+        return url, args
 
     def _maptiles_dir(self) -> Path:
         return self.assets_dir / "maptiles"
@@ -50,6 +106,16 @@ class OSMMapSource:
 
     def _provider_summary_key(self, provider: str) -> str:
         return "openfreemap" if str(provider or "").strip().lower() == "ofm" else "openstreetmap"
+
+    @classmethod
+    def _provider_max_zoom(cls, provider: str) -> int:
+        provider_l = str(provider or "").strip().lower()
+        return prefs.get_map_max_zoom(provider_l, cls.DEFAULT_PROVIDER_MAX_ZOOM.get(provider_l, 14))
+
+    @classmethod
+    def _provider_max_tile_grid(cls, provider: str) -> int:
+        provider_l = str(provider or "").strip().lower()
+        return prefs.get_map_max_tile_grid(provider_l, cls.DEFAULT_PROVIDER_MAX_TILE_GRID.get(provider_l, 4))
 
     def _inc_tile_stat(self, provider: str, name: str, step: int = 1) -> None:
         key = self._provider_summary_key(provider)
@@ -95,14 +161,50 @@ class OSMMapSource:
         return raw
 
     @classmethod
-    def parse_bbox_expr(cls, expr: str) -> Optional[Tuple[str, float, float, float, float]]:
+    def _strip_map_options(cls, body: str, provider: str) -> Tuple[str, Optional[int], Optional[int]]:
+        text = str(body or "").strip()
+        forced_zoom = None
+        max_tile_grid = None
+        while True:
+            m = re.search(r"/([zt])(\d+)\s*$", text, re.I)
+            if not m:
+                break
+            key = str(m.group(1) or "").lower()
+            val = int(m.group(2))
+            text = text[:m.start()].rstrip()
+            if key == "z":
+                forced_zoom = max(0, min(cls._provider_max_zoom(provider), val))
+            elif key == "t":
+                max_tile_grid = max(1, min(32, val))
+        return text.strip(), forced_zoom, max_tile_grid
+
+    @staticmethod
+    def _parse_bbox_numbers(text: str) -> Optional[List[float]]:
+        raw = str(text or "").strip()
+        space_tokens = [p for p in re.split(r"\s+", raw) if p]
+        if len(space_tokens) == 4:
+            try:
+                return [float(p.replace(",", ".")) for p in space_tokens]
+            except ValueError:
+                pass
+        try:
+            return [float(p) for p in re.split(r"[\s,;]+", raw) if p.strip()]
+        except ValueError:
+            return None
+
+    @classmethod
+    def parse_bbox_expr(cls, expr: str) -> Optional[Tuple[str, float, float, float, float, Optional[int], Optional[int]]]:
         s = str(expr or "").strip()
-        m = re.match(r"^(osm|ofm)://\[\s*([^\]]+)\s*\]\s*$", s, re.I)
+        m = re.match(r"^(osm|ofm)://(?P<body>\[\s*[^\]]+\s*\](?:/[zt]\d+)*)\s*$", s, re.I)
         if not m:
             return None
         provider = str(m.group(1) or "").strip().lower()
-        nums = [float(x) for x in re.split(r"[\s,;]+", str(m.group(2) or "").strip()) if x.strip()]
-        if len(nums) != 4:
+        body, forced_zoom, max_tile_grid = cls._strip_map_options(str(m.group("body") or ""), provider)
+        mb = re.match(r"^\[\s*([^\]]+)\s*\]$", body)
+        if not mb:
+            return None
+        nums = cls._parse_bbox_numbers(str(mb.group(1) or ""))
+        if not nums or len(nums) != 4:
             return None
         lat1, lon1, lat2, lon2 = nums
         if not (-180.0 <= lon1 <= 180.0 and -180.0 <= lon2 <= 180.0):
@@ -113,10 +215,10 @@ class OSMMapSource:
         east = max(lon1, lon2)
         south = min(lat1, lat2)
         north = max(lat1, lat2)
-        return provider, west, south, east, north
+        return provider, west, south, east, north, forced_zoom, max_tile_grid
 
     @classmethod
-    def parse_named_expr(cls, expr: str) -> Optional[Tuple[str, str, Optional[int]]]:
+    def parse_named_expr(cls, expr: str) -> Optional[Tuple[str, str, Optional[int], Optional[int]]]:
         s = str(expr or "").strip()
         m = re.match(r"^(osm|ofm)://\s*(.+?)\s*$", s, re.I)
         if not m:
@@ -125,14 +227,10 @@ class OSMMapSource:
         body = str(m.group(2) or "").strip()
         if not body or body.startswith("["):
             return None
-        forced_zoom = None
-        mz = re.match(r"^(.*?)/z(\d+)\s*$", body, re.I)
-        if mz:
-            body = str(mz.group(1) or "").strip()
-            forced_zoom = max(0, min(cls.PROVIDER_MAX_ZOOM.get(provider, 14), int(mz.group(2))))
+        body, forced_zoom, max_tile_grid = cls._strip_map_options(body, provider)
         if not body or body.lower().startswith("#map="):
             return None
-        return provider, body, forced_zoom
+        return provider, body, forced_zoom, max_tile_grid
 
     def _geocode_cache_file(self, provider: str, query: str, feature_type: str = "") -> Path:
         seed = f"v2|{str(query or '').strip().lower()}|{str(feature_type or '').strip().lower()}"
@@ -250,8 +348,8 @@ class OSMMapSource:
         max_tile_grid: Optional[int] = None,
     ) -> int:
         if max_tile_grid is None:
-            max_tile_grid = int(cls.PROVIDER_MAX_TILE_GRID.get(provider, 4))
-        zmax = int(cls.PROVIDER_MAX_ZOOM.get(provider, 14))
+            max_tile_grid = cls._provider_max_tile_grid(provider)
+        zmax = cls._provider_max_zoom(provider)
         for z in range(zmax, -1, -1):
             xmin, ymin, xmax, ymax = cls.tile_span_for_bbox(west, south, east, north, z)
             nx = xmax - xmin + 1
@@ -266,15 +364,26 @@ class OSMMapSource:
             return cls.OFM_TILE_TEMPLATE
         return cls.OSM_TILE_TEMPLATE
 
-    def fetch_vector_tiles_at_zoom(self, provider: str, bbox: BBox, z: int) -> Tuple[int, List[Tuple[bytes, int, int, int]]]:
+    def fetch_vector_tiles_at_zoom(
+        self,
+        provider: str,
+        bbox: BBox,
+        z: int,
+        *,
+        max_tile_grid: Optional[int] = None,
+    ) -> Tuple[int, List[Tuple[bytes, int, int, int]]]:
         west, south, east, north = bbox
-        z = max(0, min(self.PROVIDER_MAX_ZOOM.get(provider, 14), int(z)))
+        z = max(0, min(self._provider_max_zoom(provider), int(z)))
         xmin, ymin, xmax, ymax = self.tile_span_for_bbox(west, south, east, north, z)
+        nx = xmax - xmin + 1
+        ny = ymax - ymin + 1
         count = (xmax - xmin + 1) * (ymax - ymin + 1)
         _l.i(
-            "[sources] map tiles provider=%s z=%d count=%d span=%d,%d..%d,%d bbox=%.6f,%.6f,%.6f,%.6f",
-            provider, z, count, xmin, ymin, xmax, ymax, west, south, east, north,
+            "[sources] map tiles provider=%s z=%d count=%d grid=%dx%d max_tile_grid=%s span=%d,%d..%d,%d bbox=%.6f,%.6f,%.6f,%.6f",
+            provider, z, count, nx, ny, str(max_tile_grid or ""), xmin, ymin, xmax, ymax, west, south, east, north,
         )
+        if max_tile_grid is not None and (nx > int(max_tile_grid) or ny > int(max_tile_grid)):
+            _l.w(f"[sources] map forced zoom exceeds /t{int(max_tile_grid)}: grid={nx}x{ny} z={z}")
         template = self.tile_template_for_provider(provider)
         specs: List[Tuple[bytes, int, int, int]] = []
         for x in range(xmin, xmax + 1):
@@ -283,25 +392,32 @@ class OSMMapSource:
                 specs.append((raw, z, x, y))
         return z, specs
 
-    def fetch_vector_tiles(self, provider: str, bbox: BBox) -> Tuple[int, List[Tuple[bytes, int, int, int]]]:
-        z = self.choose_zoom_for_bbox(provider, *bbox)
-        return self.fetch_vector_tiles_at_zoom(provider, bbox, z)
+    def fetch_vector_tiles(
+        self,
+        provider: str,
+        bbox: BBox,
+        *,
+        max_tile_grid: Optional[int] = None,
+    ) -> Tuple[int, List[Tuple[bytes, int, int, int]]]:
+        grid = int(max_tile_grid) if max_tile_grid is not None else self._provider_max_tile_grid(provider)
+        z = self.choose_zoom_for_bbox(provider, *bbox, max_tile_grid=grid)
+        return self.fetch_vector_tiles_at_zoom(provider, bbox, z, max_tile_grid=grid)
 
     @staticmethod
-    def _bbox_from_expr_or_name(expr: str, geocoder: "OSMMapSource") -> Optional[Tuple[str, BBox, Optional[int]]]:
+    def _bbox_from_expr_or_name(expr: str, geocoder: "OSMMapSource") -> Optional[MapResolveResult]:
         parsed_bbox = geocoder.parse_bbox_expr(expr)
         if parsed_bbox:
-            provider, west, south, east, north = parsed_bbox
-            return provider, (west, south, east, north), None
+            provider, west, south, east, north, forced_zoom, max_tile_grid = parsed_bbox
+            return provider, (west, south, east, north), forced_zoom, max_tile_grid
         parsed_named = geocoder.parse_named_expr(expr)
         if not parsed_named:
             return None
-        provider, query, forced_zoom = parsed_named
+        provider, query, forced_zoom, max_tile_grid = parsed_named
         geo = geocoder.geocode_place(provider, query)
         if not geo:
             return None
         west, south, east, north, _lon, _lat = geo
-        return provider, (west, south, east, north), forced_zoom
+        return provider, (west, south, east, north), forced_zoom, max_tile_grid
 
     @staticmethod
     def _output_size_for_bbox(bbox: BBox, width_px: int) -> Tuple[int, int]:
@@ -314,33 +430,41 @@ class OSMMapSource:
         return width_px, height_px
 
     def render_svg_text(self, expr: str) -> Optional[str]:
-        resolved = self._bbox_from_expr_or_name(expr, self)
+        expr_url, args = self._split_map_source_args(expr)
+        resolved = self._bbox_from_expr_or_name(expr_url, self)
         if not resolved:
             return None
-        provider, bbox, forced_zoom = resolved
+        provider, bbox, forced_zoom, max_tile_grid = resolved
         key = self._provider_summary_key(provider)
         self._map_uses[key] = int(self._map_uses.get(key) or 0) + 1
         try:
             if forced_zoom is None:
-                z, tile_specs = self.fetch_vector_tiles(provider, bbox)
+                z, tile_specs = self.fetch_vector_tiles(provider, bbox, max_tile_grid=max_tile_grid)
             else:
-                z, tile_specs = self.fetch_vector_tiles_at_zoom(provider, bbox, forced_zoom)
+                z, tile_specs = self.fetch_vector_tiles_at_zoom(provider, bbox, forced_zoom, max_tile_grid=max_tile_grid)
         except Exception:
             self._emit_source_summary(provider)
             raise
         self._emit_source_summary(provider)
         width_px, height_px = self._output_size_for_bbox(bbox, self.OUTPUT_WIDTH_PX)
+        view_expr = str(args.get("view") or "default").strip()
+        view_filter = MAP_STYLE.resolve_view_filter(view_expr)
+        _l.i(f"[sources] map view='{view_expr}'")
         root = MVT.build_debug_svg_multi(
             tile_specs,
             width=width_px,
             height=height_px,
             include_layers=None,
+            view_filter=view_filter,
             bbox_override=bbox,
         )
         root.set("data-osm-provider", provider)
         root.set("data-osm-zoom", str(z))
+        root.set("data-osm-max-tile-grid", str(max_tile_grid or self._provider_max_tile_grid(provider)))
+        root.set("data-id-prefix", "")
         if forced_zoom is not None:
             root.set("data-osm-forced-zoom", str(forced_zoom))
+        root.set("data-osm-view", view_expr)
         return ET.tostring(root, encoding="unicode")
 
     def resolve(self, expr: str) -> Optional[List[str]]:

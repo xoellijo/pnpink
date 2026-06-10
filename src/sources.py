@@ -1691,6 +1691,25 @@ class SourceManager:
                 sid, wh = _make_placeholder_symbol(self.defs, key_hint, "svg text had no drawable body")
                 return SourceRef(symbol_id=sid, content_type="svg", intrinsic_box=wh, canonical_key=None)
 
+        map_plain_ids = ("data-id-prefix" in dict(src_root.attrib or {}) and str(src_root.get("data-id-prefix") or "") == "")
+        if map_plain_ids:
+            id_map: Dict[str, str] = {}
+            for n in dep_copies + body_copies:
+                for el in n.iter():
+                    oid = str(el.get("id") or "").strip()
+                    if oid and oid not in id_map:
+                        id_map[oid] = f"srcmap_{oid}"
+                        try:
+                            el.set("data-origid", oid)
+                        except Exception:
+                            pass
+            for n in dep_copies + body_copies:
+                for el in n.iter():
+                    oid = str(el.get("id") or "").strip()
+                    if oid and oid in id_map:
+                        el.set("id", id_map[oid])
+                self._rewrite_id_refs_in_subtree(n, id_map)
+
         sid = _unique_symbol_id(self.defs, "src_")
         if as_symbol:
             sym = SVG.etree.SubElement(self.defs, inkex.addNS('symbol', 'svg'))
@@ -1699,6 +1718,8 @@ class SourceManager:
             if force_deep:
                 sym.set("data-place-mode", "deep")
         sym.set('id', sid)
+        if "data-id-prefix" in dict(src_root.attrib or {}):
+            sym.set("data-id-prefix", str(src_root.get("data-id-prefix") or ""))
         if dep_copies:
             d = SVG.etree.SubElement(sym, inkex.addNS('defs', 'svg'))
             for dep in dep_copies:

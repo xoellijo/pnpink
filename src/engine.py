@@ -1208,6 +1208,10 @@ def run(self, __version__):
             else:
                 # Measure exactly like generated instances: on a flattened, uniquified copy.
                 (template_anchor_x, template_anchor_y, aw, ah), temp_anchor = _measure_flattened_template_bbox(proto_root, bbox_id)
+                if (aw <= 1e-6 or ah <= 1e-6) and declared_bbox_node is not None:
+                    _l.w(f"[templates] measured bbox for '{bbox_id}' is empty; using declared bbox")
+                    template_anchor_x, template_anchor_y, aw, ah = _visual_bbox_with_inherited_transform(declared_bbox_node)
+                    temp_anchor = declared_bbox_node
                 anc_id = _safe_node_id(temp_anchor)
                 _l.i(
                     f"[templates] measured_bbox_node_id='{anc_id}' aw_px={aw:.2f} ah_px={ah:.2f} "

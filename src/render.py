@@ -399,31 +399,32 @@ def render_phase(ctx):
         from pathlib import Path
         import glob as _glob
 
-        def _slots_per_page():
-            try:
-                return int(planner.slots_per_page() or 0)
-            except Exception:
-                try:
-                    return int(len(getattr(planner, 'local_slots', []) or []))
-                except Exception:
-                    return 0
+        def _slot_view_for(current):
+            pw_mm, ph_mm = current.page.resolved_size_mm(doc_page_mm)
+            pw = float(pw_mm) * float(getattr(planner, "px_per_mm", 1.0) or 1.0)
+            ph = float(ph_mm) * float(getattr(planner, "px_per_mm", 1.0) or 1.0)
+            plan_obj, slots = planner._compute_plan_for(current, pw, ph)
+            return plan_obj, slots, current.layout
 
-        def _resolve_slot_ref_1based(tok: str):
+        def _slots_per_page(slot_view):
+            return int(getattr(slot_view[0], "per_page", 0) or len(slot_view[1] or []))
+
+        def _resolve_slot_ref_1based(tok: str, slot_view):
             kind, val = _parse_slot_ref(tok)
-            n = _slots_per_page()
+            n = _slots_per_page(slot_view)
             if kind == "index":
                 return int(val) if 1 <= int(val) <= n else None
             if kind == "cell":
                 c1, r1 = val
-                return _slot_rc_to_index_1based(r1, c1, planner.plan, planner.current.layout)
+                return _slot_rc_to_index_1based(r1, c1, slot_view[0], slot_view[2])
             return None
 
-        def _expand_declarative_slot_selector(sel_raw: str):
+        def _expand_declarative_slot_selector(sel_raw: str, slot_view):
             body = str(sel_raw or "").strip()
             if body.startswith('[') and body.endswith(']'):
                 body = body[1:-1].strip()
             toks = [t for t in re.split(r'[\s,]+', body) if t]
-            n = _slots_per_page()
+            n = _slots_per_page(slot_view)
             out = []
             for t in toks:
                 if t == '*':
@@ -439,8 +440,8 @@ def render_phase(ctx):
                     continue
                 m = re.fullmatch(r'([A-Za-z]+\d+)\s*\.\.\s*([A-Za-z]+\d+)', t)
                 if m:
-                    a = _resolve_slot_ref_1based(m.group(1))
-                    b = _resolve_slot_ref_1based(m.group(2))
+                    a = _resolve_slot_ref_1based(m.group(1), slot_view)
+                    b = _resolve_slot_ref_1based(m.group(2), slot_view)
                     if a is None or b is None:
                         _l.w(f"[slots] invalid sequential range '{t}'")
                         continue
@@ -459,7 +460,7 @@ def render_phase(ctx):
                     cells = []
                     for rr in range(min(r1a, r1b), max(r1a, r1b) + 1):
                         for cc in range(min(c1a, c1b), max(c1a, c1b) + 1):
-                            s1 = _slot_rc_to_index_1based(rr, cc, planner.plan, planner.current.layout)
+                            s1 = _slot_rc_to_index_1based(rr, cc, slot_view[0], slot_view[2])
                             if s1 is None:
                                 _l.w(f"[slots] selector cell out of range: {cc},{rr}")
                                 continue
@@ -476,25 +477,25 @@ def render_phase(ctx):
                         else:
                             _l.w(f"[slots] selector index out of range: {i1} (size={n})")
                     continue
-                s1 = _resolve_slot_ref_1based(t)
+                s1 = _resolve_slot_ref_1based(t, slot_view)
                 if s1 is None:
                     _l.w(f"[slots] invalid selector token '{t}'")
                     continue
                 out.append(int(s1))
             return out
 
-        def _expand_procedural_slot_selector(sel_raw: str):
+        def _expand_procedural_slot_selector(sel_raw: str, slot_view, cursor_start):
             toks = [t for t in re.split(r'[\s,]+', str(sel_raw or '').strip()) if t]
-            n = _slots_per_page()
+            n = _slots_per_page(slot_view)
             out = []
-            cursor = int(getattr(planner, 'slot_index', 0) or 0) + 1
+            cursor = int(cursor_start)
             for t in toks:
                 m_gap = re.fullmatch(r'(\d+)-', t)
                 if m_gap:
                     cursor += int(m_gap.group(1))
                     continue
                 if re.fullmatch(r'[A-Za-z]+[1-9]\d*', t):
-                    s1 = _resolve_slot_ref_1based(t)
+                    s1 = _resolve_slot_ref_1based(t, slot_view)
                     if s1 is None:
                         _l.w(f"[slots] invalid anchor '{t}'")
                         continue
@@ -517,7 +518,7 @@ def render_phase(ctx):
                         cursor += 1
                     continue
                 _l.w(f"[slots] invalid procedural token '{t}'")
-            return out, max(0, cursor - 1)
+            return out, max(1, cursor)
 
         def _count_leading_stars(s: str) -> int:
             n = 0
@@ -1003,7 +1004,42 @@ def render_phase(ctx):
                 return v.strip().lower() in ("1", "true", "yes", "y", "on")
             return False
 
+        sim_page = deepcopy(page)
+        sim_card = deepcopy(card)
+        sim_layout = deepcopy(layout)
+        sim_gaps = deepcopy(gaps)
+        sim_current = deepcopy(planner.current)
+        sim_slot_index = int(getattr(planner, "slot_index", 0) or 0)
+
+        def _apply_sim_row_layout(_row):
+            nonlocal sim_page, sim_card, sim_layout, sim_gaps, sim_current, sim_slot_index
+            row_page = str(_row.get("__dm_page__", "") or "").strip()
+            row_layout = str(_row.get("__dm_layout__", "") or "").strip()
+            if row_page:
+                page_text = row_page
+                m = re.match(r"^\{\s*(?:(?P<n>\d+)\s*(?:\*\s*(?P<body>[^\}]+))?)?\s*\}$", row_page)
+                if m:
+                    body_txt = (m.group("body") or "").strip()
+                    if body_txt:
+                        page_text = "{" + body_txt + "}"
+                    else:
+                        sim_slot_index = 0
+                        page_text = ""
+                if page_text:
+                    sim_page = LYT.parse_and_resolve_page(page_text, sim_page, doc_page_mm)
+                    sim_current = _resolve_with_base(ctx, sim_page, sim_card, sim_layout, sim_gaps, doc_page_mm)
+                    sim_slot_index = 0
+            if row_layout:
+                ls = DSL.parse_layout_block(row_layout)
+                sim_page, sim_card, sim_layout, sim_gaps = LYT.apply_layout_spec(
+                    (sim_page, sim_card, sim_layout, sim_gaps), ls
+                )
+                sim_current = _resolve_with_base(ctx, sim_page, sim_card, sim_layout, sim_gaps, doc_page_mm)
+                sim_slot_index = 0
+            return None
+
         for _row in (rows or []):
+            _apply_sim_row_layout(_row)
             row_list, has_iter = _expand_row_iterators(_row)
             iter_select = _row.get('__dm_iter_select__', []) or []
             if has_iter and iter_select:
@@ -1050,8 +1086,14 @@ def render_phase(ctx):
             slot_select_raw = str(_row.get('__dm_slot_select__', '') or '').strip()
             slot_select_mode = str(_row.get('__dm_slot_select_mode__', '') or '').strip().lower()
             if slot_select_raw:
+                slot_view = _slot_view_for(sim_current)
+                n_slots = _slots_per_page(slot_view)
+                if n_slots > 0:
+                    sim_slot_index %= int(n_slots)
                 if slot_select_mode == 'declarative':
-                    targets = _expand_declarative_slot_selector(slot_select_raw)
+                    targets = _expand_declarative_slot_selector(slot_select_raw, slot_view)
+                    if targets:
+                        sim_slot_index = int(targets[-1])
                     for _i, tgt in enumerate(targets):
                         src = row_list[(_i % max(n_iter, 1))] if row_list else _row
                         r = dict(src)
@@ -1064,7 +1106,10 @@ def render_phase(ctx):
                         yield r
                     continue
                 if slot_select_mode == 'procedural':
-                    targets, cursor_after = _expand_procedural_slot_selector(slot_select_raw)
+                    targets, cursor_after = _expand_procedural_slot_selector(
+                        slot_select_raw, slot_view, cursor_start=sim_slot_index + 1
+                    )
+                    sim_slot_index = max(0, int(cursor_after) - 1)
                     for _i, tgt in enumerate(targets):
                         src = row_list[(_i % max(n_iter, 1))] if row_list else _row
                         r = dict(src)
@@ -1095,6 +1140,7 @@ def render_phase(ctx):
                 if _i > 0 and '__dm_page__' in r:
                     r['__dm_page__'] = ''  # copias no repiten page
                 yield r
+            sim_slot_index += int(holes_list.count(0)) + int(reps) + sum(int(holes_list.count(i + 1)) for i in range(reps))
     def _coerce_holes(val):
         """Coerce __dm_holes__ into a list of 1-based integers.
         In the legacy v10 monolith, __dm_holes__ was stored as a Python list[int].

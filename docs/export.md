@@ -82,6 +82,8 @@ Formats:
 
 The page border is exported in gray for positioning. Cut bbox shapes are exported in red.
 
+For Silhouette Studio, `export_cut_dxf_cameo_scale_fix=1` compensates the observed DXF import scale mismatch. Disable it in `preferences.ini` if your Cameo workflow imports DXF at the correct physical size without it.
+
 ## SVG parts
 
 Large generated SVG files can be split into smaller SVG parts. This is configured in the Preferences tab:

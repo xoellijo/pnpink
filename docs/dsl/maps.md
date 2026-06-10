@@ -17,6 +17,9 @@ All map sources use one of these forms:
 
 @{ osm://spain/z4 }
 @{ ofm://madrid/z8 }
+@{ ofm://shikoku/t1 }
+@{ ofm://shikoku/z10/t2 }
+@{ ofm://shikoku/z8/t1 view=all-labels+water_name[bay lake] }
 ```
 
 - `osm://[...]` and `ofm://[...]`
@@ -25,8 +28,25 @@ All map sources use one of these forms:
   - use a place name
 - `/zN`
   - forces a specific zoom level
+- `/tN`
+  - sets the maximum automatic tile grid per axis
+- `view=...`
+  - selects which map layers/features are rendered
 
-If no zoom is forced, PnPInk chooses it automatically.
+If no zoom is forced, PnPInk chooses it automatically. `/t1` forces the automatic zoom to fit the requested area in one tile, useful when you want to style polygons without tile-boundary strokes.
+
+`/zN` and `/tN` are part of the map URL. `view=` is a Source parameter:
+
+```txt
+@{ ofm://berlin/z12/t4 view=all-labels }
+@{ ofm://berlin view=nude+transport+places }
+@{ ofm://berlin view=all-landuses+landuse[residential industrial] }
+@{ ofm://shikoku view=all-label+water_name[bay lake] }
+```
+
+`view` expressions start from a preset (`all`, `nude`, `water`, `transport`, `places`, etc.) and then apply `+` or `-` modifiers. Feature lists use brackets with spaces, not commas.
+
+Default maximum zoom and tile grid values are configured in `preferences.ini` (`map_osm_max_zoom`, `map_ofm_max_zoom`, `map_osm_max_tile_grid`, `map_ofm_max_tile_grid`).
 
 As a simple rule:
 
@@ -57,7 +77,7 @@ PnPInk automatically:
 - resolves the place when needed
 - chooses an appropriate zoom if you do not force one
 - downloads the necessary tiles
-- joins adjacent tiles
+- clips each tile exactly to its tile rectangle
 - clips the result to the requested area
 - inserts the generated SVG into the document
 

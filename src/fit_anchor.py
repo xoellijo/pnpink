@@ -313,6 +313,10 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
             place = "use+unlink"
     except Exception:
         pass
+    try:
+        id_prefix = base.get("data-id-prefix") if "data-id-prefix" in dict(base.attrib or {}) else "af"
+    except Exception:
+        id_prefix = "af"
 
     # 12) parent where we place the clone
     #     - By default: same parent as the rect
@@ -364,6 +368,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
             anchor=(ax, ay),
             insert_after=(insert_after_elem if insert_after_elem is not None else rect),
             mode=place,
+            id_prefix=id_prefix,
         )
         placed_bbox = (target_x_world - ax * fitted_w, target_y_world - ay * fitted_h, fitted_w, fitted_h)
         if local_transform_spec is not None and placed is not None:
@@ -721,7 +726,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
         u = svg.clone_as_use(base, clip_g, T_local, insert_after=None)
         placed = svg.unlink_use(u)
     else:
-        placed = svg.deepcopy_place(base, clip_g, T_local, insert_after=None, id_prefix="af")
+        placed = svg.deepcopy_place(base, clip_g, T_local, insert_after=None, id_prefix=id_prefix)
 
     # Diagnostic logs
     _l.d(

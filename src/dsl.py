@@ -221,7 +221,17 @@ def _split_top(s: str) -> List[str]:
     out: List[str] = []
     tok: List[str] = []
     d_b = d_c = d_a = 0
+    quote = ""
     for ch in s:
+        if quote:
+            tok.append(ch)
+            if ch == quote:
+                quote = ""
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            tok.append(ch)
+            continue
         if ch == '[':
             d_b += 1; tok.append(ch); continue
         if ch == ']':
@@ -444,6 +454,13 @@ def _source_from_body(body: str) -> SourceRef:
     if has_kv:
         args = _parse_brace_dict("{"+b+"}")
         src = str(args.get("src") or args.get("href") or args.get("url") or "")
+        if not src:
+            for k, v in list(args.items()):
+                if v is True and re.match(r"^(?:https?://|wkmc://|pxby://|oclp://|pnp://|osm://|ofm://|icon://|file:|data:)", str(k), re.I):
+                    src = str(k)
+                    args["src"] = src
+                    del args[k]
+                    break
         if not src:
             raise DSLError("Source requires src")
         s = src

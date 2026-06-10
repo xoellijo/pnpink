@@ -143,7 +143,13 @@ def _parse_source_inner_token(inner: str):
     s = (inner or "").strip()
     if s.startswith("@{"):
         dsl_src, suffix = DSL.split_source_token(s)
-        return (dsl_src.src or "").strip(), suffix
+        src_uri = (dsl_src.src or "").strip()
+        args = dict(getattr(dsl_src, "args", {}) or {})
+        if src_uri.lower().startswith(("osm://", "ofm://")):
+            view_val = args.get("view") if args.get("view") not in (None, "") else args.get("v")
+            if view_val not in (None, ""):
+                src_uri = f"{src_uri} view={view_val}"
+        return src_uri, suffix
 
     m = re.match(
         r'^\s*(?:Source|S)\s*\{\s*(?P<body>[^}]*)\s*\}\s*(?:(?:\.(?P<fit>Fit\s*\{[^}]*\}))|(?:~(?P<ops>.*)))?\s*$',
@@ -155,6 +161,11 @@ def _parse_source_inner_token(inner: str):
     body = (m.group("body") or "").strip()
     dsl_src, _suffix0 = DSL.split_source_token(f"@{{{body}}}")
     src_uri = (dsl_src.src or "").strip()
+    args = dict(getattr(dsl_src, "args", {}) or {})
+    if src_uri.lower().startswith(("osm://", "ofm://")):
+        view_val = args.get("view") if args.get("view") not in (None, "") else args.get("v")
+        if view_val not in (None, ""):
+            src_uri = f"{src_uri} view={view_val}"
     fit_text = m.group("fit")
     legacy_ops = m.group("ops")
     if fit_text:

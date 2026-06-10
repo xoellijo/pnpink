@@ -11,26 +11,44 @@
     "high": { "min": 12 }
   },
 
+  // Map views are layer presets. Use them from a map source with:
+  // @{ofm://place/z8/t1 view=all-labels+water_name[bay lake]}
+  "views": {
+    "default": ["ocean", "land", "landcover", "landuse", "park", "aeroway", "water", "water_polygons", "waterway", "water_lines", "transportation", "streets", "transportation_name", "street_labels", "water_name", "water_polygons_labels", "building", "buildings", "mountain_peak", "place", "place_labels"],
+    "all": "*",
+    "nude": ["ocean", "water", "water_polygons", "waterway", "water_lines", "land", "landcover", "park"],
+    "water": ["ocean", "water", "water_polygons", "waterway", "water_lines", "water_name"],
+    "transport": ["transportation", "streets", "transportation_name", "street_labels"],
+    "places": ["place", "place_labels"],
+    "label": ["water_name", "water_polygons_labels", "transportation_name", "street_labels", "place_labels"],
+    "labels": ["water_name", "water_polygons_labels", "transportation_name", "street_labels", "place_labels"],
+    "landuse": ["landuse", "landcover", "park", "land"],
+    "landuses": ["landuse", "landcover", "park", "land"],
+    "buildings": ["building", "buildings"],
+    "boundaries": ["boundary"]
+  },
+
   // Higher values are drawn later.
   "layer_order": {
     "ocean": 0,
-    "landcover": 2,
-    "park": 3,
+    "land": 1,
+    "landcover": 4,
     "landuse": 5,
-    "land": 5,
-    "water": 6,
-    "water_polygons": 6,
-    "waterway": 7,
-    "water_lines": 7,
-    "aeroway": 12,
+    "park": 6,
+    "aeroway": 7,
+    "water": 8,
+    "water_polygons": 8,
+    "waterway": 9,
+    "water_lines": 9,
+    "boundary": 88,
     "transportation": 20,
     "streets": 20,
+    "transportation_name": 21,
+    "street_labels": 21,
+    "water_name": 22,
+    "water_polygons_labels": 22,
     "building": 30,
     "buildings": 30,
-    "water_name": 90,
-    "water_polygons_labels": 90,
-    "transportation_name": 92,
-    "street_labels": 92,
     "mountain_peak": 94,
     "place": 96,
     "place_labels": 96
@@ -39,7 +57,7 @@
   // Fallback SVG attributes by geometry type.
   "base_style": {
     "polygon": { "fill": "#ddd", "stroke": "#666", "stroke-width": "0.4" },
-    "line": { "fill": "none", "stroke": "#444", "stroke-width": "0.7" },
+    "line": { "fill": "none", "stroke": "#444", "stroke-width": "0.7", "stroke-linejoin": "round", "stroke-linecap": "round" },
     "point": { "fill": "#000", "stroke": "#fff", "stroke-width": "0.8" }
   },
 
@@ -62,33 +80,64 @@
     },
 
     "water_name": {
-      "include": [ { "zoom": ["medium", "high"], "kind": ["bay", "lake", "ocean"] } ],
-      "label_style": { "default": { "font-size": "9" } }
+      "include": [ { "zoom": ["medium", "high"], "kind": ["bay", "canal", "lake", "ocean"] } ],
+      "point_shape": { "default": "none" },
+      "label_style": {
+        "default": {
+          "fill": "#245f8f",
+          "font-size": "8",
+          "text-anchor": "middle",
+          "dominant-baseline": "middle"
+        }
+      },
+      "label_offset": [0, 0]
     },
 
     "waterway": {
-      "include": [ { "kind": "river" } ],
-      "style": { "line": [ { "attrs": { "fill": "none", "stroke": "#6fb2e4", "stroke-width": "0.8" } } ] }
+      "include": [ { "kind": ["river", "canal", "stream", "drain", "ditch"] } ],
+      "style": {
+        "line": [
+          { "kind": "canal", "attrs": { "fill": "none", "stroke": "#6fb2e4", "stroke-width": "1.05" } },
+          { "attrs": { "fill": "none", "stroke": "#6fb2e4", "stroke-width": "0.8" } }
+        ]
+      }
     },
 
     "water_polygons": {
-      "include": [ { "kind": ["water", "river", "reservoir", "basin", "lagoon"] } ],
+      "include": [ { "kind": ["water", "river", "canal", "reservoir", "basin", "lagoon"] } ],
       "style": {
         "polygon": [
-          { "kind": "river", "attrs": { "fill": "#9fcfee", "stroke": "#79b4db", "stroke-width": "0.35" } },
+          { "kind": ["river", "canal"], "attrs": { "fill": "#9fcfee", "stroke": "#79b4db", "stroke-width": "0.35" } },
           { "attrs": { "fill": "#8ec4e8", "stroke": "#6baed6", "stroke-width": "0.35" } }
         ]
       }
     },
 
     "water_lines": {
-      "include": [ { "zoom": ["medium", "high"], "kind": "river" } ],
-      "style": { "line": [ { "attrs": { "fill": "none", "stroke": "#6fb2e4", "stroke-width": "0.8" } } ] }
+      "include": [ { "zoom": ["medium", "high"], "kind": ["river", "canal", "stream", "drain", "ditch"] } ],
+      "style": {
+        "line": [
+          { "kind": "canal", "attrs": { "fill": "none", "stroke": "#6fb2e4", "stroke-width": "1.05" } },
+          { "attrs": { "fill": "none", "stroke": "#6fb2e4", "stroke-width": "0.8" } }
+        ]
+      }
     },
 
     "water_polygons_labels": { "include": [] },
-    "boundary": { "include": [] },
-    "boundaries": { "include": [] },
+
+    "boundary": {
+      // Disabled by default. To show political/maritime boundaries, use:
+      "include": [ { "admin_level": [2, 4, 6, 8] } ],
+      //"include": [],
+      "style": {
+        "line": [
+          { "attrs": { "fill": "none", "stroke": "#000", "stroke-width": "0.22", "stroke-dasharray": "1.2 1.8", "stroke-linecap": "round", "stroke-linejoin": "round" } }
+        ],
+        "polygon": [
+          { "attrs": { "fill": "none", "stroke": "#000", "stroke-width": "0.22", "stroke-dasharray": "1.2 1.8", "stroke-linecap": "round", "stroke-linejoin": "round" } }
+        ]
+      }
+    },
 
     "mountain_peak": {
       "include": [
@@ -134,6 +183,21 @@
           { "kind": "commercial", "attrs": { "fill": "#d7c5b6", "stroke": "#aa9583", "stroke-width": "0.18" } },
           { "kind": ["university", "school", "hospital"], "attrs": { "fill": "#ece8ce", "stroke": "#cfcaa1", "stroke-width": "0.18" } },
           { "kind": "residential", "attrs": { "fill": "#ffd19b", "stroke": "none" } }
+        ]
+      }
+    },
+
+    "aeroway": {
+      "include": [ { "zoom": ["medium", "high"] } ],
+      "style": {
+        "polygon": [
+          { "kind": "apron", "attrs": { "fill": "#d6d6d6", "stroke": "#b5b5b5", "stroke-width": "0.18" } },
+          { "attrs": { "fill": "#cfcfcf", "stroke": "#aaaaaa", "stroke-width": "0.22" } }
+        ],
+        "line": [
+          { "kind": "runway", "attrs": { "fill": "none", "stroke": "#b8b8b8", "stroke-width": "2.0" } },
+          { "kind": "taxiway", "attrs": { "fill": "none", "stroke": "#c7c7c7", "stroke-width": "0.9" } },
+          { "attrs": { "fill": "none", "stroke": "#c0c0c0", "stroke-width": "0.7" } }
         ]
       }
     },
