@@ -24,6 +24,7 @@
     "labels": ["water_name", "water_polygons_labels", "transportation_name", "street_labels", "place_labels"],
     "landuse": ["landuse", "landcover", "park", "land"],
     "landuses": ["landuse", "landcover", "park", "land"],
+    "mountains": ["mountain_peak", "landcover", "land"],
     "buildings": ["building", "buildings"],
     "boundaries": ["boundary"]
   },
@@ -141,18 +142,21 @@
 
     "mountain_peak": {
       "include": [
-        { "kind": "saddle", "zoom": "high", "rank_max": 3 },
-        { "kind": "peak", "zoom": "low", "rank_max": 2, "ele_min": 300 },
-        { "kind": "peak", "zoom": "medium", "rank_max": 3, "ele_min": 120 },
-        { "kind": "peak", "zoom": "high", "rank_max": 4, "ele_min": 50 }
+        { "kind": "saddle", "zoom": "medium", "rank_max": 3, "ele_min": 600 },
+        { "kind": "saddle", "zoom": "high", "rank_max": 8, "ele_min": 800 },
+        { "kind": "peak", "zoom": "low", "rank_max": 3, "ele_min": 800 },
+        { "kind": "peak", "zoom": "medium", "rank_max": 6, "ele_min": 500 },
+        { "kind": "peak", "zoom": "high", "rank_max": 12, "ele_min": 300 }
       ],
       "labels": false,
       "point_shape": { "default": "triangle" },
-      "point_size": { "default": 2.2 },
+      "point_size": { "default": "=clamp((16-rank)/3,1.2,3.8)", "saddle": "=clamp((14-rank)/4,1.0,2.8)" },
       "style": {
         "point": [
-          { "kind": "saddle", "attrs": { "fill": "#7c6855", "stroke": "#fff", "stroke-width": "0.8" } },
-          { "attrs": { "fill": "#5f5244", "stroke": "#fff", "stroke-width": "0.8" } }
+          { "kind": "saddle", "attrs": { "fill": "#8a735d", "stroke": "#fff", "stroke-width": "0.65" } },
+          { "ele_min": 2000, "attrs": { "fill": "#4d4035", "stroke": "#fff", "stroke-width": "0.75" } },
+          { "ele_min": 1000, "attrs": { "fill": "#5f5244", "stroke": "#fff", "stroke-width": "0.7" } },
+          { "attrs": { "fill": "#756655", "stroke": "#fff", "stroke-width": "0.65" } }
         ]
       },
       "label_style": { "default": { "font-size": "8" } },
@@ -165,9 +169,17 @@
     },
 
     "landcover": {
-      "include": [ { "kind": ["wood", "grass", "wetland"] } ],
+      "include": [
+        { "kind": ["wood", "grass", "wetland", "rock"] },
+        { "subclass": ["bare_rock", "scree", "shingle", "heath", "grassland", "scrub", "fell"] }
+      ],
       "style": {
         "polygon": [
+          { "subclass": "bare_rock", "attrs": { "fill": "#c7b9a5", "stroke": "#aa9983", "stroke-width": "0.18" } },
+          { "subclass": ["scree", "shingle"], "attrs": { "fill": "#d2c7b7", "stroke": "#b7a996", "stroke-width": "0.16", "stroke-dasharray": "0.6 0.7" } },
+          { "subclass": ["heath", "fell"], "attrs": { "fill": "#d3d3b1", "stroke": "#b9bb8f", "stroke-width": "0.16" } },
+          { "subclass": ["grassland", "scrub"], "attrs": { "fill": "#ccd7ad", "stroke": "#aebd8b", "stroke-width": "0.16" } },
+          { "kind": "rock", "attrs": { "fill": "#c9bcaa", "stroke": "#ad9f8c", "stroke-width": "0.18" } },
           { "kind": "wood", "attrs": { "fill": "#c9ddb2", "stroke": "#a7c08a", "stroke-width": "0.2" } },
           { "kind": "grass", "attrs": { "fill": "#d9e7bf", "stroke": "#bccf95", "stroke-width": "0.18" } },
           { "kind": "wetland", "attrs": { "fill": "#cddfb3", "stroke": "#9ab88a", "stroke-width": "0.18" } }
@@ -205,10 +217,14 @@
     "land": {
       "include": [
         { "zoom": "low", "kind": "forest" },
-        { "zoom": ["medium", "high"], "kind": ["forest", "park", "grass", "grassland", "meadow", "garden", "golf_course", "orchard", "farmland", "farmyard", "beach", "industrial", "commercial", "brownfield", "bare_rock", "heath", "allotments", "greenfield", "greenhouse_horticulture", "garages"] }
+        { "zoom": ["medium", "high"], "kind": ["forest", "park", "grass", "grassland", "meadow", "garden", "golf_course", "orchard", "farmland", "farmyard", "beach", "industrial", "commercial", "brownfield", "bare_rock", "scree", "scrub", "heath", "fell", "allotments", "greenfield", "greenhouse_horticulture", "garages"] }
       ],
       "style": {
         "polygon": [
+          { "kind": "bare_rock", "attrs": { "fill": "#c7b9a5", "stroke": "#aa9983", "stroke-width": "0.18" } },
+          { "kind": "scree", "attrs": { "fill": "#d2c7b7", "stroke": "#b7a996", "stroke-width": "0.16", "stroke-dasharray": "0.6 0.7" } },
+          { "kind": ["heath", "fell"], "attrs": { "fill": "#d3d3b1", "stroke": "#b9bb8f", "stroke-width": "0.16" } },
+          { "kind": "scrub", "attrs": { "fill": "#cbd2aa", "stroke": "#aeb58b", "stroke-width": "0.16" } },
           { "kind": ["forest", "park", "grass", "grassland", "meadow", "garden", "golf_course", "orchard"], "attrs": { "fill": "#c9ddb2", "stroke": "#a7c08a", "stroke-width": "0.25" } },
           { "kind": ["farmland", "farmyard", "allotments", "greenhouse_horticulture"], "attrs": { "fill": "#d8dfb0", "stroke": "#b7c184", "stroke-width": "0.22" } },
           { "kind": "beach", "attrs": { "fill": "#ecd8aa", "stroke": "#d7bf8a", "stroke-width": "0.2" } },

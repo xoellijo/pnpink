@@ -27,7 +27,7 @@ def coerce_margins_mm(mg):
 # ------------------------------------------------------
 __version__ = "v_7.3.0"
 
-import os, sys, re, math, tempfile, subprocess, hashlib
+import os, sys, re, math, tempfile, subprocess, hashlib, fnmatch
 from copy import deepcopy
 from pathlib import Path
 from urllib.parse import urlparse, unquote
@@ -1239,6 +1239,149 @@ def style_map(node: etree._Element):
 
 def style_set(node: etree._Element, m: dict):
     node.set("style", ";".join(f"{k}:{v}" for k,v in m.items() if v!=""))
+
+
+_PASTE_STYLE_ATTRS = {
+    "style", "class", "filter",
+    "fill", "fill-opacity", "fill-rule",
+    "stroke", "stroke-width", "stroke-opacity", "stroke-linecap", "stroke-linejoin",
+    "stroke-miterlimit", "stroke-dasharray", "stroke-dashoffset",
+    "opacity", "paint-order", "color", "vector-effect",
+}
+
+_PASTE_DESCENDANT_STYLE_ATTRS = _PASTE_STYLE_ATTRS - {"filter", "class"}
+_PASTE_GEOMETRY_TAGS = {"path", "rect", "circle", "ellipse", "polygon", "polyline", "line"}
+
+
+def _svg_local_name(node) -> str:
+    tag = str(getattr(node, "tag", "") or "")
+    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
+
+
+def _node_desc_text(node) -> str:
+    try:
+        for child in list(node):
+            if _svg_local_name(child) == "desc":
+                return "".join(child.itertext()).strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _node_paste_rule_text(node) -> str:
+    return (
+        (node.get(f"{{{NSS.get('inkscape')}}}label") or "").strip()
+        or (node.get("inkscape:label") or "").strip()
+        or _node_desc_text(node)
+    )
+
+
+def _copy_paste_attrs(src, dst, *, filter_only: bool, attrs_override=None) -> bool:
+    if filter_only:
+        val = src.get("filter") or style_map(src).get("filter")
+        if not val:
+            return False
+        changed = False
+        if dst.get("filter") != val:
+            dst.set("filter", val)
+            changed = True
+        dst_style = style_map(dst)
+        if dst_style.get("filter") != val:
+            dst_style["filter"] = val
+            style_set(dst, dst_style)
+            changed = True
+        return changed
+    attrs = set(attrs_override) if attrs_override is not None else ({"filter"} if filter_only else _PASTE_STYLE_ATTRS)
+    changed = False
+    for key in attrs:
+        val = src.get(key)
+        if val is None:
+            if filter_only:
+                continue
+            try:
+                dst.attrib.pop(key, None)
+                changed = True
+            except Exception:
+                pass
+            continue
+        if dst.get(key) != val:
+            dst.set(key, val)
+            changed = True
+    return changed
+
+
+def _copy_paste_attrs_to_descendants(src, dst) -> int:
+    changed = 0
+    for child in dst.iter():
+        if child is dst or not isinstance(getattr(child, "tag", None), str):
+            continue
+        if _svg_local_name(child) not in _PASTE_GEOMETRY_TAGS:
+            continue
+        if _copy_paste_attrs(src, child, filter_only=False, attrs_override=_PASTE_DESCENDANT_STYLE_ATTRS):
+            changed += 1
+    return changed
+
+
+def _paste_pattern_matches(node, pattern: str) -> bool:
+    pat = str(pattern or "").strip()
+    if not pat:
+        return False
+    ids = {
+        str(node.get("id") or "").strip(),
+        str(node.get("data-origid") or "").strip(),
+    }
+    pats = {pat, pat.replace("-", "_"), pat.replace("_", "-")}
+    for value in {v for v in ids if v}:
+        values = {value, value.replace("-", "_"), value.replace("_", "-")}
+        if any(fnmatch.fnmatchcase(v, p) for v in values for p in pats):
+            return True
+    return False
+
+
+def apply_paste_style_rules(source_root, target_root) -> int:
+    """Apply template style/filter paste rules to generated nodes by id glob.
+
+    Rules live in Inkscape labels, with SVG <desc> as fallback:
+      paste: water_group*
+      paste-style: water_group*
+      paste-filter: water_*_u4
+    """
+    if source_root is None or target_root is None:
+        return 0
+    rules = []
+    rule_nodes = set()
+    for node in source_root.iter():
+        if not isinstance(getattr(node, "tag", None), str):
+            continue
+        text = _node_paste_rule_text(node)
+        m = re.match(r"^\s*(paste|paste-style|paste-filter)\s*:\s*(.+?)\s*$", text, re.I)
+        if not m:
+            continue
+        kind = m.group(1).lower()
+        patterns = [p for p in re.split(r"\s+", m.group(2).strip()) if p]
+        if patterns:
+            rules.append((node, kind == "paste-filter", patterns))
+            rule_nodes.add(node)
+    if not rules:
+        _l.i("[paste-style] no paste rules found")
+        return 0
+
+    changed = 0
+    targets = [n for n in target_root.iter() if isinstance(getattr(n, "tag", None), str) and (n.get("id") or "").strip()]
+    for src, filter_only, patterns in rules:
+        matches = 0
+        for dst in targets:
+            if dst in rule_nodes:
+                continue
+            if any(_paste_pattern_matches(dst, pat) for pat in patterns):
+                matches += 1
+                if _copy_paste_attrs(src, dst, filter_only=filter_only):
+                    changed += 1
+                if not filter_only:
+                    changed += _copy_paste_attrs_to_descendants(src, dst)
+        _l.i(f"[paste-style] rule patterns={patterns} matches={matches} filter_only={filter_only}")
+    _l.i(f"[paste-style] applied {changed} style/filter paste(s) from {len(rules)} rule(s)")
+    return changed
 
 def hoist_template_text_styles_to_css(template_root, defs_root=None) -> int:
     """Deduplicate inline text styles into CSS classes stored in defs/style."""
@@ -2702,7 +2845,7 @@ __all__ = [
     "rightmost_page","next_dm_page_id","ensure_page_for","find_or_create_layer",
     "apply_translation","composed_transform","pick_anchor_in",
     "clear_children","is_text_like","replace_text","replace_text_fast","replace_xml",
-    "style_map","style_set","hoist_template_images_to_defs","hoist_template_text_styles_to_css","BBox","query_all",
+    "style_map","style_set","apply_paste_style_rules","hoist_template_images_to_defs","hoist_template_text_styles_to_css","BBox","query_all",
     "ensure_xlink_ns","clone_node_transform","absolutize_all_linked_images",
     "build_target_index",
     "node_kind","visual_bbox",

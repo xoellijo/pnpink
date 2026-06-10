@@ -46,6 +46,24 @@ If no zoom is forced, PnPInk chooses it automatically. `/t1` forces the automati
 
 `view` expressions start from a preset (`all`, `nude`, `water`, `transport`, `places`, etc.) and then apply `+` or `-` modifiers. Feature lists use brackets with spaces, not commas.
 
+Useful map view presets:
+
+```txt
+default     normal map without boundaries
+all         all styled layers
+nude        clean land/water base
+water       water layers and water labels
+transport   roads/rail and transport labels
+places      places and place labels
+landuse     land, landcover, parks, landuse
+mountains   peaks and mountain-like landcover
+buildings   buildings
+boundaries  administrative boundaries
+labels      main label layers
+```
+
+`mountains` uses provider data such as `mountain_peak ele/rank` and rocky/highland landcover (`bare_rock`, `scree`, `heath`, `grassland`, etc.). It is not DEM/contour data.
+
 Default maximum zoom and tile grid values are configured in `preferences.ini` (`map_osm_max_zoom`, `map_ofm_max_zoom`, `map_osm_max_tile_grid`, `map_ofm_max_tile_grid`).
 
 As a simple rule:
@@ -98,3 +116,12 @@ src/map_style.jsonc
 ```
 
 It controls layer order, label language priority, zoom bands, feature filters, SVG styles, label styles, and label offsets. JSONC comments (`// ...`) are allowed.
+
+Template objects can override generated map styles by Inkscape label:
+
+```txt
+paste-style: water_group*
+paste-filter: water_*_u4
+```
+
+`paste-style:` copies visual style attributes, including filters, to generated IDs matching the glob pattern. When the target is a group, paint attributes are also applied to descendant geometry. `paste-filter:` copies only the filter. Hyphens and underscores are treated as equivalent in paste patterns.

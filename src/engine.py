@@ -1807,5 +1807,9 @@ def run(self, __version__):
             SM.log_web_summary()
         except Exception:
             pass
+    try:
+        SVG.apply_paste_style_rules(root, root)
+    except Exception as ex:
+        _l.w(f"[paste-style] skipped: {ex}")
 
     _l.s("END DeckMaker")

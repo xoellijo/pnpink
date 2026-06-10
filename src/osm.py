@@ -9,6 +9,7 @@ import hashlib
 import json
 import math
 import re
+import unicodedata
 import urllib.parse
 import xml.etree.ElementTree as ET
 
@@ -238,30 +239,35 @@ class OSMMapSource:
         return self._maptiles_dir() / f"nominatim_{key}.json"
 
     @staticmethod
-    def _geocode_bbox_area(row: dict) -> float:
-        try:
-            south, north, west, east = [float(v) for v in (row.get("boundingbox") or [])]
-            return max(0.0, east - west) * max(0.0, north - south)
-        except Exception:
-            return float("inf")
+    def _norm_place_text(value: object) -> str:
+        text = unicodedata.normalize("NFKD", str(value or "").lower())
+        text = "".join(ch for ch in text if not unicodedata.combining(ch))
+        return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", text)).strip()
 
     @classmethod
     def _choose_geocode_row(cls, query: str, rows: list) -> Optional[dict]:
         good = [r for r in rows if isinstance(r, dict) and r.get("boundingbox") and r.get("lat") and r.get("lon")]
         if not good:
             return None
-        return sorted(good, key=lambda r: (cls._geocode_bbox_area(r), -float(r.get("importance") or 0.0)))[0]
+        return good[0]
 
-    @staticmethod
-    def _is_broad_admin(row: dict) -> bool:
-        try:
-            return (
-                str(row.get("category") or "") == "boundary"
-                and str(row.get("type") or "") == "administrative"
-                and int(row.get("place_rank") or 0) <= 10
-            )
-        except Exception:
-            return False
+    @classmethod
+    def _filter_geocode_rows(cls, query: str, rows: list) -> tuple[str, list]:
+        parts = [p.strip() for p in str(query or "").split(",") if p.strip()]
+        if len(parts) <= 1:
+            return str(query or "").strip(), rows
+        base = parts[0]
+        filters = [cls._norm_place_text(p) for p in parts[1:] if cls._norm_place_text(p)]
+        if not filters:
+            return base, rows
+        filtered = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            haystack = cls._norm_place_text(" ".join(str(row.get(k) or "") for k in ("display_name", "name", "category", "type", "addresstype")))
+            if all(f in haystack for f in filters):
+                filtered.append(row)
+        return base, filtered
 
     def _load_geocode_rows(self, provider: str, query: str, feature_type: str = "") -> Optional[list]:
         cache = self._geocode_cache_file(provider, query, feature_type)
@@ -298,16 +304,27 @@ class OSMMapSource:
         return list(data or [])
 
     def geocode_place(self, provider: str, query: str) -> Optional[GeocodeResult]:
-        rows = self._load_geocode_rows(provider, query) or []
+        search_query = str(query or "").split(",", 1)[0].strip() or str(query or "").strip()
+        rows_raw = self._load_geocode_rows(provider, search_query) or []
+        _base_query, rows = self._filter_geocode_rows(query, rows_raw)
         if not rows:
-            _l.w(f"[sources] nominatim no candidates query='{query}'")
+            _l.w(f"[sources] nominatim no candidates query='{query}' search='{search_query}'")
             return None
+        try:
+            preview = []
+            for r in rows[:5]:
+                if not isinstance(r, dict):
+                    continue
+                preview.append(
+                    f"{r.get('display_name') or ''} "
+                    f"type={r.get('category') or ''}/{r.get('type') or ''} "
+                    f"rank={r.get('place_rank') or ''} imp={r.get('importance') or ''}"
+                )
+            if preview:
+                _l.i(f"[sources] nominatim candidates query='{query}' search='{search_query}' filtered={len(rows)}/{len(rows_raw)} -> " + " | ".join(preview))
+        except Exception:
+            pass
         row = self._choose_geocode_row(query, rows) or {}
-        if row and self._is_broad_admin(row) and "," not in str(query or ""):
-            city_rows = self._load_geocode_rows(provider, query, "city") or []
-            city_row = self._choose_geocode_row(query, city_rows)
-            if city_row:
-                row = city_row
         if not row:
             _l.w(f"[sources] nominatim no valid bbox query='{query}' candidates={len(rows)}")
             return None
@@ -315,7 +332,11 @@ class OSMMapSource:
             south, north, west, east = [float(v) for v in (row.get("boundingbox") or [])]
             lat = float(row.get("lat"))
             lon = float(row.get("lon"))
-            _l.i(f"[sources] nominatim selected query='{query}' display='{row.get('display_name') or ''}' bbox={west:.6f},{south:.6f},{east:.6f},{north:.6f}")
+            _l.i(
+                f"[sources] nominatim selected query='{query}' search='{search_query}' "
+                f"display='{row.get('display_name') or ''}' "
+                f"bbox={west:.6f},{south:.6f},{east:.6f},{north:.6f}"
+            )
             return west, south, east, north, lon, lat
         except Exception:
             return None
