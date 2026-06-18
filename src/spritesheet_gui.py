@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import tkinter as tk
 from dataclasses import dataclass
 from math import floor
@@ -28,22 +29,28 @@ import deckmaker_ipc as DMIPC
 import inkscape_cli as INKSCAPE
 import log as LOG
 import deckmaker_paths as DMPATHS
+import gui as GUI
 import svg as SVG
 import svg
 
 _l = LOG
-INKSCAPE_DOC_DPI = 96.0
-PREVIEW_EXPORT_DPI = 300
+PREVIEW_EXPORT_DPI = 96
 MM_SPIN_STEP = 0.01
 MM_CUSTOM_STEP = 0.1
 
 
 def mm_to_px(mm: float, svgdoc) -> float:
-    return float(inkex.units.convert_unit(f"{mm}mm", "px", svgdoc))
+    try:
+        return float(mm) * float(svgdoc.unittouu("1mm"))
+    except Exception:
+        return float(inkex.units.convert_unit(f"{mm}mm", "px", svgdoc))
 
 
 def px_to_mm(px: float, svgdoc) -> float:
-    return float(inkex.units.convert_unit(f"{px}px", "mm", svgdoc))
+    try:
+        return float(px) / float(svgdoc.unittouu("1mm"))
+    except Exception:
+        return float(inkex.units.convert_unit(f"{px}px", "mm", svgdoc))
 
 
 DEFAULT_GUI_SPEC = {
@@ -211,45 +218,62 @@ def _compute_grid(spec, bw, bh, svgdoc):
 
 def _try_export_png_id(input_svg: str, node_id: str | None, inkscape_exe: str | None) -> str | None:
     if not inkscape_exe or not node_id or not input_svg:
-        _l.w(
-            "[spritesheet_gui] export id skipped "
-            f"inkscape='{inkscape_exe or ''}' id='{node_id or ''}' svg='{input_svg or ''}'"
-        )
+        _l.w(f"[spritesheet_gui] export id skipped inkscape='{inkscape_exe or ''}' id='{node_id or ''}' svg='{input_svg or ''}'")
         return None
     fd, out_png = tempfile.mkstemp(prefix="pnpink_sprite_id_", suffix=".png")
     os.close(fd)
-    commands = [
-        "active-window-start",
-        "export-type:png",
-        f"export-dpi:{int(PREVIEW_EXPORT_DPI)}",
-        f"export-filename:{out_png}",
-        f"export-id:{node_id}",
-        "export-id-only",
-        "export-do",
-    ]
+    commands = INKSCAPE.build_shell_export_id_png_commands(input_svg, [(node_id, out_png, PREVIEW_EXPORT_DPI)])
     _l.i(f"[spritesheet_gui] export id shell start svg='{input_svg}' id='{node_id}' out='{out_png}'")
     try:
         rc, msg = INKSCAPE.run_shell_commands(
             inkscape_exe,
             commands,
             exe_dir=INKSCAPE.executable_dir(inkscape_exe),
-            env=INKSCAPE.clean_launch_env(isolated_profile=False),
             timeout_s=8.0,
             shell_args=["-q", "-g"],
         )
-        exists = os.path.isfile(out_png)
-        size = os.path.getsize(out_png) if exists else 0
-        _l.i(f"[spritesheet_gui] export id shell done id='{node_id}' rc={rc} exists={exists} size={size}")
-        if rc == 0 and exists and size > 0:
+        ok = rc == 0 and os.path.isfile(out_png) and os.path.getsize(out_png) > 0 and _is_complete_png(out_png)
+        _l.i(f"[spritesheet_gui] export id shell done id='{node_id}' rc={rc} ok={ok} size={os.path.getsize(out_png) if os.path.isfile(out_png) else 0}")
+        if ok:
             return out_png
         _l.w(f"[spritesheet_gui] export id shell failed id='{node_id}' rc={rc} msg={str(msg or '')[:500]}")
-    except Exception:
-        pass
-    try:
-        os.remove(out_png)
-    except Exception:
-        pass
+    except Exception as ex:
+        _l.w(f"[spritesheet_gui] export id shell exception id='{node_id}': {ex}")
+    _remove_pnpink_temp_file(out_png, ("pnpink_sprite_id_",))
     return None
+
+
+def _is_pnpink_temp_file(path: str, prefixes: tuple[str, ...]) -> bool:
+    try:
+        full = os.path.abspath(str(path or ""))
+        temp = os.path.abspath(tempfile.gettempdir())
+        name = os.path.basename(full).lower()
+        return os.path.commonpath([full, temp]).lower() == temp.lower() and any(name.startswith(prefix) for prefix in prefixes)
+    except Exception:
+        return False
+
+
+def _remove_pnpink_temp_file(path: str, prefixes: tuple[str, ...]) -> None:
+    if not _is_pnpink_temp_file(path, prefixes):
+        return
+    try:
+        os.remove(path)
+    except Exception:
+        pass
+
+
+def _is_complete_png(path: str) -> bool:
+    try:
+        size = os.path.getsize(path)
+        if size <= 16:
+            return False
+        with open(path, "rb") as fh:
+            head = fh.read(8)
+            fh.seek(max(0, size - 32))
+            tail = fh.read()
+        return head == b"\x89PNG\r\n\x1a\n" and b"IEND" in tail
+    except Exception:
+        return False
 
 
 def _write_temp_svg(doc_tree) -> str | None:
@@ -279,13 +303,23 @@ def _copy_svg_for_worker(src_svg: str) -> str | None:
         _l.w(f"[spritesheet_gui] worker svg copy failed: {ex}")
         return None
 
+
+def _is_inkscape_temp_svg(path: str) -> bool:
+    try:
+        p = os.path.abspath(str(path or ""))
+        temp = os.path.abspath(tempfile.gettempdir())
+        return p.lower().startswith(temp.lower()) and os.path.basename(p).lower().startswith("ink_ext_")
+    except Exception:
+        return False
+
+
 @dataclass
 class GuiResult:
     layout_text: str | None
 
 
 class SpriteSheetGui:
-    def __init__(self, bw, bh, initial_spec, svgdoc, initial_image: str | None = None):
+    def __init__(self, bw, bh, initial_spec, svgdoc, loader=None):
         self.bw = float(bw)
         self.bh = float(bh)
         self.svgdoc = svgdoc
@@ -294,12 +328,10 @@ class SpriteSheetGui:
         self.pan_x = 10.0
         self.pan_y = 10.0
         self._drag_last = None
-        self._photo = None
         self._pil_base = None
         self._pil_image = None
         self._img_id = None
         self._did_initial_fit = False
-        self._last_pil_size = None
         self._last_view_key = None
         self._last_spec_key = None
         self._last_grid = None
@@ -311,6 +343,7 @@ class SpriteSheetGui:
         self._gap_max_mm = 20.0
         self._border_max_mm = 40.0
         self._cleanup_paths = []
+        self.grid_controls = []
 
         self.root = tk.Tk()
         self.root.title("PnPInk Spritesheet")
@@ -321,7 +354,7 @@ class SpriteSheetGui:
 
         self.vars = {
             "card_mode": tk.StringVar(value=initial_spec["card_mode"]),
-            "ui_mode": tk.StringVar(value="Manual"),
+            "ui_mode": tk.StringVar(value="Grid"),
             "cols": tk.IntVar(value=int(initial_spec["cols"])),
             "rows": tk.IntVar(value=int(initial_spec["rows"])),
             "card_preset": tk.StringVar(value=initial_spec["card_preset"]),
@@ -343,8 +376,8 @@ class SpriteSheetGui:
         }
 
         self._build_ui()
-        if initial_image:
-            self._load_image(initial_image)
+        if loader:
+            self._start_loader(loader)
         self.root.after(80, self.request_redraw)
 
     def _build_ui(self):
@@ -372,9 +405,15 @@ class SpriteSheetGui:
         self._on_ui_mode_changed()
 
     def _build_bottom_controls(self, parent):
-        choices = ["Manual", "Custom", "Preset"]
+        choices = ["Grid", "Preset", "Custom"]
         self.mode_combo = ttk.Combobox(parent, state="readonly", textvariable=self.vars["ui_mode"], values=choices, width=16)
         self.mode_combo.place(x=4, rely=1.0, y=-2, anchor="sw")
+
+        self.cols_spin = ttk.Spinbox(parent, from_=1, to=30, width=3, textvariable=self.vars["cols"], command=self._round_grid_vars)
+        self.cols_spin.place(x=134, rely=1.0, y=-2, anchor="sw")
+        self.rows_spin = ttk.Spinbox(parent, from_=1, to=30, width=3, textvariable=self.vars["rows"], command=self._round_grid_vars)
+        self.rows_spin.place(x=174, rely=1.0, y=-2, anchor="sw")
+        self.grid_controls.extend((self.cols_spin, self.rows_spin))
 
         self.custom_w_spin = ttk.Spinbox(parent, from_=1, to=500, increment=MM_CUSTOM_STEP, width=6, textvariable=self.vars["card_w_mm"], command=self.request_redraw)
         self.custom_h_spin = ttk.Spinbox(parent, from_=1, to=500, increment=MM_CUSTOM_STEP, width=6, textvariable=self.vars["card_h_mm"], command=self.request_redraw)
@@ -384,8 +423,16 @@ class SpriteSheetGui:
         self.preset_combo.place(x=134, rely=1.0, y=-2, anchor="sw")
         self.preset_combo.bind("<<ComboboxSelected>>", lambda _e: self.request_redraw())
 
-        self.layout_entry = ttk.Entry(parent, textvariable=self.vars["layout_text"], width=48, justify="center")
-        self.layout_entry.place(relx=0.5, rely=1.0, y=-2, anchor="s")
+        self.gap_h_scale = ttk.Scale(parent, from_=0, to=30, orient=tk.HORIZONTAL, variable=self.vars["gap_h"], length=130, command=lambda _v: self._sync_linked_controls())
+        self.gap_h_scale.place(relx=0.5, rely=1.0, y=-2, x=-25, anchor="s")
+        self.gap_h_spin = ttk.Spinbox(parent, from_=0, to=30, increment=0.1, width=4, textvariable=self.vars["gap_h"], command=self._sync_linked_controls)
+        self.gap_h_spin.place(relx=0.5, rely=1.0, y=-2, x=92, anchor="s")
+
+        self._add_tooltip(self.mode_combo, "Grid: set columns and rows manually. Preset/Custom: derive them from card size.")
+        self._add_tooltip(self.cols_spin, "Columns")
+        self._add_tooltip(self.rows_spin, "Rows")
+        self._add_tooltip(self.gap_h_scale, "Gap (all / horizontal)")
+        self._add_tooltip(self.gap_h_spin, "Gap (all / horizontal)")
 
     def _build_overlay_controls(self, parent):
         self.manual_controls = []
@@ -394,46 +441,58 @@ class SpriteSheetGui:
             self.manual_controls.append(widget)
             return widget
 
-        self.cols_scale = ttk.Scale(parent, from_=1, to=30, orient=tk.HORIZONTAL, variable=self.vars["cols"], length=96, command=lambda _v: self._round_grid_vars())
-        remember(self.cols_scale).place(relx=1.0, y=0, x=-4, anchor="ne")
-        remember(ttk.Spinbox(parent, from_=1, to=30, width=3, textvariable=self.vars["cols"], command=self._round_grid_vars)).place(relx=1.0, y=0, x=-104, anchor="ne")
-
-        self.rows_scale = ttk.Scale(parent, from_=1, to=30, orient=tk.VERTICAL, variable=self.vars["rows"], length=96, command=lambda _v: self._round_grid_vars())
-        remember(self.rows_scale).place(relx=1.0, y=28, x=-4, anchor="ne")
-        remember(ttk.Spinbox(parent, from_=1, to=30, width=3, textvariable=self.vars["rows"], command=self._round_grid_vars)).place(relx=1.0, y=128, x=-4, anchor="ne")
-
-        self.gap_h_scale = ttk.Scale(parent, from_=0, to=30, orient=tk.HORIZONTAL, variable=self.vars["gap_h"], length=130, command=lambda _v: self._sync_linked_controls())
-        remember(self.gap_h_scale).place(relx=0.5, y=0, anchor="n")
-        self.gap_h_spin = ttk.Spinbox(parent, from_=0, to=30, increment=0.1, width=4, textvariable=self.vars["gap_h"], command=self._sync_linked_controls)
-        remember(self.gap_h_spin).place(relx=0.5, y=0, x=70, anchor="nw")
-        remember(ttk.Checkbutton(parent, text="", variable=self.vars["gap_link"], command=self._sync_linked_controls)).place(x=4, rely=0.5, y=-80, anchor="nw")
+        self.layout_entry = ttk.Entry(parent, textvariable=self.vars["layout_text"], width=48, justify="center")
+        self.layout_entry.place(relx=0.5, y=0, anchor="n")
+        self.gap_link_check = ttk.Checkbutton(parent, text="", variable=self.vars["gap_link"], command=self._sync_linked_controls)
+        remember(self.gap_link_check).place(relx=1.0, rely=0.5, x=-4, y=-80, anchor="ne")
         self.gap_v_scale = ttk.Scale(parent, from_=0, to=30, orient=tk.VERTICAL, variable=self.vars["gap_v"], length=112)
-        remember(self.gap_v_scale).place(x=4, rely=0.5, y=-54, anchor="nw")
+        remember(self.gap_v_scale).place(relx=1.0, rely=0.5, x=-4, y=-54, anchor="ne")
         self.gap_v_spin = ttk.Spinbox(parent, from_=0, to=30, increment=0.1, width=4, textvariable=self.vars["gap_v"], command=self._sync_linked_controls)
-        remember(self.gap_v_spin).place(x=4, rely=0.5, y=64, anchor="nw")
+        remember(self.gap_v_spin).place(relx=1.0, rely=0.5, x=-4, y=64, anchor="ne")
 
         self.border_t_scale = ttk.Scale(parent, from_=0, to=50, orient=tk.HORIZONTAL, variable=self.vars["border_t"], length=118, command=lambda _v: self._sync_linked_controls())
         remember(self.border_t_scale).place(x=4, y=0, anchor="nw")
         self.border_t_spin = ttk.Spinbox(parent, from_=0, to=50, increment=0.1, width=4, textvariable=self.vars["border_t"], command=self._sync_linked_controls)
         remember(self.border_t_spin).place(x=126, y=0, anchor="nw")
-        remember(ttk.Checkbutton(parent, text="", variable=self.vars["border_tb_link"], command=self._sync_linked_controls)).place(x=4, y=28, anchor="nw")
+        self.border_tb_check = ttk.Checkbutton(parent, text="", variable=self.vars["border_tb_link"], command=self._sync_linked_controls)
+        remember(self.border_tb_check).place(x=4, y=28, anchor="nw")
         self.border_l_scale = ttk.Scale(parent, from_=0, to=50, orient=tk.VERTICAL, variable=self.vars["border_l"], length=96, command=lambda _v: self._sync_linked_controls())
         remember(self.border_l_scale).place(x=4, y=54, anchor="nw")
         self.border_l_spin = ttk.Spinbox(parent, from_=0, to=50, increment=0.1, width=4, textvariable=self.vars["border_l"], command=self._sync_linked_controls)
         remember(self.border_l_spin).place(x=4, y=154, anchor="nw")
 
-        remember(ttk.Checkbutton(parent, text="", variable=self.vars["border_lr_link"], command=self._sync_linked_controls)).place(relx=1.0, rely=1.0, x=-4, y=-4, anchor="se")
+        self.border_lr_check = ttk.Checkbutton(parent, text="", variable=self.vars["border_lr_link"], command=self._sync_linked_controls)
+        remember(self.border_lr_check).place(relx=1.0, rely=1.0, x=-4, y=-4, anchor="se")
         self.border_b_scale = ttk.Scale(parent, from_=50, to=0, orient=tk.HORIZONTAL, variable=self.vars["border_r"], length=118)
         remember(self.border_b_scale).place(relx=1.0, rely=1.0, x=-32, y=-4, anchor="se")
-        self.border_b_spin = ttk.Spinbox(parent, from_=0, to=50, increment=0.1, width=4, textvariable=self.vars["border_b"], command=self._sync_linked_controls)
+        self.border_b_spin = ttk.Spinbox(parent, from_=0, to=50, increment=0.1, width=4, textvariable=self.vars["border_r"], command=self._sync_linked_controls)
         remember(self.border_b_spin).place(relx=1.0, rely=1.0, x=-154, y=-4, anchor="se")
         self.border_r_scale = ttk.Scale(parent, from_=50, to=0, orient=tk.VERTICAL, variable=self.vars["border_b"], length=96)
         remember(self.border_r_scale).place(relx=1.0, rely=1.0, x=-4, y=-32, anchor="se")
-        self.border_r_spin = ttk.Spinbox(parent, from_=0, to=50, increment=0.1, width=4, textvariable=self.vars["border_r"], command=self._sync_linked_controls)
+        self.border_r_spin = ttk.Spinbox(parent, from_=0, to=50, increment=0.1, width=4, textvariable=self.vars["border_b"], command=self._sync_linked_controls)
         remember(self.border_r_spin).place(relx=1.0, rely=1.0, x=-4, y=-132, anchor="se")
 
         self._refresh_mm_step_controls(force=True)
         self._sync_linked_controls()
+        self._add_tooltip(self.gap_v_scale, "Gap vertical")
+        self._add_tooltip(self.gap_v_spin, "Gap vertical")
+        self._add_tooltip(self.gap_link_check, "Gap horizontal/vertical independent")
+        self._add_tooltip(self.border_t_scale, "Border (all / horizontal / top)")
+        self._add_tooltip(self.border_t_spin, "Border (all / horizontal / top)")
+        self._add_tooltip(self.border_l_scale, "Border (vertical / left)")
+        self._add_tooltip(self.border_l_spin, "Border (vertical / left)")
+        self._add_tooltip(self.border_b_scale, "Border (right)")
+        self._add_tooltip(self.border_b_spin, "Border (right)")
+        self._add_tooltip(self.border_r_scale, "Border (bottom)")
+        self._add_tooltip(self.border_r_spin, "Border (bottom)")
+        self._add_tooltip(self.border_tb_check, "Border horizontal/vertical independent")
+        self._add_tooltip(self.border_lr_check, "Border top/right/bottom/left independent")
+
+    def _add_tooltip(self, widget, text: str):
+        try:
+            GUI.attach_tooltip(widget, text)
+        except Exception:
+            pass
 
     def _apply_window_icon(self):
         icon_path = DMPATHS.app_icon(os.path.dirname(__file__))
@@ -446,14 +505,27 @@ class SpriteSheetGui:
             self._icon_image = None
 
     def _on_ui_mode_changed(self):
-        mode = str(self.vars["ui_mode"].get() or "Manual").strip()
-        manual = mode == "Manual"
+        mode = str(self.vars["ui_mode"].get() or "Grid").strip()
+        manual = mode == "Grid"
         custom = mode == "Custom"
         preset = mode == "Preset"
         try:
             self.vars["card_mode"].set("auto" if manual else ("custom" if custom else "preset"))
         except Exception:
             pass
+        for widget in getattr(self, "grid_controls", []):
+            try:
+                if manual:
+                    info = self._place_cache.get(widget)
+                    if info:
+                        widget.place(**info)
+                else:
+                    info = widget.place_info()
+                    if info:
+                        self._place_cache[widget] = info
+                    widget.place_forget()
+            except Exception:
+                pass
         for widget in getattr(self, "manual_controls", []):
             try:
                 if manual:
@@ -608,20 +680,29 @@ class SpriteSheetGui:
         try:
             from PIL import Image
             self._pil_base = Image.open(path).convert("RGBA")
-            self._photo = None
-            self._last_pil_size = None
             _l.d("[spritesheet_gui] image loaded PIL:", path, "size=", self._pil_base.size)
             return
         except Exception as ex:
             _l.w(f"[spritesheet_gui] PIL image load failed path='{path}': {ex}")
-        try:
-            self._photo = tk.PhotoImage(file=path)
-            self._pil_base = None
-            _l.d("[spritesheet_gui] image loaded Tk:", path)
-        except Exception as ex:
-            _l.w(f"[spritesheet_gui] Tk image load failed path='{path}': {ex}")
-            self._photo = None
-            self._pil_base = None
+        self._pil_base = None
+
+    def _start_loader(self, loader):
+        def _job():
+            try:
+                path = loader()
+            except Exception as ex:
+                _l.w(f"[spritesheet_gui] preview loader failed: {ex}")
+                path = None
+            if path:
+                self.root.after(0, lambda p=path: self._set_loaded_image(p))
+
+        threading.Thread(target=_job, daemon=True).start()
+
+    def _set_loaded_image(self, path: str):
+        self._load_image(path)
+        if _is_pnpink_temp_file(path, ("pnpink_sprite_id_",)):
+            self._cleanup_paths.append(path)
+        self.request_redraw()
 
     def _fit_view(self):
         cw = max(1, self.canvas.winfo_width())
@@ -708,10 +789,12 @@ class SpriteSheetGui:
                     cropped = self._pil_base.crop(crop_box)
                     resized = cropped.resize((draw_w, draw_h), resample=getattr(resampling, "BILINEAR", 2))
                     self._pil_image = ImageTk.PhotoImage(resized)
-                    self._last_pil_size = (draw_w, draw_h)
                     self._last_view_key = view_key
                 ix = self.pan_x + vx0 * self.zoom
                 iy = self.pan_y + vy0 * self.zoom
+                if self._img_id is not None and self.canvas.type(self._img_id) != "image":
+                    self.canvas.delete(self._img_id)
+                    self._img_id = None
                 if self._img_id is None:
                     self._img_id = self.canvas.create_image(ix, iy, anchor="nw", image=self._pil_image)
                 else:
@@ -722,15 +805,10 @@ class SpriteSheetGui:
                 _l.w("[spritesheet_gui] PIL draw failed: ", ex)
                 self._pil_base = None
                 self._pil_image = None
-                self._last_pil_size = None
                 self._last_view_key = None
-        if self._photo is not None:
-            if self._img_id is None:
-                self._img_id = self.canvas.create_image(self.pan_x, self.pan_y, anchor="nw", image=self._photo)
-            else:
-                self.canvas.coords(self._img_id, self.pan_x, self.pan_y)
-                self.canvas.itemconfigure(self._img_id, image=self._photo)
-            return
+        if self._img_id is not None and self.canvas.type(self._img_id) != "rectangle":
+            self.canvas.delete(self._img_id)
+            self._img_id = None
         if self._img_id is None:
             self._img_id = self.canvas.create_rectangle(
                 self.pan_x,
@@ -846,10 +924,7 @@ class SpriteSheetGui:
     def run(self):
         self.root.mainloop()
         for p in self._cleanup_paths:
-            try:
-                os.remove(p)
-            except Exception:
-                pass
+            _remove_pnpink_temp_file(p, ("pnpink_sprite_id_", "pnpink_sprite_worker_", "pnpink_tmp_doc_"))
         return GuiResult(self.vars["layout_text"].get().strip() or None)
 
 
@@ -862,14 +937,11 @@ class SpriteSheetGUIExtension(inkex.EffectExtension):
         svgdoc = self.svg
         selection = list(svgdoc.selection or [])
         if len(selection) != 1:
-            raise inkex.AbortExtension("Select exactly one group.")
+            raise inkex.AbortExtension("Select exactly one image, group or object.")
         selected_node = selection[0]
-        selected_tag = str(getattr(selected_node, "tag", "") or "")
-        if not selected_tag.endswith("g"):
-            raise inkex.AbortExtension("Select exactly one SVG group (<g>).")
         selected_id = (selected_node.get("id") or "").strip()
         if not selected_id:
-            raise inkex.AbortExtension("Selected group has no id.")
+            raise inkex.AbortExtension("Selected object has no id.")
         try:
             _l.i(
                 "[spritesheet_gui] selection "
@@ -910,17 +982,18 @@ class SpriteSheetGUIExtension(inkex.EffectExtension):
             f"input_svg='{input_svg}' temp_doc='{temp_doc_svg or ''}' preview_svg='{preview_svg or ''}' "
             f"preview_exists={bool(preview_svg and os.path.isfile(preview_svg))}"
         )
-        _l.i(f"[spritesheet_gui] selected group id='{selected_id}'")
+        _l.i(f"[spritesheet_gui] selected object id='{selected_id}'")
 
-        worker_svg = _copy_svg_for_worker(preview_svg)
+        if input_svg and os.path.isfile(input_svg) and not _is_inkscape_temp_svg(input_svg):
+            worker_svg = preview_svg
+        else:
+            worker_svg = _copy_svg_for_worker(preview_svg)
+            if not worker_svg:
+                worker_svg = _write_temp_svg(self.document)
         script = os.path.abspath(__file__)
-        if not _launch_detached_worker(script, worker_svg or preview_svg, selected_id, bw, bh):
+        if not worker_svg or not _launch_detached_worker(script, worker_svg, selected_id, bw, bh):
             raise inkex.AbortExtension("Could not launch Spritesheet GUI worker.")
-        if temp_doc_svg and os.path.isfile(temp_doc_svg):
-            try:
-                os.remove(temp_doc_svg)
-            except Exception:
-                pass
+        _remove_pnpink_temp_file(temp_doc_svg, ("pnpink_tmp_doc_",))
         _l.i("[spritesheet_gui] detached worker launched, extension returns immediately")
         _l.d("[spritesheet_gui] closed_no_svg_changes=1 total_effect_ms=", int((perf_counter() - t_effect) * 1000))
 
@@ -1007,25 +1080,20 @@ def _run_detached_worker(argv: list[str]) -> int:
     inkscape_exe = INKSCAPE.find_executable()
     shell_exe = INKSCAPE.shell_executable(inkscape_exe)
     _l.i(f"[spritesheet_gui] worker preview inkscape='{inkscape_exe or ''}' shell='{shell_exe or ''}'")
-    preview_png = _try_export_png_id(svg_path, selected_id, shell_exe)
-    if not preview_png:
-        _l.w(f"[spritesheet_gui] worker export failed id='{selected_id}'")
-        return 3
 
-    # Convert exported PNG pixels back to Inkscape user units (96 dpi) so
-    # preset mm values still match the real selection dimensions.
-    try:
-        from PIL import Image
-
-        with Image.open(preview_png) as im:
-            wpx, hpx = im.size
-        if int(wpx) > 0 and int(hpx) > 0:
-            scale = float(INKSCAPE_DOC_DPI) / float(PREVIEW_EXPORT_DPI)
-            bw = float(wpx) * scale
-            bh = float(hpx) * scale
-            _l.i(f"[spritesheet_gui] worker png size={wpx}x{hpx} logical={bw:.3f}x{bh:.3f}")
-    except Exception:
-        pass
+    def _load_preview_png():
+        preview_png = _try_export_png_id(svg_path, selected_id, shell_exe)
+        if not preview_png:
+            _l.w(f"[spritesheet_gui] worker export failed id='{selected_id}'")
+            return None
+        try:
+            from PIL import Image
+            with Image.open(preview_png) as im:
+                wpx, hpx = im.size
+            _l.i(f"[spritesheet_gui] worker png size={wpx}x{hpx} bbox={bw:.3f}x{bh:.3f}")
+        except Exception:
+            pass
+        return preview_png
 
     try:
         gui = SpriteSheetGui(
@@ -1033,22 +1101,14 @@ def _run_detached_worker(argv: list[str]) -> int:
             bh=max(1.0, bh),
             initial_spec=DEFAULT_GUI_SPEC,
             svgdoc=svgdoc,
-            initial_image=preview_png,
+            loader=_load_preview_png,
         )
-        gui._cleanup_paths.append(preview_png)
-        gui._cleanup_paths.append(svg_path)
+        if _is_pnpink_temp_file(svg_path, ("pnpink_sprite_worker_", "pnpink_tmp_doc_")):
+            gui._cleanup_paths.append(svg_path)
         gui.run()
         return 0
     except Exception as ex:
         _l.w(f"[spritesheet_gui] worker gui failed: {ex}")
-        try:
-            os.remove(preview_png)
-        except Exception:
-            pass
-        try:
-            os.remove(svg_path)
-        except Exception:
-            pass
         return 4
 
 

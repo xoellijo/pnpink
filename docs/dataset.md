@@ -249,7 +249,7 @@ Column A in data rows can carry row-level DSL:
 - `{A4 ...}` page block
 - `L{...}` layout tail
 - `M{...}` marks tail
-- trailing copies number
+- trailing copies number, or `?` for automatic copies (current layout capacity)
 - optional hole patterns in `[...]`
 - optional iterator selection in `[...]` when using numeric ranges like `1..5 7..100`
 
@@ -257,6 +257,7 @@ Examples:
 
 ```txt
 {A4 b=[-5]} L{p=3x3 g=2} M{mk_cut} 2
+{} ?                  -> fill one page with the current row (e.g. backs)
 [3 - 2-]            -> 3 copies, then 1 hole, then 2 holes
 [1..5 7..100]       -> keep iterator items 1..5 and 7..100 (skip 6)
 [1..4 3- 7..9]      -> keep 1..4, then 3 holes, then keep 7..9

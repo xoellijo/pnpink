@@ -39,7 +39,7 @@ _l = LOG
 
 _normalize_path = DMPATHS.normalize
 
-APP_VERSION = "Deckmaker v0.50"
+APP_VERSION = "Deckmaker v0.52"
 DOCS_INTRO_URL = "https://xoellijo.github.io/pnpink/intro/"
 DOCS_GUIDE_URL = "https://xoellijo.github.io/pnpink/quickstart/"
 OTHER_EXPORT_FORMATS = ("png", "jpeg", "jpeg2000", "pdf", "svg", "tiff", "webp", "ps", "eps", "emf", "wmf")
@@ -65,12 +65,13 @@ def notify_or_launch(
     sheet_range: str = "",
     log_level: str = "global",
     dataset_source_mode: str = "",
+    autorun: bool = False,
 ) -> bool:
     try:
         TEMPPATHS.cleanup_runs_now(keep_paths=[snapshot_path] if str(snapshot_path or "").strip() else None)
     except Exception:
         pass
-    return IPC.notify_or_launch(__file__, template, snapshot_path, sheet_id, sheet_range, log_level, dataset_source_mode)
+    return IPC.notify_or_launch(__file__, template, snapshot_path, sheet_id, sheet_range, log_level, dataset_source_mode, autorun)
 
 
 class DeckMakerApp:
@@ -403,7 +404,13 @@ class DeckMakerApp:
         cut_box.columnconfigure(1, weight=1)
         cut_format_label = ttk.Label(cut_box, text="Format")
         cut_format_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
-        GUI.attach_tooltip(cut_format_label, "Vector formats are preferred. For DXF/Cameo, use Simplify in Silhouette Studio before cutting.")
+        GUI.attach_tooltip(
+            cut_format_label,
+            "For DXF/Cameo, in Silhouette Studio:\n"
+            "- First time: Edit > Preferences > Export > DXF > Open > \"Center\".\n"
+            "- Every template: select all and apply \"Simplify\", and group all.\n"
+            "  (red lines for cutting, gray lines for page-border alignment).",
+        )
         cut_format_combo = ttk.Combobox(
             cut_box,
             textvariable=self.cut_template_format_var,
@@ -1867,7 +1874,7 @@ class DeckMakerApp:
             self.root.focus_force()
         except Exception:
             pass
-        self.root.after(120, lambda: self._autorun(serial))
+        self.root.after(120, lambda: self._autorun(serial, force=bool(req.autorun)))
 
     def _schedule_auth_warmup(self):
         if self._source_mode_value() == "local_csv":
@@ -1940,11 +1947,11 @@ class DeckMakerApp:
         finally:
             self.root.after(80, self._drain_ui_queue)
 
-    def _autorun(self, serial: int):
+    def _autorun(self, serial: int, force: bool = False):
         if serial <= self._autorun_serial:
             return
         self._autorun_serial = serial
-        if not bool(self.auto_create_var.get()):
+        if not force and not bool(self.auto_create_var.get()):
             return
         if self._render_thread and self._render_thread.is_alive():
             return
@@ -2347,6 +2354,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--sheet-range", default="")
     ap.add_argument("--dataset-source-mode", default="")
     ap.add_argument("--log-level", default="global")
+    ap.add_argument("--autorun", dest="autorun", action="store_true", default=False)
+    ap.add_argument("--no-autorun", dest="autorun", action="store_false")
     ns = ap.parse_args(argv)
 
     initial = None
@@ -2358,6 +2367,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             sheet_range=ns.sheet_range,
             dataset_source_mode=ns.dataset_source_mode,
             log_level=ns.log_level,
+            autorun=bool(ns.autorun),
         )
     app = DeckMakerApp(initial)
     app.run()

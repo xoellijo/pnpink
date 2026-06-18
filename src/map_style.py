@@ -47,6 +47,7 @@ _FALLBACK_CONFIG: Dict[str, Any] = {
         }
     },
     "label_offset": {"default": [4.0, -2.0]},
+    "line_smoothing": {"layers": [], "polygon_layers": [], "smooth": 0, "min_points": 4},
 }
 
 
@@ -533,6 +534,52 @@ def label_offset(layer_name: str, feature: Any) -> tuple[float, float]:
         return float(vals[0]), float(vals[1])
     except Exception:
         return 4.0, -2.0
+
+
+def _smooth_cfg(override: Any = None) -> Dict[str, Any]:
+    cfg = _config().get("line_smoothing") or {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    out = dict(cfg)
+    if override not in (None, ""):
+        out["smooth"] = override
+    return out
+
+
+def _smooth_is_enabled(cfg: Dict[str, Any]) -> bool:
+    if cfg.get("enabled", True) is False:
+        return False
+    value = str(cfg.get("smooth", 1) if cfg.get("smooth", 1) is not None else "").strip().lower()
+    return value not in {"", "0", "off", "false", "no", "none"}
+
+
+def smooth_line_enabled(layer_name: str, override: Any = None) -> bool:
+    cfg = _smooth_cfg(override)
+    if not _smooth_is_enabled(cfg):
+        return False
+    layers = {str(v).strip().lower() for v in _as_list(cfg.get("layers")) if str(v).strip()}
+    return str(layer_name or "").strip().lower() in layers
+
+
+def smooth_polygon_enabled(layer_name: str, override: Any = None) -> bool:
+    cfg = _smooth_cfg(override)
+    if not _smooth_is_enabled(cfg):
+        return False
+    layers = {str(v).strip().lower() for v in _as_list(cfg.get("polygon_layers")) if str(v).strip()}
+    return str(layer_name or "").strip().lower() in layers
+
+
+def smooth_value(override: Any = None) -> str:
+    cfg = _smooth_cfg(override)
+    return str(cfg.get("smooth", 1) if cfg.get("smooth", 1) is not None else "1").strip() or "1"
+
+
+def smooth_line_min_points(default: int = 4, override: Any = None) -> int:
+    cfg = _smooth_cfg(override)
+    try:
+        return max(3, int(float((cfg or {}).get("min_points", default))))
+    except Exception:
+        return int(default)
 
 
 def layer_order(layer_name: str) -> int:

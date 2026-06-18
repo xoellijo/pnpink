@@ -20,6 +20,7 @@ All map sources use one of these forms:
 @{ ofm://shikoku/t1 }
 @{ ofm://shikoku/z10/t2 }
 @{ ofm://shikoku/z8/t1 view=all-labels+water_name[bay lake] }
+@{ ofm://asturias view=mountains smooth=3 }
 ```
 
 - `osm://[...]` and `ofm://[...]`
@@ -32,19 +33,27 @@ All map sources use one of these forms:
   - sets the maximum automatic tile grid per axis
 - `view=...`
   - selects which map layers/features are rendered
+- `smooth=...` or `s=...`
+  - controls cheap curve smoothing/simplification for configured layers
 
 If no zoom is forced, PnPInk chooses it automatically. `/t1` forces the automatic zoom to fit the requested area in one tile, useful when you want to style polygons without tile-boundary strokes.
 
-`/zN` and `/tN` are part of the map URL. `view=` is a Source parameter:
+`/zN` and `/tN` are part of the map URL. `view=` and `smooth=` are Source parameters:
 
 ```txt
 @{ ofm://berlin/z12/t4 view=all-labels }
 @{ ofm://berlin view=nude+transport+places }
 @{ ofm://berlin view=all-landuses+landuse[residential industrial] }
 @{ ofm://shikoku view=all-label+water_name[bay lake] }
+@{ ofm://asturias view=mountains smooth=0 }     ## no smoothing
+@{ ofm://asturias view=mountains smooth=1 }     ## curve every point
+@{ ofm://asturias view=mountains smooth=4 }     ## roughly 4 points -> 1 curve
+@{ ofm://asturias view=mountains s=3/2 }        ## roughly 3 points -> 2 curves
 ```
 
 `view` expressions start from a preset (`all`, `nude`, `water`, `transport`, `places`, etc.) and then apply `+` or `-` modifiers. Feature lists use brackets with spaces, not commas.
+
+`smooth` defaults to `0` because dense curved maps are expensive for Inkscape to render. It only affects layers enabled in `map_style.jsonc` (`line_smoothing.layers` and `line_smoothing.polygon_layers`). Higher values reduce SVG size but may remove detail.
 
 Useful map view presets:
 

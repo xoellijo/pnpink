@@ -313,7 +313,7 @@ def _remove_style_value(el, key: str) -> None:
 
 def _iter_page_elements(nv) -> list:
     out = []
-    for el in list(nv or []):
+    for el in list(nv) if nv is not None else []:
         tag = getattr(el, "tag", "")
         if isinstance(tag, str) and tag.endswith("page"):
             out.append(el)

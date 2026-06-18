@@ -398,6 +398,7 @@ def render_phase(ctx):
 
         from pathlib import Path
         import glob as _glob
+        import fnmatch as _fnmatch
 
         def _slot_view_for(current):
             pw_mm, ph_mm = current.page.resolved_size_mm(doc_page_mm)
@@ -624,6 +625,8 @@ def render_phase(ctx):
             if not (s.startswith('@{') and s.endswith('}')):
                 return None
             pat = s[2:-1].strip()
+            if len(pat) >= 2 and ((pat[0] == '"' and pat[-1] == '"') or (pat[0] == "'" and pat[-1] == "'")):
+                pat = pat[1:-1].strip()
             if not pat:
                 return []
 
@@ -664,7 +667,15 @@ def render_phase(ctx):
                     bases = [Path('.')]
                 for base in bases:
                     try:
-                        for x in _glob.glob(str((Path(base) / pat))):
+                        matches = list(_glob.glob(str((Path(base) / pat))))
+                        if (not matches) and os.name == "nt":
+                            parent = Path(base) / os.path.dirname(pat)
+                            pat_name = os.path.basename(pat).lower()
+                            try:
+                                matches = [str(p) for p in parent.iterdir() if p.is_file() and _fnmatch.fnmatch(p.name.lower(), pat_name)]
+                            except Exception:
+                                matches = []
+                        for x in matches:
                             _add_hit(x, base=base, keep_abs=False)
                     except Exception:
                         continue
@@ -1079,7 +1090,11 @@ def render_phase(ctx):
                     holes_list = []
             n_iter = len(row_list) if has_iter else 1
             try:
-                copies_decl = int(_row.get('__dm_copies__', 1) or 1)
+                copies_raw = _row.get('__dm_copies__', 1)
+                if str(copies_raw or "").strip() == "?":
+                    copies_decl = _slots_per_page(_slot_view_for(sim_current))
+                else:
+                    copies_decl = int(copies_raw or 1)
             except Exception:
                 copies_decl = 1
             copies_explicit = _as_bool(_row.get('__dm_copies_explicit__', False))

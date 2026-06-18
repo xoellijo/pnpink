@@ -36,10 +36,16 @@ PREVIEW_GROUP_STYLE = "mix-blend-mode:multiply; pointer-events:none;"
 
 # ---------- conversion helpers (document-aware) ----------
 def mm_to_px(mm: float, svgdoc) -> float:
-    return float(inkex.units.convert_unit(f"{mm}mm", "px", svgdoc))
+    try:
+        return float(mm) * float(svgdoc.unittouu("1mm"))
+    except Exception:
+        return float(inkex.units.convert_unit(f"{mm}mm", "px", svgdoc))
 
 def px_to_mm(px: float, svgdoc) -> float:
-    return float(inkex.units.convert_unit(f"{px}px", "mm", svgdoc))
+    try:
+        return float(px) / float(svgdoc.unittouu("1mm"))
+    except Exception:
+        return float(inkex.units.convert_unit(f"{px}px", "mm", svgdoc))
 
 # ---------- overlay helpers ----------
 def _remove_old_preview(root):

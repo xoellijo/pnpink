@@ -265,7 +265,8 @@ def _matrix_to_datasets(matrix):
         slot_select_mode = None
         copies_explicit = False
         if lead is not None:
-            copies = int(getattr(lead, "copies", 1) or 1)
+            copies_raw = getattr(lead, "copies", 1) or 1
+            copies = "?" if copies_raw == "?" else int(copies_raw)
             holes = list(getattr(lead, "holes", []) or [])
             iter_select = getattr(lead, "iter_select_raw", None) or list(getattr(lead, "iter_select", []) or [])
             page_preset = getattr(lead, "page_block", None)
@@ -288,6 +289,14 @@ def _matrix_to_datasets(matrix):
             f"select={iter_select} slot={slot_select_mode}:{slot_select} page={page_preset} L={layout_tail} M={marks_tail}"
         )
         return copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail, slot_select, slot_select_mode
+
+    def _copies_skip_row(copies) -> bool:
+        if copies == "?":
+            return False
+        try:
+            return int(copies) <= 0
+        except Exception:
+            return False
 
     # --- Pre-scan to detect any explicit marker rows {{...}} in column A ---
     has_markers = False
@@ -418,7 +427,7 @@ def _matrix_to_datasets(matrix):
 
             lead_text = cells[0]
             copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail, slot_select, slot_select_mode = _parse_lead_to_meta(lead_text)
-            if copies <= 0:
+            if _copies_skip_row(copies):
                 _l.i("row skipped due to copies <= 0")
                 continue
 
@@ -546,7 +555,7 @@ def _matrix_to_datasets(matrix):
 
         lead_text = cells[0]
         copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail, slot_select, slot_select_mode = _parse_lead_to_meta(lead_text)
-        if copies <= 0:
+        if _copies_skip_row(copies):
             _l.i("row skipped due to copies <= 0")
             continue
 

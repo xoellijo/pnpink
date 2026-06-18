@@ -19,7 +19,7 @@ __version__ = "v0.1"
 
 from dataclasses import dataclass
 from typing import Optional, Dict, Tuple, List, Set
-import os, re, hashlib, threading, shutil, mimetypes
+import os, re, hashlib, threading, shutil, mimetypes, fnmatch
 from concurrent.futures import ThreadPoolExecutor, Future
 from pathlib import Path
 from urllib.parse import urlparse, unquote, urlunparse
@@ -109,13 +109,8 @@ EXT_PRIORITY = [
     "png", "jpeg", "jpg", "JPG", "svg", "svgz", "webp",
 ]
 
-# Subfolders lookup order (relative to SVG folder):
-# 1) assets, 2) images, 3) img
+# Local asset folder names, in lookup order.
 REL_DIRS = ["assets", "images", "img", "imgs"]
-
-# Derived from SVG name
-#   mydoc.svg → mydoc_img / mydoc_assets
-DERIVED_SUFFIXES = ["_img", "_assets"]
 
 # Default size (if we cannot inspect the image)
 DEFAULT_W = 100.0
@@ -363,33 +358,36 @@ class PathResolver:
         self.project_root = Path(project_root).resolve() if project_root else None
         self.relaxed_case = bool(relaxed_case)
 
-    # ---- exact folder order, as requested ----
     def candidate_dirs(self) -> List[Path]:
         dirs: List[Path] = []
+
+        def add_dir(path: Path) -> None:
+            if path.is_dir():
+                dirs.append(path)
+
         if self.svg_path:
             base = self.svg_path.parent
-            # 1) SVG folder
-            dirs.append(base)
-            # 2) standard subfolders
-            for sub in REL_DIRS:
-                d = (base / sub)
-                if d.is_dir(): dirs.append(d)
-            # 3) derived from SVG name
             stem = self.svg_path.stem
-            for suf in DERIVED_SUFFIXES:
-                d = (base / f"{stem}{suf}")
-                if d.is_dir(): dirs.append(d)
-        # 4) project_root/assets, project_root/images, project_root/img
+            add_dir(base)
+            for name in REL_DIRS:
+                add_dir(base / name)
+            for name in REL_DIRS:
+                for hit in sorted(base.glob(f"{stem}*{name}"), key=lambda p: _normcase_path(p)):
+                    add_dir(hit)
+            for name in REL_DIRS:
+                add_dir(base.parent / name)
+
         if self.project_root:
-            for sub in ("assets", "images", "img"):
-                d = (self.project_root / sub)
-                if d.is_dir(): dirs.append(d)
-        # dedupe preservando orden
-        seen = set(); out = []
+            for name in REL_DIRS:
+                add_dir(self.project_root / name)
+
+        seen = set()
+        out = []
         for d in dirs:
             key = _normcase_path(d)
             if key not in seen:
-                seen.add(key); out.append(d)
+                seen.add(key)
+                out.append(d)
         return out
 
     def ext_priority(self) -> List[str]:
@@ -410,6 +408,7 @@ class PathResolver:
         name = _norm_sep(name)
         stem, ext = os.path.splitext(name)
         dirs = self.candidate_dirs()
+        has_glob = any(ch in name for ch in "*?[")
 
         def _match_case(p: Path) -> Optional[Path]:
             if p.exists():
@@ -426,8 +425,28 @@ class PathResolver:
                 pass
             return None
 
+        def _glob_first(base: Path, pattern: str) -> Optional[Path]:
+            try:
+                hits = [p for p in base.glob(pattern) if p.is_file()]
+            except Exception:
+                hits = []
+            if not hits and self.relaxed_case:
+                parent = base / os.path.dirname(pattern)
+                pat = os.path.basename(pattern).lower()
+                try:
+                    hits = [p for p in parent.iterdir() if p.is_file() and fnmatch.fnmatch(p.name.lower(), pat)]
+                except Exception:
+                    hits = []
+            if not hits:
+                return None
+            return sorted(hits, key=lambda p: _normcase_path(p))[0].resolve()
+
         if ext:
             for d in dirs:
+                if has_glob:
+                    hit = _glob_first(d, name)
+                    if hit:
+                        return hit
                 cand = d / name
                 hit = _match_case(cand)
                 if hit and hit.is_file():
@@ -2360,5 +2379,5 @@ class SourceManager:
 __all__ = [
     "__version__",
     "SourceManager", "SourceRef",
-    "EXT_PRIORITY", "REL_DIRS", "DERIVED_SUFFIXES",
+    "EXT_PRIORITY", "REL_DIRS",
 ]

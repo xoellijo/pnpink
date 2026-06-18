@@ -1734,16 +1734,16 @@ def parse_copies_page_tail(cell0):
         slot_select_raw = str(rest or "").strip()
         slot_select_mode = "procedural"
         rest = ""
-    # trailing number as copies (ignoring numbers inside [] and {})
+    # trailing number / '?' as copies (ignoring tokens inside [] and {})
     if copies == 1 and slot_select_mode is None:
         rest_no_braces = re.sub(r"\{[^}]*\}", "", rest)
         rest_no_brackets = re.sub(r"\[[^\]]*\]", "", rest_no_braces)
-        m_num = re.search(r"(?:^|\s)(\d+)\s*$", rest_no_brackets.strip())
+        m_num = re.search(r"(?:^|\s)(\d+|\?)\s*$", rest_no_brackets.strip())
         if m_num:
-            copies = max(0, int(m_num.group(1)))
+            copies = "?" if m_num.group(1) == "?" else max(0, int(m_num.group(1)))
             copies_explicit = True
             # remove that trailing number so it does not block the L{...} tail
-            rest = re.sub(r"(?:^|\s)\d+\s*$", "", rest)
+            rest = re.sub(r"(?:^|\s)(?:\d+|\?)\s*$", "", rest)
 
     # tail M{ ... } — admite ".M{...}" o "M{...}" al final
     # IMPORTANT: parse M first to allow "... .L{...}.M{...}".
@@ -1806,7 +1806,7 @@ def parse_index_selector_1based(sel: str, size: Optional[int] = None) -> List[in
 
 @dataclass
 class DLeadingCell:
-    copies: int
+    copies: object
     holes: List[int]
     iter_select: List[int] = field(default_factory=list)
     iter_select_raw: Optional[str] = None
@@ -1921,7 +1921,7 @@ def parse_leading_cell(cell0) -> DLeadingCell:
         except DSLError:
             ms = None
     return DLeadingCell(
-        copies=int(copies or 1),
+        copies=(copies if copies == "?" else int(copies or 1)),
         holes=list(holes or []),
         iter_select=list(iter_select or []),
         iter_select_raw=(str(iter_select_raw).strip() if iter_select_raw else None),

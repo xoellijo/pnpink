@@ -49,7 +49,6 @@ _DEFAULTS = {
     "export_other_ids": "",
     "export_cut_template": "0",
     "export_cut_template_format": "svg",
-    "export_cut_dxf_cameo_scale_fix": "1",
     "export_png_antialias": "2",
     "export_png_background": "#ffffff",
     "export_png_background_opacity": "0.0",
@@ -104,7 +103,6 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     ("export_other_ids", ("Optional object IDs for additional output. Comma-separated ids. If set, page selection is ignored and one file per ID is exported.",)),
     ("export_cut_template", ("Export plotter cut templates from generated instance bboxes. Values: 0 | 1",)),
     ("export_cut_template_format", ("Cut template output format. Values: svg | png | dxf",)),
-    ("export_cut_dxf_cameo_scale_fix", ("Compensate Silhouette Studio DXF import scale. Values: 0 | 1",)),
     ("export_png_antialias", ("PNG antialias level used by png_alpha raster export. Values: 0 | 1 | 2 | 3",)),
     ("export_png_background", ("Bitmap matte/background color when applicable. Values: any valid SVG color string",)),
     ("export_png_background_opacity", ("Bitmap background opacity when applicable. Values: 0.0..1.0 or 1..255",)),
@@ -395,10 +393,6 @@ def get_export_cut_template_format(default: str = "svg") -> str:
 def set_export_cut_template_format(value: str) -> None:
     item = str(value or "svg").strip().lower()
     set("export_cut_template_format", item if item in {"svg", "png", "dxf"} else "svg", save=True)
-
-
-def get_export_cut_dxf_cameo_scale_fix(default: bool = True) -> bool:
-    return str(get("export_cut_dxf_cameo_scale_fix", "1" if default else "0")).strip() == "1"
 
 
 def get_export_png_antialias(default: int = 2) -> int:

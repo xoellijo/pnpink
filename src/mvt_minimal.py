@@ -354,6 +354,150 @@ def viewbox_points_to_svg_path(geoms: List[List[Tuple[float, float]]], geom_type
     return " ".join(parts) if parts else None
 
 
+def _smooth_step(value: object) -> float:
+    text = str(value if value is not None else "1").strip().lower()
+    if text in {"", "0", "off", "false", "no", "none"}:
+        return 0.0
+    if "/" in text:
+        left, right = text.split("/", 1)
+        try:
+            return max(1.0, float(left) / max(1e-9, float(right)))
+        except Exception:
+            return 1.0
+    try:
+        return max(0.0, float(text))
+    except Exception:
+        return 1.0
+
+
+def _smooth_indices(count: int, step: float) -> List[int]:
+    n = int(count or 0)
+    if n <= 1:
+        return list(range(n))
+    out = [0]
+    pos = 0.0
+    step = max(1.0, float(step or 1.0))
+    while out[-1] < n - 1:
+        pos += step
+        idx = int(round(pos))
+        if idx <= out[-1]:
+            idx = out[-1] + 1
+        if idx >= n - 1:
+            break
+        out.append(idx)
+    out.append(n - 1)
+    return out
+
+
+def _smooth_closed_indices(count: int, step: float) -> List[int]:
+    n = int(count or 0)
+    if n <= 3:
+        return list(range(n))
+    target = max(3, int(round(float(n) / max(1.0, float(step or 1.0)))))
+    target = min(n, target)
+    out: List[int] = []
+    for i in range(target):
+        idx = int(round((float(i) * float(n)) / float(target))) % n
+        if idx not in out:
+            out.append(idx)
+    return out if len(out) >= 3 else list(range(min(n, 3)))
+
+
+def _avg_point(points: Sequence[Tuple[float, float]]) -> Tuple[float, float]:
+    if not points:
+        return 0.0, 0.0
+    n = float(len(points))
+    return sum(p[0] for p in points) / n, sum(p[1] for p in points) / n
+
+
+def _smooth_open_grouped_path(ring: List[Tuple[float, float]], step: float) -> str:
+    idxs = _smooth_indices(len(ring), step)
+    cmds = [f"M {ring[0][0]:.2f},{ring[0][1]:.2f}"]
+    for a, b in zip(idxs, idxs[1:]):
+        end = ring[b]
+        if b <= a + 1:
+            cmds.append(f"L {end[0]:.2f},{end[1]:.2f}")
+            continue
+        cx, cy = _avg_point(ring[a + 1:b])
+        cmds.append(f"Q {cx:.2f},{cy:.2f} {end[0]:.2f},{end[1]:.2f}")
+    return " ".join(cmds)
+
+
+def _smooth_closed_grouped_path(points: List[Tuple[float, float]], step: float) -> str:
+    idxs = _smooth_closed_indices(len(points), step)
+    cmds = [f"M {points[idxs[0]][0]:.2f},{points[idxs[0]][1]:.2f}"]
+    for pos, a in enumerate(idxs):
+        b = idxs[(pos + 1) % len(idxs)]
+        end = points[b]
+        if b > a:
+            between = points[a + 1:b]
+        else:
+            between = points[a + 1:] + points[:b]
+        if between:
+            cx, cy = _avg_point(between)
+            cmds.append(f"Q {cx:.2f},{cy:.2f} {end[0]:.2f},{end[1]:.2f}")
+        else:
+            cmds.append(f"L {end[0]:.2f},{end[1]:.2f}")
+    cmds.append("Z")
+    return " ".join(cmds)
+
+
+def viewbox_points_to_smooth_line_path(geoms: List[List[Tuple[float, float]]], min_points: int = 4, smooth: object = 1) -> Optional[str]:
+    if not geoms:
+        return None
+    parts: List[str] = []
+    step = _smooth_step(smooth)
+    for ring in geoms:
+        if step <= 0.0 or len(ring) < max(3, int(min_points or 4)) or ring[0] == ring[-1]:
+            d = viewbox_points_to_svg_path([ring], GEOM_LINESTRING)
+            if d:
+                parts.append(d)
+            continue
+        if step > 1.0:
+            parts.append(_smooth_open_grouped_path(ring, step))
+            continue
+        cmds = [f"M {ring[0][0]:.2f},{ring[0][1]:.2f}"]
+        for i in range(1, len(ring) - 1):
+            cx, cy = ring[i]
+            nx, ny = ring[i + 1]
+            mx = (cx + nx) * 0.5
+            my = (cy + ny) * 0.5
+            cmds.append(f"Q {cx:.2f},{cy:.2f} {mx:.2f},{my:.2f}")
+        cmds.append(f"L {ring[-1][0]:.2f},{ring[-1][1]:.2f}")
+        parts.append(" ".join(cmds))
+    return " ".join(parts) if parts else None
+
+
+def viewbox_points_to_smooth_polygon_path(geoms: List[List[Tuple[float, float]]], min_points: int = 4, smooth: object = 1) -> Optional[str]:
+    if not geoms:
+        return None
+    parts: List[str] = []
+    step = _smooth_step(smooth)
+    for ring in geoms:
+        pts = list(ring or [])
+        if len(pts) >= 2 and pts[0] == pts[-1]:
+            pts.pop()
+        if step <= 0.0 or len(pts) < max(3, int(min_points or 4)):
+            d = viewbox_points_to_svg_path([ring], GEOM_POLYGON)
+            if d:
+                parts.append(d)
+            continue
+        if step > 1.0:
+            parts.append(_smooth_closed_grouped_path(pts, step))
+            continue
+        start_x = (pts[-1][0] + pts[0][0]) * 0.5
+        start_y = (pts[-1][1] + pts[0][1]) * 0.5
+        cmds = [f"M {start_x:.2f},{start_y:.2f}"]
+        for i, (cx, cy) in enumerate(pts):
+            nx, ny = pts[(i + 1) % len(pts)]
+            mx = (cx + nx) * 0.5
+            my = (cy + ny) * 0.5
+            cmds.append(f"Q {cx:.2f},{cy:.2f} {mx:.2f},{my:.2f}")
+        cmds.append("Z")
+        parts.append(" ".join(cmds))
+    return " ".join(parts) if parts else None
+
+
 def _points_overlap_viewbox(points: List[List[Tuple[float, float]]], width: float, height: float) -> bool:
     flat = [p for ring in (points or []) for p in (ring or [])]
     if not flat:
@@ -459,6 +603,7 @@ def build_debug_svg_multi(
     include_layers: Optional[Iterable[str]] = None,
     view_filter: Optional[Dict[str, object]] = None,
     bbox_override: Optional[Tuple[float, float, float, float]] = None,
+    smooth: object = None,
 ) -> ET.Element:
     if not tile_specs:
         raise ValueError("tile_specs cannot be empty")
@@ -498,6 +643,8 @@ def build_debug_svg_multi(
     layer_kind_geom_seen: Dict[str, Counter] = defaultdict(Counter)
     layer_kind_geom_included: Dict[str, Counter] = defaultdict(Counter)
     label_items: List[Tuple[ET.Element, str, float, float, Dict[str, str], str]] = []
+    smooth_value = MAP_STYLE.smooth_value(smooth)
+    smooth_min_points = MAP_STYLE.smooth_line_min_points(override=smooth)
 
     def _debug_layer(name: str) -> bool:
         lname = str(name or "").lower()
@@ -564,7 +711,12 @@ def build_debug_svg_multi(
                 if not _points_overlap_viewbox(pts, width, height):
                     continue
                 if feat.type in (GEOM_POLYGON, GEOM_LINESTRING):
-                    path_d = viewbox_points_to_svg_path(pts, feat.type)
+                    if feat.type == GEOM_LINESTRING and MAP_STYLE.smooth_line_enabled(layer.name, smooth):
+                        path_d = viewbox_points_to_smooth_line_path(pts, smooth_min_points, smooth_value)
+                    elif feat.type == GEOM_POLYGON and MAP_STYLE.smooth_polygon_enabled(layer.name, smooth):
+                        path_d = viewbox_points_to_smooth_polygon_path(pts, smooth_min_points, smooth_value)
+                    else:
+                        path_d = viewbox_points_to_svg_path(pts, feat.type)
                     if not path_d:
                         continue
                     style = {"d": path_d, "id": elem_id}

@@ -16,7 +16,7 @@ def examples_dir(base_dir: str) -> str:
 
 
 def app_icon(base_dir: str) -> str:
-    return os.path.join(base_dir, "examples", "assets", "deckmaker_icon.png")
+    return os.path.join(base_dir, "assets", "deckmaker_icon.png")
 
 
 def app_log(base_dir: str) -> str:
@@ -77,4 +77,3 @@ def output_pages(base_path: str, page_count: int) -> list[str]:
     if total == 1:
         return [normalize(base_path)]
     return [output_page(base_path, page_no) for page_no in range(1, total + 1)]
-

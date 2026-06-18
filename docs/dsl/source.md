@@ -40,17 +40,15 @@ file.ext
 Notes:
 
 - `file.ext` is accepted only for known source extensions (`png`, `jpg`, `jpeg`, `gif`, `bmp`, `webp`, `svg`, `svgz`, `pdf`, `tif`, `tiff`).
-- `file.ext}` is **not** valid syntax. The closing `}` only exists in braced forms:
-  - `@{file.ext}`
-  - `Source{file.ext}`
+- `@{file.ext}` or `Source{file.ext}` is accepted as the standard Source module form.
 
 When no path is provided (`file.ext`), lookup order is:
 
-1. Same folder as the SVG.
-2. `assets/`
-3. `images/`
-4. `img/`
-5. `imgs/` (compatibility)
+1. Same folder as the SVG template.
+2. Asset folders beside it: `assets/`, `images/`, `img/`, `imgs/`.
+3. Template-named asset folders beside it: `template_name*assets/`, `template_name*images/`, `template_name*img/`, `template_name*imgs/`.
+4. Parent asset folders: `../assets/`, `../images/`, `../img/`, `../imgs/`.
+5. Runtime Python asset folders: `python_dir/assets/`, `python_dir/images/`, `python_dir/img/`, `python_dir/imgs/`.
 
 Local sources support environment/home expansion:
 
@@ -142,9 +140,10 @@ PnPInk also supports dedicated map sources:
 @{ ofm://spain/z4 }
 @{ ofm://shikoku/t1 }
 @{ ofm://shikoku/z8/t1 view=all-labels+water_name[bay lake] }
+@{ ofm://asturias view=mountains smooth=3 }
 ```
 
-These sources generate maps from simple URLs. Map sources support `/zN` to force zoom and `/tN` to limit the automatic tile grid per axis. Use `view=` to choose rendered layers/features. See [Maps](./maps.md) for details.
+These sources generate maps from simple URLs. Map sources support `/zN` to force zoom and `/tN` to limit the automatic tile grid per axis. Use `view=` to choose rendered layers/features and `smooth=`/`s=` to control configured line smoothing. See [Maps](./maps.md) for details.
 
 Placed sources can also be adjusted afterwards with [Transform](./transform.md), for example to reduce opacity or soften edges.
 

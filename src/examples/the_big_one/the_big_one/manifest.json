@@ -1,0 +1,8 @@
+{
+  "format": "pnp",
+  "version": 1,
+  "svg": "the_big_one.svg",
+  "run_deckmaker_on_import": true,
+  "csv": "the_big_one.csv",
+  "assets_dir": "assets"
+}

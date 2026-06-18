@@ -168,6 +168,9 @@ Interpretation: no cards are generated from that row.
 ### Explicit copies
 Column A can declare an explicit quantity.
 
+Use `?` as automatic copies: it means "as many cards as fit in the current page layout".
+This is useful for full sheets of repeated backs or fillers when card size/layout may change.
+
 With iterators:
 
 1. If copies > iterator length, values wrap around.
@@ -188,6 +191,13 @@ art = *[A B C]
 ```
 
 Interpretation: `A, B`.
+
+```txt
+Column A: ?
+back = @{back.png}
+```
+
+Interpretation: one full page of identical backs. If the current layout is `3x3`, this generates `9` cards.
 
 ### Selector syntax in the final `[...]`
 The final bracket block in column A can select iterator positions explicitly.
@@ -289,6 +299,7 @@ Column A can therefore be used to:
 - leave default generation untouched
 - skip a row with `0`
 - force a fixed number of copies
+- use automatic copies with `?` (current layout capacity)
 - skip parts of an iterator sequence
 - reorder iterator positions
 - refer to the unknown end with `?`

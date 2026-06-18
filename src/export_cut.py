@@ -11,7 +11,6 @@ from xml.etree import ElementTree as ET
 import export as EXPORT
 import inkscape_cli as INKSCAPE
 import log as LOG
-import prefs
 import temp_paths as TEMPPATHS
 
 SVG_NS = "http://www.w3.org/2000/svg"
@@ -19,7 +18,6 @@ INK_NS = "http://www.inkscape.org/namespaces/inkscape"
 CUT_STROKE = "#ff0000"
 PAGE_STROKE = "#808080"
 STROKE_WIDTH = "0.15"
-CAMEO_DXF_SCALE = 1.04928
 ET.register_namespace("", SVG_NS)
 
 
@@ -47,7 +45,7 @@ def _read_pages(root) -> dict[str, dict]:
 
 
 def _parse_bbox(text: str) -> tuple[float, float, float, float] | None:
-    parts = [p for p in str(text or "").replace(",", " ").split() if p]
+    parts = str(text or "").replace(",", " ").split()
     if len(parts) != 4:
         return None
     x, y, w, h = [_f(p) for p in parts]
@@ -62,7 +60,7 @@ def _local_name(node) -> str:
 
 
 def _strip_pnp_suffix(value: str) -> str:
-    return str(value or "").split("_pnp", 1)[0]
+    return value.split("_pnp", 1)[0]
 
 
 def _clone_node(node):
@@ -259,35 +257,6 @@ def _convert_svg(svg_path: str, out_path: str, export_format: str, export_dpi: i
     return True, str(msg or "")
 
 
-def _apply_cameo_dxf_scale_fix(path: str) -> None:
-    """Silhouette Studio imports Inkscape DXF slightly smaller; compensate here."""
-    try:
-        lines = Path(path).read_text(encoding="utf-8", errors="ignore").splitlines()
-    except Exception:
-        return
-    coord_codes = {"10", "11", "12", "13", "20", "21", "22", "23", "40", "41", "42", "43"}
-    in_entities = False
-    for i in range(0, len(lines) - 1):
-        if lines[i].strip() == "SECTION" and i + 3 < len(lines) and lines[i + 2].strip() == "ENTITIES":
-            in_entities = True
-            continue
-        if lines[i].strip() == "ENDSEC" and in_entities:
-            in_entities = False
-            continue
-        if not in_entities:
-            continue
-        if lines[i].strip() not in coord_codes:
-            continue
-        try:
-            lines[i + 1] = f" {float(lines[i + 1].strip()) * CAMEO_DXF_SCALE:.6f} "
-        except Exception:
-            continue
-    try:
-        Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    except Exception:
-        pass
-
-
 def export_cut_templates(svg_path: str, output_base: str, *, export_format: str = "svg", export_dpi: int = 300) -> tuple[bool, dict]:
     started = time.perf_counter()
     fmt = str(export_format or "svg").strip().lower()
@@ -308,7 +277,7 @@ def export_cut_templates(svg_path: str, output_base: str, *, export_format: str 
         return False, {"error": "No generated cut bboxes found in SVG output"}
 
     base = os.path.splitext(os.path.abspath(output_base))[0]
-    work_dir = TEMPPATHS.make_work_dir("cut_export", stem=Path(base).name)
+    work_dir = "" if fmt == "svg" else TEMPPATHS.make_work_dir("cut_export", stem=Path(base).name)
     outputs = []
     for index, pattern in enumerate(patterns, start=1):
         final_path = f"{base}_cut{index}.{fmt}"
@@ -318,9 +287,6 @@ def export_cut_templates(svg_path: str, output_base: str, *, export_format: str 
             ok, msg = _convert_svg(svg_target, final_path, fmt, export_dpi)
             if not ok:
                 return False, {"error": msg, "outputs": outputs}
-            if fmt == "dxf":
-                if prefs.get_export_cut_dxf_cameo_scale_fix():
-                    _apply_cameo_dxf_scale_fix(final_path)
         outputs.append(final_path)
         LOG.i(
             "[export.cut] pattern=%d pages=%s rects=%d out='%s'",

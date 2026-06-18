@@ -28,6 +28,16 @@ import render as REN
 
 # --------------------- util / parsing ---------------------
 
+def _runtime_python_dir() -> str:
+    """Folder containing the Python entry point currently running PnPInk."""
+    try:
+        entry = (sys.argv[0] or "").strip()
+        if entry and os.path.isfile(entry):
+            return os.path.dirname(os.path.abspath(entry))
+    except Exception:
+        pass
+    return os.path.dirname(os.path.abspath(__file__))
+
 
 class EngineContext(SimpleNamespace):
     """Shared mutable context across pipeline phases."""
@@ -383,7 +393,7 @@ def run(self, __version__):
     dm_defs_id = f"{dm_tag}_defs"
     _l.i(f"[dm] run tag={dm_tag}")
 
-    SM = SRC.SourceManager(root, _doc_path, project_root=None, defs_group_id=dm_defs_id)
+    SM = SRC.SourceManager(root, _doc_path, project_root=_runtime_python_dir(), defs_group_id=dm_defs_id)
 
     # ---------------- Global comment directives (snippets + spritesheets) ----------------
     # Multi-section datasets: the loader can split a single sheet into multiple sections.
@@ -1319,7 +1329,9 @@ def run(self, __version__):
             jobs = _marks_pending_by_page.get(int(page_idx)) or []
             if not jobs:
                 return
-            marks_parent = jobs[0].get("parent") or out_layer
+            marks_parent = jobs[0].get("parent")
+            if marks_parent is None:
+                marks_parent = out_layer
 
             # Special case: hextile/hextiles marks must be computed at the PAGE level.
             # Slot-based rectangular marks are geometrically wrong for hex tiles.

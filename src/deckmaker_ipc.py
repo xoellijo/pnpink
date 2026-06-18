@@ -30,6 +30,7 @@ def send_request(req: AppRequest, timeout: float = 0.35) -> bool:
         "sheet_range": req.sheet_range,
         "dataset_source_mode": req.dataset_source_mode,
         "log_level": req.log_level,
+        "autorun": bool(req.autorun),
     }
     try:
         with socket.create_connection((HOST, PORT), timeout=timeout) as s:
@@ -78,6 +79,7 @@ def notify_or_launch(
     sheet_range: str = "",
     log_level: str = "global",
     dataset_source_mode: str = "",
+    autorun: bool = False,
 ) -> bool:
     req = AppRequest(
         template=DMPATHS.normalize(template),
@@ -86,6 +88,7 @@ def notify_or_launch(
         sheet_range=str(sheet_range or "").strip(),
         dataset_source_mode=str(dataset_source_mode or "").strip().lower(),
         log_level=str(log_level or "global").strip() or "global",
+        autorun=bool(autorun),
     )
     if send_request(req):
         _l.i(f"[deckmaker_app] notified resident app template='{req.template}'")
@@ -100,6 +103,7 @@ def notify_or_launch(
         "--sheet-range", req.sheet_range,
         "--dataset-source-mode", req.dataset_source_mode,
         "--log-level", req.log_level,
+        "--autorun" if req.autorun else "--no-autorun",
     ]
     env = os.environ.copy()
     env[ENV_DIRECT_RUN] = "1"
@@ -168,6 +172,7 @@ def start_server(request_queue, stop_event) -> threading.Thread:
                             sheet_range=str(msg.get("sheet_range") or "").strip(),
                             dataset_source_mode=str(msg.get("dataset_source_mode") or "").strip().lower(),
                             log_level=str(msg.get("log_level") or "global").strip() or "global",
+                            autorun=bool(msg.get("autorun")),
                         ))
                         conn.sendall(b"OK\n")
                     except Exception:

@@ -7,7 +7,7 @@
    viewBox="0 0 210 297"
    version="1.1"
    id="svg1"
-   inkscape:version="1.4.2 (f4327f4, 2025-05-13)"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
    sodipodi:docname="the_big_one.svg"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
@@ -24,15 +24,15 @@
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
      inkscape:document-units="mm"
-     inkscape:zoom="0.32"
-     inkscape:cx="62.5"
-     inkscape:cy="657.8125"
+     inkscape:zoom="0.45254834"
+     inkscape:cx="-13.258252"
+     inkscape:cy="549.11261"
      inkscape:window-width="1920"
      inkscape:window-height="974"
      inkscape:window-x="-11"
      inkscape:window-y="-11"
      inkscape:window-maximized="1"
-     inkscape:current-layer="svg1">
+     inkscape:current-layer="layer1">
     <inkscape:page
        id="page1"
        x="0"
@@ -1211,17 +1211,6 @@
            id="path3646" />
       </g>
     </symbol>
-    <symbol
-       id="src_222">
-      <image
-         x="0"
-         y="0"
-         width="120"
-         height="120"
-         xlink:href="assets/bola_rosa.png"
-         href="assets/bola_rosa.png"
-         id="image3646" />
-    </symbol>
     <clipPath
        id="clip_fa_clip_main_icon_pnp214258"
        clipPathUnits="userSpaceOnUse">
@@ -1379,14 +1368,6 @@
        height="16"
        id="corazon"
        transform="matrix(0.0661458,0,0,0.0661458,166.30071,20.026363)" />
-    <rect
-       style="display:inline;opacity:1;fill:none;fill-opacity:1;stroke:#010101;stroke-width:0.1;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1;paint-order:stroke fill markers"
-       id="icon"
-       width="7"
-       height="7"
-       x="126.86845"
-       y="6.9999461"
-       ry="0" />
     <use
        xlink:href="#noto-activities.svg:noto--mahjong-red-dragon"
        width="16"
@@ -1614,9 +1595,9 @@
        transform="translate(15.621904,10.289876)"><tspan
          x="47.294273"
          y="235.80989"
-         id="tspan3"><tspan
+         id="tspan12"><tspan
            style="fill:#251f6f"
-           id="tspan2">This is a label</tspan></tspan></text>
+           id="tspan11">This is a label</tspan></tspan></text>
   </g>
   <g
      id="g450"
@@ -1662,19 +1643,19 @@
        x="0.53320241"
        y="0"
        inkscape:label="main_text"><tspan
-         x="-241.08886"
+         x="-245.73797"
          y="229.73633"
-         id="tspan5">This is the template of a card. 
+         id="tspan13">This is the template of a card. 
 </tspan><tspan
          x="-286.78496"
          y="253.0697"
-         id="tspan6">With PnPInk&gt;deckmaker you can create </tspan><tspan
+         id="tspan14">With PnPInk&gt;deckmaker you can create </tspan><tspan
          x="-287.14894"
          y="276.40308"
-         id="tspan7">lots of variations from this from a csv or </tspan><tspan
+         id="tspan15">lots of variations from this from a csv or </tspan><tspan
          x="-162.74471"
          y="299.73645"
-         id="tspan8">google sheet</tspan></text>
+         id="tspan16">google sheet</tspan></text>
     <text
        xml:space="preserve"
        transform="matrix(0,-0.199295,0.263167,0,98.5138,36.7166)"
@@ -1685,23 +1666,23 @@
        inkscape:label="example of vertical text frame"><tspan
          x="-268.16883"
          y="225.3227"
-         id="tspan9">vertical text example</tspan></text>
-    <use
-       x="0"
-       y="0"
-       xlink:href="#icon"
+         id="tspan18">vertical text example</tspan></text>
+    <rect
+       style="display:inline;fill:none;fill-opacity:1;stroke:#010101;stroke-width:0.1;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1;paint-order:stroke fill markers"
        id="clone_icon-1"
-       transform="translate(-10.182012,67.001337)"
-       inkscape:label="test"
-       style="display:inline" />
-    <use
-       x="0"
-       y="0"
-       xlink:href="#icon"
+       width="7"
+       height="7"
+       x="116.68643"
+       y="74.001282"
+       ry="0" />
+    <rect
+       style="display:inline;fill:none;fill-opacity:1;stroke:#010101;stroke-width:0.1;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1;paint-order:stroke fill markers"
        id="clone_icon"
-       transform="translate(-10.189012,67.001137)"
-       inkscape:label="rect for placement of other elements. id is &quot;clone_icon&quot; (can be even a clone of other element)"
-       style="display:inline" />
+       width="7"
+       height="7"
+       x="116.67944"
+       y="74.001083"
+       ry="0" />
     <path
        sodipodi:type="star"
        style="fill:none;stroke:#150000;stroke-width:0.10850643;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:6.2;stroke-opacity:1"
@@ -1747,7 +1728,7 @@
        y="0"><tspan
          x="-214.06019"
          y="266.91398"
-         id="tspan10">fit and anchor</tspan></text>
+         id="tspan19">fit and anchor</tspan></text>
   </g>
   <g
      id="g1462"

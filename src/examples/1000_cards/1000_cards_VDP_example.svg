@@ -7,8 +7,8 @@
    viewBox="0 0 210 297"
    version="1.1"
    id="svg1"
-   inkscape:version="1.4.2 (f4327f4, 2025-05-13)"
-   sodipodi:docname="3000_cards_VPD_example.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   sodipodi:docname="1000_cards_VDP_example.svg"
    xml:space="preserve"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
@@ -25,14 +25,14 @@
      inkscape:deskcolor="#d1d1d1"
      inkscape:document-units="mm"
      inkscape:zoom="1.3630051"
-     inkscape:cx="435.43492"
-     inkscape:cy="275.49421"
+     inkscape:cx="435.06807"
+     inkscape:cy="275.4942"
      inkscape:window-width="1920"
      inkscape:window-height="974"
      inkscape:window-x="-11"
      inkscape:window-y="-11"
      inkscape:window-maximized="1"
-     inkscape:current-layer="g5" /><defs
+     inkscape:current-layer="layer1" /><defs
      id="defs1"><linearGradient
        id="linearGradient10"
        inkscape:collect="always"><stop
@@ -91,8 +91,8 @@
      inkscape:groupmode="layer"
      id="layer1"><g
        id="g5"
-       transform="matrix(0.56091696,0,0,0.56091696,15.936131,17.129404)"><rect
-         style="fill:url(#linearGradient11);fill-opacity:1;stroke:#16242d;stroke-width:0.22106659;stroke-linejoin:round;stroke-miterlimit:6.2;paint-order:stroke fill markers;stroke-dasharray:none;stroke-opacity:1"
+       transform="matrix(0.56091696,0,0,0.56091696,28.553778,14.217639)"><rect
+         style="fill:url(#linearGradient11);fill-opacity:1;stroke:#16242d;stroke-width:0.221067;stroke-linejoin:round;stroke-miterlimit:6.2;stroke-dasharray:none;stroke-opacity:1;paint-order:stroke fill markers"
          id="rect1"
          width="119.18823"
          height="72.988235"
@@ -107,8 +107,8 @@
          y="0"><tspan
            x="190.99319"
            y="381.86899"
-           id="tspan7">this is a fixed text allways the same</tspan></text><rect
-         style="fill:none;fill-opacity:1;stroke:url(#linearGradient8);stroke-width:2.67419263;stroke-linejoin:round;stroke-miterlimit:6.2;stroke-dasharray:none;stroke-opacity:0.47259;paint-order:stroke fill markers"
+           id="tspan1">this is a fixed text allways the same</tspan></text><rect
+         style="fill:none;fill-opacity:1;stroke:url(#linearGradient8);stroke-width:2.67419;stroke-linejoin:round;stroke-miterlimit:6.2;stroke-dasharray:none;stroke-opacity:0.47259;paint-order:stroke fill markers"
          id="rect5"
          width="111.61037"
          height="65.216263"
@@ -140,7 +140,7 @@
          height="24.337564"
          preserveAspectRatio="none"
          style="image-rendering:optimizeQuality"
-         xlink:href="assets/pnpink_logo.png"
+         xlink:href="..%5C..%5Cassets%5Cpnpink_logo.png"
          id="image1-8"
          x="44.93774"
          y="47.674377" /><text
@@ -153,7 +153,7 @@
          inkscape:label="text7"><tspan
            x="96.851723"
            y="59.022617"
-           id="tspan8">3</tspan></text><text
+           id="tspan2">3</tspan></text><text
          xml:space="preserve"
          id="text1"
          style="font-style:italic;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:10.0629px;line-height:1;font-family:Cambria;-inkscape-font-specification:'Cambria, Italic';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:start;text-decoration-color:#000000;letter-spacing:0px;word-spacing:0px;writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect2);display:inline;fill:#000000;fill-opacity:1;stroke:#000000;stroke-width:0.155946;stroke-linejoin:round;stroke-miterlimit:6.2;stroke-dasharray:none;stroke-opacity:1;paint-order:stroke fill markers"
@@ -162,7 +162,7 @@
          y="0"><tspan
            x="246.51367"
            y="191.24521"
-           id="tspan9">text for name</tspan></text><text
+           id="tspan3">text for name</tspan></text><text
          xml:space="preserve"
          id="text1-2"
          style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:6.00364px;line-height:1;font-family:Cambria;-inkscape-font-specification:'Cambria, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:start;text-decoration-color:#000000;letter-spacing:0px;word-spacing:0px;writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect2-4);display:inline;fill:#796c5d;fill-opacity:0.921569;stroke:#030303;stroke-width:0.155946;stroke-linejoin:round;stroke-miterlimit:6.2;stroke-dasharray:none;stroke-opacity:0.6;paint-order:stroke fill markers"
@@ -171,7 +171,7 @@
          y="0"><tspan
            x="246.51367"
            y="188.08779"
-           id="tspan10">text for data</tspan></text><text
+           id="tspan4">text for data</tspan></text><text
          xml:space="preserve"
          transform="matrix(0.26458333,0,0,0.26458333,-19.534544,34.258008)"
          id="text1-2-1"
@@ -180,4 +180,4 @@
          y="0"><tspan
            x="246.51367"
            y="201.9075"
-           id="tspan11">text for company</tspan></text></g></g></svg>
+           id="tspan5">text for company</tspan></text></g></g></svg>

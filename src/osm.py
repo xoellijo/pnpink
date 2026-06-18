@@ -90,6 +90,8 @@ class OSMMapSource:
             val = val.strip()
             if key in {"view", "v"}:
                 args["view"] = val
+            elif key in {"smooth", "s", "simplify"}:
+                args["smooth"] = val
             else:
                 args[key] = val
         return url, args
@@ -229,6 +231,8 @@ class OSMMapSource:
         if not body or body.startswith("["):
             return None
         body, forced_zoom, max_tile_grid = cls._strip_map_options(body, provider)
+        if len(body) >= 2 and body[0] == body[-1] and body[0] in ("'", '"'):
+            body = body[1:-1].strip()
         if not body or body.lower().startswith("#map="):
             return None
         return provider, body, forced_zoom, max_tile_grid
@@ -269,6 +273,31 @@ class OSMMapSource:
                 filtered.append(row)
         return base, filtered
 
+    @classmethod
+    def _nominatim_feature_type(cls, query: str) -> str:
+        parts = [p.strip() for p in str(query or "").split(",") if p.strip()]
+        if len(parts) <= 1:
+            return ""
+        value = cls._norm_place_text(parts[1])
+        return value if value in {"country", "state", "city", "settlement"} else ""
+
+    @staticmethod
+    def _log_geocode_rows(label: str, query: str, search_query: str, rows: list, feature_type: str = "") -> None:
+        preview = []
+        for r in (rows or [])[:8]:
+            if not isinstance(r, dict):
+                continue
+            preview.append(
+                f"{r.get('display_name') or ''} "
+                f"type={r.get('category') or ''}/{r.get('type') or ''}/{r.get('addresstype') or ''} "
+                f"rank={r.get('place_rank') or ''} imp={r.get('importance') or ''}"
+            )
+        if preview:
+            _l.i(
+                f"[sources] nominatim {label} query='{query}' search='{search_query}' "
+                f"featureType='{feature_type}' count={len(rows or [])} -> " + " | ".join(preview)
+            )
+
     def _load_geocode_rows(self, provider: str, query: str, feature_type: str = "") -> Optional[list]:
         cache = self._geocode_cache_file(provider, query, feature_type)
         data = None
@@ -305,10 +334,12 @@ class OSMMapSource:
 
     def geocode_place(self, provider: str, query: str) -> Optional[GeocodeResult]:
         search_query = str(query or "").split(",", 1)[0].strip() or str(query or "").strip()
-        rows_raw = self._load_geocode_rows(provider, search_query) or []
+        feature_type = self._nominatim_feature_type(query)
+        rows_raw = self._load_geocode_rows(provider, search_query, feature_type=feature_type) or []
+        self._log_geocode_rows("raw", query, search_query, rows_raw, feature_type)
         _base_query, rows = self._filter_geocode_rows(query, rows_raw)
         if not rows:
-            _l.w(f"[sources] nominatim no candidates query='{query}' search='{search_query}'")
+            _l.w(f"[sources] nominatim no candidates query='{query}' search='{search_query}' featureType='{feature_type}' raw={len(rows_raw)}")
             return None
         try:
             preview = []
@@ -469,8 +500,9 @@ class OSMMapSource:
         self._emit_source_summary(provider)
         width_px, height_px = self._output_size_for_bbox(bbox, self.OUTPUT_WIDTH_PX)
         view_expr = str(args.get("view") or "default").strip()
+        smooth_expr = str(args.get("smooth") or "").strip()
         view_filter = MAP_STYLE.resolve_view_filter(view_expr)
-        _l.i(f"[sources] map view='{view_expr}'")
+        _l.i(f"[sources] map view='{view_expr}' smooth='{smooth_expr or MAP_STYLE.smooth_value()}'")
         root = MVT.build_debug_svg_multi(
             tile_specs,
             width=width_px,
@@ -478,6 +510,7 @@ class OSMMapSource:
             include_layers=None,
             view_filter=view_filter,
             bbox_override=bbox,
+            smooth=smooth_expr or None,
         )
         root.set("data-osm-provider", provider)
         root.set("data-osm-zoom", str(z))
@@ -486,6 +519,7 @@ class OSMMapSource:
         if forced_zoom is not None:
             root.set("data-osm-forced-zoom", str(forced_zoom))
         root.set("data-osm-view", view_expr)
+        root.set("data-osm-smooth", smooth_expr or MAP_STYLE.smooth_value())
         return ET.tostring(root, encoding="unicode")
 
     def resolve(self, expr: str) -> Optional[List[str]]:

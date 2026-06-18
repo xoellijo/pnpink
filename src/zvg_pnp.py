@@ -7,16 +7,18 @@ import os
 import posixpath
 import re
 import shutil
+import urllib.parse
 import zipfile
 import csv
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, Optional
 
 import inkex
 import gsheets_client_pkce as GS
 import dataset_state as DSTATE
+import sources as SRC
+import svg as SVG
 
 import log as LOG
 _l = LOG
@@ -26,11 +28,11 @@ XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
 HREF_KEYS = ("href", XLINK_HREF)
 NO_COMPRESS_EXT = {".png", ".jpg", ".jpeg", ".webp", ".pdf"}
 CACHE_FILE_RE = re.compile(r"^web_[0-9a-f]{64}\.[a-z0-9]+$", re.IGNORECASE)
+LOCAL_SOURCE_EXT_RE = re.compile(r"(?<![\w:/\\.-])([~%$A-Za-z0-9_. /\\-]+\.(?:png|jpg|jpeg|gif|bmp|webp|svg|svgz|pdf|tif|tiff))(?![\w.-])", re.IGNORECASE)
 
 
 @dataclass
 class PackageInfo:
-    kind: str
     base_dir: Path
     svg_abs: Path
     manifest: Dict[str, object]
@@ -54,6 +56,61 @@ def _get_doc_path(ext) -> Optional[Path]:
     return pp
 
 
+def _template_path_for_export(doc_path: Optional[Path]) -> Optional[Path]:
+    if doc_path is None:
+        return None
+    if doc_path.suffix.lower() != ".svg":
+        return None
+    if doc_path.stem.endswith("_output"):
+        template = doc_path.with_name(doc_path.stem[:-7] + doc_path.suffix)
+        if template.is_file():
+            _l.i(f"[pnp] exporting source template instead of generated output: '{template}'")
+            return template
+    return doc_path
+
+
+def _pnp_extracted_svg_path(pnp_path: Optional[Path]) -> Optional[Path]:
+    if pnp_path is None or pnp_path.suffix.lower() != ".pnp":
+        return None
+    base_dir = pnp_path.with_suffix("")
+    man_path = base_dir / "manifest.json"
+    if not man_path.is_file():
+        return None
+    try:
+        manifest = json.loads(man_path.read_text(encoding="utf-8", errors="replace"))
+        if not isinstance(manifest, dict):
+            return None
+        svg_name = str(manifest.get("svg") or "").strip()
+        if not svg_name:
+            return None
+        svg_path = _safe_join(base_dir, svg_name)
+        return svg_path if svg_path.is_file() else None
+    except Exception:
+        return None
+
+
+def _source_path_for_export(doc_path: Optional[Path]) -> Optional[Path]:
+    return _template_path_for_export(doc_path) or _pnp_extracted_svg_path(doc_path)
+
+
+def _export_svg_root(ext, doc_path: Optional[Path]):
+    if doc_path is not None:
+        try:
+            return inkex.load_svg(str(doc_path)).getroot()
+        except Exception as ex:
+            _l.w(f"[pnp] could not reload export source '{doc_path}': {ex}")
+    svg_root = getattr(ext, "svg", None)
+    if svg_root is not None:
+        return svg_root
+    doc = getattr(ext, "document", None)
+    if doc is not None:
+        try:
+            return doc.getroot()
+        except Exception:
+            pass
+    raise inkex.AbortExtension("Could not access current SVG document.")
+
+
 def _is_local_ref(v: str) -> bool:
     s = (v or "").strip()
     if not s:
@@ -64,6 +121,16 @@ def _is_local_ref(v: str) -> bool:
     if sl.startswith(("http://", "https://", "data:", "icon://", "@{", "wkmc://", "pxby://", "oclp://", "pnp://")):
         return False
     return True
+
+
+def _runtime_python_dir() -> str:
+    try:
+        entry = (os.sys.argv[0] or "").strip()
+        if entry and os.path.isfile(entry):
+            return os.path.dirname(os.path.abspath(entry))
+    except Exception:
+        pass
+    return os.path.dirname(os.path.abspath(__file__))
 
 
 def _iter_href_attrs(svg_root):
@@ -77,22 +144,28 @@ def _iter_href_attrs(svg_root):
                 yield elem, k, str(v)
 
 
-def _resolve_local_asset(svg_dir: Path, raw_ref: str) -> Optional[Path]:
+def _resolve_local_asset(svg_dir: Path, raw_ref: str, *, svg_path: Optional[Path] = None) -> Optional[Path]:
     s = (raw_ref or "").strip()
     if not _is_local_ref(s):
         return None
     # Keep it simple: do not try query/fragment here for local refs.
     if ("?" in s) or ("#" in s):
         s = s.split("?", 1)[0].split("#", 1)[0]
-    p = Path(s)
-    cand = p if p.is_absolute() else (svg_dir / p)
+    s = urllib.parse.unquote(os.path.expanduser(os.path.expandvars(s)))
     try:
+        p = Path(s)
+        cand = p if p.is_absolute() else (svg_dir / p)
         cand = cand.resolve()
+        if cand.is_file():
+            return cand
+    except Exception:
+        pass
+    try:
+        resolver = SRC.PathResolver(str(svg_path or (svg_dir / "_pnpink.svg")), project_root=_runtime_python_dir())
+        hit = resolver.resolve_logical(s)
+        return hit if hit and hit.is_file() else None
     except Exception:
         return None
-    if not cand.is_file():
-        return None
-    return cand
 
 
 def _should_include_in_pnp(path: Path) -> bool:
@@ -100,6 +173,111 @@ def _should_include_in_pnp(path: Path) -> bool:
     if CACHE_FILE_RE.match(name):
         return False
     return True
+
+
+def _iter_local_refs_from_text(text: str) -> Iterable[str]:
+    data = text or ""
+    for m in re.finditer(r"@\{\s*([^}]*)\s*\}", data):
+        yield m.group(1)
+    for m in re.finditer(r"(?:^|[\s,])(?:Source|S)\s*\{\s*([^}]*)\s*\}", data, re.IGNORECASE):
+        yield m.group(1)
+    for m in LOCAL_SOURCE_EXT_RE.finditer(data):
+        yield m.group(1)
+
+
+def _asset_arc_for_ref(raw_ref: str, src: Path, used_arcs: Dict[str, int]) -> str:
+    raw = (raw_ref or "").strip()
+    if ("?" in raw) or ("#" in raw):
+        raw = raw.split("?", 1)[0].split("#", 1)[0]
+    raw = urllib.parse.unquote(raw).replace("\\", "/").strip()
+    if raw and not Path(os.path.expanduser(os.path.expandvars(raw))).is_absolute():
+        rel = posixpath.normpath(raw).lstrip("/")
+        if rel and not rel.startswith("../") and rel != "..":
+            arc = rel if "/" in rel else f"assets/{rel}"
+        else:
+            arc = f"assets/{src.name}"
+    else:
+        arc = f"assets/{src.name}"
+    if arc not in used_arcs:
+        used_arcs[arc] = 1
+        return arc
+    used_arcs[arc] += 1
+    stem, ext = posixpath.splitext(arc)
+    return f"{stem}_{used_arcs[arc]}{ext}"
+
+
+def _add_asset(asset_map: Dict[Path, str], used_arcs: Dict[str, int], src: Path, raw_ref: str) -> None:
+    if src in asset_map:
+        return
+    asset_map[src] = _asset_arc_for_ref(raw_ref, src, used_arcs)
+
+
+def _include_dataset_assets(asset_map: Dict[Path, str], used_arcs: Dict[str, int], svg_path: Optional[Path], csv_bytes: bytes | None) -> int:
+    if not csv_bytes or svg_path is None:
+        return 0
+    try:
+        text = csv_bytes.decode("utf-8-sig", errors="replace")
+    except Exception:
+        return 0
+    n0 = len(asset_map)
+    for raw in _iter_local_refs_from_text(text):
+        src = _resolve_local_asset(svg_path.parent, raw, svg_path=svg_path)
+        if src is None or not _should_include_in_pnp(src):
+            continue
+        _add_asset(asset_map, used_arcs, src, raw)
+    return len(asset_map) - n0
+
+
+def _read_file_bytes(path: Optional[Path]) -> bytes | None:
+    if path is None or not path.is_file():
+        return None
+    try:
+        return path.read_bytes()
+    except Exception:
+        return None
+
+
+def _csv_for_export(ext, doc_path: Optional[Path], svg_name: str, ext_man: Dict[str, object]) -> tuple[Optional[str], Optional[bytes]]:
+    if doc_path is not None:
+        local_csv = doc_path.with_suffix(".csv")
+        data = _read_file_bytes(local_csv)
+        if data is not None:
+            return local_csv.name, data
+
+    opt = getattr(ext, "options", None)
+    state_sid = ""
+    state_srg = ""
+    if doc_path is not None:
+        try:
+            rec = DSTATE.get_gsheet_for_svg(str(doc_path))
+            if rec:
+                state_sid = str(rec.get("sheet_id") or "").strip()
+                state_srg = str(rec.get("sheet_range") or "").strip()
+        except Exception:
+            pass
+
+    sheet_id = str(
+        (getattr(opt, "sheet_id", "") if opt is not None else "")
+        or ext_man.get("gsheet_id")
+        or state_sid
+        or ""
+    ).strip()
+    if not sheet_id:
+        return None, None
+
+    sheet_range = str(
+        (getattr(opt, "sheet_range", "") if opt is not None else "")
+        or ext_man.get("gsheet_range")
+        or state_srg
+        or ""
+    ).strip()
+    data = _fetch_gsheet_csv_bytes(doc_path, sheet_id, sheet_range)
+    if data is None:
+        return None, None
+    ext_man.setdefault("gsheet_id", sheet_id)
+    if sheet_range:
+        ext_man.setdefault("gsheet_range", sheet_range)
+    return _default_csv_for_svg(svg_name), data
 
 
 def _zip_add_file(zf: zipfile.ZipFile, src: Path, arcname: str) -> None:
@@ -204,18 +382,8 @@ def _fetch_gsheet_csv_bytes(doc_path: Optional[Path], sheet_id: str, range_a1: O
 
 
 def export_package(ext, stream, *, kind: str) -> None:
-    svg_root = getattr(ext, "svg", None)
-    if svg_root is None:
-        doc = getattr(ext, "document", None)
-        if doc is not None:
-            try:
-                svg_root = doc.getroot()
-            except Exception:
-                svg_root = None
-    if svg_root is None:
-        raise inkex.AbortExtension("Could not access current SVG document.")
-
-    doc_path = _get_doc_path(ext)
+    doc_path = _source_path_for_export(_get_doc_path(ext))
+    svg_root = _export_svg_root(ext, doc_path)
     svg_name = (doc_path.name if doc_path else f"document.{kind}.svg")
     svg_dir = (doc_path.parent if doc_path else Path.cwd())
 
@@ -226,30 +394,18 @@ def export_package(ext, stream, *, kind: str) -> None:
         svg_clone = svg_root
 
     asset_map: Dict[Path, str] = {}
-    used_names: Dict[str, int] = {}
+    used_arcs: Dict[str, int] = {}
 
     for elem, key, raw in _iter_href_attrs(svg_clone):
-        src = _resolve_local_asset(svg_dir, raw)
+        src = _resolve_local_asset(svg_dir, raw, svg_path=doc_path)
         if src is None:
             continue
         if kind == "pnp" and not _should_include_in_pnp(src):
             continue
 
-        if src not in asset_map:
-            name = src.name
-            if name in used_names:
-                used_names[name] += 1
-                stem = Path(name).stem
-                suf = Path(name).suffix
-                name = f"{stem}_{used_names[Path(src).name]}{suf}"
-            else:
-                used_names[name] = 1
-            asset_map[src] = f"assets/{name}"
+        _add_asset(asset_map, used_arcs, src, raw)
         elem.set(key, asset_map[src])
 
-    csv_name = None
-    csv_abs = None
-    csv_generated_bytes = None
     ext_man: Dict[str, object] = {}
 
     if doc_path is not None:
@@ -262,42 +418,12 @@ def export_package(ext, stream, *, kind: str) -> None:
         except Exception:
             ext_man = {}
 
-    if doc_path is not None:
-        csv_abs = doc_path.with_suffix(".csv")
-        if csv_abs.is_file():
-            csv_name = csv_abs.name
-
-    if kind == "pnp" and not csv_name:
-        opt = getattr(ext, "options", None)
-        state_sid = ""
-        state_srg = ""
-        if doc_path is not None:
-            try:
-                rec = DSTATE.get_gsheet_for_svg(str(doc_path))
-                if rec:
-                    state_sid = str(rec.get("sheet_id") or "").strip()
-                    state_srg = str(rec.get("sheet_range") or "").strip()
-            except Exception:
-                pass
-        sheet_id = str(
-            (getattr(opt, "sheet_id", "") if opt is not None else "")
-            or ext_man.get("gsheet_id")
-            or state_sid
-            or ""
-        ).strip()
-        sheet_range = str(
-            (getattr(opt, "sheet_range", "") if opt is not None else "")
-            or ext_man.get("gsheet_range")
-            or state_srg
-            or ""
-        ).strip()
-        if sheet_id:
-            csv_generated_bytes = _fetch_gsheet_csv_bytes(doc_path, sheet_id, sheet_range)
-            if csv_generated_bytes:
-                csv_name = _default_csv_for_svg(svg_name)
-                ext_man.setdefault("gsheet_id", sheet_id)
-                if sheet_range:
-                    ext_man.setdefault("gsheet_range", sheet_range)
+    csv_name, csv_bytes = (None, None)
+    if kind == "pnp":
+        csv_name, csv_bytes = _csv_for_export(ext, doc_path, svg_name, ext_man)
+        added = _include_dataset_assets(asset_map, used_arcs, doc_path, csv_bytes)
+        if added:
+            _l.i(f"[pnp] included dataset local assets: {added}")
 
     manifest = _build_manifest(kind, svg_name, csv_name, deckmaker=(kind == "pnp"))
     if doc_path is not None:
@@ -311,15 +437,13 @@ def export_package(ext, stream, *, kind: str) -> None:
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"), compress_type=zipfile.ZIP_DEFLATED)
         zf.writestr(svg_name, _as_bytes(svg_clone), compress_type=zipfile.ZIP_DEFLATED)
-        if csv_abs is not None and csv_abs.is_file():
-            _zip_add_file(zf, csv_abs, csv_name or csv_abs.name)
-        elif csv_generated_bytes is not None and csv_name:
-            zf.writestr(csv_name, csv_generated_bytes, compress_type=zipfile.ZIP_DEFLATED)
+        if csv_bytes is not None and csv_name:
+            zf.writestr(csv_name, csv_bytes, compress_type=zipfile.ZIP_DEFLATED)
         for src, arc in sorted(asset_map.items(), key=lambda kv: kv[1]):
             _zip_add_file(zf, src, arc)
 
     stream.write(out.getvalue())
-    csv_ok = bool((csv_abs and csv_abs.is_file()) or (csv_generated_bytes is not None and csv_name))
+    csv_ok = bool(csv_bytes is not None and csv_name)
     _l.i(f"[{kind}] export ok: svg='{svg_name}' assets={len(asset_map)} csv={'yes' if csv_ok else 'no'}")
 
 
@@ -346,90 +470,39 @@ def _extract_package(stream, package_path: Path) -> PackageInfo:
                 shutil.copyfileobj(src_f, dst_f)
 
     svg_abs = _safe_join(base_dir, svg_name)
-    _l.i(f"[pkg] extracted into '{base_dir}'")
-    return PackageInfo(kind=str(manifest.get("format") or ""), base_dir=base_dir, svg_abs=svg_abs, manifest=manifest)
-
-
-def _run_deckmaker_if_requested(svg_root, info: PackageInfo):
-    want = bool(info.manifest.get("run_deckmaker_on_import", False))
-    if not want:
-        return svg_root
     try:
-        import engine as ENG
+        doc = inkex.load_svg(str(svg_abs))
+        fixed_images = SVG.absolutize_all_linked_images(doc, str(svg_abs), prefer="fileuri")
+        if fixed_images:
+            svg_abs.write_bytes(_as_bytes(doc.getroot()))
+            _l.i(f"[{manifest.get('format') or 'pkg'}] absolutized linked images on import: {fixed_images}")
     except Exception as ex:
-        _l.w(f"[pnp] deckmaker import requested, but engine import failed: {ex}")
-        return svg_root
+        _l.w(f"[pkg] could not absolutize linked images on import: {ex}")
+    _l.i(f"[pkg] extracted into '{base_dir}'")
+    return PackageInfo(base_dir=base_dir, svg_abs=svg_abs, manifest=manifest)
+
+
+def _launch_deckmaker_if_requested(info: PackageInfo) -> None:
+    if not bool(info.manifest.get("run_deckmaker_on_import", False)):
+        return
+    try:
+        import deckmaker_app as DMAPP
+    except Exception as ex:
+        _l.w(f"[pnp] deckmaker app import failed: {ex}")
+        return
 
     csv_rel = str(info.manifest.get("csv") or "").strip()
-    csv_path = str(_safe_join(info.base_dir, csv_rel)) if csv_rel else ""
-    has_packaged_csv = bool(csv_path and os.path.isfile(csv_path))
+    has_packaged_csv = bool(csv_rel and _safe_join(info.base_dir, csv_rel).is_file())
     sheet_id = "" if has_packaged_csv else str(info.manifest.get("gsheet_id") or "").strip()
     sheet_range = "" if has_packaged_csv else str(info.manifest.get("gsheet_range") or "").strip()
-    preset = str(info.manifest.get("preset") or "{A4}")
-    preloaded_datasets = None
+    source_mode = "local_csv" if has_packaged_csv else ""
     if has_packaged_csv and str(info.manifest.get("gsheet_id") or "").strip():
         _l.i(f"[pnp] using packaged CSV on import, ignoring manifest gsheet_id for deterministic render: '{csv_rel}'")
-    if has_packaged_csv:
-        try:
-            import dataset as DS
 
-            preloaded_datasets = DS.load_csv_datasets(csv_path)
-            _l.i(f"[pnp] preloaded packaged CSV datasets={len(preloaded_datasets or [])} path='{csv_rel}'")
-        except Exception as ex:
-            _l.w(f"[pnp] could not preload packaged CSV '{csv_rel}': {ex}")
-            preloaded_datasets = None
-
-    class _Runner:
-        def __init__(self, root, path, datasets=None):
-            self.svg = root
-            self._path = str(path)
-            self._dm_output_disabled = True
-            if datasets is not None:
-                self._dm_preloaded_datasets = datasets
-            self.options = SimpleNamespace(
-                tab="",
-                csv_path=csv_path,
-                sheet_id=sheet_id,
-                sheet_range=sheet_range,
-                prototypes_layer="Prototypes",
-                preset=preset,
-                stop_on_error=False,
-                log_level="global",
-            )
-
-        def document_path(self):
-            return self._path
-
-        def _document_path_or_abort(self):
-            p = self.document_path()
-            if not p or not os.path.isabs(p) or not os.path.isfile(p):
-                raise inkex.AbortExtension("Save document before running DeckMaker.")
-            return os.path.normpath(p)
-
-        def _find_or_create_layer(self, root, label: str):
-            for child in list(root):
-                try:
-                    if not (hasattr(child, "tag") and isinstance(child.tag, str) and child.tag.endswith("g")):
-                        continue
-                    if child.get(inkex.addNS("groupmode", "inkscape")) == "layer":
-                        if (child.get(inkex.addNS("label", "inkscape")) or "") == label:
-                            return child
-                except Exception:
-                    continue
-            layer = inkex.Group()
-            layer.set(inkex.addNS("groupmode", "inkscape"), "layer")
-            layer.set(inkex.addNS("label", "inkscape"), label)
-            root.append(layer)
-            return layer
-
-    try:
-        runner = _Runner(svg_root, info.svg_abs, preloaded_datasets)
-        ENG.run(runner, "pnp-import")
-        _l.i("[pnp] deckmaker auto-run on import: OK")
-        return runner.svg
-    except Exception as ex:
-        _l.w(f"[pnp] deckmaker auto-run on import failed: {ex}")
-        return svg_root
+    if DMAPP.notify_or_launch(str(info.svg_abs), "", sheet_id, sheet_range, "global", source_mode, autorun=True):
+        _l.i(f"[pnp] deckmaker app launched for '{info.svg_abs}'")
+    else:
+        _l.w("[pnp] could not launch DeckMaker App")
 
 
 def import_package(ext, stream, *, kind: str):
@@ -452,12 +525,7 @@ def import_package(ext, stream, *, kind: str):
     root = doc.getroot()
 
     if kind == "pnp":
-        root2 = _run_deckmaker_if_requested(root, info)
-        if root2 is not root:
-            try:
-                doc._setroot(root2)
-            except Exception:
-                doc = inkex.etree.ElementTree(root2)
+        _launch_deckmaker_if_requested(info)
 
     _l.i(f"[{kind}] import ok: svg='{info.svg_abs}'")
     return doc

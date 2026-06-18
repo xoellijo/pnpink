@@ -1050,9 +1050,6 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                 pass
 
     is_fa_token = force_fa_default or header_plus or compact_ops_present or ("~" in raw_token) or raw_token.endswith("=") or raw_token.endswith("+") or ("=~" in raw_token) or ("+~" in raw_token) or raw_token.lstrip().startswith('[')
-    if header_plus and ("~" not in raw_token):
-        raw_token = raw_token + "~i"
-
     def _ensure_ops_full(ops_body: str) -> str:
         s = (ops_body or "").strip()
         if not s:

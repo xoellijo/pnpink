@@ -14,6 +14,7 @@ class AppRequest:
     dataset_source_mode: str = ""
     log_level: str = "global"
     snapshot_path: str = ""
+    autorun: bool = False
 
 
 @dataclass(frozen=True)

@@ -62,6 +62,17 @@
     "point": { "fill": "#000", "stroke": "#fff", "stroke-width": "0.8" }
   },
 
+  // Cheap quadratic smoothing. Disabled by default because dense maps become
+  // expensive to render in Inkscape. Enable per source with smooth=1, s=3/2, etc.
+  // smooth=1 curves every point; smooth=4 roughly turns 4 points into 1 curve.
+  "line_smoothing": {
+    "enabled": true,
+    "smooth": 0,
+    "layers": ["waterway", "water_lines", "boundary"],
+    "polygon_layers": ["landcover"],
+    "min_points": 4
+  },
+
   // Per-layer rules. "include" keeps a feature if any rule matches.
   // Supported match keys: zoom, kind, class, subclass, rail, rank_min/max, ele_min/max.
   "features": {

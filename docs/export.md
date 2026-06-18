@@ -77,12 +77,16 @@ Formats:
 | Format | Notes |
 | --- | --- |
 | `svg (vector, cricut)` | Preferred vector output when supported. |
-| `dxf (vector, cameo)` | Vector output for Silhouette/Cameo. In Silhouette Studio, use `Simplify` before cutting if imported curves look segmented. |
+| `dxf (vector, cameo)` | Vector output for Silhouette/Cameo. |
 | `png (raster, all)` | Raster preview/fallback for tools that do not import vectors well. |
 
 The page border is exported in gray for positioning. Cut bbox shapes are exported in red.
 
-For Silhouette Studio, `export_cut_dxf_cameo_scale_fix=1` compensates the observed DXF import scale mismatch. Disable it in `preferences.ini` if your Cameo workflow imports DXF at the correct physical size without it.
+For DXF/Cameo, in Silhouette Studio:
+
+- First time: `Edit > Preferences > Export > DXF > Open > "Center"`.
+- Every template: select all and apply `"Simplify"`, and group all.
+- Red lines are for cutting; gray lines are for page-border alignment.
 
 ## SVG parts
 

@@ -48,7 +48,7 @@ The most important controls are:
 | `PDF/X export (CMYK)` | Enables CMYK PDF/X export through Ghostscript. |
 | `Raster filters` | Chooses how filtered SVG content is handled before PDF export. |
 | `Other formats` | Exports page images or alternate formats such as PNG, JPEG, TIFF, WebP, PS, EPS, EMF, or WMF. |
-| `Cutting-plotter template` | Exports cut-only templates as `svg (vector, cricut)`, `dxf (vector, cameo)`, or `png (raster, all)`. Prefer vector formats; for DXF/Cameo, use `Simplify` in Silhouette Studio before cutting if curves look segmented. |
+| `Cutting-plotter template` | Exports cut-only templates as `svg (vector, cricut)`, `dxf (vector, cameo)`, or `png (raster, all)`. For DXF/Cameo in Silhouette Studio, set DXF open mode to `"Center"` once, then select all, apply `"Simplify"`, and group each imported template. |
 | `DPI` | Output resolution used by Inkscape exports. |
 | `JPEG quality` | JPEG quality for JPEG-based outputs. |
 
