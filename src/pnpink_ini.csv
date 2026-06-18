@@ -10,6 +10,7 @@
 # :Ts(text) = <tspan text-decoration='underline'>${text}</tspan>
 # :Tx(text) = <tspan text-decoration='line-through'>${text}</tspan>
 # :Tf(text font size) = <tspan font-family='${font}' ${size? font-size='${size}'}>${text}</tspan>
+# :Tp(text size) = <tspan ${size? font-size='${size}'}>${text}</tspan>
 # :Tc(text fill stroke width=1) = <tspan fill='${fill}' ${stroke? stroke='${stroke}' width='${width}' paint-order='stroke'}>${text}</tspan>
 # =====================
 

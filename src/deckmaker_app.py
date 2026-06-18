@@ -39,6 +39,14 @@ _l = LOG
 
 _normalize_path = DMPATHS.normalize
 
+
+def _file_mtime_ns(path: str) -> int:
+    try:
+        return int(os.stat(_normalize_path(path)).st_mtime_ns)
+    except Exception:
+        return 0
+
+
 APP_VERSION = "Deckmaker v0.52"
 DOCS_INTRO_URL = "https://xoellijo.github.io/pnpink/intro/"
 DOCS_GUIDE_URL = "https://xoellijo.github.io/pnpink/quickstart/"
@@ -156,6 +164,7 @@ class DeckMakerApp:
         self._generated_output_ready = False
         self._dataset_source_invalid = False
         self._snapshot_path = _normalize_path(initial.snapshot_path) if initial and initial.snapshot_path else ""
+        self._snapshot_template_mtime_ns = 0
         try:
             TEMPPATHS.cleanup_runs_now(keep_paths=[self._snapshot_path] if self._snapshot_path else None)
         except Exception:
@@ -1853,6 +1862,7 @@ class DeckMakerApp:
             self.sheet_range_var.set(sheet_range)
             self._refresh_source_mode(req.template, req.dataset_source_mode)
             self._snapshot_path = _normalize_path(req.snapshot_path) if req.snapshot_path else ""
+            self._snapshot_template_mtime_ns = _file_mtime_ns(req.template) if self._snapshot_path and os.path.isfile(self._snapshot_path) else 0
         finally:
             self._suppress_source_change = False
         self._dataset_source_invalid = False
@@ -1972,7 +1982,15 @@ class DeckMakerApp:
             self.status_var.set("Save/open a template SVG first")
             self._log("Save/open a template SVG first", "warning")
             return
-        snapshot_path = self._snapshot_path if (self._snapshot_path and os.path.isfile(self._snapshot_path)) else ""
+        snapshot_path = ""
+        if self._snapshot_path and os.path.isfile(self._snapshot_path):
+            current_mtime_ns = _file_mtime_ns(template)
+            if (not self._snapshot_template_mtime_ns) or (not current_mtime_ns) or current_mtime_ns <= self._snapshot_template_mtime_ns:
+                snapshot_path = self._snapshot_path
+            else:
+                self._log("Template source: saved SVG is newer than the last Inkscape snapshot")
+                self._snapshot_path = ""
+                self._snapshot_template_mtime_ns = 0
         if snapshot_path:
             self._log("Template source: current Inkscape document snapshot")
         else:
