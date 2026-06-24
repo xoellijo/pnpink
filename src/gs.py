@@ -319,6 +319,7 @@ def build_pdfwrite_argv(
         "-dNOPAUSE",
         "-dSAFER" if safer else "-dNOSAFER",
         "-sDEVICE=pdfwrite",
+        "-dAutoRotatePages=/None",
         f"-sOutputFile={out_pdf}",
     ]
     argv.append(f"-dDetectDuplicateImages={'true' if detect_duplicate_images else 'false'}")

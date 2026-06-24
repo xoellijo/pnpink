@@ -47,7 +47,10 @@ _PILLOW_EXPORT_ALIASES = {
     "webp": "WEBP",
     "tiff": "TIFF",
     "tif": "TIFF",
+    "avif": "AVIF",
 }
+
+PILLOW_INTERMEDIATE_EXPORTS = {"jpeg", "tiff", "jpeg2000", "webp", "avif"}
 
 
 def _normalize_export_name(name: str) -> str:
@@ -92,6 +95,16 @@ def _pillow_format_status(format_name: str) -> tuple[bool, str]:
 def _pillow_supports_format(format_name: str) -> bool:
     ok, _reason = _pillow_format_status(format_name)
     return ok
+
+
+def available_other_export_formats(base_formats: tuple[str, ...]) -> tuple[str, ...]:
+    out: list[str] = []
+    for item in base_formats:
+        name = _normalize_export_name(item)
+        if name == "avif" and not _pillow_supports_format(name):
+            continue
+        out.append(item)
+    return tuple(out)
 
 
 def _pillow_convert_image(src_png: str, dst_path: str, export_name: str, *, jpeg_quality: int) -> None:
@@ -429,8 +442,8 @@ def export_other_pages_via_inkscape(
 
     export_name = _normalize_export_name(export_type)
     pillow_ok, pillow_reason = _pillow_format_status(export_name)
-    use_png_intermediate = export_name in {"jpeg", "tiff", "jpeg2000", "webp"} and pillow_ok
-    if export_name in {"tiff", "jpeg2000", "webp"} and not use_png_intermediate:
+    use_png_intermediate = export_name in PILLOW_INTERMEDIATE_EXPORTS and pillow_ok
+    if export_name in (PILLOW_INTERMEDIATE_EXPORTS - {"jpeg"}) and not use_png_intermediate:
         _l.w("[export.%s] pillow unsupported: %s", export_name, pillow_reason)
         return False, {
             "error": f"Pillow does not support {export_name.upper()} on this system: {pillow_reason}",

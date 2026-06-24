@@ -56,7 +56,9 @@ Enable `Other formats` to export page-based output in a non-PDF format.
 
 Supported formats:
 
-`png`, `jpeg`, `jpeg2000`, `pdf`, `svg`, `tiff`, `webp`, `ps`, `eps`, `emf`, `wmf`
+`png`, `jpeg`, `jpeg2000`, `pdf`, `svg`, `tiff`, `webp`, `avif`, `ps`, `eps`, `emf`, `wmf`
+
+`avif` is shown only when the installed Pillow runtime can write AVIF files.
 
 Use the `Pages` field to restrict export to specific pages. Syntax examples:
 

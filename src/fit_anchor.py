@@ -204,6 +204,18 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
 
 # we could use rect_with_pad, but there the order is (t,r,b,l) as well
     if pad_top or pad_right or pad_bottom or pad_left:
+        final_scale = kwargs.get("final_scale")
+        if final_scale:
+            try:
+                fsx, fsy = float(final_scale[0]), float(final_scale[1])
+                if abs(fsx) > 1e-9:
+                    pad_left /= abs(fsx)
+                    pad_right /= abs(fsx)
+                if abs(fsy) > 1e-9:
+                    pad_top /= abs(fsy)
+                    pad_bottom /= abs(fsy)
+            except Exception:
+                pass
         inner_x, inner_y, inner_w, inner_h = svg.rect_with_pad(
             rx, ry, rw, rh, (pad_top, pad_right, pad_bottom, pad_left)
         )

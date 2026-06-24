@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import base64
 import json
 import os
 import posixpath
@@ -29,6 +30,7 @@ HREF_KEYS = ("href", XLINK_HREF)
 NO_COMPRESS_EXT = {".png", ".jpg", ".jpeg", ".webp", ".pdf"}
 CACHE_FILE_RE = re.compile(r"^web_[0-9a-f]{64}\.[a-z0-9]+$", re.IGNORECASE)
 LOCAL_SOURCE_EXT_RE = re.compile(r"(?<![\w:/\\.-])([~%$A-Za-z0-9_. /\\-]+\.(?:png|jpg|jpeg|gif|bmp|webp|svg|svgz|pdf|tif|tiff))(?![\w.-])", re.IGNORECASE)
+DATA_IMAGE_RE = re.compile(r"^data:image/([^;,]+)([^,]*),(.*)$", re.IGNORECASE | re.DOTALL)
 
 
 @dataclass
@@ -109,6 +111,45 @@ def _export_svg_root(ext, doc_path: Optional[Path]):
         except Exception:
             pass
     raise inkex.AbortExtension("Could not access current SVG document.")
+
+
+def _svg_docname(svg_root) -> str:
+    if svg_root is None:
+        return ""
+    for key in ("{http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd}docname", "sodipodi:docname"):
+        try:
+            value = str(svg_root.get(key) or "").strip()
+        except Exception:
+            value = ""
+        if value:
+            return value
+    return ""
+
+
+def _stream_name(stream) -> str:
+    try:
+        return str(getattr(stream, "name", "") or "").strip()
+    except Exception:
+        return ""
+
+
+def _package_svg_name(kind: str, doc_path: Optional[Path], svg_root, stream) -> str:
+    candidates = []
+    if doc_path is not None:
+        candidates.append(doc_path.name)
+    candidates.append(_svg_docname(svg_root))
+    candidates.append(_stream_name(stream))
+    for raw in candidates:
+        name = Path(str(raw or "").replace("\\", "/")).name.strip()
+        if not name:
+            continue
+        stem = Path(name).stem
+        if not stem or stem.lower() == "document":
+            continue
+        if stem.lower().endswith(f".{kind}"):
+            stem = stem[:-(len(kind) + 1)] or stem
+        return f"{_safe_asset_stem(stem)}.svg"
+    return f"document.svg"
 
 
 def _is_local_ref(v: str) -> bool:
@@ -212,6 +253,76 @@ def _add_asset(asset_map: Dict[Path, str], used_arcs: Dict[str, int], src: Path,
     asset_map[src] = _asset_arc_for_ref(raw_ref, src, used_arcs)
 
 
+def _unique_arc(base_arc: str, used_arcs: Dict[str, int]) -> str:
+    arc = posixpath.normpath(str(base_arc or "").replace("\\", "/")).lstrip("/")
+    if not arc or arc == ".":
+        arc = "assets/asset"
+    if arc not in used_arcs:
+        used_arcs[arc] = 1
+        return arc
+    used_arcs[arc] += 1
+    stem, ext = posixpath.splitext(arc)
+    return f"{stem}_{used_arcs[arc]}{ext}"
+
+
+def _data_image_ext(media_subtype: str) -> str:
+    sub = str(media_subtype or "").strip().lower()
+    if sub in {"jpeg", "pjpeg"}:
+        return ".jpg"
+    if sub == "svg+xml":
+        return ".svg"
+    if sub in {"png", "gif", "bmp", "webp", "tiff", "x-icon"}:
+        return ".ico" if sub == "x-icon" else f".{sub}"
+    return ".bin"
+
+
+def _decode_data_image(raw: str) -> tuple[str, bytes] | None:
+    m = DATA_IMAGE_RE.match(str(raw or "").strip())
+    if not m:
+        return None
+    ext = _data_image_ext(m.group(1))
+    meta = str(m.group(2) or "").lower()
+    payload = str(m.group(3) or "")
+    try:
+        data = base64.b64decode(payload, validate=False) if ";base64" in meta else urllib.parse.unquote_to_bytes(payload)
+    except Exception:
+        return None
+    return (ext, data) if data else None
+
+
+def _safe_asset_stem(name: str) -> str:
+    stem = Path(str(name or "embedded")).stem or "embedded"
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", stem).strip("._") or "embedded"
+
+
+def _externalize_embedded_package_images(svg_root, used_arcs: Dict[str, int], *, svg_name: str = "") -> list[tuple[str, bytes]]:
+    assets: list[tuple[str, bytes]] = []
+    if svg_root is None:
+        return assets
+    seen: Dict[str, str] = {}
+    stem = _safe_asset_stem(svg_name)
+    index = 0
+    for elem, key, raw in list(_iter_href_attrs(svg_root)):
+        decoded = _decode_data_image(raw)
+        if decoded is None:
+            continue
+        ext, data = decoded
+        if raw in seen:
+            arc = seen[raw]
+        else:
+            index += 1
+            arc = _unique_arc(f"assets/{stem}_{index:03d}{ext}", used_arcs)
+            assets.append((arc, data))
+            seen[raw] = arc
+        elem.set(key, arc)
+        for other_key in HREF_KEYS:
+            if other_key != key and str(elem.get(other_key) or "").strip() == str(raw).strip():
+                elem.set(other_key, arc)
+    if assets:
+        _l.i(f"[pkg] externalized embedded image assets: {len(assets)}")
+    return assets
+
+
 def _include_dataset_assets(asset_map: Dict[Path, str], used_arcs: Dict[str, int], svg_path: Optional[Path], csv_bytes: bytes | None) -> int:
     if not csv_bytes or svg_path is None:
         return 0
@@ -284,6 +395,12 @@ def _zip_add_file(zf: zipfile.ZipFile, src: Path, arcname: str) -> None:
     ext = src.suffix.lower()
     ctype = zipfile.ZIP_STORED if ext in NO_COMPRESS_EXT else zipfile.ZIP_DEFLATED
     zf.write(str(src), arcname=arcname, compress_type=ctype)
+
+
+def _zip_add_bytes(zf: zipfile.ZipFile, arcname: str, data: bytes) -> None:
+    ext = Path(str(arcname or "")).suffix.lower()
+    ctype = zipfile.ZIP_STORED if ext in NO_COMPRESS_EXT else zipfile.ZIP_DEFLATED
+    zf.writestr(arcname, data, compress_type=ctype)
 
 
 def _safe_join(base: Path, rel: str) -> Path:
@@ -384,7 +501,7 @@ def _fetch_gsheet_csv_bytes(doc_path: Optional[Path], sheet_id: str, range_a1: O
 def export_package(ext, stream, *, kind: str) -> None:
     doc_path = _source_path_for_export(_get_doc_path(ext))
     svg_root = _export_svg_root(ext, doc_path)
-    svg_name = (doc_path.name if doc_path else f"document.{kind}.svg")
+    svg_name = _package_svg_name(kind, doc_path, svg_root, stream)
     svg_dir = (doc_path.parent if doc_path else Path.cwd())
 
     # Work on a clone so we can rewrite hrefs for portable package layout.
@@ -395,6 +512,7 @@ def export_package(ext, stream, *, kind: str) -> None:
 
     asset_map: Dict[Path, str] = {}
     used_arcs: Dict[str, int] = {}
+    embedded_assets = _externalize_embedded_package_images(svg_clone, used_arcs, svg_name=svg_name)
 
     for elem, key, raw in _iter_href_attrs(svg_clone):
         src = _resolve_local_asset(svg_dir, raw, svg_path=doc_path)
@@ -441,10 +559,12 @@ def export_package(ext, stream, *, kind: str) -> None:
             zf.writestr(csv_name, csv_bytes, compress_type=zipfile.ZIP_DEFLATED)
         for src, arc in sorted(asset_map.items(), key=lambda kv: kv[1]):
             _zip_add_file(zf, src, arc)
+        for arc, data in embedded_assets:
+            _zip_add_bytes(zf, arc, data)
 
     stream.write(out.getvalue())
     csv_ok = bool(csv_bytes is not None and csv_name)
-    _l.i(f"[{kind}] export ok: svg='{svg_name}' assets={len(asset_map)} csv={'yes' if csv_ok else 'no'}")
+    _l.i(f"[{kind}] export ok: svg='{svg_name}' assets={len(asset_map) + len(embedded_assets)} csv={'yes' if csv_ok else 'no'}")
 
 
 def _extract_package(stream, package_path: Path) -> PackageInfo:

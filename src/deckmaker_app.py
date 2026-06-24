@@ -47,10 +47,10 @@ def _file_mtime_ns(path: str) -> int:
         return 0
 
 
-APP_VERSION = "Deckmaker v0.52"
+APP_VERSION = "Deckmaker v0.53"
 DOCS_INTRO_URL = "https://xoellijo.github.io/pnpink/intro/"
 DOCS_GUIDE_URL = "https://xoellijo.github.io/pnpink/quickstart/"
-OTHER_EXPORT_FORMATS = ("png", "jpeg", "jpeg2000", "pdf", "svg", "tiff", "webp", "ps", "eps", "emf", "wmf")
+OTHER_EXPORT_FORMATS = ("png", "jpeg", "jpeg2000", "pdf", "svg", "tiff", "webp", "avif", "ps", "eps", "emf", "wmf")
 CUT_TEMPLATE_FORMATS = {
     "svg": "svg (vector, cricut)",
     "dxf": "dxf (vector, cameo)",
@@ -387,7 +387,7 @@ class DeckMakerApp:
         other_format_combo = ttk.Combobox(
             format_box,
             textvariable=self.other_export_format_var,
-            values=list(OTHER_EXPORT_FORMATS),
+            values=list(EXPORT.available_other_export_formats(OTHER_EXPORT_FORMATS)),
             state="readonly",
             width=12,
         )

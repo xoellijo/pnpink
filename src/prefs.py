@@ -98,7 +98,7 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
         "Values: png | jpeg | png_alpha | inkscape | none",
     )),
     ("export_png", ("Enable additional non-PDF export. Values: 0 | 1",)),
-    ("export_other_format", ("Additional output format. Values: png | jpeg | jpeg2000 | pdf | svg | tiff | webp | ps | eps | emf | wmf",)),
+    ("export_other_format", ("Additional output format. Values: png | jpeg | jpeg2000 | pdf | svg | tiff | webp | avif | ps | eps | emf | wmf",)),
     ("export_other_pages", ("Optional pages for additional output. Examples: 1,3-5,8. Empty = all pages",)),
     ("export_other_ids", ("Optional object IDs for additional output. Comma-separated ids. If set, page selection is ignored and one file per ID is exported.",)),
     ("export_cut_template", ("Export plotter cut templates from generated instance bboxes. Values: 0 | 1",)),
@@ -350,13 +350,13 @@ def set_export_png(flag: bool) -> None:
 
 
 def get_export_other_format(default: str = "png") -> str:
-    valid = {"png", "jpeg", "jpeg2000", "pdf", "svg", "tiff", "webp", "ps", "eps", "emf", "wmf"}
+    valid = {"png", "jpeg", "jpeg2000", "pdf", "svg", "tiff", "webp", "avif", "ps", "eps", "emf", "wmf"}
     value = str(get("export_other_format", default) or default).strip().lower()
     return value if value in valid else str(default or "png").strip().lower()
 
 
 def set_export_other_format(value: str) -> None:
-    valid = {"png", "jpeg", "jpeg2000", "pdf", "svg", "tiff", "webp", "ps", "eps", "emf", "wmf"}
+    valid = {"png", "jpeg", "jpeg2000", "pdf", "svg", "tiff", "webp", "avif", "ps", "eps", "emf", "wmf"}
     item = str(value or "png").strip().lower()
     set("export_other_format", item if item in valid else "png", save=True)
 

@@ -730,6 +730,22 @@ def add_inkscape_page_mm_after(nv, after_el, x_px, y_px, w_px, h_px, page_id, at
     except Exception:
         nv.add(el)
     return el
+
+
+def _numstr(value) -> str:
+    try:
+        return f"{float(value):.6f}".rstrip("0").rstrip(".")
+    except Exception:
+        return str(value)
+
+
+def _format_doc_len_like(previous, value) -> str:
+    text = str(previous or "").strip()
+    m = re.match(r"^\s*[-+]?(?:\d+(?:\.\d+)?|\.\d+)([A-Za-z%]+)\s*$", text)
+    unit = m.group(1) if m else ""
+    return f"{_numstr(value)}{unit}"
+
+
 def update_page_geometry(pages, page_index, w_px, h_px):
     """Update width/height of an existing inkscape:page in-place and cache info."""
     try:
@@ -743,6 +759,15 @@ def update_page_geometry(pages, page_index, w_px, h_px):
     el.set("height", str(h_px))
     info["w"] = w_px
     info["h"] = h_px
+    if int(page_index or 0) == 0:
+        root = info.get("root")
+        if root is not None:
+            try:
+                root.set("width", _format_doc_len_like(root.get("width"), w_px))
+                root.set("height", _format_doc_len_like(root.get("height"), h_px))
+                root.set("viewBox", f"0 0 {_numstr(w_px)} {_numstr(h_px)}")
+            except Exception:
+                pass
 
 
 def set_page_attrs(page_el, attrs):
@@ -790,6 +815,7 @@ def list_existing_pages_px(svg_root):
                 "w": parse_len_px(svg_root, el.get("width")),
                 "h": parse_len_px(svg_root, el.get("height")),
                 "el": el,
+                "root": svg_root,
                 "margin": el.get("margin"),
                 "bleed": el.get("bleed"),
             })

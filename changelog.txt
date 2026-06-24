@@ -1,3 +1,11 @@
+[0.53]
+- Fix Fit/Anchor border sizing after layout scaling, so bleed-like borders keep their final page size.
+- Fix layout changes after automatic full-page rows (`?`) to avoid starting the next layout on an already used page.
+- Fix generated page export selection and first-page geometry updates.
+- Fix PDF export auto-rotation by disabling Ghostscript page rotation.
+- Improve ZVG/PNP packaging for embedded raster images, asset naming, and PDF-imported document names.
+- Add optional AVIF export when the active Pillow runtime supports it.
+
 [0.50]
 - inicio ciclo v0.50
 

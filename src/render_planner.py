@@ -175,7 +175,6 @@ class CardPlanner:
         old_sig = _sig(self.current)
         new_sig = _sig(new_resolved)
         self.current = new_resolved
-        self.sync_page_attrs()
         if self.slot_index != 0 and new_sig != old_sig:
             self.page_index += 1
             self.slot_index = 0
@@ -183,6 +182,8 @@ class CardPlanner:
                 self.page_index, self.pages, self.nv, self.current,
                 self.doc_page_mm, self.page_gap_px, self.px_per_mm,
             )
+        else:
+            self.sync_page_attrs()
         pw, ph = self.page_size_px()
         self.plan, self.local_slots = self._compute_plan_for(self.current, pw, ph)
         if self.plan.per_page <= 0:

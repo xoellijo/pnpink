@@ -1088,6 +1088,12 @@ def render_phase(ctx):
                     holes_list = [int(_holes_raw)]
                 except Exception:
                     holes_list = []
+
+            def _clear_copy_once_meta(r):
+                for _k in ("__dm_page__", "__dm_layout__", "__dm_marks__"):
+                    if _k in r:
+                        r[_k] = ""
+
             n_iter = len(row_list) if has_iter else 1
             try:
                 copies_raw = _row.get('__dm_copies__', 1)
@@ -1116,8 +1122,8 @@ def render_phase(ctx):
                             r['cells'] = list(r.get('cells') or [])
                         r['_i'] = _i
                         r['__dm_target_slot__'] = int(tgt)
-                        if _i > 0 and '__dm_page__' in r:
-                            r['__dm_page__'] = ''
+                        if _i > 0:
+                            _clear_copy_once_meta(r)
                         yield r
                     continue
                 if slot_select_mode == 'procedural':
@@ -1134,8 +1140,8 @@ def render_phase(ctx):
                         r['__dm_target_slot__'] = int(tgt)
                         if _i == (len(targets) - 1):
                             r['__dm_target_cursor_after__'] = int(cursor_after)
-                        if _i > 0 and '__dm_page__' in r:
-                            r['__dm_page__'] = ''
+                        if _i > 0:
+                            _clear_copy_once_meta(r)
                         yield r
                     continue
             reps = max(copies_decl, 0) if copies_explicit else (n_iter if has_iter else 1)
@@ -1152,8 +1158,8 @@ def render_phase(ctx):
                     r['__dm_holes_before__'] = int(holes_list.count(0))
                 if holes_list:
                     r['__dm_holes_after__'] = int(holes_list.count(_i + 1))
-                if _i > 0 and '__dm_page__' in r:
-                    r['__dm_page__'] = ''  # copias no repiten page
+                if _i > 0:
+                    _clear_copy_once_meta(r)  # copies do not repeat one-shot control tails
                 yield r
             sim_slot_index += int(holes_list.count(0)) + int(reps) + sum(int(holes_list.count(i + 1)) for i in range(reps))
     def _coerce_holes(val):
@@ -1207,17 +1213,17 @@ def render_phase(ctx):
 
     deferred_fa_styles = {}
 
-    def _exec_use_fa_paths(inst_node, use_jobs, fa_jobs, path_jobs, transform_jobs, *, warn_tag: str, owner_group=None):
+    def _exec_use_fa_paths(inst_node, use_jobs, fa_jobs, path_jobs, transform_jobs, *, warn_tag: str, owner_group=None, final_scale=None):
         """Center <use> elements, execute deferred Fit/Anchor jobs, then Paths jobs."""
         def _apply_fa(scope_node, base_id, r_id, ops_full, place_mode, rect_elem, *, return_bbox=False):
             try:
-                return FA.apply_to_by_ids(scope_node, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem, return_bbox=return_bbox)
+                return FA.apply_to_by_ids(scope_node, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem, return_bbox=return_bbox, final_scale=final_scale)
             except Exception as ex:
                 msg = str(ex or "")
                 # Back/template passes can run on detached clones where defs are not reachable
                 # through the local scope. Retry against document root.
                 if "base id=" in msg and "not found" in msg:
-                    return FA.apply_to_by_ids(root, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem, return_bbox=return_bbox)
+                    return FA.apply_to_by_ids(root, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem, return_bbox=return_bbox, final_scale=final_scale)
                 raise
 
         for placeholder, u, tr_spec in (use_jobs or []):
@@ -2066,6 +2072,8 @@ def render_phase(ctx):
                 _l.w(f"layout tail invÃ¡lido '{row_layout}': {ex}")
                 ls = None
             if ls is not None:
+                if int(planner.page_index) in page_states:
+                    _jump_page_with_marks(planner)
                 page, card, layout, gaps = LYT.apply_layout_spec((page, card, layout, gaps), ls)
                 current = _resolve_with_base(ctx, page, card, layout, gaps, doc_page_mm)
                 _old_page_idx = int(planner.page_index)
@@ -2691,6 +2699,7 @@ def render_phase(ctx):
                 j.get('transform_jobs') or [],
                 warn_tag='[deckmaker]',
                 owner_group=card_group,
+                final_scale=(sx, sy),
             ))
         # Remove placeholders at the end so the same rect can be reused (multivalue/dup headers).
         for _ph in list(dict.fromkeys(_fa_remove_later)):

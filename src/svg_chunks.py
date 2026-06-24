@@ -87,7 +87,7 @@ def _svg_page_numbers(svg_path: str) -> tuple[int, ...]:
             if m:
                 value = int(m.group(1))
                 if page_id.startswith("dm_page_"):
-                    generated.append(value)
+                    generated.append(value + 1)
                 else:
                     fallback.append(value)
         if generated:
