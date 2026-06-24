@@ -1,17 +1,17 @@
 "# :dib(file) = @{wkmc://""File:Haeckel ${file}.jpg""}",,,,,,,,
-rect1,rect1+=~[2]a,,text1,[fill],[stroke],text2,,text3
-{A4}.L{g=4 s=poker}.M{} 7,:dib(Discomedusae 8),,0,#86b5cfbf,#a71312ff,Discomedusae, 8,Designed by Haeckel
+rect1,rect1+##=~[3]a,,text1,[fill],[stroke],text2,,text3
+{A4^}.L{g=0 s=bridge}.M{} 7,:dib(Discomedusae 8),,0,#86b5cfbf,#a71312ff,Discomedusae,8,Designed by Haeckel
 13,:dib(Florideae),,1,#f7bec6d9,#f54148ff,Florideae,,Designed by Haeckel
 13,:dib(Leptomedusae),,2,#b4ecead9,#326f89ff,Leptomedusae,,Designed by Haeckel
 13,:dib(Discoidea),,3,#fcdd5cbf,#870809ff,Discoidea,,Designed by Haeckel
-13,:dib(Phaeodaria 1),,4,#f3efd3d9,#615a30ff,Phaeodaria, 1,Designed by Haeckel
+13,:dib(Phaeodaria 1),,4,#f3efd3d9,#615a30ff,Phaeodaria,1,Designed by Haeckel
 13,:dib(Filicinae),,5,#b8c5b3d9,#3a5a43ff,Filicinae,,Designed by Haeckel
-13,:dib(Siphonophorae 59),,6,9ed3c7bf,#6b0700ff,Siphonophorae, 59,Designed by Haeckel
-7,:dib(Nepenthaceae),,7,#f8c3b285,#365224ff,Nepenthaceae,,Designed by Haeckel
-7,:dib(Actiniae),,8,#a38e4e85,#66391dff,Actiniae,,Designed by Haeckel
+13,:dib(Siphonophorae 59),,6,#9ed3c7bf,#6b0700ff,Siphonophorae,59,Designed by Haeckel
+7,:dib(Nepenthaceae),,7,#9e330dd9,#f3f2deff,Nepenthaceae,,Designed by Haeckel
+7,:dib(Actiniae),,8,#9e330dd9,#66391dff,Actiniae,,Designed by Haeckel
 7,:dib(Ascidiae),,9,#e48a36d9,#000000ff,Ascidiae,,Designed by Haeckel
-7,:dib(Discomedusae 28),,10,#f0debcbf,#3d2937ff,Discomedusae, 28,Designed by Haeckel
+7,:dib(Discomedusae 28),,10,#f0debcbf,#3d2937ff,Discomedusae,28,Designed by Haeckel
 7,:dib(Hexactinellae),,-1,#f9faf5bf,#21211fff,Hexactinellae,,Designed by Haeckel
 7,:dib(Basimycetes),,-5,#f3f3f3d9,#e9eae5ff,Basimycetes,,Designed by Haeckel
-7,:dib(Hexacoralla 69),,-10,#f9faf5bf,#21211fff,Hexacoralla, 69,Designed by Haeckel
+7,:dib(Hexacoralla 69),,-10,#f9faf5bf,#21211fff,Hexacoralla,69,Designed by Haeckel
 {} ?,:dib(Muscinae),,:Tp(Medusas 20),#f9faf5b9,#51665cff,Muscinae,,Created with PnPInk
