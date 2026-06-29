@@ -72,6 +72,9 @@ It drives:
 - front/back slot pairing,
 - page-membership selectors for `@page`.
 
+For duplex backs and back-side column sections, see
+[@back -- Back-Side Templates](dataset.md#back-side-templates).
+
 ## Headers, Comments, and Directives
 Headers and comments are part of the dataset grammar, not free text.
 Before authoring complex sheets, review:
@@ -82,5 +85,5 @@ Before authoring complex sheets, review:
 
 ## Multi-Dataset and Multi-Template
 - Multiple datasets in one sheet are supported via repeated marker rows (`{{...}}`).
-- Multiple template columns are supported via header declarations (`{template_id ...}`).
+- Multiple template columns are supported via header declarations (`{template_id ...}`), including `@back` and `@page`.
 - Multiple main templates in one marker list are not supported; use one main template per dataset section.

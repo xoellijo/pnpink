@@ -882,6 +882,7 @@ def run(self, __version__):
                 'bbox_node': n,
                 'template_root': tmpl,
                 'control_key': ckey,
+                'col_index': (col or {}).get('col_index'),
                 'mods': sorted(list(mods)),
             }
 

@@ -202,7 +202,6 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
             pad_top = pad_right = pad_bottom = pad_left = 0.0
             border_mir_h = border_mir_v = False
 
-# we could use rect_with_pad, but there the order is (t,r,b,l) as well
     if pad_top or pad_right or pad_bottom or pad_left:
         final_scale = kwargs.get("final_scale")
         if final_scale:

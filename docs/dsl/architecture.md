@@ -25,6 +25,7 @@ Header modifiers control when a template is rendered:
 - `@page @back`: page-anchored but rendered on back pages.
 
 These modifiers belong to template headers, not to data cells.
+For detailed duplex/back-side behavior, see [@back -- Back-Side Templates](../dataset.md#back-side-templates).
 
 ## Where Layout and Page Apply
 This distinction prevents common mistakes when debugging placement.

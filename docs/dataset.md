@@ -208,6 +208,7 @@ Supported modifiers:
 - `@back` back-pass templates
 
 Template columns are rendered as additional instances; they do not replace the main template column logic.
+For duplex backs, see [@back -- Back-Side Templates](#back-side-templates).
 
 ## Comments and Directives (#)
 Comments are processed **before any other operation**.
@@ -294,23 +295,123 @@ card_bbox,title,cost
 ,Fireball,3
 ```
 
+<a id="back-side-templates"></a>
+
 ## @back -- Back-Side Templates (Back Pass)
-Use `@back` for duplex output where back faces must align with front slot geometry.
+Use `@back` for duplex backs: card backs, tile backs, alternate reverse sides, and any back-side artwork that must align with the front layout.
 
-A template column marked with `@back` is rendered **only on back pages**.
+An `@back` header is a **control column** and a **section boundary**:
 
-```txt
-{card_back @back}
+```csv
+rect1,front_art,{rect1 @back},rect1=~[1]a
+{A4}.L{s=miniEuro g=2}.M{},*@{front_*.png},.M{},back.png
 ```
 
-Back templates:
+In this example:
 
-- reuse the same slot sequence from the front layout,
-- mirror slot placement within the page for duplex alignment,
-- preserve row order as Z-order.
-- back pages are inserted right after each front page (interleaved).
+- `rect1` in the first header cell is the main/front template bbox.
+- `{rect1 @back}` does not place `back.png` by itself.
+- `{rect1 @back}` starts the back-side column section.
+- `rect1=~[1]a` after `{rect1 @back}` is a normal back-side field, with the same Fit/Anchor power as a front field.
+- `.M{}` in the `{rect1 @back}` cell controls marks for the back side.
 
-If a dataset cell for an `@back` column is empty or contains `-` or `0`, that back instance is skipped.
+### Back Template and Layout
+The bbox inside `{... @back}` selects the template used for backs.
+It can be the same bbox as the front (`{rect1 @back}`) or a different back template (`{bbox_back @back}`).
+
+Back pages are not driven by their own Page/Layout settings.
+They are derived from the corresponding front pages:
+
+- page size, margins, layout shape and gaps come from the front slot being backed,
+- back pages are inserted after their matching front pages,
+- each back slot is horizontally mirrored inside the page for duplex alignment,
+- top/bottom position is preserved,
+- card artwork is not mirrored; only the slot position is mirrored.
+
+This means front and back use the same card-generation behavior, except for the mirrored layout placement.
+
+### Back Column Section
+Columns after `{bbox @back}` belong to that back template until another template-control header starts.
+
+```csv
+front_title,front_art,{bbox_back @back},back_bg=~a,back_icon~i5,back_text
+```
+
+Back-side columns support the same features as front columns:
+
+- text replacement,
+- source loading,
+- Fit/Anchor defaults such as `rect1=~[1]a`,
+- style property columns such as `id[fill]`,
+- snippets,
+- paths,
+- transforms,
+- iterated values.
+
+For Fit/Anchor behavior, see [Fit and Anchor](dsl/fit-anchor.md).
+For iterators, see [Iterators and Copies](dsl/iterators.md).
+
+### Back Control Cell
+The cell under `{bbox @back}` controls whether and how that back instance is generated.
+It is not the content cell.
+
+Accepted control values:
+
+- empty: generate the back normally, with no extra back marks,
+- `0` or `-`: skip that back instance,
+- `.M{...}`: generate marks for the back side,
+- `.M{...} [selector]`: generate marks and remap which iterator/card data is used for the back fields,
+- `[selector]`: remap back data without marks.
+
+Examples:
+
+```csv
+{rect1 @back},rect1=~[1]a
+.M{},back.png
+```
+
+Same back image for every generated front, with back marks.
+
+```csv
+{rect1 @back},rect1=~[1]a
+.M{} [2..? 1],*@{back_*.png}
+```
+
+Use the next iterator item as the back for each card, wrapping the last one to the first item in the same dataset row expansion.
+
+The selector in the back control cell uses the same 1-based list/range grammar as column-A iterator selectors:
+
+```txt
+[1..5 5..1 8..3]
+[2..? 1]
+[5..1]
+```
+
+It is evaluated against the generated instances of the same dataset row expansion, not against unrelated rows.
+For the selector grammar, see [Iterators and Copies -> Selector syntax in the final `[...]`](dsl/iterators.md#iterator-selector-syntax).
+
+### Iterators and Specific Backs
+Back sections work with iterators.
+If the front row expands through `*@{...}`, the back section can also use iterator values.
+
+```csv
+rect1,{rect1 @back},rect1=~[1]a
+{A4}.L{s=square g=2}.M{},.M{} [2..? 1],*@{embedded_*.png}
+```
+
+Here each front card uses its own front data from the row expansion.
+The back field uses the control selector `[2..? 1]`, so backs are shifted by one position inside that same expanded row.
+
+### Marks on Backs
+Back marks are declared in the `{bbox @back}` control cell:
+
+```csv
+{rect1 @back},rect1=~[1]a
+.M{ len=[3 0] d=2 },back.png
+```
+
+Back marks follow the mirrored back layout, so exterior side marks remain exterior after duplex mirroring.
+For mark parameters, see [Marks](dsl/marks.md).
 
 ## @page -- Page-Anchored Templates (One Per Page)
 Use `@page` for elements that belong to the page frame, not to per-card slots.

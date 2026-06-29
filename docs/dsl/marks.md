@@ -5,7 +5,7 @@ Use it when output is intended for physical cutting and alignment consistency ma
 
 `Marks` is a page/layout-level system. If you want local lines attached to individual hexes or tiles, use [Paths](paths.md) instead.
 
-Marks are defined in the **first header cell** (same place as `Page{}` and `Layout{}`), for example:
+Front-side marks are defined in the **first header cell** (same place as `Page{}` and `Layout{}`), for example:
 
 ```txt
 {A4}.L{p=3x3 g=2}.M{ mk_style len=[3 2] d=2 }
@@ -114,7 +114,9 @@ Example:
 This section documents current implementation limits to avoid false expectations.
 
 The `scope=` parameter is documented but **not implemented** in the current engine.
-Marks are always generated on the front pass.
+Front marks are controlled from column A.
+Back marks are controlled from the `{bbox @back}` control cell and follow the mirrored back layout.
+See [@back -- Back-Side Templates](../dataset.md#back-side-templates).
 
 ## Examples
 **Basic cut marks with default style**

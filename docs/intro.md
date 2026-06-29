@@ -203,7 +203,8 @@ Generate aligned duplex backs with `@back`:
 {card_back @back}
 ```
 
-See [DSL Advanced](dsl/advanced.md).
+The `@back` control column starts the back-side fields, mirrors slots for duplex alignment, and can use iterators and marks.
+See [@back -- Back-Side Templates](dataset.md#back-side-templates).
 
 ### Page-level elements
 Place objects once per page, not once per card:

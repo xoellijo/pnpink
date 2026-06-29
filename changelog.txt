@@ -1,7 +1,11 @@
 [0.53]
 - Fix Fit/Anchor border sizing after layout scaling, so bleed-like borders keep their final page size.
 - Fix layout changes after automatic full-page rows (`?`) to avoid starting the next layout on an already used page.
+- Rework `@back` as a back-side control column with mirrored layouts, marks, iterator selectors, and per-card backs.
+- Fix back-side sizing so front/back cards share the same final Fit/Anchor behavior.
+- Fix iterator selectors such as `[37..?]` and scoped back-side selectors like `[2..? 1]`.
 - Fix generated page export selection and first-page geometry updates.
 - Fix PDF export auto-rotation by disabling Ghostscript page rotation.
 - Improve ZVG/PNP packaging for embedded raster images, asset naming, and PDF-imported document names.
 - Add optional AVIF export when the active Pillow runtime supports it.
+- Expand documentation for `@back`, iterator selectors, and back-side marks.

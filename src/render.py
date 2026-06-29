@@ -171,14 +171,19 @@ def render_phase(ctx):
         parent.append(node)
         return node
 
-    def _compile_field_specs(headers_list):
+    def _compile_field_specs(headers_list, include_indices=None):
         headers_local = list(headers_list or [])
+        include = None if include_indices is None else {int(i) for i in include_indices}
         by_header = {}
         for i, h in enumerate(headers_local):
+            if include is not None and i not in include:
+                continue
             by_header.setdefault(h, []).append(i)
         yielded = set()
         order = []
         for i, h in enumerate(headers_local):
+            if include is not None and i not in include:
+                continue
             if i in yielded:
                 continue
             idxs = by_header.get(h) or [i]
@@ -1049,7 +1054,7 @@ def render_phase(ctx):
                 sim_slot_index = 0
             return None
 
-        for _row in (rows or []):
+        for _group_no, _row in enumerate((rows or []), start=1):
             _apply_sim_row_layout(_row)
             row_list, has_iter = _expand_row_iterators(_row)
             iter_select = _row.get('__dm_iter_select__', []) or []
@@ -1121,6 +1126,7 @@ def render_phase(ctx):
                         if isinstance(r.get('cells'), list):
                             r['cells'] = list(r.get('cells') or [])
                         r['_i'] = _i
+                        r['__dm_iter_group__'] = int(_group_no)
                         r['__dm_target_slot__'] = int(tgt)
                         if _i > 0:
                             _clear_copy_once_meta(r)
@@ -1137,6 +1143,7 @@ def render_phase(ctx):
                         if isinstance(r.get('cells'), list):
                             r['cells'] = list(r.get('cells') or [])
                         r['_i'] = _i
+                        r['__dm_iter_group__'] = int(_group_no)
                         r['__dm_target_slot__'] = int(tgt)
                         if _i == (len(targets) - 1):
                             r['__dm_target_cursor_after__'] = int(cursor_after)
@@ -1154,6 +1161,7 @@ def render_phase(ctx):
                 if isinstance(r.get('cells'), list):
                     r['cells'] = list(r.get('cells') or [])
                 r['_i'] = _i
+                r['__dm_iter_group__'] = int(_group_no)
                 if _i == 0 and holes_list:
                     r['__dm_holes_before__'] = int(holes_list.count(0))
                 if holes_list:
@@ -1212,6 +1220,60 @@ def render_phase(ctx):
                 )
 
     deferred_fa_styles = {}
+
+    def _template_col_index(te: dict) -> int | None:
+        try:
+            return int((te or {}).get('col_index'))
+        except Exception:
+            return None
+
+    def _field_indices_between(start_col: int | None, end_col: int | None) -> set[int]:
+        start = -1 if start_col is None else int(start_col)
+        end = len(headers) if end_col is None else int(end_col)
+        return {
+            i for i, h in enumerate(headers or [])
+            if start < i < end and str(h or "").strip() and not str(h or "").strip().startswith("__dm_")
+        }
+
+    def _next_template_col_after(start_col: int | None) -> int | None:
+        if start_col is None:
+            return None
+        candidates = []
+        for te in list(overlay_templates or []) + list(back_templates or []) + list(page_templates or []) + list(page_back_templates or []):
+            ci = _template_col_index(te)
+            if ci is not None and ci > int(start_col):
+                candidates.append(ci)
+        return min(candidates) if candidates else None
+
+    def _split_back_control(value: str):
+        s = str(value or "").strip()
+        if not s:
+            return "", ""
+        m = re.search(r"\[([^\[\]]*)\]\s*$", s)
+        if not m:
+            return s, ""
+        return s[:m.start()].strip(), (m.group(1) or "").strip()
+
+    def _select_slot_record_by_index_list(selector: str, current_rec: dict):
+        current_row = (current_rec or {}).get('row') or {}
+        group_id = current_row.get('__dm_iter_group__')
+        records = [
+            r for r in (slot_records or [])
+            if ((r.get('row') or {}).get('__dm_iter_group__') == group_id)
+        ]
+        if not records:
+            return None
+        try:
+            position_1based = records.index(current_rec) + 1
+        except Exception:
+            position_1based = 1
+        sel = _parse_index_selector_1based(str(selector or ""), size=len(records))
+        if not sel:
+            return None
+        mapped = int(sel[(int(position_1based) - 1) % len(sel)])
+        if 1 <= mapped <= len(records):
+            return records[mapped - 1]
+        return None
 
     def _exec_use_fa_paths(inst_node, use_jobs, fa_jobs, path_jobs, transform_jobs, *, warn_tag: str, owner_group=None, final_scale=None):
         """Center <use> elements, execute deferred Fit/Anchor jobs, then Paths jobs."""
@@ -1375,6 +1437,51 @@ def render_phase(ctx):
         node.set('data-pnpink-cut-bbox', f"{float(x):.6f} {float(y):.6f} {float(w):.6f} {float(h):.6f}")
         if shape_id:
             node.set('data-pnpink-cut-shape-id', str(shape_id))
+
+    def _orient_of(w, h) -> int:
+        try:
+            w = float(w); h = float(h)
+        except Exception:
+            return 0
+        if w <= 1e-9 or h <= 1e-9:
+            return 0
+        if abs(w - h) <= max(w, h) * 1e-6:
+            return 0
+        return -1 if w > h else 1
+
+    def _shape_rotation_deg(card_obj, tmpl_w, tmpl_h, dst_w, dst_h) -> float:
+        steps = getattr(card_obj, "rotation_steps", None)
+        if steps is not None:
+            return {0: 0.0, 1: 90.0, 2: 180.0, 3: -90.0}.get(int(steps) % 4, 0.0)
+        src_o = _orient_of(tmpl_w, tmpl_h)
+        dst_o = _orient_of(dst_w, dst_h)
+        if src_o == 0 or dst_o == 0 or src_o == dst_o:
+            return 0.0
+        return -90.0 if src_o == 1 and dst_o == -1 else 90.0
+
+    def _fit_group_to_slot(card_group, template_bbox, slot_rect, shape_id=""):
+        bx, by, bw, bh = [float(v) for v in template_bbox]
+        slot_x, slot_y, slot_w, slot_h = [float(v) for v in slot_rect]
+        rot_deg = _shape_rotation_deg(planner.current.card, bw, bh, slot_w, slot_h)
+        rot_quarter = int(round(float(rot_deg) / 90.0)) % 4 if rot_deg else 0
+        src_w = bh if rot_quarter in (1, 3) else bw
+        src_h = bw if rot_quarter in (1, 3) else bh
+        sx = (slot_w / src_w) if src_w else 1.0
+        sy = (slot_h / src_h) if src_h else 1.0
+        if rot_deg:
+            T_fit = SVG.build_fit_transform(
+                bx=bx, by=by, bw=bw, bh=bh,
+                target_x=slot_x, target_y=slot_y,
+                sx=sx, sy=sy, rot_deg=rot_deg,
+                anchor=(0.0, 0.0),
+            )
+            card_group.set('transform', str(T_fit))
+        else:
+            tx = slot_x - (bx * sx)
+            ty = slot_y - (by * sy)
+            card_group.set('transform', f"matrix({sx:.12g} 0 0 {sy:.12g} {tx:.12g} {ty:.12g})")
+        _set_cut_template_attrs(card_group, slot_x, slot_y, slot_w, slot_h, shape_id)
+        return sx, sy
 
     def _parse_slot_selector(sel_raw: str):
         """Parse a @page selector cell.
@@ -1802,9 +1909,23 @@ def render_phase(ctx):
             except Exception as ex:
                 _l.w(f"[iconify] preload skipped/failed: {ex}")
         ctx._iconify_preloaded = True
-    compiled_field_specs = _compile_field_specs(headers)
+    first_back_col = min(
+        [ci for ci in (_template_col_index(te) for te in list(back_templates or []) + list(page_back_templates or [])) if ci is not None],
+        default=None,
+    )
+    front_field_indices = _field_indices_between(None, first_back_col)
+    compiled_field_specs = _compile_field_specs(headers, front_field_indices)
     compiled_clone_specs = [s for s in compiled_field_specs if s.get("is_clone")]
     compiled_apply_specs = [s for s in compiled_field_specs if (not s.get("is_clone")) and (not s.get("is_internal"))]
+    back_field_specs_by_col = {}
+    for bt in back_templates or []:
+        bt_col = _template_col_index(bt)
+        if bt_col is None:
+            continue
+        back_field_specs_by_col[int(bt_col)] = _compile_field_specs(
+            headers,
+            _field_indices_between(bt_col, _next_template_col_after(bt_col)),
+        )
     def _header_may_touch_anchor(hk):
         if not hk:
             return False
@@ -2006,6 +2127,7 @@ def render_phase(ctx):
         row_page   = (row.get("__dm_page__")   or "").strip()
         row_layout = (row.get("__dm_layout__") or "").strip()
         row_marks  = (row.get("__dm_marks__")  or "").strip()
+        page_cursor_explicit = False
         if (not row_page) and (not row_layout) and (not row_marks):
             is_placeholder = True
             for v in _row_cells(row):
@@ -2029,14 +2151,14 @@ def render_phase(ctx):
                         for _ in range(n):
                             _jump_page_with_marks(planner)
                     else:
-                        if planner.slot_index > 0:
-                            _jump_page_with_marks(planner)
                         body = "{" + body_txt + "}"
                         ps_for_cursor = None
                         try:
                             ps_for_cursor = DSL.parse_page_block(body)
                         except Exception:
                             ps_for_cursor = None
+                        if planner.slot_index > 0 and not bool((getattr(ps_for_cursor, 'at', None) or '').strip()):
+                            _jump_page_with_marks(planner)
                         page = LYT.parse_and_resolve_page(body, page, doc_page_mm)
                         current = _resolve_with_base(ctx, page, card, layout, gaps, doc_page_mm)
                         _old_page_idx = int(planner.page_index)
@@ -2045,16 +2167,17 @@ def render_phase(ctx):
                             _flush_marks_for_page(_old_page_idx)
                         if ps_for_cursor is not None:
                             _apply_page_cursor_from_page(planner, ps_for_cursor)
+                            page_cursor_explicit = bool((getattr(ps_for_cursor, 'at', None) or '').strip())
                         for _ in range(n-1):
                             _jump_page_with_marks(planner)
                 else:
-                    if planner.slot_index > 0:
-                        _jump_page_with_marks(planner)
                     ps_for_cursor = None
                     try:
                         ps_for_cursor = DSL.parse_page_block(row_page)
                     except Exception:
                         ps_for_cursor = None
+                    if planner.slot_index > 0 and not bool((getattr(ps_for_cursor, 'at', None) or '').strip()):
+                        _jump_page_with_marks(planner)
                     page = LYT.parse_and_resolve_page(row_page, page, doc_page_mm)
                     current = _resolve_with_base(ctx, page, card, layout, gaps, doc_page_mm)
                     _old_page_idx = int(planner.page_index)
@@ -2063,6 +2186,7 @@ def render_phase(ctx):
                         _flush_marks_for_page(_old_page_idx)
                     if ps_for_cursor is not None:
                         _apply_page_cursor_from_page(planner, ps_for_cursor)
+                        page_cursor_explicit = bool((getattr(ps_for_cursor, 'at', None) or '').strip())
             _l.i(f"Grid {planner.plan.cols}x{planner.plan.rows}, gaps {planner.current.gaps.h}Ã—{planner.current.gaps.v} mm; slots/page {planner.slots_per_page()}")
         if row_layout:
             _log_row_stage(idx, "apply LAYOUT tail")
@@ -2072,7 +2196,7 @@ def render_phase(ctx):
                 _l.w(f"layout tail invÃ¡lido '{row_layout}': {ex}")
                 ls = None
             if ls is not None:
-                if int(planner.page_index) in page_states:
+                if (not page_cursor_explicit) and int(planner.page_index) in page_states:
                     _jump_page_with_marks(planner)
                 page, card, layout, gaps = LYT.apply_layout_spec((page, card, layout, gaps), ls)
                 current = _resolve_with_base(ctx, page, card, layout, gaps, doc_page_mm)
@@ -2144,6 +2268,7 @@ def render_phase(ctx):
             'slot_no': int(slot_no),
             'page_index': int(planner.page_index),
             'slot_in_page': int(slot_within_for_record),
+            'state': deepcopy(planner.current),
             'row': row,
         })
 
@@ -2604,46 +2729,7 @@ def render_phase(ctx):
         _sub_t = _sub_t2
         placed_node = card_group
 
-        def _orient_of(w, h) -> int:
-            try:
-                w = float(w); h = float(h)
-            except Exception:
-                return 0
-            if w <= 1e-9 or h <= 1e-9:
-                return 0
-            if abs(w - h) <= max(w, h) * 1e-6:
-                return 0
-            return -1 if w > h else 1
-
-        def _shape_rotation_deg(card_obj, tmpl_w, tmpl_h, dst_w, dst_h) -> float:
-            steps = getattr(card_obj, "rotation_steps", None)
-            if steps is not None:
-                return {0: 0.0, 1: 90.0, 2: 180.0, 3: -90.0}.get(int(steps) % 4, 0.0)
-            src_o = _orient_of(tmpl_w, tmpl_h)
-            dst_o = _orient_of(dst_w, dst_h)
-            if src_o == 0 or dst_o == 0 or src_o == dst_o:
-                return 0.0
-            return -90.0 if src_o == 1 and dst_o == -1 else 90.0
-
-        rot_deg = _shape_rotation_deg(planner.current.card, bw, bh, slot_w, slot_h)
-        rot_quarter = int(round(float(rot_deg) / 90.0)) % 4 if rot_deg else 0
-        src_w = float(bh) if rot_quarter in (1, 3) else float(bw)
-        src_h = float(bw) if rot_quarter in (1, 3) else float(bh)
-        sx = (float(slot_w) / src_w) if src_w else 1.0
-        sy = (float(slot_h) / src_h) if src_h else 1.0
-        if rot_deg:
-            T_fit = SVG.build_fit_transform(
-                bx=float(bx), by=float(by), bw=float(bw), bh=float(bh),
-                target_x=float(slot_x), target_y=float(slot_y),
-                sx=sx, sy=sy, rot_deg=rot_deg,
-                anchor=(0.0, 0.0),
-            )
-            card_group.set('transform', str(T_fit))
-        else:
-            tx = float(slot_x) - (float(bx) * sx)
-            ty = float(slot_y) - (float(by) * sy)
-            card_group.set('transform', f"matrix({sx:.12g} 0 0 {sy:.12g} {tx:.12g} {ty:.12g})")
-        _set_cut_template_attrs(card_group, slot_x, slot_y, slot_w, slot_h, declared_bbox_id)
+        final_scale = _fit_group_to_slot(card_group, (bx, by, bw, bh), (slot_x, slot_y, slot_w, slot_h), declared_bbox_id)
         _sub_t2 = time.perf_counter()
         _profile["fit_transform_ms"] += (_sub_t2 - _sub_t) * 1000.0
         _sub_t = _sub_t2
@@ -2699,7 +2785,7 @@ def render_phase(ctx):
                 j.get('transform_jobs') or [],
                 warn_tag='[deckmaker]',
                 owner_group=card_group,
-                final_scale=(sx, sy),
+                final_scale=final_scale,
             ))
         # Remove placeholders at the end so the same rect can be reused (multivalue/dup headers).
         for _ph in list(dict.fromkeys(_fa_remove_later)):
@@ -2936,7 +3022,7 @@ def render_phase(ctx):
                 if bp is None:
                     continue
 
-                st = page_states.get(fp)
+                st = rec.get('state') or page_states.get(fp)
                 try:
                     planner.page_index = int(bp)
                     if st is not None:
@@ -2983,18 +3069,38 @@ def render_phase(ctx):
                     brow0, bcol0 = _slot_index_to_rc(int(sp), planner.plan, planner.current.layout)
                     back_col1 = int(bcol0) + 1
                     back_row1 = int(brow0) + 1
+                    back_mark_col0 = max(0, int(getattr(planner.plan, 'cols', 0) or 0) - 1 - int(bcol0))
                 except Exception:
                     back_col1 = 1
                     back_row1 = 1
+                    back_mark_col0 = 0
 
                 row_map = _build_row_map(headers, row)
                 # Place back templates (one or many columns)
                 for bt_i, bt in enumerate(back_templates or [], start=1):
                     ctrl_key = (bt or {}).get('control_col') or (bt or {}).get('control_key')
                     ctrl_val = (row_map.get(ctrl_key) or '').strip() if ctrl_key else ''
-                    if ctrl_val in ('0', '-'):
+                    ctrl_marks_text, ctrl_back_select = _split_back_control(ctrl_val)
+                    if ctrl_marks_text in ('0', '-'):
                         skipped_back_instances += 1
                         continue
+                    back_marks = None
+                    if ctrl_marks_text:
+                        try:
+                            marks_text = ctrl_marks_text[1:] if ctrl_marks_text.startswith(".M") else ctrl_marks_text
+                            back_marks = DSL.parse_marks_block(marks_text)
+                        except Exception:
+                            back_marks = None
+
+                    back_row = row
+                    if ctrl_back_select:
+                        try:
+                            selected_rec = _select_slot_record_by_index_list(ctrl_back_select, rec)
+                            if selected_rec is not None:
+                                back_row = selected_rec.get('row') or row
+                        except Exception as ex:
+                            _l.w(f"[@back] invalid data selector '[{ctrl_back_select}]': {ex}")
+                    back_row_map = _build_row_map(headers, back_row)
 
                     tmpl_root = (bt or {}).get('template_root')
                     if tmpl_root is None:
@@ -3004,53 +3110,60 @@ def render_phase(ctx):
                     back_item_no = int(next_n)
                     suffix = f"_MD{next_n}"; next_n += 1
                     inst, _target_index_back = _instantiate_template(tmpl_root, suffix, "back")
+                    bbid = (bt or {}).get('bbox_id') or ''
+                    back_template_bbox = None
+                    try:
+                        rid0 = SVG.resolve_local_id(inst, bbid) if bbid else None
+                        bbox0 = inst.find(f".//*[@id='{rid0}']") if rid0 else None
+                        if bbox0 is not None:
+                            bb0 = bbox0.bounding_box()
+                            back_template_bbox = (float(bb0.left), float(bb0.top), float(bb0.width), float(bb0.height))
+                    except Exception:
+                        back_template_bbox = None
 
                     use_jobs = []
                     fa_jobs = []
                     path_jobs = []
                     transform_jobs = []
-                    _fill_instance_fields(inst, row, row_map, use_jobs, fa_jobs, path_jobs, transform_jobs, clone_first=False)
-
-                    _fa_remove_later = _exec_use_fa_paths(
-                        inst, use_jobs, fa_jobs, path_jobs, transform_jobs,
-                        warn_tag='[@back]',
-                        owner_group=card_group,
-                    )
-                    for _ph in list(dict.fromkeys(_fa_remove_later)):
-                        try:
-                            par = _ph.getparent()
-                            if par is not None:
-                                if not _is_rect_elem(_ph):
-
-                                    par.remove(_ph)
-                        except Exception:
-                            pass
+                    back_start_col = _template_col_index(bt)
+                    back_specs = back_field_specs_by_col.get(int(back_start_col)) if back_start_col is not None else []
+                    cells_for_back = _row_cells(back_row)
+                    for back_spec in back_specs:
+                        back_key = str(back_spec.get("key") or "")
+                        if not back_key or back_key.startswith("__dm_") or back_key.startswith("_"):
+                            continue
+                        bi = int(back_spec.get("index") or 0)
+                        back_val = cells_for_back[bi] if bi < len(cells_for_back) else ""
+                        back_val = "" if back_val is None else str(back_val)
+                        apply_field_in_clone(
+                            inst, back_key, back_val, back_row_map,
+                            root_doc=root, use_jobs=use_jobs, fa_jobs=fa_jobs, path_jobs=path_jobs,
+                            use_seq=use_seq, layout_obj=planner.current.layout, sm=SM, ss_registry=ss_registry,
+                            transform_jobs=transform_jobs, target_index=_target_index_back,
+                            header_info=back_spec.get("hk"),
+                        )
 
                     card_group.append(inst)
                     _append_output(card_group, page_index=int(planner.page_index))
 
-                    # Fit to slot rect using the declared bbox of that back template (same as front).
-                    bbid = (bt or {}).get('bbox_id') or ''
+                    # Fit to slot rect using the same geometry path as front cards.
                     try:
-                        rid = SVG.resolve_local_id(inst, bbid) if bbid else None
-                        bbox_elem = inst.find(f".//*[@id='{rid}']") if rid else None
-                        if bbox_elem is None:
+                        if back_template_bbox is not None:
+                            bx, by, bw, bh = back_template_bbox
+                        else:
+                            rid = SVG.resolve_local_id(inst, bbid) if bbid else None
+                            bbox_elem = inst.find(f".//*[@id='{rid}']") if rid else None
+                            if bbox_elem is not None:
+                                bb = bbox_elem.bounding_box(); bx, by, bw, bh = float(bb.left), float(bb.top), float(bb.width), float(bb.height)
+                            else:
+                                an = SVG.pick_anchor_in(inst)
+                                bb = an.bounding_box(); bx, by, bw, bh = float(bb.left), float(bb.top), float(bb.width), float(bb.height)
+                        if bw <= 0 or bh <= 0:
                             an = SVG.pick_anchor_in(inst)
                             bb = an.bounding_box(); bx, by, bw, bh = float(bb.left), float(bb.top), float(bb.width), float(bb.height)
-                        else:
-                            bb = bbox_elem.bounding_box(); bx, by, bw, bh = float(bb.left), float(bb.top), float(bb.width), float(bb.height)
-                        T_fit = SVG.transform_bbox_to_rect(
-                            bx=bx, by=by, bw=bw, bh=bh,
-                            dst_x=slot_x, dst_y=slot_y, dst_w=slot_w, dst_h=slot_h,
-                            fit='a', anchor=(0.0, 0.0), shift=(0.0, 0.0),
-                            rot_deg=0.0, mir_h=False, mir_v=False
-                        )
-                        curT = inkex.Transform(card_group.get('transform') or "")
                     except Exception:
-                        T_fit = inkex.Transform(); curT = inkex.Transform()
+                        bx, by, bw, bh = 0.0, 0.0, float(slot_w), float(slot_h)
 
-                    # Note: we do NOT mirror artwork; we only mirrored the slot selection (sp_m).
-                    _flatten_card_group(card_group, inst)
                     back_name = _set_card_group_identity(
                         card_group,
                         str(tmpl_root.get('id') or 'card'),
@@ -3068,11 +3181,51 @@ def render_phase(ctx):
                         back_unique_name = back_name
                     card_group.set('id', back_unique_name)
                     card_group.set(inkex.addNS('label', 'inkscape'), back_name)
-                    card_group.set('transform', str(T_fit @ curT))
-                    _set_cut_template_attrs(card_group, slot_x, slot_y, slot_w, slot_h, bbid)
+                    back_final_scale = _fit_group_to_slot(card_group, (bx, by, bw, bh), (slot_x, slot_y, slot_w, slot_h), bbid)
+
+                    _fa_remove_later = _exec_use_fa_paths(
+                        inst, use_jobs, fa_jobs, path_jobs, transform_jobs,
+                        warn_tag='[@back]',
+                        owner_group=card_group,
+                        final_scale=back_final_scale,
+                    )
+                    for _ph in list(dict.fromkeys(_fa_remove_later)):
+                        try:
+                            par = _ph.getparent()
+                            if par is not None:
+                                if not _is_rect_elem(_ph):
+                                    par.remove(_ph)
+                        except Exception:
+                            pass
+
+                    # Note: we do NOT mirror artwork; we only mirrored the slot selection (sp_m).
+                    _flatten_card_group(card_group, inst)
+                    if back_marks is not None:
+                        try:
+                            jobs = _marks_pending_by_page.setdefault(int(planner.page_index), [])
+                            jobs.append({
+                                'ms': back_marks,
+                                'parent': _page_group_for(int(planner.page_index)),
+                                'bbox': (float(slot_x), float(slot_y), float(slot_w), float(slot_h)),
+                                'within': int(sp),
+                                'r': int(back_row1) - 1,
+                                'c': int(back_mark_col0),
+                                'rows': int(getattr(planner.plan, 'rows', 0) or 0),
+                                'cols': int(getattr(planner.plan, 'cols', 0) or 0),
+                                'gaps_has_offsets': _gaps_has_offsets(planner.current.layout),
+                                'smart_shape': (getattr(planner.current.layout, 'smart_shape', None) or '').strip().lower(),
+                                'smart_hex_orient': (getattr(planner.current.layout, 'smart_hex_orient', None) or '').strip().lower(),
+                            })
+                        except Exception as ex:
+                            _l.w(f"[@back marks] render failed: {ex}")
                     placed_back += 1
 # Any remaining pending @page requests that referenced slots beyond the placed range are ignored.
     _flush_deferred_paths(warn_tag='[@back]')
+    try:
+        for _pid in sorted(list(_marks_pending_by_page.keys())):
+            _flush_marks_for_page(int(_pid))
+    except Exception:
+        pass
     if pending_page_req:
         _l.w(f"[@page] ignored {sum(len(v) for v in pending_page_req.values())} pending requests: slot ref out of range")
         pending_page_req.clear()

@@ -1647,8 +1647,6 @@ def parse_copies_page_tail(cell0):
             return True
         if re.search(r"[A-Za-z]+\d+", bb):
             return True
-        if re.search(r"\.\.\s*\?", bb):
-            return True
         return False
 
     def _looks_like_slot_selector_proc(body: str) -> bool:

@@ -199,6 +199,8 @@ back = @{back.png}
 
 Interpretation: one full page of identical backs. If the current layout is `3x3`, this generates `9` cards.
 
+<a id="iterator-selector-syntax"></a>
+
 ### Selector syntax in the final `[...]`
 The final bracket block in column A can select iterator positions explicitly.
 
@@ -222,6 +224,10 @@ Interpretation:
 - then continue with `4,5`
 
 This selector is applied to the expanded iterator sequence before copy wrapping/truncation.
+
+The same 1-based selector grammar is also used by `@back` control cells to remap
+which generated row instance feeds the back-side fields. See
+[@back -- Back-Side Templates](../dataset.md#back-side-templates).
 
 ### Unknown end: `?`
 Use `?` to mean "the final iterator position calculated by PnPInk".
