@@ -65,12 +65,15 @@ _DEFAULTS = {
     "inkscape_shell_workers": "6",
     "network_workers": "8",
     "network_workers_wkmc": "0",
+    "network_workers_gdrive": "8",
+    "gdrive_api_key": "",
     "map_osm_max_zoom": "14",
     "map_ofm_max_zoom": "14",
     "map_osm_max_tile_grid": "4",
     "map_ofm_max_tile_grid": "4",
     "inline_icons_bbox_backend": "query_all",
     "inline_icons_show_debug_rects": "0",
+    "inline_icons_extra_ratio": "0.00",
     "template_engine": "composed",
     "web_user_agent": "github.com/xoellijo/pnpink",
 
@@ -112,12 +115,15 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     ("inkscape_shell_workers", ("Parallel Inkscape shell workers used during export. Values: integer >= 1",)),
     ("network_workers", ("Parallel network workers for non-Wikimedia web asset downloads. Values: integer 1..32",)),
     ("network_workers_wkmc", ("Parallel network workers for Wikimedia Commons (wkmc://) resolution/downloads. Values: 0 or empty = network_workers; otherwise integer 1..32.",)),
+    ("network_workers_gdrive", ("Parallel network workers for Google Drive (gdrive://) downloads. Values: integer 1..32.",)),
+    ("gdrive_api_key", ("Google Drive API key for public gdrive://file and gdrive://folder sources. Empty disables folder listing.",)),
     ("map_osm_max_zoom", ("Default maximum vector-tile zoom for osm:// maps. Values: integer 0..22",)),
     ("map_ofm_max_zoom", ("Default maximum vector-tile zoom for ofm:// maps. Values: integer 0..22",)),
     ("map_osm_max_tile_grid", ("Default maximum tile grid per axis for automatic osm:// zoom selection. Values: integer >= 1",)),
     ("map_ofm_max_tile_grid", ("Default maximum tile grid per axis for automatic ofm:// zoom selection. Values: integer >= 1",)),
     ("inline_icons_bbox_backend", ("Inline icon bbox measurement backend. Values: query_all | shell_per_text",)),
     ("inline_icons_show_debug_rects", ("Show inline-icon hole debug rectangles. Values: 0 | 1",)),
+    ("inline_icons_extra_ratio", ("Extra inline icon text advance as a fraction of text height. Negative values bring surrounding text closer without resizing the icon. Default: 0.00",)),
     ("template_engine", ("Template instantiation engine. Values: legacy | composed | composed-instance", "composed is the default; unsupported individual templates fall back to legacy.")),
     ("web_user_agent", ("User-Agent used for Wikimedia/direct web asset downloads. Empty = github.com/xoellijo/pnpink",)),
     ("split_svg_output", ("Split DM_output into SVG parts. Values: 0 | 1",)),
@@ -625,6 +631,30 @@ def set_network_workers_wkmc(value: int) -> None:
     set("network_workers_wkmc", str(max(0, min(out, 32))), save=True)
 
 
+def get_network_workers_gdrive(default: int = 8) -> int:
+    try:
+        value = int(str(get("network_workers_gdrive", default) or default).strip())
+    except Exception:
+        value = int(default)
+    return max(1, min(value, 32))
+
+
+def set_network_workers_gdrive(value: int) -> None:
+    try:
+        out = int(value)
+    except Exception:
+        out = 8
+    set("network_workers_gdrive", str(max(1, min(out, 32))), save=True)
+
+
+def get_gdrive_api_key(default: str = "") -> str:
+    return str(get("gdrive_api_key", default) or "").strip()
+
+
+def set_gdrive_api_key(value: str) -> None:
+    set("gdrive_api_key", str(value or "").strip(), save=True)
+
+
 def _map_provider_key(provider: str, suffix: str) -> str:
     p = str(provider or "").strip().lower()
     if p not in ("osm", "ofm"):
@@ -664,3 +694,11 @@ def get_template_engine(default: str = "legacy") -> str:
 
 def get_inline_icons_show_debug_rects(default: bool = False) -> bool:
     return str(get("inline_icons_show_debug_rects", "1" if default else "0")).strip() == "1"
+
+
+def get_inline_icons_extra_ratio(default: float = 0.0) -> float:
+    try:
+        value = float(str(get("inline_icons_extra_ratio", default) or default).strip())
+    except Exception:
+        value = float(default)
+    return value

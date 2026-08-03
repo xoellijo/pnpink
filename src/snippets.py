@@ -182,14 +182,58 @@ def _find_call_at(text: str, start: int) -> Optional[Tuple[int, int, str, str]]:
 
 
 def _split_call_args(inner: str) -> List[str]:
-    """Split call arguments on spaces while respecting quotes."""
+    """Split call arguments on spaces while respecting quotes and nested calls."""
     inner = (inner or "").strip()
     if not inner:
         return []
-    try:
-        return shlex.split(inner, posix=True)
-    except ValueError:
-        return inner.split()
+
+    out: List[str] = []
+    buf: List[str] = []
+    quote = ""
+    keep_quote = False
+    token_started = False
+    par = 0
+    i = 0
+    while i < len(inner):
+        ch = inner[i]
+        if quote:
+            if ch == "\\" and i + 1 < len(inner):
+                buf.append(inner[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                if keep_quote:
+                    buf.append(ch)
+                quote = ""
+                keep_quote = False
+            else:
+                buf.append(ch)
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            token_started = True
+            quote = ch
+            keep_quote = par > 0
+            if keep_quote:
+                buf.append(ch)
+        elif ch == "(":
+            par += 1
+            buf.append(ch)
+        elif ch == ")" and par > 0:
+            par -= 1
+            buf.append(ch)
+        elif ch.isspace() and par == 0:
+            if token_started:
+                out.append("".join(buf))
+                buf = []
+                token_started = False
+        else:
+            token_started = True
+            buf.append(ch)
+        i += 1
+    if token_started:
+        out.append("".join(buf))
+    return out
 
 
 def _parse_call_kwargs(tokens: List[str]) -> Tuple[List[str], Dict[str, str]]:
@@ -271,6 +315,39 @@ def _resolve_mapping_expr(expr: str, mapping: Dict[str, Any]) -> Any:
     return cur
 
 
+def _split_conditional_body(body: str) -> Tuple[str, Optional[str]]:
+    """Split 'true : false' at a top-level ':'; keep legacy 'true' unchanged."""
+    quote = ""
+    depth = 0
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if quote:
+            if ch == "\\" and i + 1 < len(body):
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            i += 1
+            continue
+        if body.startswith("${", i):
+            depth += 1
+            i += 2
+            continue
+        if ch == "}" and depth > 0:
+            depth -= 1
+            i += 1
+            continue
+        if ch == ":" and depth == 0:
+            return body[:i].strip(), body[i + 1:].strip()
+        i += 1
+    return body, None
+
+
 def _apply_conditionals(tpl: str, mapping: Dict[str, Any]) -> str:
     """
     Aplica inclusiones condicionales del tipo:
@@ -346,12 +423,12 @@ def _apply_conditionals(tpl: str, mapping: Dict[str, Any]) -> str:
             i = body_start
             continue
 
-        body = tpl[body_start:j]  # Without the closing brace.
-        # include body if the variable has a value
+        true_body, false_body = _split_conditional_body(tpl[body_start:j])
         val = _resolve_mapping_expr(var, mapping)
         if val:
-            out_chunks.append(body)
-        # if empty, add nothing
+            out_chunks.append(true_body)
+        elif false_body is not None:
+            out_chunks.append(false_body)
 
         i = j + 1  # avanzar tras '}'
 
@@ -420,23 +497,22 @@ def expand_snippets_in_text(text: str,
                 continue
 
             i0, i1, name, inner = found
-            # 1) expand inner first (nesting)
-            inner_expanded = _expand_once(inner, depth - 1)
-
-            # 2) if snippet does not exist, keep literal (with inner already expanded)
             defn = registry.get(name)
             if defn is None:
+                inner_expanded = _expand_once(inner, depth - 1)
                 chunks.append(f":{name}({inner_expanded})")
                 i = i1
                 continue
 
-            # 3) parse arguments
-            tokens = _split_call_args(inner_expanded)
-            pos, named = _parse_call_kwargs(tokens)
+            tokens = _split_call_args(inner)
+            raw_pos, raw_named = _parse_call_kwargs(tokens)
+            pos = [_expand_once(v, depth - 1) for v in raw_pos]
+            named = {k: _expand_once(v, depth - 1) for k, v in raw_named.items()}
 
-            # 3bis) Special case: single unnamed positional param -> take ALL inner
+            # Single-param snippets take the whole inner content as text.
             if len(defn.params) == 1:
                 only = defn.params[0]
+                inner_expanded = _expand_once(inner, depth - 1)
                 if only not in named and (inner_expanded.strip() != ""):
                     argmap = {only: inner_expanded.strip()}
                 else:

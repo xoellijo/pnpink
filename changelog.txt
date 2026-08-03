@@ -1,3 +1,19 @@
+[Unreleased]
+- Add dataset symbol rows with `symbol_id` in column A, generating a row into `<defs>` without consuming page layout slots.
+- Add `Transform{text=...}` / `Transform{t=...}` to replace text inside placed icons or groups; text transforms force real copies instead of shared clones.
+- Support `.T{...}` transforms in inline `:id...:` icon tokens.
+- Add snippet conditional fallbacks with `${var? true : false}` and update `:Tc` defaults.
+- Fix `Transform{text=...}` on styled symbol icons so nested `<tspan>` font/color styles are preserved.
+- Add `Transform{scale=...}` / `Transform{s=...}` for centered post-placement scaling; soft edge is now `edge` / `e`.
+- Add `inline_icons_extra_ratio` preference to tune inline icon text spacing without resizing the icon; default is `0.00`.
+- Add `gdrive://` sources for public Google Drive files and folders, including folder paths, glob filters, selectors, iterators, and local cache.
+- Add `gdrive_api_key` preference for Google Drive public folder listing.
+- Add `network_workers_gdrive` preference and parallel Google Drive downloads; cache folder listings per run.
+- Convert `.webp` bitmap sources to cached `.png` files before placement for more reliable Inkscape/export behavior.
+- Support quoted local source paths with spaces.
+- Fix deep-copy placement to preserve inherited SVG transforms, avoiding oversized generated symbols from scaled template layers.
+- Update Source and Snippets documentation for Google Drive, WebP conversion, and current rich-text snippet definitions.
+
 [0.53]
 - Fix Fit/Anchor border sizing after layout scaling, so bleed-like borders keep their final page size.
 - Fix layout changes after automatic full-page rows (`?`) to avoid starting the next layout on an already used page.

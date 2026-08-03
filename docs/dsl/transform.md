@@ -26,6 +26,7 @@ Examples of `Transform` concerns:
 - rotate
 - mirror
 - opacity
+- scale
 - soft edges
 - later, other visual effects such as blur, color adjustments or shadows
 
@@ -33,10 +34,10 @@ Examples of `Transform` concerns:
 
 ```txt
 object_id.T{rotate=15 mirror=h}
-object_id.T{opacity=50% soft=12%}
-object_id.T{o=50% s=12%}
+object_id.T{opacity=50% scale=110%}
+object_id.T{o=50% s=110%}
 object_id.T{f=myFilter}
-object_id.T{f=image1-9-1 s=8%}
+object_id.T{f=image1-9-1 e=8%}
 @{source}.T{o=70%}
 ```
 
@@ -52,8 +53,10 @@ Current parameters are:
 - `rotate` or `r`
 - `mirror` or `m`
 - `opacity` or `o`
-- `soft` or `s`
+- `scale` or `s`
+- `edge` or `e`
 - `filter` or `f`
+- `text` or `t`
 
 ## Rotate and Mirror
 
@@ -84,15 +87,40 @@ In compact form, `^` means rotate and `|` / `||` mean horizontal / vertical mirr
 
 This changes the final opacity of the placed object.
 
+## Scale
+
+```txt
+.T{s=1}
+.T{s=110%}
+.T{s=110%+2}
+.T{s=[1+120% -3+90%]}
+```
+
+`scale` resizes the already placed object around its current center.
+
+Accepted forms:
+
+- one value: same scale in width and height
+- two values: `[width height]`
+- absolute values are millimeters when no unit is provided
+- percentages are relative to the current placed size
+- absolute and percentage parts can be combined
+
+Examples:
+
+- `s=1` makes the object 1 mm wider and 1 mm taller
+- `s=110%` makes it 10% larger
+- `s=110%+2` makes it 110% of current size plus 2 mm
+
 ## Soft Edges
 
 ```txt
-.T{s=12%}
-.T{soft=[12% 4%]}
-.T{s=[5% 10% 15% 20%]}
+.T{e=12%}
+.T{edge=[12% 4%]}
+.T{e=[5% 10% 15% 20%]}
 ```
 
-`soft` creates a soft fade towards the edges of the object.
+`edge` creates a soft fade towards the edges of the object.
 
 Accepted forms:
 
@@ -120,14 +148,30 @@ Accepted references:
 When an element id is used, PnPInk copies that element's current `filter` reference.
 This is useful for reusing Inkscape-made effects such as color shifts, brightness tweaks or glows without rewriting the filter in the DSL.
 
+## Text Replacement
+
+```txt
+icon.T{text=+1}
+icon.T{t=-2}
+icon.T{t=[+1 -2 +5]}
+```
+
+`text` replaces plain text inside the placed object.
+With a list, values are applied to the first text node, second text node, and so on.
+
+This is intended for reusable icons or groups that contain small labels.
+When `text` is used, PnPInk places a real copy instead of a shared clone, so each instance can have its own text.
+The original template object is not modified.
+
 ## Typical Use
 
 ```txt
 photo.T{o=85%}
-photo.T{s=10%}
+photo.T{e=10%}
 photo.T{f=myWarmTint}
-photo.T{f=image1-9-1 s=7%}
-photo.T{o=75% s=[8% 3%]}
+photo.T{f=image1-9-1 e=7%}
+photo.T{o=75% e=[8% 3%]}
+counter_icon.T{t=+3}
 ```
 
 This is useful for:

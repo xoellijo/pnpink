@@ -82,10 +82,12 @@ Text rendering supports inline icon tokens:
 :heart_icon:
 :@{icon://noto/heart-suit}:
 :@{icon://noto/star}~i5^10:
+:blue_planet.T{t=1}:
 ```
 
 Token forms implemented:
 
 - `:id:` uses an existing SVG id.
+- `:id.T{t=...}:` replaces text inside the placed icon; icons with text changes are placed as real copies.
 - `:@{...}:` uses a Source token with optional fit suffix.
 - `:S{...}:` and `:Source{...}:` are equivalent source forms.

@@ -79,6 +79,7 @@ Useful advanced keys:
 | --- | --- | --- |
 | `template_engine` | `legacy`, `composed`, `composed-instance` | Template instantiation engine. `legacy` is the normal engine. `composed` is experimental and intentionally fails on unsupported templates. `composed-instance` keeps composed clones anchored to the first generated instance instead of `<defs>`. |
 | `inline_icons_bbox_backend` | `query_all`, `shell_per_text` | Inline icon bbox measurement backend. Use `query_all` for normal work. `shell_per_text` is kept for investigation only. |
+| `inline_icons_extra_ratio` | decimal | Extra inline icon text advance as a fraction of text height. Negative values bring surrounding text closer without resizing the icon, for example `-0.10`. Default: `0.00`. |
 | `inkscape_shell_workers` | integer >= 1 | Parallel Inkscape shell workers used during export. |
 | `split_svg_output` | `0`, `1` | Enables generated SVG parts. |
 | `split_svg_chunk_mb` | integer >= 1 | Target part size in MB. |

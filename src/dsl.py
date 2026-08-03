@@ -72,8 +72,10 @@ class TransformSpec:
     rotate: Optional[float] = None
     mirror: Optional[str] = None     # 'h'|'v'|'none'
     opacity: Optional[str] = None
+    scale: Optional[List[str]] = None
     soft: Optional[List[str]] = None
     filter_ref: Optional[str] = None
+    text: Optional[List[str]] = None
 
 @dataclass
 class GridSpec:
@@ -275,22 +277,31 @@ def _find_top_level_equal(t: str) -> int:
             return i
     return -1
 
-def _parse_brace_dict(body: str) -> Dict[str, Any]:
+def _unquote_value(v: str) -> str:
+    if v.startswith("'") and v.endswith("'"):
+        return v[1:-1]
+    if v.startswith('"') and v.endswith('"'):
+        return v[1:-1]
+    return v
+
+
+def _parse_brace_dict(body: str, *, raw_keys: Optional[set[str]] = None) -> Dict[str, Any]:
     inner = _strip_balanced(body, "{", "}")
     toks = _split_top(inner)
     out: Dict[str, Any] = {}
+    raw_keys = {str(k).lower() for k in (raw_keys or set())}
     for t in toks:
         idx = _find_top_level_equal(t)
         if idx >= 0:
             k = t[:idx].strip()
             v = t[idx+1:].strip()
-            if v.startswith("'") and v.endswith("'"): v = v[1:-1]
-            if v.startswith('"') and v.endswith('"'): v = v[1:-1]
+            raw_value = k.lower() in raw_keys
+            v = _unquote_value(v)
             if v.startswith("[") and v.endswith("]"):
                 lst = _parse_list(v)
-                out[k] = [(_to_number(x) if _num_pure_re.match(x) else x) for x in lst]
+                out[k] = [_unquote_value(x) for x in lst] if raw_value else [(_to_number(x) if _num_pure_re.match(x) else x) for x in lst]
             else:
-                out[k] = _to_number(v) if _num_pure_re.match(v) else v
+                out[k] = v if raw_value else (_to_number(v) if _num_pure_re.match(v) else v)
         else:
             out[t.strip()] = True
     return out
@@ -662,17 +673,36 @@ def _transform_from_dict(args: Dict[str, Any]) -> TransformSpec:
         ts.filter_ref = str(args.get("filter") or "").strip()
     if "f" in args and not ts.filter_ref:
         ts.filter_ref = str(args.get("f") or "").strip()
+    raw_text = None
+    if "text" in args:
+        raw_text = args.get("text")
+    elif "t" in args:
+        raw_text = args.get("t")
+    if raw_text is not None:
+        vals = [str(v).strip() for v in _as_list(raw_text)]
+        ts.text = vals
+
+    raw_scale = None
+    if "scale" in args:
+        raw_scale = args.get("scale")
+    elif "s" in args:
+        raw_scale = args.get("s")
+    if raw_scale is not None:
+        vals = [str(v).strip() for v in _as_list(raw_scale) if str(v).strip()]
+        if len(vals) not in (1, 2):
+            raise DSLError("scale requires 1 or 2 values")
+        ts.scale = vals
 
     raw_soft = None
-    if "soft" in args:
-        raw_soft = args.get("soft")
-    elif "s" in args:
-        raw_soft = args.get("s")
+    if "edge" in args:
+        raw_soft = args.get("edge")
+    elif "e" in args:
+        raw_soft = args.get("e")
     if raw_soft is not None:
         vals = _as_list(raw_soft)
         vals = [str(v).strip() for v in vals if str(v).strip()]
         if len(vals) not in (1, 2, 4):
-            raise DSLError("soft requires 1, 2 or 4 values")
+            raise DSLError("edge requires 1, 2 or 4 values")
         ts.soft = vals
     return ts
 
@@ -1566,15 +1596,22 @@ def _parse_suffixes(tokens: List[Token], pos: int) -> Tuple[List[ModuleCall], Op
             if tokens[p+2].kind != 'brace':
                 raise DSLError(f"Se esperaba '{{}}' en módulo .{mod_name}")
             body = tokens[p+2].value
-            args = _parse_brace_dict(body)
-            mc = ModuleCall(mod_name, args, spec=None)
+            mc = ModuleCall(mod_name, {}, spec=None)
             lname = mod_name.lower()
             if lname == 'fit':
+                args = _parse_brace_dict(body)
+                mc.args = args
                 mc.spec = _fit_from_dict(args)
             elif lname in ('transform', 't'):
+                args = _parse_brace_dict(body, raw_keys={"text", "t"})
+                mc.args = args
                 mc.spec = _transform_from_dict(args)
             elif lname in ('layout','l'):
+                args = _parse_brace_dict(body)
+                mc.args = args
                 mc.spec = _parse_layout_v2(f"dummy.{mod_name}{body}")
+            else:
+                mc.args = _parse_brace_dict(body)
             modules.append(mc)
             p += 3; continue
         if t.kind == 'tilde':

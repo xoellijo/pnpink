@@ -48,11 +48,11 @@ If a parameter has a default, it’s used when no value is given.
 
 :Box(Title red) → \<rect stroke='red'/\>\<text\>Title\</text\>
 
-## 4️⃣ Conditional text with \${var ...}
-\${var ...} inserts its content **only if** that parameter exists and is non-empty.\
+## 4️⃣ Conditional text with \${var? ...}
+\${var? ...} inserts its content **only if** that parameter exists and is non-empty.\
 This is useful for optional attributes or flexible tags.
 
-\# :Tf(text font size) = \<tspan font-family='\${font}'\${size font-size='\${size}'}\>\${text}\</tspan\>
+\# :Tf(text font size) = \<tspan font-family='\${font}' \${size? font-size='\${size}'}\>\${text}\</tspan\>
 
 - :Tf(Label Noto) → \<tspan font-family='Noto'\>Label\</tspan\>
 
@@ -89,6 +89,9 @@ In SVG, rich text is written using \<tspan\> elements.\
 PnPInk lets you define shorthand snippets to simplify it — effectively a **mini markup language** for formatted text.
 
 ### Example set
+\# =====================
+\# RICH TEXT SNIPPETS
+\# =====================
 \# :Tb(text) = \<tspan font-weight='bold'\>\${text}\</tspan\>
 
 \# :Ti(text) = \<tspan font-style='italic'\>\${text}\</tspan\>
@@ -101,11 +104,11 @@ PnPInk lets you define shorthand snippets to simplify it — effectively a **min
 
 \# :Tx(text) = \<tspan text-decoration='line-through'\>\${text}\</tspan\>
 
-\# :Tc(text fill border bordercolor) = \<tspan fill='\${fill}'\${border stroke='\${bordercolor}' stroke-width='\${border}' paint-order='stroke'}\>\${text}\</tspan\>
+\# :Tf(text font size) = \<tspan font-family='\${font}' \${size? font-size='\${size}'}\>\${text}\</tspan\>
 
-\# :Tf(text font size) = \<tspan font-family='\${font}'\${size font-size='\${size}'}\>\${text}\</tspan\>
+\# :Tp(text size) = \<tspan \${size? font-size='\${size}'}\>\${text}\</tspan\>
 
-\# :Te(text) = \<tspan font-family='Noto Color Emoji'\>\${text}\</tspan\>
+\# :Tc(text fill stroke width=1) = \<tspan fill='\${fill}' \${stroke? stroke='\${stroke}' width='\${width}' paint-order='stroke'}\>\${text}\</tspan\>
 
 ### Examples of use
 :Tb(Strong) → \<tspan font-weight='bold'\>Strong\</tspan\>
@@ -114,7 +117,7 @@ PnPInk lets you define shorthand snippets to simplify it — effectively a **min
 
 → \<tspan font-style='italic'\>Italic \<tspan font-weight='bold'\>Bold\</tspan\>\</tspan\>
 
-:Tc(Text red 0.5 black)
+:Tc(Text red black 0.5)
 
 → \<tspan fill='red' stroke='black' stroke-width='0.5' paint-order='stroke'\>Text\</tspan\>
 
@@ -138,7 +141,7 @@ paths, style fragments, and \<tspan\> markup — before variable substitution.
 | Definition | \# :Name(a b=def) = text | \# :Hello(name) = Hi \${name} | defines snippet |
 | Use | :Hello(World) |  | Hi World |
 | Default | param=value | \# :Box(t color=red) | uses red if omitted |
-| Conditional | \${p text} | \${size font-size='\${size}'} | adds only if defined |
+| Conditional | \${p? text} | \${size? font-size='\${size}'} | adds only if defined |
 | Escape | \\Name() |  | prevents expansion |
 | Nested | :A(:B(x)) |  | inner first |
 | One param | :Bold(any text) |  | captures all |

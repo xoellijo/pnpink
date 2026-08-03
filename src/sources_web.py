@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-sources_web.py — Web source resolvers (Wikimedia Commons, Pixabay, Openclipart)
+sources_web.py â€” Web source resolvers (Wikimedia Commons, Pixabay, Openclipart)
 """
 from __future__ import annotations
 
@@ -311,7 +311,7 @@ class WebSources:
             except Exception:
                 pass
             # Defensive cleanup: malformed callers may leak token suffixes
-            # into the size segment (e.g. '1000}.T{s=10%}~...').
+            # into the size segment (e.g. '1000}.T{e=10%}~...').
             size = re.sub(r"\.(?:Transform|T)\s*\{[^{}]*\}\s*$", "", size, flags=re.I).strip()
             size = re.sub(r"(?:~.*|[\^!\|].*)$", "", size, flags=re.S).strip()
             while size.endswith("}"):

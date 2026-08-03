@@ -2362,18 +2362,72 @@ def unlink_use(use_el):
         idx = p.index(use_el)
         p.remove(use_el)
         p.insert(idx, dup)
-        try: _l.d("[svg.unlink_use] fallback manual OK (useT@baseT)")
+        try: _l.d("[svg.unlink_use] manual fallback OK (useT@baseT)")
         except Exception: pass
         return dup
     except Exception as e:
-        try: _l.e(f"[svg.unlink_use] fallback manual falló: {e}")
+        try: _l.e(f"[svg.unlink_use] manual fallback failed: {e}")
         except Exception: pass
         return use_el
 
 def deepcopy_place(base, parent, T: inkex.Transform, *, insert_after=None, id_prefix="af"):
-    """Deep-copy exacta del comportamiento de <use>: crear <use> con T y materializar."""
-    use = clone_as_use(base, parent, T, insert_after=insert_after, set_id=None)
-    dup = unlink_use(use)
+    """Place a real editable copy with source coordinates expressed in parent space."""
+    try:
+        tag = str(getattr(base, "tag", "") or "")
+        dup = etree.Element(inkex.addNS("g", "svg"))
+        dup.set("transform", str(T))
+        if tag.endswith("symbol"):
+            for child in list(base):
+                dup.append(deepcopy(child))
+        else:
+            child = deepcopy(base)
+            try:
+                base_doc_t = base.composed_transform()
+            except Exception:
+                base_doc_t = inkex.Transform(base.get("transform") or "")
+            try:
+                parent_doc_t = parent.composed_transform()
+                parent_inv_t = parent_doc_t.inverse()
+            except Exception:
+                parent_inv_t = inkex.Transform()
+            child.set("transform", str(parent_inv_t @ base_doc_t))
+            dup.append(child)
+        if insert_after is not None and insert_after.getparent() is parent:
+            parent.insert(parent.index(insert_after) + 1, dup)
+        else:
+            parent.append(dup)
+    except Exception:
+        use = clone_as_use(base, parent, T, insert_after=insert_after, set_id=None)
+        dup = unlink_use(use)
+    try:
+        _semanticize_ids_in_scope(dup, prefix=id_prefix)
+    except Exception:
+        try:
+            dup.set_random_ids(prefix=id_prefix)
+        except Exception:
+            pass
+    return dup
+
+def deepcopy_place_local(base, parent, T: inkex.Transform, *, insert_after=None, id_prefix="af"):
+    """Place a real copy using only the source node's own local transform."""
+    try:
+        tag = str(getattr(base, "tag", "") or "")
+        if tag.endswith("symbol"):
+            dup = etree.Element(inkex.addNS("g", "svg"))
+            for child in list(base):
+                dup.append(deepcopy(child))
+            dup.set("transform", str(T))
+        else:
+            dup = deepcopy(base)
+            base_t = inkex.Transform(base.get("transform") or "")
+            dup.set("transform", str(T @ base_t))
+        if insert_after is not None and insert_after.getparent() is parent:
+            parent.insert(parent.index(insert_after) + 1, dup)
+        else:
+            parent.append(dup)
+    except Exception:
+        use = clone_as_use(base, parent, T, insert_after=insert_after, set_id=None)
+        dup = unlink_use(use)
     try:
         _semanticize_ids_in_scope(dup, prefix=id_prefix)
     except Exception:

@@ -11,7 +11,7 @@
 # :Tx(text) = <tspan text-decoration='line-through'>${text}</tspan>
 # :Tf(text font size) = <tspan font-family='${font}' ${size? font-size='${size}'}>${text}</tspan>
 # :Tp(text size) = <tspan ${size? font-size='${size}'}>${text}</tspan>
-# :Tc(text fill stroke width=1) = <tspan fill='${fill}' ${stroke? stroke='${stroke}' width='${width}' paint-order='stroke'}>${text}</tspan>
+# :Tc(text fill stroke width) = <tspan fill='${fill}' ${stroke? stroke='${stroke}' : stroke='${fill}'} ${width? stroke-width='${width}'} paint-order='stroke'>${text}</tspan>
 # =====================
 
 # =====================

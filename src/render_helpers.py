@@ -122,7 +122,7 @@ def make_use_for_wrap(wrap_id: str, w: float, h: float, use_id: Optional[str] = 
     return u
 
 
-def center_use_over_placeholder(u, placeholder, *, dbg_fa_rect_ids=None):
+def center_use_over_placeholder(u, placeholder):
     bb_t = placeholder.bounding_box()
     cx_t = float(bb_t.left) + float(bb_t.width) * 0.5
     cy_t = float(bb_t.top) + float(bb_t.height) * 0.5
@@ -133,13 +133,6 @@ def center_use_over_placeholder(u, placeholder, *, dbg_fa_rect_ids=None):
     u.set("x", f"{x:.6f}")
     u.set("y", f"{y:.6f}")
     par = placeholder.getparent()
-    try:
-        pid = placeholder.get("id") or ""
-        in_fa = bool(dbg_fa_rect_ids) and pid in dbg_fa_rect_ids
-        par_id = (par.get("id") if par is not None else None)
-        _l.d(f"[dbg.use_rm] placeholder id='{pid}' par='{par_id}' in_fa={in_fa}")
-    except Exception:
-        pass
     if par is not None:
         if is_rect_elem(placeholder):
             return

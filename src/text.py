@@ -39,7 +39,7 @@ __version__ = "text.py v7.51 (in-place; 1-query; baseline I; rich-visible→DOM 
 NBSP = "\u00A0"
 EPS = 1e-12
 
-EXTRA_RATIO = 0.10   # Extra margin as a fraction of text height.
+EXTRA_RATIO = 0.00   # Extra margin as a fraction of text height.
 OVERSHOOT   = 0.98   # Optical baseline support (1.00 = exact).
 
 DEFAULT_SPACER_GLYPH = "I"  # Configurable via --spacer_glyph.
@@ -128,7 +128,7 @@ def _find_inline_token(s: str, pos: int) -> Optional[Tuple[int,int,str]]:
         if end_colon < 0:
             break
         inner = (s[j_id+1:end_colon] or "").strip()
-        if _INLINE_ID_RX.fullmatch(inner or ""):
+        if _parse_inline_id_token(inner) is not None:
             id_hit = (j_id, end_colon+1, inner)
             break
         j_id = s.find(":", j_id + 1)
@@ -137,6 +137,60 @@ def _find_inline_token(s: str, pos: int) -> Optional[Tuple[int,int,str]]:
     if not hits:
         return None
     return sorted(hits, key=lambda h: h[0])[0]
+
+def _split_inline_transform_suffixes(token: str):
+    s = str(token or "").strip()
+    if not s:
+        return "", None
+    tail = ""
+    m_tail = re.match(
+        r"^(?P<core>.*?)(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*))?\s*$",
+        s,
+        re.IGNORECASE,
+    )
+    if m_tail:
+        s = (m_tail.group("core") or "").strip()
+        tail = (m_tail.group("tail") or "").strip()
+    specs = []
+    rx = re.compile(r"^(?P<base>.*?)(?P<mod>\.(?:Transform|T)\s*\{[^{}]*\})\s*$", re.IGNORECASE)
+    while True:
+        m = rx.match(s)
+        if not m:
+            break
+        try:
+            ch = DSL.maybe_parse_chain("X" + (m.group("mod") or ""))
+            mod = next((mm for mm in (getattr(ch, "modules", None) or []) if str(getattr(mm, "name", "")).lower() in ("transform", "t")), None)
+        except Exception:
+            mod = None
+        if mod is None or getattr(mod, "spec", None) is None:
+            break
+        specs.insert(0, getattr(mod, "spec"))
+        s = (m.group("base") or "").strip()
+    return ((s + tail).strip() if tail else s), TFX.merge_specs(specs)
+
+def _parse_inline_id_token(inner: str):
+    s, tr = _split_inline_transform_suffixes(inner)
+    m = re.match(
+        r"^\s*(?P<id>[A-Za-z_][\w\-.]*)\s*(?:(?:\.(?P<fit>Fit\s*\{[^}]*\}))|(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$",
+        s or "",
+        re.IGNORECASE,
+    )
+    if not m:
+        return None
+    fit_text = m.group("fit")
+    ops_text = m.group("ops")
+    compact_ops = m.group("ops_compact")
+    if fit_text:
+        fit_cmd = DSL.parse(f"X.{fit_text}")
+        fs = getattr(fit_cmd, "fit", None)
+        suffix = DSL.SourceSuffix(kind="fit", fit=fs, raw_fit_text=fit_text[fit_text.find('{'):])
+    elif ops_text is not None:
+        suffix = DSL.SourceSuffix(kind="ops", ops=DSL.normalize_ops_suffix(ops_text))
+    elif compact_ops:
+        suffix = DSL.SourceSuffix(kind="ops", ops=DSL.normalize_ops_suffix(compact_ops))
+    else:
+        suffix = DSL.SourceSuffix(kind="none")
+    return (m.group("id") or "").strip(), suffix, tr
 
 def _parse_source_inner_token(inner: str):
     """Parse inline source inner token (@{...} / S{...} / Source{...}) into (src_uri, suffix)."""
@@ -237,6 +291,7 @@ class TokenItem:
     text_id: str
     H_local: float
     is_doc_id: bool = False
+    parsed_transform: Optional["DSL.TransformSpec"] = None
 
     # resolved runtime (filled later)
     symbol_id: Optional[str] = None
@@ -247,6 +302,7 @@ class TokenItem:
     hole_pad_trbl: Optional[Tuple[float,float,float,float]] = None  # (t,r,b,l) in doc uu
     hole_wh_doc: Optional[Tuple[float,float]] = None               # (W,H) in doc uu
     hole_wh_base_doc: Optional[Tuple[float,float]] = None          # (W,H) before padding, doc uu
+    text_advance_w_doc: Optional[float] = None                     # text flow advance; does not resize icon rect
 @dataclass
 class ProcessResult:
     icons_placed: int
@@ -421,12 +477,83 @@ def _extract_scale(tf_raw: Optional[str]) -> Tuple[float,float,Optional[str]]:
     return sx, sy, rest
 
 # ---------- rich-visible → DOM ----------
+def _rich_visible_fragment_nodes(fragment: str, owner_id: Optional[str]) -> Optional[List[SVG.etree._Element]]:
+    if "<tspan" not in (fragment or ""):
+        return None
+    visible_sane = _sanitize_rich_visible(fragment)
+    if visible_sane != fragment:
+        _l.w("id=%s â€” se detectaron atributos sin comillas en <tspan> (saneados automÃ¡ticamente)", owner_id)
+    visible_sane = _escape_text_nodes_only(visible_sane)
+    wrapper = f"<svg xmlns='{NS['svg']}'><text xmlns='{NS['svg']}'>{visible_sane}</text></svg>"
+    try:
+        doc = SVG.etree.fromstring(wrapper.encode("utf-8"))
+    except Exception as ex:
+        _l.w("id=%s â€” fallo al parsear rich-text: %s", owner_id, ex)
+        return None
+    new_text = doc.find("{%s}text" % NS['svg'])
+    if new_text is None:
+        return None
+
+    nodes: List[SVG.etree._Element] = []
+    if new_text.text:
+        t0 = SVG.etree.Element("{%s}tspan" % NS['svg'])
+        t0.set(CONST.XML_SPACE, "preserve")
+        t0.text = new_text.text
+        nodes.append(t0)
+    for node in list(new_text):
+        if isinstance(node.tag, str) and (node.tag.endswith('tspan') or node.tag == "{%s}tspan" % NS['svg']):
+            out = copy.deepcopy(node)
+            out.set(CONST.XML_SPACE, "preserve")
+            nodes.append(out)
+        elif node.text:
+            out = SVG.etree.Element("{%s}tspan" % NS['svg'])
+            out.set(CONST.XML_SPACE, "preserve")
+            out.text = node.text
+            nodes.append(out)
+        if node.tail:
+            tail = SVG.etree.Element("{%s}tspan" % NS['svg'])
+            tail.set(CONST.XML_SPACE, "preserve")
+            tail.text = node.tail
+            nodes.append(tail)
+    return nodes
+
+
+def _parse_rich_visible_fragments(text_el: SVG.etree._Element) -> int:
+    count = 0
+    for node in list(text_el.iter()):
+        if node is text_el:
+            continue
+        owner_id = text_el.get("id")
+        if node.text and "<tspan" in node.text:
+            nodes = _rich_visible_fragment_nodes(node.text, owner_id)
+            if nodes:
+                node.text = None
+                for idx, child in enumerate(nodes):
+                    node.insert(idx, child)
+                count += 1
+        if node.tail and "<tspan" in node.tail:
+            parent = node.getparent()
+            nodes = _rich_visible_fragment_nodes(node.tail, owner_id)
+            if parent is not None and nodes:
+                node.tail = None
+                pos = list(parent).index(node) + 1
+                for child in nodes:
+                    parent.insert(pos, child)
+                    pos += 1
+                count += 1
+    return count
+
+
 def _maybe_parse_rich_visible_into_dom(text_el: SVG.etree._Element) -> bool:
     """Convierte literal '<tspan ...>' en nodos <tspan> reales dentro del <text>, con saneo y warnings."""
     try:
-        # If there are already real <tspan> nodes, do nothing
+        # Existing Inkscape text usually already contains tspans; only parse
+        # literal rich fragments generated inside their text/tail.
         if text_el.find(".//{%s}tspan" % NS['svg']) is not None:
-            return False
+            changed = _parse_rich_visible_fragments(text_el)
+            if changed:
+                _l.d("parsed rich-visible fragments id=%s count=%d", text_el.get("id"), changed)
+            return bool(changed)
 
         visible = text_el.text or ""
         if "<tspan" not in visible:
@@ -549,6 +676,7 @@ def _process_text_fragment(
         if inner.startswith("@{") or inner.lower().startswith("s{") or inner.lower().startswith("source{"):
             try:
                 src_uri, suffix = _parse_source_inner_token(inner)
+                parsed_transform = None
             except Exception as ex:
                 # Malformed token: keep the literal text for better UX.
                 acc += s[t0:t1]
@@ -569,23 +697,24 @@ def _process_text_fragment(
                 parsed_local = None
             if parsed_local:
                 src_uri, suffix = parsed_local
+                parsed_transform = None
                 if callable(source_exists) and (not source_exists(src_uri)):
                     acc += s[t0:t1]
                     pos = t1
                     continue
                 is_doc_id = False
             else:
-                if not _INLINE_ID_RX.fullmatch(inner or ""):
+                parsed_id = _parse_inline_id_token(inner)
+                if parsed_id is None:
                     acc += s[t0:t1]
                     _l.w(f"[inline_icons] invalid token kept as literal: {s[t0:t1]!r}")
                     pos = t1
                     continue
-                if callable(source_exists) and (not source_exists(inner)):
+                src_uri, suffix, parsed_transform = parsed_id
+                if callable(source_exists) and (not source_exists(src_uri)):
                     acc += s[t0:t1]
                     pos = t1
                     continue
-                src_uri = inner
-                suffix = None
                 is_doc_id = True
 
         # volcar acc al atributo actual y “cerrar”
@@ -621,7 +750,8 @@ def _process_text_fragment(
             suffix=suffix,
             text_id=text_el.get('id') or '',
             H_local=_read_effective_fontsize(node),
-            is_doc_id=is_doc_id
+            is_doc_id=is_doc_id,
+            parsed_transform=parsed_transform,
         ))
 
         # continue after token: move remainder to a new tspan to preserve order
@@ -1028,6 +1158,7 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
         source_manager = SRC.SourceManager(doc_root, doc_path, project_root=None)
     pref_debug_rects = prefs.get_inline_icons_show_debug_rects(False)
     show_debug_rects = bool(show_debug_rects or pref_debug_rects)
+    extra_ratio = prefs.get_inline_icons_extra_ratio(EXTRA_RATIO)
 
     def _inline_local_source_exists(src_uri: str) -> bool:
         s = (src_uri or "").strip()
@@ -1115,7 +1246,7 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
         icon_fs = copy.deepcopy(fs_all)
         icon_fs.border = None
         icon_fs.shift = None
-        it.icon_transform = tr_all
+        it.icon_transform = TFX.merge_specs([getattr(it, "parsed_transform", None), tr_all])
         if icon_fs.mode is None:
             icon_fs.mode = "i"
         if icon_fs.anchor is None:
@@ -1155,12 +1286,11 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
         # Sizes in DOC (uu)
         H_doc = it.H_local * Sy_text
         W_icon_d = H_doc * ratio
-        extra_d = EXTRA_RATIO * H_doc
 
         # Hole base (before padding expansion)
-        hole_base_w = W_icon_d + extra_d
+        hole_base_w = W_icon_d
         hole_base_h = H_doc
-        hole_w, hole_h = hole_base_w, hole_base_h
+        hole_w, hole_h = max(EPS, hole_base_w), max(EPS, hole_base_h)
 
         # Hole border/outset (uses standard border parser)
         pad_t = pad_r = pad_b = pad_l = 0.0
@@ -1168,8 +1298,8 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
             try:
                 pad_t, pad_r, pad_b, pad_l, _, _ = SVG.border_tokens_to_pad_px(doc_root, float(hole_w), float(hole_h), hole_fs.border)
                 # Interpretation for inline_icons: border INCREASES the hole (outset)
-                hole_w = hole_w + pad_l + pad_r
-                hole_h = hole_h + pad_t + pad_b
+                hole_w = max(EPS, hole_w + pad_l + pad_r)
+                hole_h = max(EPS, hole_h + pad_t + pad_b)
             except Exception as ex:
                 _l.w(f"[inline_icons] hole border parse failed for {it.src_expr!r}: {ex}")
                 pad_t = pad_r = pad_b = pad_l = 0.0
@@ -1177,9 +1307,10 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
         it.hole_pad_trbl = (float(pad_t), float(pad_r), float(pad_b), float(pad_l))
         it.hole_wh_doc = (float(hole_w), float(hole_h))
         it.hole_wh_base_doc = (float(hole_base_w), float(hole_base_h))
+        it.text_advance_w_doc = max(EPS, float(hole_w) + extra_ratio * H_doc)
 
-        # letter-spacing en LOCAL(<text>)
-        W_hole_loc = hole_w / max(EPS, Sx_text)
+        # Text advance is independent from the Fit/Anchor rect used to size the icon.
+        W_hole_loc = it.text_advance_w_doc / max(EPS, Sx_text)
 
         spacer = (doc_root.xpath(f".//*[@id='{it.spacer_id}']") or [])
         if spacer:
@@ -1288,6 +1419,14 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
         x_left_doc = baseline_x - vx * (OVERSHOOT * H_doc) - ux * (hole_base_w * 0.5)
         y_top_doc  = baseline_y - vy * (OVERSHOOT * H_doc) - uy * (hole_base_w * 0.5)
 
+        # Center the visual icon rect inside the text advance. Negative advances
+        # intentionally make the icon overlap surrounding text symmetrically.
+        advance_w = it.text_advance_w_doc if it.text_advance_w_doc is not None else hole_w
+        dx_advance = (float(advance_w) - float(hole_w)) * 0.5
+        if abs(dx_advance) > EPS:
+            x_left_doc += ux * dx_advance
+            y_top_doc  += uy * dx_advance
+
         # Re-center if the hole was expanded (symmetric padding)
         dy_center = max(0.0, (hole_h - hole_base_h) * 0.5)
         if dy_center:
@@ -1359,9 +1498,10 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
 
         # Apply FitAnchor to insert the icon inside the rect
         try:
+            place_mode = "copy" if TFX.has_text(getattr(it, "icon_transform", None)) else "clone"
             placed_res = FA.apply_to_by_ids(
                 doc_root, it.symbol_id, "", it.icon_fit,
-                rect_elem=rect, parent_elem=g, place_mode="clone",
+                rect_elem=rect, parent_elem=g, place=place_mode,
                 return_bbox=(getattr(it, "icon_transform", None) is not None),
             )
             if isinstance(placed_res, tuple) and len(placed_res) == 2:

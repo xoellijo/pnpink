@@ -253,6 +253,7 @@ Column A in data rows can carry row-level DSL:
 - trailing copies number, or `?` for automatic copies (current layout capacity)
 - optional hole patterns in `[...]`
 - optional iterator selection in `[...]` when using numeric ranges like `1..5 7..100`
+- `symbol_id` to generate the row into `<defs>` instead of a page slot
 
 Examples:
 
@@ -262,7 +263,14 @@ Examples:
 [3 - 2-]            -> 3 copies, then 1 hole, then 2 holes
 [1..5 7..100]       -> keep iterator items 1..5 and 7..100 (skip 6)
 [1..4 3- 7..9]      -> keep 1..4, then 3 holes, then keep 7..9
+alien_card           -> build this row as symbol "alien_card" in <defs>
 ```
+
+Symbol rows do not consume layout slots and do not create page marks.
+If the same symbol id is defined again, the later row overwrites the previous generated symbol.
+Generated symbols can be referenced later like any other SVG id.
+Use them for reusable composed objects built with the same dataset/rendering rules as normal cards.
+Page-layer path jobs are not generated inside symbol rows.
 
 Hole syntax in the final `[...]`:
 
@@ -295,9 +303,7 @@ card_bbox,title,cost
 ,Fireball,3
 ```
 
-<a id="back-side-templates"></a>
-
-## @back -- Back-Side Templates (Back Pass)
+## @back -- Back-Side Templates (Back Pass) {#back-side-templates}
 Use `@back` for duplex backs: card backs, tile backs, alternate reverse sides, and any back-side artwork that must align with the front layout.
 
 An `@back` header is a **control column** and a **section boundary**:

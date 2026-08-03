@@ -407,7 +407,7 @@ def parse_source_like_token(raw_token: str):
         body_for_dsl = (m_all.group("body") or "").strip()
         src_val = None
         body_low = body_for_dsl.lower()
-        if body_low.startswith("osm://") or body_low.startswith("ofm://") or body_low.startswith("pnp://"):
+        if body_low.startswith("osm://") or body_low.startswith("ofm://") or body_low.startswith("pnp://") or body_low.startswith("gdrive://"):
             src_val = body_for_dsl
         else:
             try:
@@ -449,7 +449,7 @@ def parse_source_like_token(raw_token: str):
         return src_val, ops, tag
 
     m_url = re.match(
-        r"^\s*(?P<url>(?:https?://|wkmc://|pxby://|oclp://|pnp://|osm://|ofm://)\S+?)\s*(?:(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$",
+        r"^\s*(?P<url>(?:https?://|wkmc://|pxby://|oclp://|pnp://|gdrive://|osm://|ofm://)\S+?)\s*(?:(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$",
         s,
         re.IGNORECASE,
     )
@@ -465,6 +465,33 @@ def parse_source_like_token(raw_token: str):
             ops = ""
         ops = normalize_ops_chain(ops)
         return url, ops, "url"
+
+    m_local_quoted = re.match(
+        r"^\s*(?P<q>['\"])(?P<path>.+?\.(?:png|jpe?g|gif|bmp|webp|svgz?|pdf|tiff?))(?P=q)\s*"
+        r"(?:(?:\.(?P<fit>Fit\s*\{[^}]*\}))|(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$",
+        s,
+        re.IGNORECASE,
+    )
+    if m_local_quoted:
+        src_val = (m_local_quoted.group("path") or "").strip()
+        fit_text = m_local_quoted.group("fit")
+        legacy_ops = m_local_quoted.group("ops")
+        compact_ops = m_local_quoted.group("ops_compact")
+        if fit_text:
+            try:
+                fit_cmd = DSL.parse(f"X.{fit_text}")
+                fs = getattr(fit_cmd, "fit", None)
+                ops = DSL.ops_from_fit_spec(fs) if fs else ""
+            except Exception:
+                ops = ""
+        elif legacy_ops:
+            ops = f"~{legacy_ops.strip()}"
+        elif compact_ops:
+            ops = f"~{compact_ops.strip()}"
+        else:
+            ops = ""
+        ops = normalize_ops_chain(ops)
+        return src_val, ops, "file"
 
     m_local = re.match(
         r"^\s*(?P<sigil>@)?(?P<path>[^\s\[\]~]+?\.(?:png|jpe?g|gif|bmp|webp|svgz?|pdf|tiff?))\s*"
@@ -498,7 +525,7 @@ def parse_source_like_token(raw_token: str):
 def parse_source_token_with_selector(raw_token: str):
     s = (raw_token or "").strip()
     m = re.match(
-        r"^\s*(?P<core>(?:@\{[^}]*\}|(?:Source|S)\s*\{[^}]*\}|(?:https?://|wkmc://|pxby://|oclp://|pnp://|osm://|ofm://)\S+?))\s*"
+        r"^\s*(?P<core>(?:@\{[^}]*\}|(?:Source|S)\s*\{[^}]*\}|(?:https?://|wkmc://|pxby://|oclp://|pnp://|gdrive://|osm://|ofm://)\S+?))\s*"
         r"(?P<sel>\[[^\]]*\])?\s*"
         r"(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
         s,
@@ -528,6 +555,8 @@ def virtual_warn_tag(src_val: str, base_tag: str) -> str:
         return (base_tag or "ofm").replace("wkmc", "ofm")
     if s.startswith("pnp://"):
         return (base_tag or "pnp").replace("wkmc", "pnp")
+    if s.startswith("gdrive://") or "drive.google.com" in s:
+        return (base_tag or "gdrive").replace("wkmc", "gdrive")
     return base_tag
 
 
@@ -552,6 +581,8 @@ def resolve_virtual_source_urls(sm, src_val: str, selector: Optional[str], *, wa
         urls = list(sm.resolve_oclp_urls(s) or [])
     elif sl.startswith("pnp://"):
         urls = list(sm.resolve_pnp_urls(s) or [])
+    elif sl.startswith("gdrive://") or "drive.google.com" in sl:
+        urls = list(sm.resolve_gdrive_urls(s) or [])
     elif sl.startswith("osm://"):
         urls = list(sm.resolve_osm_urls(s) or [])
         if not urls:
@@ -564,6 +595,8 @@ def resolve_virtual_source_urls(sm, src_val: str, selector: Optional[str], *, wa
     try:
         if urls:
             sm.prefetch_urls(urls)
+            if sl.startswith("gdrive://") or "drive.google.com" in sl:
+                sm.prefetch_gdrive_files(urls)
     except Exception:
         pass
     if frag:

@@ -390,9 +390,9 @@ def _auth_header(client_id: Optional[str] = None) -> Dict[str, str]:
 def fetch_sheet(spreadsheet_id: str, range_a1: str, client_id: Optional[str] = None):
     """
     Devuelve una matriz (2D list[str]) para el rango A1 indicado.
-    Puede incluir nombre de hoja: 'MiHoja!A1:Z999' o sólo 'A1:Z999'.
+    Puede incluir nombre de hoja: 'MiHoja!A1:AA999' o sólo 'A1:AA999'.
     """
-    range_a1 = range_a1 or "A1:Z999"
+    range_a1 = range_a1 or "A1:ZZ999"
     params = {"majorDimension": "ROWS", "valueRenderOption": "UNFORMATTED_VALUE"}
     url = (
         f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/"

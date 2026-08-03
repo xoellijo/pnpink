@@ -16,7 +16,7 @@ The `source_ref` can be:
 - a path to a local file,
 - an iconify reference,
 - a web URL,
-- or a virtual source (Wikimedia Commons, Pixabay, Openclipart, PnPInk Assets).
+- or a virtual source (Wikimedia Commons, Pixabay, Openclipart, PnPInk Assets, Google Drive).
 
 ## Local File Sources
 Use local files for stable, reproducible builds where assets are versioned with the project.
@@ -41,6 +41,7 @@ Notes:
 
 - `file.ext` is accepted only for known source extensions (`png`, `jpg`, `jpeg`, `gif`, `bmp`, `webp`, `svg`, `svgz`, `pdf`, `tif`, `tiff`).
 - `@{file.ext}` or `Source{file.ext}` is accepted as the standard Source module form.
+- `.webp` inputs are converted to cached `.png` files before SVG placement, because not every Inkscape/export pipeline handles WebP reliably.
 
 When no path is provided (`file.ext`), lookup order is:
 
@@ -129,6 +130,8 @@ PnPInk supports virtual sources that resolve to real URLs:
 @{ pxby://query/size }
 @{ oclp://query/size }
 @{ pnp://asset_path }
+@{ gdrive://file/file_id }
+@{ gdrive://folder/folder_id/*.png }
 ```
 
 PnPInk also supports dedicated map sources:
@@ -162,6 +165,12 @@ Placed sources can also be adjusted afterwards with [Transform](./transform.md),
  - default `.png` extension when omitted
  - friendly numeric fallback: `pnp://birds/egg` -> first matching numbered asset such as `egg1.png`
  - optional global lookup when the name is unambiguous: `pnp://egg`
+- `gdrive://` (Google Drive) supports public shared files/folders:
+ - file by id: `gdrive://file/file_id`
+ - folder listing by id: `gdrive://folder/folder_id/*.png`
+ - folder paths: `gdrive://folder/folder_id/Artworks/used/card.png`
+ - real Drive URLs: `https://drive.google.com/file/d/file_id/...` and `https://drive.google.com/drive/folders/folder_id`
+ - folder listing requires `gdrive_api_key` in `preferences.ini`
 
 Size accepts:
 
@@ -181,6 +190,9 @@ Examples:
 @{ oclp://id:24829/largest }
 @{ pnp://birds/egg }
 @{ pnp://IA/icons/crown1 }
+@{ gdrive://file/1AbCdEf... }
+@{ gdrive://folder/1AbCdEf.../*.png }
+@{ gdrive://folder/1AbCdEf.../Artworks/used/card.png }
 ```
 
 Multiple-result virtual sources can be selected outside the source with a 1-based selector:
@@ -188,6 +200,7 @@ Multiple-result virtual sources can be selected outside the source with a 1-base
 ```txt
 @{ wkmc://"The Ancestral Homes of Britain"/medium }[2 4..12 15..26]
 *@{ pxby://castle/large }[1..20]
+*@{ gdrive://folder/1AbCdEf.../*.png }[1..20]
 ```
 
 Selector notes:
@@ -196,6 +209,15 @@ Selector notes:
 - out-of-range indices are ignored with warning,
 - without selector, if multiple results exist, the first one is used (warning in log).
 - for `wkmc://`, category/search results keep the API order after size filtering; PnPInk does not reorder them by image dimensions.
+
+Google Drive notes:
+
+- Only public/shared resources are supported. Private folders require OAuth and are not handled here.
+- `gdrive://file/...` downloads a single file and caches it locally.
+- `gdrive://folder/...` lists the public folder, filters by name/glob, then downloads selected files.
+- Folder path segments are resolved as real Drive folders, not as slash characters in the file name.
+- Cached downloads are stored in the same `assets` cache used by other web sources.
+- Folder listings are cached per run, and file downloads are prefetched in parallel using `network_workers_gdrive` from `preferences.ini` (default: `8`).
 
 Wikimedia Commons category catalogs:
 

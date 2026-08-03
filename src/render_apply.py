@@ -539,7 +539,7 @@ def _normalize_source_token(raw_token: str, sm=None, ss_registry=None):
                 token = f"{sref.symbol_id}{sep}{ops_tail}" if sep else sref.symbol_id
                 symbol_id = sref.symbol_id
                 normalized = True
-                _l.d(f"[deckmaker.src] normalized 'icon://' → '{token}' (symbol in <defs>)")
+                _l.d(f"[deckmaker.src] normalized 'icon://' -> '{token}' (symbol in <defs>)")
             except Exception as ex:
                 _l.w(f"[deckmaker.src] icon:// normalize failed '{token}': {ex}")
 
@@ -971,16 +971,13 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
             _l.w(f"field '{key}': STYLE[{prop}] failed on id='{target_id}': {ex}")
             return 0, "miss"
     raw_token = (value or "").strip()
-    # Phase-1: multivalue cells â€” split into top-level whitespace-separated tokens
-    # and process each token independently against the SAME header/target.
-    # IMPORTANT: each clone/use/FA job is inserted relative to the same placeholder,
-    # so iterating A B C in natural order would leave C on top of B on top of A.
-    # Reverse the processing order so the first token remains at the back.
+    # Phase-1: multivalue cells are processed left-to-right against the same target.
+    # Later tokens are placed above earlier ones by the Fit/Anchor insertion chain.
     if raw_token and any(ch.isspace() for ch in raw_token):
         toks = _split_multivalue(raw_token)
         if len(toks) > 1:
             total = 0
-            for _tok in reversed(toks):
+            for _tok in toks:
                 c, _ = apply_field_in_clone(inst, key, _tok, row, root_doc=root_doc, use_jobs=use_jobs, fa_jobs=fa_jobs, path_jobs=path_jobs, use_seq=use_seq, layout_obj=layout_obj, sm=sm, ss_registry=ss_registry, transform_jobs=transform_jobs, target_index=target_index, header_info=hk)
                 total += int(c or 0)
             return total, 'multi'
@@ -1181,4 +1178,3 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
     use_id, wrap_id, bw, bh = res
     _l.d(f"field '{key}': INSERT use id='{use_id}' wrap='{wrap_id}' (src_bbox w={bw:.2f} h={bh:.2f})")
     return 1, "clone"
-

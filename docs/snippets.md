@@ -46,7 +46,8 @@ Snippets support positional args, named args, defaults, and nesting.
 :Tf(text=Title font=Noto size=12)  -> named arguments are valid
 ```
 
-Conditional blocks use `${var? ...}` and render only when `var` is non-empty.
+Conditional blocks use `${var? true}` and render only when `var` is non-empty.
+They can also use `${var? true : false}` for fallback text.
 
 If a snippet has exactly one parameter, that parameter captures the full inner text:
 
@@ -89,15 +90,21 @@ Snippets can call other snippets and are expanded inside-out.
 ## Practical SVG Text Helpers
 These helpers are optional, but they are the fastest way to build rich text consistently.
 
-Useful helpers for `<tspan>` rich text:
+Current default rich-text helpers for `<tspan>` rich text:
 
 ```txt
-# :Tb(text) = <tspan font-weight='bold'>${text}</tspan>
-# :Ti(text) = <tspan font-style='italic'>${text}</tspan>
+# =====================
+# RICH TEXT SNIPPETS
+# =====================
+# :Tb(text) = <tspan font-weight='bold'>${text}</tspan>        ## bold text
+# :Ti(text) = <tspan font-style='italic'>${text}</tspan>       ## italic text
+# :Td(text) = <tspan baseline-shift='sub' font-size='65%'>${text}</tspan>
+# :Tu(text) = <tspan baseline-shift='super' font-size='65%'>${text}</tspan>
 # :Ts(text) = <tspan text-decoration='underline'>${text}</tspan>
 # :Tx(text) = <tspan text-decoration='line-through'>${text}</tspan>
-# :Tc(text fill border bordercolor) = <tspan fill='${fill}'${border? stroke='${bordercolor}' stroke-width='${border}' paint-order='stroke'}>${text}</tspan>
-# :Te(text) = <tspan font-family='Noto Color Emoji'>${text}</tspan>
+# :Tf(text font size) = <tspan font-family='${font}' ${size? font-size='${size}'}>${text}</tspan>
+# :Tp(text size) = <tspan ${size? font-size='${size}'}>${text}</tspan>
+# :Tc(text fill stroke width) = <tspan fill='${fill}' ${stroke? stroke='${stroke}' : stroke='${fill}'} ${width? stroke-width='${width}'} paint-order='stroke'>${text}</tspan>
 ```
 
 Nested expansion is supported and resolved from inner to outer calls.

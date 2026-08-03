@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import re
+from copy import deepcopy
 from typing import Iterable
 
 import inkex
@@ -29,11 +31,127 @@ def merge_specs(specs: Iterable[object]) -> object | None:
             out.mirror = str(getattr(sp, "mirror") or "").strip().lower()
         if getattr(sp, "opacity", None):
             out.opacity = str(getattr(sp, "opacity") or "").strip()
+        if getattr(sp, "scale", None):
+            out.scale = [str(v).strip() for v in (getattr(sp, "scale") or []) if str(v).strip()]
         if getattr(sp, "soft", None):
             out.soft = [str(v).strip() for v in (getattr(sp, "soft") or []) if str(v).strip()]
         if getattr(sp, "filter_ref", None):
             out.filter_ref = str(getattr(sp, "filter_ref") or "").strip()
+        if getattr(sp, "text", None) is not None:
+            out.text = [str(v) for v in (getattr(sp, "text") or [])]
     return out
+
+
+def has_text(spec) -> bool:
+    return bool(spec is not None and getattr(spec, "text", None) is not None)
+
+
+def _is_text_root(node) -> bool:
+    tag = str(getattr(node, "tag", "") or "")
+    return tag.endswith("text") or tag.endswith("flowRoot")
+
+
+def _iter_text_roots(node):
+    if node is None:
+        return
+    if _is_text_root(node):
+        yield node
+        return
+    for child in node.iter():
+        if child is node:
+            continue
+        if _is_text_root(child):
+            yield child
+
+
+def _copy_use_ref(root, use_el):
+    href = (SVG.get_href(use_el) or "").strip()
+    ref = SVG.find_id(root, href[1:], include_defs=True) if href.startswith("#") else None
+    if ref is None:
+        return None
+    if str(getattr(ref, "tag", "") or "").endswith("symbol"):
+        out = SVG.etree.Element(inkex.addNS("g", "svg"), nsmap=getattr(ref, "nsmap", None))
+        for child in ref:
+            out.append(deepcopy(child))
+    else:
+        out = deepcopy(ref)
+    try:
+        out.attrib.pop("id", None)
+        use_t = inkex.Transform(use_el.get("transform") or "")
+        x = float(use_el.get("x") or 0.0)
+        y = float(use_el.get("y") or 0.0)
+        if x or y:
+            use_t = use_t @ inkex.Transform(f"translate({x},{y})")
+        base_t = inkex.Transform(out.get("transform") or "")
+        out.set("transform", str(use_t @ base_t))
+    except Exception:
+        pass
+    return out
+
+
+def _expand_uses(root, node):
+    for _ in range(16):
+        changed = False
+        for use_el in list(node.iter()):
+            if not str(getattr(use_el, "tag", "") or "").endswith("use"):
+                continue
+            parent = use_el.getparent()
+            repl = _copy_use_ref(root, use_el)
+            if parent is None or repl is None:
+                continue
+            idx = parent.index(use_el)
+            parent.remove(use_el)
+            parent.insert(idx, repl)
+            if use_el is node:
+                node = repl
+            changed = True
+        if not changed:
+            break
+    return node
+
+
+def _apply_text(root, node, values) -> bool:
+    vals = [str(v) for v in (values or [])]
+    if not vals:
+        return False
+    changed = False
+    for text_el, value in zip(_iter_text_roots(node), vals):
+        _replace_text_preserving_runs(text_el, value)
+        changed = True
+    return changed
+
+
+def _text_run_nodes(text_el):
+    for n in text_el.iter():
+        tag = str(getattr(n, "tag", "") or "")
+        if n is text_el or tag.endswith("tspan") or tag.endswith("textPath") or tag.endswith("flowPara"):
+            yield n
+
+
+def _replace_text_preserving_runs(text_el, value: str) -> None:
+    runs = list(_text_run_nodes(text_el))
+    if len(runs) <= 1:
+        SVG.replace_text(text_el, value)
+        return
+
+    first = None
+    for n in runs:
+        if n is text_el:
+            continue
+        if len(list(n)) == 0:
+            first = n
+            break
+    if first is None:
+        SVG.replace_text(text_el, value)
+        return
+
+    text_el.text = None
+    for n in runs:
+        n.tail = None
+        if n is first:
+            n.text = "" if value is None else str(value)
+        elif n is not text_el:
+            n.text = None
 
 
 def _parse_percent_value(raw, *, name: str) -> float:
@@ -80,6 +198,50 @@ def _opacity_value(raw) -> str | None:
     return f"{v:.6f}".rstrip("0").rstrip(".")
 
 
+def _abs_to_uu(root, raw: str) -> float:
+    s = str(raw or "").strip()
+    if not s:
+        return 0.0
+    try:
+        if any(ch.isalpha() for ch in s):
+            return float(root.unittouu(s))
+        return float(root.unittouu(s + "mm"))
+    except Exception:
+        return float(s or 0.0)
+
+
+def _target_size_from_scale_token(root, token: str, base: float) -> float:
+    s = str(token or "").strip().replace(" ", "")
+    if not s:
+        return float(base)
+    terms = [m.group(0) for m in re.finditer(r"[+-]?[^+-]+", s)]
+    pct = 0.0
+    abs_uu = 0.0
+    has_pct = False
+    for term in terms:
+        sign = -1.0 if term.startswith("-") else 1.0
+        body = term[1:] if term[:1] in "+-" else term
+        if not body:
+            continue
+        if body.endswith("%"):
+            pct += sign * (float(body[:-1] or "0") / 100.0)
+            has_pct = True
+        else:
+            abs_uu += sign * _abs_to_uu(root, body)
+    return (float(base) * pct + abs_uu) if has_pct else (float(base) + abs_uu)
+
+
+def _normalize_scale_values(raw_vals) -> tuple[str, str] | None:
+    vals = [str(v).strip() for v in (raw_vals or []) if str(v).strip()]
+    if not vals:
+        return None
+    if len(vals) == 1:
+        return vals[0], vals[0]
+    if len(vals) == 2:
+        return vals[0], vals[1]
+    raise ValueError("scale requires 1 or 2 values")
+
+
 def _num_sig(v: float) -> str:
     return f"{v * 100.0:.3f}".rstrip("0").rstrip(".").replace("-", "m").replace(".", "p")
 
@@ -95,16 +257,35 @@ def _resolve_filter_value(root, raw_ref) -> str | None:
     if ref.startswith("url(#") and ref.endswith(")"):
         return ref
 
+    def _find_by_inkscape_label(label: str):
+        want = str(label or "").strip()
+        if not want:
+            return None
+        label_keys = (
+            inkex.addNS("label", "inkscape"),
+            "inkscape:label",
+        )
+        try:
+            for el in root.iter():
+                if any(str(el.get(k) or "").strip() == want for k in label_keys):
+                    return el
+        except Exception:
+            return None
+        return None
+
     try:
         node = SVG.find_target_exact_in(root, ref)
     except Exception:
         node = root.find(f".//*[@id='{ref}']")
     if node is None:
+        node = _find_by_inkscape_label(ref)
+    if node is None:
         return f"url(#{ref})"
 
     try:
         if str(getattr(node, "tag", "")).endswith("filter"):
-            return f"url(#{ref})"
+            fid = str(node.get("id") or "").strip()
+            return f"url(#{fid})" if fid else None
     except Exception:
         pass
 
@@ -150,12 +331,13 @@ def _normalize_bbox(bbox) -> tuple[float, float, float, float] | None:
     return None
 
 
-def _apply_visual_matrix(node, *, rotate=None, mirror=None, bbox=None) -> bool:
+def _apply_visual_matrix(root, node, *, rotate=None, mirror=None, scale=None, bbox=None) -> bool:
     if node is None:
         return False
     rot = float(rotate or 0.0)
     mir = str(mirror or "").strip().lower()
-    if rot == 0.0 and mir not in ("h", "v"):
+    scale_vals = _normalize_scale_values(scale)
+    if rot == 0.0 and mir not in ("h", "v") and scale_vals is None:
         return False
     parent = node.getparent() if hasattr(node, "getparent") else None
     if parent is None:
@@ -179,6 +361,10 @@ def _apply_visual_matrix(node, *, rotate=None, mirror=None, bbox=None) -> bool:
         L = L @ inkex.Transform("scale(-1,1)")
     elif mir == "v":
         L = L @ inkex.Transform("scale(1,-1)")
+    if scale_vals is not None:
+        target_w = max(1e-9, _target_size_from_scale_token(root, scale_vals[0], w))
+        target_h = max(1e-9, _target_size_from_scale_token(root, scale_vals[1], h))
+        L = L @ inkex.Transform(f"scale({target_w / w},{target_h / h})")
     if rot:
         L = L @ inkex.Transform(f"rotate({rot})")
     extra = inkex.Transform(f"translate({cx},{cy})") @ L @ inkex.Transform(f"translate({-cx},{-cy})")
@@ -299,6 +485,18 @@ def _ensure_soft_mask(root, geom_node, soft_vals: tuple[float, float, float, flo
 def apply_transform_spec(root, node, spec, *, bbox=None) -> bool:
     if root is None or node is None or spec is None:
         return False
+    if has_text(spec):
+        try:
+            node = _expand_uses(root, node)
+        except Exception as ex:
+            _l.w(f"[transform] text use expansion failed on id='{node.get('id') or ''}': {ex}")
+        try:
+            import text as TXT
+            TXT._normalize_rich_visible_for_all_texts(node)
+            if _is_text_root(node):
+                TXT._maybe_parse_rich_visible_into_dom(node)
+        except Exception:
+            pass
     opacity_target = node
     soft_target = node
     filter_target = node
@@ -332,10 +530,16 @@ def apply_transform_spec(root, node, spec, *, bbox=None) -> bool:
     changed = False
 
     try:
-        if _apply_visual_matrix(opacity_target, rotate=getattr(spec, "rotate", None), mirror=getattr(spec, "mirror", None), bbox=bbox):
+        if has_text(spec):
+            changed = _apply_text(root, node, getattr(spec, "text", None)) or changed
+    except Exception as ex:
+        _l.w(f"[transform] text failed on id='{node.get('id') or ''}': {ex}")
+
+    try:
+        if _apply_visual_matrix(root, opacity_target, rotate=getattr(spec, "rotate", None), mirror=getattr(spec, "mirror", None), scale=getattr(spec, "scale", None), bbox=bbox):
             changed = True
     except Exception as ex:
-        _l.w(f"[transform] rotate/mirror failed on id='{opacity_target.get('id') or ''}': {ex}")
+        _l.w(f"[transform] visual matrix failed on id='{opacity_target.get('id') or ''}': {ex}")
 
     try:
         if getattr(spec, "opacity", None):
@@ -388,8 +592,10 @@ def apply_transform_spec(root, node, spec, *, bbox=None) -> bool:
                 f"filter_target='{filter_target.get('id') or ''}' "
                 f"soft_target='{soft_target.get('id') or ''}' "
                 f"node='{node.get('id') or ''}' soft={getattr(spec, 'soft', None)} "
+                f"scale={getattr(spec, 'scale', None)} "
                 f"filter={getattr(spec, 'filter_ref', None)} "
-                f"opacity={getattr(spec, 'opacity', None)}"
+                f"opacity={getattr(spec, 'opacity', None)} "
+                f"text={getattr(spec, 'text', None)}"
             )
     except Exception:
         pass
@@ -397,4 +603,4 @@ def apply_transform_spec(root, node, spec, *, bbox=None) -> bool:
     return changed
 
 
-__all__ = ["merge_specs", "apply_transform_spec"]
+__all__ = ["merge_specs", "has_text", "apply_transform_spec"]

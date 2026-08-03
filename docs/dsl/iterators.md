@@ -199,9 +199,7 @@ back = @{back.png}
 
 Interpretation: one full page of identical backs. If the current layout is `3x3`, this generates `9` cards.
 
-<a id="iterator-selector-syntax"></a>
-
-### Selector syntax in the final `[...]`
+### Selector syntax in the final `[...]` {#iterator-selector-syntax}
 The final bracket block in column A can select iterator positions explicitly.
 
 Examples:

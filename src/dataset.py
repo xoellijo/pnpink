@@ -247,8 +247,17 @@ def _matrix_to_datasets(matrix):
     def _is_blank_row(cells):
         return all(str(c or "").strip() == "" for c in cells)
 
+    def _symbol_id_from_lead(text: str) -> str:
+        s = str(text or "").strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*", s):
+            return ""
+        return s
+
     def _parse_lead_to_meta(lead_text: str):
         """Parse lead cell (column A in data rows): copies/page/layout/marks/holes."""
+        symbol_id = _symbol_id_from_lead(lead_text)
+        if symbol_id:
+            lead_text = ""
         try:
             lead = DSL.parse_leading_cell(lead_text)
         except Exception as ex:
@@ -288,7 +297,7 @@ def _matrix_to_datasets(matrix):
             f"dataset.row_cell0='{lead_text}' → copies={copies} explicit={copies_explicit} "
             f"select={iter_select} slot={slot_select_mode}:{slot_select} page={page_preset} L={layout_tail} M={marks_tail}"
         )
-        return copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail, slot_select, slot_select_mode
+        return copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail, slot_select, slot_select_mode, symbol_id
 
     def _copies_skip_row(copies) -> bool:
         if copies == "?":
@@ -426,7 +435,7 @@ def _matrix_to_datasets(matrix):
                 cells[j] = _strip_cell_trailing_comment(cells[j], enable=True, marker="##")
 
             lead_text = cells[0]
-            copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail, slot_select, slot_select_mode = _parse_lead_to_meta(lead_text)
+            copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail, slot_select, slot_select_mode, symbol_id = _parse_lead_to_meta(lead_text)
             if _copies_skip_row(copies):
                 _l.i("row skipped due to copies <= 0")
                 continue
@@ -437,6 +446,8 @@ def _matrix_to_datasets(matrix):
             base["__dm_copies_explicit__"] = bool(copies_explicit)
             base["__dm_holes__"] = holes
             base["__dm_iter_select__"] = iter_select
+            if symbol_id:
+                base["__dm_symbol_id__"] = symbol_id
             if slot_select:
                 base["__dm_slot_select__"] = slot_select
                 base["__dm_slot_select_mode__"] = str(slot_select_mode or "").strip()
@@ -554,7 +565,7 @@ def _matrix_to_datasets(matrix):
             cells[j] = _strip_cell_trailing_comment(cells[j], enable=True, marker="##")
 
         lead_text = cells[0]
-        copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail, slot_select, slot_select_mode = _parse_lead_to_meta(lead_text)
+        copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail, slot_select, slot_select_mode, symbol_id = _parse_lead_to_meta(lead_text)
         if _copies_skip_row(copies):
             _l.i("row skipped due to copies <= 0")
             continue
@@ -565,6 +576,8 @@ def _matrix_to_datasets(matrix):
         base["__dm_copies_explicit__"] = bool(copies_explicit)
         base["__dm_holes__"] = holes
         base["__dm_iter_select__"] = iter_select
+        if symbol_id:
+            base["__dm_symbol_id__"] = symbol_id
         if slot_select:
             base["__dm_slot_select__"] = slot_select
             base["__dm_slot_select_mode__"] = str(slot_select_mode or "").strip()
@@ -628,7 +641,7 @@ def _split_selector(selector: Optional[str]) -> Tuple[str, str]:
     Kinds:
       - ""      : empty selector
       - "gid"   : numeric gid (public export CSV)
-      - "range" : sheet/range selector, e.g. "Sheet1!A1:Z99"
+      - "range" : sheet/range selector, e.g. "Sheet1!A1:AA99"
       - "sheet" : plain sheet title
     """
     s = str(selector or "").strip()
@@ -641,22 +654,25 @@ def _split_selector(selector: Optional[str]) -> Tuple[str, str]:
     return "sheet", s
 
 
+def _sheet_range(sheet_name: str, cells: str = "") -> str:
+    sh = str(sheet_name or "").strip()
+    cc = str(cells or "").strip()
+    return f"{sh}!{cc}" if cc else sh
+
+
 def _choose_sheet_and_range(effect, sheet_id: str, selector: Optional[str]) -> str:
     kind, val = _split_selector(selector)
     if kind == "range":
-        # Keep current behavior: if "Sheet!" has empty cells part, default to A1:Z999.
         sh, cells = val.split("!", 1)
-        sh = (sh or "").strip()
-        cells = (cells or "").strip() or "A1:Z999"
-        return f"{sh}!{cells}"
+        return _sheet_range(sh, cells)
     if kind == "sheet":
-        return f"{val}!A1:Z999"
-    # gid / empty -> keep oauth behavior unchanged (by SVG name, else first sheet)
+        return _sheet_range(val)
+    # gid / empty -> OAuth uses SVG name, else first sheet.
     doc_path = effect._document_path_or_abort()
     svg_stem = os.path.splitext(os.path.basename(doc_path))[0]
     titles = _gs.list_sheet_titles(sheet_id)
     sheet_name = next((t for t in titles if t.strip().lower()==svg_stem.strip().lower()), (titles[0] if titles else "Sheet1"))
-    return f"{sheet_name}!A1:Z999"
+    return _sheet_range(sheet_name)
 
 
 def _fetch_gsheet_matrix_oauth(effect, sheet_id: str, selector: Optional[str], client_id_env: Optional[str]) -> List[List[str]]:
@@ -674,7 +690,7 @@ def _fetch_gsheet_matrix_public(effect, sheet_id: str, selector: Optional[str]) 
     """Best-effort public fetch (no OAuth) for link-shared sheets.
 
     Strategy:
-      - If range has explicit sheet name (Sheet!A1:Z999), use gviz CSV directly.
+      - If range has explicit sheet name (Sheet!A1:AA999), use gviz CSV directly.
       - Otherwise, try with SVG stem as sheet name.
       - Finally, try first-sheet export by gid=0.
     Returns None when every public attempt fails.
@@ -694,15 +710,16 @@ def _fetch_gsheet_matrix_public(effect, sheet_id: str, selector: Optional[str]) 
     elif kind == "range":
         sheet_name, cells = val.split("!", 1)
         sheet_name = (sheet_name or "").strip()
-        cells = (cells or "").strip() or "A1:Z999"
         q_sheet = urllib.parse.quote(sheet_name, safe="")
-        q_cells = urllib.parse.quote(cells, safe="!:$")
-        urls.append(f"https://docs.google.com/spreadsheets/d/{sid}/gviz/tq?tqx=out:csv&sheet={q_sheet}&range={q_cells}")
+        cells = (cells or "").strip()
+        if cells:
+            q_cells = urllib.parse.quote(cells, safe="!:$")
+            urls.append(f"https://docs.google.com/spreadsheets/d/{sid}/gviz/tq?tqx=out:csv&sheet={q_sheet}&range={q_cells}")
+        else:
+            urls.append(f"https://docs.google.com/spreadsheets/d/{sid}/gviz/tq?tqx=out:csv&sheet={q_sheet}")
     elif kind == "sheet":
-        # Keep compatibility when user provides sheet name only.
         q_sheet = urllib.parse.quote(val, safe="")
-        q_cells = urllib.parse.quote("A1:Z999", safe="!:$")
-        urls.append(f"https://docs.google.com/spreadsheets/d/{sid}/gviz/tq?tqx=out:csv&sheet={q_sheet}&range={q_cells}")
+        urls.append(f"https://docs.google.com/spreadsheets/d/{sid}/gviz/tq?tqx=out:csv&sheet={q_sheet}")
     else:
         urls.append(f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid=0")
 

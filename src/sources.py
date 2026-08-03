@@ -19,10 +19,10 @@ __version__ = "v0.1"
 
 from dataclasses import dataclass
 from typing import Optional, Dict, Tuple, List, Set
-import os, re, hashlib, threading, shutil, mimetypes, fnmatch
+import os, re, hashlib, threading, shutil, mimetypes, fnmatch, time
 from concurrent.futures import ThreadPoolExecutor, Future
 from pathlib import Path
-from urllib.parse import urlparse, unquote, urlunparse
+from urllib.parse import urlparse, unquote, urlunparse, urlencode, parse_qs
 from copy import deepcopy
 import gzip
 
@@ -232,6 +232,9 @@ def _build_key_for_url(url: str) -> SourceKey:
 def _build_key_for_wkmc(expr: str) -> SourceKey:
     return SourceKey(scheme="wkmc", path=(expr or "").strip(), mtime=0.0)
 
+def _build_key_for_gdrive(expr: str) -> SourceKey:
+    return SourceKey(scheme="gdrive", path=(expr or "").strip(), mtime=0.0)
+
 def _build_key_for_pxby(expr: str) -> SourceKey:
     return SourceKey(scheme="pxby", path=(expr or "").strip(), mtime=0.0)
 
@@ -297,6 +300,53 @@ def _split_source_fragment(raw: str, fragment_hint: Optional[str] = None) -> Tup
 def _is_svg_path(p: Path) -> bool:
     sx = (str(getattr(p, "suffix", "") or "")).lower()
     return sx in (".svg", ".svgz")
+
+def _is_webp_path(p: Path) -> bool:
+    return (str(getattr(p, "suffix", "") or "")).lower() == ".webp"
+
+def _safe_cache_name(name: str, fallback: str = "file") -> str:
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", str(name or "").strip()).strip("._")
+    return stem or fallback
+
+def _parse_gdrive_ref(raw: str) -> Optional[Dict[str, str]]:
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    p = urlparse(s)
+    scheme = (p.scheme or "").lower()
+    if scheme == "gdrive":
+        kind = (p.netloc or "").strip().lower()
+        path = unquote(p.path or "").lstrip("/")
+        qs = parse_qs(p.query or "")
+        resource_key = str((qs.get("resourcekey") or qs.get("resourceKey") or [""])[0] or "").strip()
+        if kind == "file":
+            fid = path.split("/", 1)[0].strip()
+            return {"kind": "file", "id": fid, "pattern": "", "resource_key": resource_key} if fid else None
+        if kind == "folder":
+            folder_id, _, pattern = path.partition("/")
+            folder_id = folder_id.strip()
+            pattern = pattern.strip() or "*"
+            return {"kind": "folder", "id": folder_id, "pattern": pattern, "resource_key": resource_key} if folder_id else None
+        return None
+    if scheme in ("http", "https"):
+        host = (p.netloc or "").lower()
+        path = unquote(p.path or "")
+        qs = parse_qs(p.query or "")
+        resource_key = str((qs.get("resourcekey") or qs.get("resourceKey") or [""])[0] or "").strip()
+        if "drive.google.com" not in host:
+            return None
+        m = re.search(r"/file/d/([^/]+)", path)
+        if m:
+            return {"kind": "file", "id": m.group(1).strip(), "pattern": "", "resource_key": resource_key}
+        m = re.search(r"/drive/(?:u/\d+/)?folders/([^/]+)(?:/(.*))?", path)
+        if m:
+            folder_id = (m.group(1) or "").strip()
+            pattern = (m.group(2) or "").strip() or "*"
+            return {"kind": "folder", "id": folder_id, "pattern": pattern, "resource_key": resource_key} if folder_id else None
+        fid = str((qs.get("id") or [""])[0] or "").strip()
+        if fid:
+            return {"kind": "file", "id": fid, "pattern": "", "resource_key": resource_key}
+    return None
 
 def _parse_svg_length_px(val: str) -> Optional[float]:
     s = str(val or "").strip()
@@ -514,15 +564,22 @@ class SourceManager:
             import prefs
             network_workers = prefs.get_network_workers(NET.DEFAULT_HOST_WORKERS)
             network_workers_wkmc = prefs.get_network_workers_wkmc(network_workers)
+            network_workers_gdrive = prefs.get_network_workers_gdrive(8)
         except Exception:
             network_workers = NET.DEFAULT_HOST_WORKERS
             network_workers_wkmc = network_workers
+            network_workers_gdrive = 8
         self._dl_pool = ThreadPoolExecutor(max_workers=max(1, int(network_workers or 1)), thread_name_prefix="pnpink-src")
         self._wkmc_pool = ThreadPoolExecutor(max_workers=max(1, int(network_workers_wkmc or network_workers or 1)), thread_name_prefix="pnpink-wkmc")
+        self._gdrive_pool = ThreadPoolExecutor(max_workers=max(1, int(network_workers_gdrive or 8)), thread_name_prefix="pnpink-gdrive")
         self._dl_futures: Dict[str, Future] = {}
         self._dl_done: Dict[str, Optional[Path]] = {}
+        self._gdrive_futures: Dict[str, Future] = {}
+        self._gdrive_done: Dict[str, Optional[Path]] = {}
         self._virtual_futures: Dict[str, Future] = {}
         self._virtual_done: Set[str] = set()
+        self._gdrive_folder_cache: Dict[Tuple[str, str], List[Dict[str, str]]] = {}
+        self._gdrive_file_meta_cache: Dict[str, Dict[str, str]] = {}
         self._web_stats = {
             "direct_scheduled": 0,
             "virtual_scheduled": 0,
@@ -574,6 +631,27 @@ class SourceManager:
         except Exception:
             pass
         return assets
+
+    def _ensure_renderable_bitmap_path(self, abspath: Path) -> Path:
+        if not _is_webp_path(abspath):
+            return abspath
+        try:
+            src = abspath.resolve()
+            stamp = f"{_normcase_path(src)}|{_stat_mtime(src):.6f}|{src.stat().st_size}"
+            digest = hashlib.sha256(stamp.encode("utf-8", "replace")).hexdigest()[:16]
+            out = self.assets_dir / f"webp_{src.stem}_{digest}.png"
+            if out.is_file() and out.stat().st_size > 0:
+                return out.resolve()
+            from PIL import Image
+            with Image.open(str(src)) as im:
+                if im.mode not in ("RGB", "RGBA"):
+                    im = im.convert("RGBA" if ("A" in im.getbands()) else "RGB")
+                im.save(str(out), "PNG")
+            _l.i(f"[sources] webp converted -> {out.name} <- {src.name}")
+            return out.resolve()
+        except Exception as ex:
+            _l.w(f"[sources] webp conversion failed '{abspath.name}': {ex}; using original")
+            return abspath
 
     def _wkmc_stat_key(self, expr: str) -> str:
         try:
@@ -655,6 +733,276 @@ class SourceManager:
 
     def resolve_pnp_urls(self, expr: str) -> Optional[List[str]]:
         return self.web.resolve_pnp_urls(expr)
+
+    def _gdrive_api_key(self) -> str:
+        try:
+            import prefs
+            return prefs.get_gdrive_api_key("")
+        except Exception:
+            return ""
+
+    def _gdrive_api_url(self, endpoint: str, params: Dict[str, str]) -> str:
+        q = dict(params or {})
+        key = self._gdrive_api_key()
+        if key:
+            q["key"] = key
+        return "https://www.googleapis.com/drive/v3/" + endpoint.lstrip("/") + "?" + urlencode(q)
+
+    def _gdrive_public_download_url(self, file_id: str, resource_key: str = "") -> str:
+        q = {"export": "download", "id": str(file_id or "").strip()}
+        if resource_key:
+            q["resourcekey"] = str(resource_key or "").strip()
+        return "https://drive.google.com/uc?" + urlencode(q)
+
+    def _fetch_gdrive_media(self, file_id: str, resource_key: str, params: Dict[str, str], headers: Dict[str, str]):
+        fid = str(file_id or "").strip()
+        api_url = self._gdrive_api_url(f"files/{fid}", params)
+        last_ex = None
+        for attempt in range(1, 6):
+            try:
+                return NET.fetch_bytes(api_url, headers=headers, timeout=60, retries=2, log_prefix="[sources] gdrive")
+            except Exception as ex:
+                last_ex = ex
+                status = int(getattr(ex, "code", getattr(ex, "status", 0)) or 0)
+                if status == 403 and attempt < 5:
+                    delay = min(0.5 * attempt, 3.0)
+                    _l.w(f"[sources] gdrive HTTP 403; retry {attempt}/5 id='{fid}' after {delay:.1f}s")
+                    time.sleep(delay)
+                    continue
+                break
+        _l.w(f"[sources] gdrive API download failed id='{fid}'; trying public download: {last_ex}")
+        return NET.fetch_bytes(
+            self._gdrive_public_download_url(fid, resource_key),
+            headers=headers,
+            timeout=60,
+            retries=4,
+            log_prefix="[sources] gdrive",
+        )
+
+    def _gdrive_file_metadata(self, file_id: str, resource_key: str = "") -> Optional[Dict[str, str]]:
+        fid = str(file_id or "").strip()
+        if not fid:
+            return None
+        cached = self._gdrive_file_meta_cache.get(fid)
+        if cached:
+            return dict(cached)
+        params = {"fields": "id,name,mimeType,modifiedTime,size"}
+        if resource_key:
+            params["resourceKey"] = resource_key
+        try:
+            meta = NET.fetch_json(self._gdrive_api_url(f"files/{fid}", params), timeout=30, retries=3, log_prefix="[sources] gdrive")
+            if meta:
+                self._gdrive_file_meta_cache[fid] = dict(meta)
+            return meta
+        except Exception as ex:
+            _l.w(f"[sources] gdrive metadata failed id='{fid}': {ex}")
+            return None
+
+    def _gdrive_cache_path(self, file_id: str, name: str, content_type: str = "") -> Path:
+        ext = (Path(str(name or "")).suffix or "").lower()
+        valid = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg", ".svgz", ".pdf", ".tif", ".tiff")
+        if ext not in valid:
+            guessed = mimetypes.guess_extension((content_type or "").split(";", 1)[0].strip().lower())
+            ext = guessed if guessed in valid else ".bin"
+        base = _safe_cache_name(Path(str(name or file_id)).stem, "gdrive")
+        digest = hashlib.sha256(str(file_id or "").encode("utf-8", "replace")).hexdigest()[:12]
+        return self.assets_dir / f"gdrive_{base}_{digest}{ext}"
+
+    def _download_gdrive_file_to_cache(self, file_id: str, resource_key: str = "") -> Optional[Path]:
+        fid = str(file_id or "").strip()
+        if not fid:
+            return None
+        meta = self._gdrive_file_metadata(fid, resource_key) or {}
+        name = str(meta.get("name") or fid).strip()
+        out = self._gdrive_cache_path(fid, name, str(meta.get("mimeType") or ""))
+        if out.is_file() and out.stat().st_size > 0:
+            _l.i(f"[sources] gdrive cache hit -> {out.name}")
+            with self._dl_lock:
+                self._web_stats["download_cached"] = int(self._web_stats.get("download_cached") or 0) + 1
+            return out.resolve()
+        params = {"alt": "media", "acknowledgeAbuse": "true", "supportsAllDrives": "true"}
+        if resource_key:
+            params["resourceKey"] = resource_key
+        try:
+            label = name if len(name) <= 120 else name[:117] + "..."
+            _l.i(f"[sources.progress] gdrive_download start id='{fid}' name='{label}'")
+            GUI.emit("mini_status", message=f"downloading Google Drive {label}", active=True)
+            headers = {"Accept": "image/*,application/pdf,*/*;q=0.8"}
+            raw, hdrs, _status = self._fetch_gdrive_media(fid, resource_key, params, headers)
+            if not Path(str(name or "")).suffix:
+                out = self._gdrive_cache_path(fid, name, str((hdrs or {}).get("Content-Type") or ""))
+            tmp = out.with_suffix(out.suffix + ".part")
+            with open(tmp, "wb") as f:
+                f.write(raw)
+            os.replace(str(tmp), str(out))
+            _l.i(f"[sources] gdrive cached -> {out.name}")
+            with self._dl_lock:
+                self._web_stats["download_ok"] = int(self._web_stats.get("download_ok") or 0) + 1
+            return out.resolve()
+        except Exception as ex:
+            with self._dl_lock:
+                self._web_stats["download_failed"] = int(self._web_stats.get("download_failed") or 0) + 1
+            _l.w(f"[sources] gdrive download failed id='{fid}' name='{name}': {ex}")
+            return None
+
+    def _gdrive_file_key(self, file_id: str, resource_key: str = "") -> str:
+        return f"{str(file_id or '').strip()}|{str(resource_key or '').strip()}"
+
+    def _ensure_gdrive_future(self, file_id: str, resource_key: str = "") -> Future:
+        fid = str(file_id or "").strip()
+        rk = str(resource_key or "").strip()
+        key = self._gdrive_file_key(fid, rk)
+        with self._dl_lock:
+            if key in self._gdrive_done:
+                f = Future()
+                f.set_result(self._gdrive_done.get(key))
+                return f
+            f0 = self._gdrive_futures.get(key)
+            if f0 is not None:
+                return f0
+
+            def _job():
+                p = self._download_gdrive_file_to_cache(fid, rk)
+                with self._dl_lock:
+                    self._gdrive_done[key] = p
+                    self._gdrive_futures.pop(key, None)
+                return p
+
+            f = self._gdrive_pool.submit(_job)
+            self._gdrive_futures[key] = f
+            return f
+
+    def _resolve_gdrive_cached_file(self, file_id: str, resource_key: str = "", *, wait: bool = True) -> Optional[Path]:
+        fid = str(file_id or "").strip()
+        if not fid:
+            return None
+        meta = self._gdrive_file_metadata(fid, resource_key) or {}
+        name = str(meta.get("name") or fid).strip()
+        out = self._gdrive_cache_path(fid, name, str(meta.get("mimeType") or ""))
+        if out.is_file() and out.stat().st_size > 0:
+            _l.i(f"[sources] gdrive cache hit -> {out.name}")
+            with self._dl_lock:
+                self._web_stats["download_cached"] = int(self._web_stats.get("download_cached") or 0) + 1
+            return out.resolve()
+        f = self._ensure_gdrive_future(fid, resource_key)
+        if not wait:
+            if not f.done():
+                return None
+            try:
+                return f.result()
+            except Exception:
+                return None
+        try:
+            return f.result(timeout=180)
+        except Exception as ex:
+            _l.w(f"[sources] gdrive wait failed id='{fid}': {ex}")
+            return None
+
+    def prefetch_gdrive_files(self, refs: List[str]) -> int:
+        n = 0
+        for raw in sorted(set(str(x or "").strip() for x in (refs or []) if str(x or "").strip())):
+            ref = _parse_gdrive_ref(raw)
+            if not ref or ref.get("kind") != "file":
+                continue
+            self._ensure_gdrive_future(ref["id"], ref.get("resource_key", ""))
+            n += 1
+        if n:
+            _l.i(f"[sources] gdrive prefetch scheduled: {n} file(s)")
+            with self._dl_lock:
+                self._web_stats["direct_scheduled"] = int(self._web_stats.get("direct_scheduled") or 0) + n
+        return n
+
+    def _gdrive_list_folder(self, folder_id: str, resource_key: str = "") -> List[Dict[str, str]]:
+        fid = str(folder_id or "").strip()
+        rk = str(resource_key or "").strip()
+        if not fid:
+            return []
+        cache_key = (fid, rk)
+        if cache_key in self._gdrive_folder_cache:
+            return list(self._gdrive_folder_cache.get(cache_key) or [])
+        files: List[Dict[str, str]] = []
+        token = ""
+        while True:
+            params = {
+                "q": f"'{fid}' in parents and trashed=false",
+                "fields": "nextPageToken,files(id,name,mimeType,modifiedTime,size,resourceKey)",
+                "pageSize": "1000",
+                "orderBy": "name_natural",
+            }
+            if token:
+                params["pageToken"] = token
+            if rk:
+                params["resourceKey"] = rk
+            data = NET.fetch_json(self._gdrive_api_url("files", params), timeout=30, retries=3, log_prefix="[sources] gdrive")
+            files.extend(list((data or {}).get("files") or []))
+            token = str((data or {}).get("nextPageToken") or "").strip()
+            if not token:
+                break
+        self._gdrive_folder_cache[cache_key] = list(files)
+        for item in files:
+            fid_item = str((item or {}).get("id") or "").strip()
+            if fid_item:
+                self._gdrive_file_meta_cache[fid_item] = dict(item)
+        return files
+
+    def _gdrive_resolve_folder_path(self, folder_id: str, path_pattern: str, resource_key: str = "") -> Tuple[str, str, str]:
+        current_id = str(folder_id or "").strip()
+        current_rk = str(resource_key or "").strip()
+        pattern = (str(path_pattern or "").strip().replace("\\", "/") or "*").strip("/")
+        if "/" not in pattern:
+            return current_id, current_rk, pattern or "*"
+        parts = [p for p in pattern.split("/") if p]
+        if not parts:
+            return current_id, current_rk, "*"
+        file_pattern = parts[-1] or "*"
+        for folder_name in parts[:-1]:
+            children = self._gdrive_list_folder(current_id, current_rk)
+            match = None
+            for item in children:
+                name = str(item.get("name") or "")
+                mime = str(item.get("mimeType") or "")
+                if name.lower() == folder_name.lower() and mime == "application/vnd.google-apps.folder":
+                    match = item
+                    break
+            if not match:
+                _l.w(f"[sources] gdrive folder path segment not found: '{folder_name}' under id='{current_id}'")
+                return "", "", file_pattern
+            current_id = str(match.get("id") or "").strip()
+            current_rk = str(match.get("resourceKey") or "").strip()
+        return current_id, current_rk, file_pattern
+
+    def resolve_gdrive_urls(self, expr: str) -> Optional[List[str]]:
+        ref = _parse_gdrive_ref(expr)
+        if not ref:
+            return None
+        if ref["kind"] == "file":
+            fid = ref["id"]
+            rk = ref.get("resource_key", "")
+            suffix = f"?resourcekey={rk}" if rk else ""
+            return [f"gdrive://file/{fid}{suffix}"]
+        if not self._gdrive_api_key():
+            _l.w("[sources] gdrive folder listing requires preferences.ini:gdrive_api_key")
+            return []
+        folder_id = ref["id"]
+        pattern = ref.get("pattern", "") or "*"
+        try:
+            folder_id, resource_key, pattern = self._gdrive_resolve_folder_path(folder_id, pattern, ref.get("resource_key", ""))
+            if not folder_id:
+                return []
+            files = self._gdrive_list_folder(folder_id, resource_key)
+        except Exception as ex:
+            _l.w(f"[sources] gdrive folder list failed id='{folder_id}': {ex}")
+            return []
+        pat = pattern.lower()
+        out: List[str] = []
+        for item in files:
+            name = str(item.get("name") or "").strip()
+            fid = str(item.get("id") or "").strip()
+            rk = str(item.get("resourceKey") or "").strip()
+            if name and fid and fnmatch.fnmatch(name.lower(), pat):
+                out.append(f"gdrive://file/{fid}" + (f"?resourcekey={rk}" if rk else ""))
+        _l.i(f"[sources] gdrive folder id='{folder_id}' pattern='{pattern}' -> {len(out)} file(s)")
+        return out
 
     def _register_first_valid_web_candidate(self, urls: List[str], *, hint_type: Optional[str], dpi=None,
                                             fragment: str = "", page: int = 0,
@@ -855,7 +1203,7 @@ class SourceManager:
         if not src:
             src = s
         sl = src.lower()
-        if sl.startswith(("wkmc://", "pxby://", "oclp://", "pnp://")):
+        if sl.startswith(("wkmc://", "pxby://", "oclp://", "pnp://", "gdrive://")) or _parse_gdrive_ref(src):
             return src
         return None
 
@@ -872,17 +1220,17 @@ class SourceManager:
         s = str(text or "")
         out: Set[str] = set()
         s_trim = s.strip()
-        if re.match(r"^https?://\S+$", s_trim, re.I):
+        if re.match(r"^https?://\S+$", s_trim, re.I) and not _parse_gdrive_ref(s_trim):
             out.add(s_trim)
 
         for m in re.finditer(r"@\{\s*([^}]*)\s*\}", s):
             u = self._extract_http_from_source_body(m.group(1))
-            if u:
+            if u and not _parse_gdrive_ref(u):
                 out.add(u)
 
         for m in re.finditer(r"(?:^|[\s])(?:Source|S)\s*\{\s*([^}]*)\s*\}", s, re.I):
             u = self._extract_http_from_source_body(m.group(1))
-            if u:
+            if u and not _parse_gdrive_ref(u):
                 out.add(u)
         return out
 
@@ -912,6 +1260,10 @@ class SourceManager:
         rl = raw.lower()
         if rl.startswith("wkmc://"):
             self.resolve_wkmc_urls(raw)
+            return
+        if rl.startswith("gdrive://") or _parse_gdrive_ref(raw):
+            urls = self.resolve_gdrive_urls(raw) or []
+            self.prefetch_gdrive_files(urls)
             return
         if rl.startswith("pxby://"):
             self.resolve_pxby_urls(raw)
@@ -968,11 +1320,13 @@ class SourceManager:
                     virtuals.update(self.extract_virtual_web_sources_from_text(v))
         n = self.prefetch_urls(sorted(urls))
         wkmc_exprs = sorted(expr for expr in virtuals if str(expr or "").strip().lower().startswith("wkmc://"))
+        gdrive_exprs = sorted(expr for expr in virtuals if _parse_gdrive_ref(str(expr or "").strip()))
         _l.i(
-            "[sources.progress] web_sources discovered direct=%d virtual=%d wkmc=%d",
+            "[sources.progress] web_sources discovered direct=%d virtual=%d wkmc=%d gdrive=%d",
             len(urls),
             len(virtuals),
             len(wkmc_exprs),
+            len(gdrive_exprs),
         )
         for expr in wkmc_exprs:
             try:
@@ -991,9 +1345,16 @@ class SourceManager:
                 batch_prefetched = int(self.web.prefetch_wkmc_file_exprs(wkmc_exprs) or 0)
             except Exception as ex:
                 _l.w(f"[sources] wkmc batch prefetch failed: {ex}")
+        gdrive_prefetched = 0
+        for expr in gdrive_exprs:
+            try:
+                gdrive_prefetched += self.prefetch_gdrive_files(self.resolve_gdrive_urls(expr) or [])
+            except Exception as ex:
+                _l.w(f"[sources] gdrive prefetch failed: {ex}")
         vcount = 0
         for expr in sorted(virtuals):
-            if str(expr or "").strip().lower().startswith("wkmc://"):
+            expr_s = str(expr or "").strip()
+            if expr_s.lower().startswith("wkmc://"):
                 try:
                     p = self.web._parse_wkmc_expr(expr)
                     if p is not None:
@@ -1003,6 +1364,8 @@ class SourceManager:
                             continue
                 except Exception:
                     pass
+            if _parse_gdrive_ref(expr_s):
+                continue
             self._ensure_virtual_future(expr)
             vcount += 1
         if vcount:
@@ -1010,7 +1373,7 @@ class SourceManager:
             with self._dl_lock:
                 self._web_stats["virtual_scheduled"] = int(self._web_stats.get("virtual_scheduled") or 0) + vcount
                 self._web_stats["wkmc_scheduled"] = int(self._web_stats.get("wkmc_scheduled") or 0) + len(wkmc_exprs)
-        return n + vcount + batch_prefetched
+        return n + vcount + batch_prefetched + gdrive_prefetched
 
     def log_web_summary(self) -> None:
         try:
@@ -1086,6 +1449,42 @@ class SourceManager:
         # Allow dataset tokens like "@icon://..." to be passed through directly.
         if raw.lower().startswith("@icon://"):
             raw = raw[1:]
+
+        gdrive_ref = _parse_gdrive_ref(raw)
+        if gdrive_ref:
+            key_gd = _build_key_for_gdrive(raw if not fragment else f"{raw}#{fragment}")
+            if key_gd in self._cache:
+                self._cache_hits += 1
+                return self._cache[key_gd]
+            self._cache_misses += 1
+            if gdrive_ref["kind"] == "folder":
+                urls = self.resolve_gdrive_urls(raw) or []
+                if not urls:
+                    sid, wh = _make_placeholder_symbol(self.defs, raw, "gdrive no results")
+                    return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=key_gd)
+                return self.register(urls[0], hint_type=hint_type, dpi=dpi, fragment=fragment, page=page)
+            cached_file = self._resolve_gdrive_cached_file(gdrive_ref["id"], gdrive_ref.get("resource_key", ""), wait=True)
+            if cached_file is None:
+                sid, wh = _make_placeholder_symbol(self.defs, raw, "gdrive download failed")
+                ref = SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=key_gd)
+                self._cache[key_gd] = ref
+                return ref
+            key = _build_key_for_path(cached_file, fragment or "", int(page or 0))
+            if key in self._cache:
+                ref = self._cache[key]
+            else:
+                if _is_svg_path(cached_file):
+                    ref = self._create_symbol_from_svg_path(cached_file, fragment=fragment)
+                else:
+                    if fragment:
+                        sid, wh = _make_placeholder_symbol(self.defs, raw, "fragment requires svg source")
+                        return SourceRef(symbol_id=sid, content_type="other", intrinsic_box=wh, canonical_key=None)
+                    ref = self._create_symbol_from_bitmap_path(cached_file, dpi=dpi or self.default_dpi)
+                ref.canonical_key = key
+                self._cache[key] = ref
+            self._cache[key_gd] = ref
+            _l.i(f"[sources] gdrive: registered -> {ref.symbol_id} <- {cached_file.name}")
+            return ref
 
         
         # Spritesheet frame shorthand inside @{...}: "alias[frame]" (1-based).
@@ -1836,6 +2235,7 @@ class SourceManager:
         )
 
     def _create_symbol_from_bitmap_path(self, abspath: Path, *, dpi: float) -> SourceRef:
+        abspath = self._ensure_renderable_bitmap_path(abspath)
         W, H = _guess_bitmap_size_px(abspath, default_dpi=dpi)
 
         sid = _unique_symbol_id(self.defs, "src_")
@@ -2019,6 +2419,12 @@ class SourceManager:
                     if len(urls) > 1:
                         _l.w(f"[spritesheets] alias '{alias_key}': pnp produced {len(urls)} results; using first")
                     src_for_path = str(urls[0] or "").strip()
+            elif sl.startswith("gdrive://") or _parse_gdrive_ref(src_for_path):
+                urls = list(self.resolve_gdrive_urls(src_for_path) or [])
+                if urls:
+                    if len(urls) > 1:
+                        _l.w(f"[spritesheets] alias '{alias_key}': gdrive produced {len(urls)} results; using first")
+                    src_for_path = str(urls[0] or "").strip()
             elif sl.startswith("osm://"):
                 urls = list(self.resolve_osm_urls(src_for_path) or [])
                 if urls:
@@ -2028,7 +2434,10 @@ class SourceManager:
 
         try:
             # If it's a web URL, use the cached local file for spritesheet tiling.
-            if re.match(r"^https?://", src_for_path, re.I):
+            gd_ref = _parse_gdrive_ref(src_for_path)
+            if gd_ref and gd_ref.get("kind") == "file":
+                abspath = self._resolve_gdrive_cached_file(gd_ref["id"], gd_ref.get("resource_key", ""), wait=True)
+            elif re.match(r"^https?://", src_for_path, re.I):
                 abspath = self._resolve_http_cached_file(src_for_path, wait=True, wkmc_download=src_from_wkmc)
             else:
                 src_fs = _expand_user_env(str(src_for_path or ""))

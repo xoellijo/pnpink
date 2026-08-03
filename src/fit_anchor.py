@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-fit_anchor.py — PnPInk (v1.2.2)
+fit_anchor.py - PnPInk
 
 Place a node onto a rect using dsl.py fit syntax.
 There is NO legacy parsing here. dsl.py handles everything.
@@ -62,6 +62,18 @@ def _rect_intersection(a, b):
         return None
     return (x1, y1, x2 - x1, y2 - y1)
 
+def _bbox_with_transform(T: inkex.Transform, x, y, w, h):
+    pts = [
+        T.apply_to_point((x, y)),
+        T.apply_to_point((x + w, y)),
+        T.apply_to_point((x, y + h)),
+        T.apply_to_point((x + w, y + h)),
+    ]
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    lx, ly = min(xs), min(ys)
+    return lx, ly, max(xs) - lx, max(ys) - ly
+
 def _css_box_shorthand(lst):
     if not lst:
         return 0, 0, 0, 0
@@ -99,12 +111,7 @@ def _clip_def_id_from_shape(kind: str, shape_el) -> str:
 # ================================================================
 
 def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_elem=None, **kwargs):
-    """
-    Coloca `base_id` sobre `rect_id` aplicando las ops de fit del DSL.
-
-    DeckMaker suele llamar así:
-        apply_to_by_ids(scope, base_id, rect_id, ops, place="clone", rect_elem=rect)
-    """
+    """Place `base_id` over `rect_id` using Fit/Anchor DSL operations."""
     # compat with deckmaker: it comes as `place=...`
     if "place" in kwargs and kwargs["place"]:
         place_mode = kwargs["place"]
@@ -113,6 +120,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
     parent_elem = kwargs.get('parent_elem')
     insert_after_elem = kwargs.get('insert_after_elem')
     return_bbox = bool(kwargs.get('return_bbox', False))
+    ignore_source_ancestors = bool(kwargs.get("ignore_source_ancestors", False))
 
     root = _fa_root_of(scope)
     svgdoc = root
@@ -144,7 +152,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
         f"rect_transform='{rect.get('transform')}'"
     )
 
-    # 3) normalizar ops → FitSpec usando dsl.py
+    # 3) normalize ops -> FitSpec using dsl.py
     fs = None
     if isinstance(ops_full, DSL.FitSpec):
         fs = ops_full
@@ -235,16 +243,6 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
         f"({bx:.2f},{by:.2f},{bw:.2f},{bh:.2f})"
     )
 
-    # DEBUG: alternate bbox via symbol
-    sb = None # = svg.bbox_use_symbol(base)
-    if sb is not None:
-        sbx, sby, sbw, sbh = sb
-        _l.d(
-            f"[fit_anchor] DEBUG base='{base_id}' "
-            f"use_bbox=({bx:.2f},{by:.2f},{bw:.2f},{bh:.2f}) "
-            f"sym_bbox=({sbx:.2f},{sby:.2f},{sbw:.2f},{sbh:.2f})"
-        )
-
     # 7) extract mode/anchor/rot/mirrors from FitSpec
     # Default fit mode when not specified: inside/contain ('i')
     # (Previously defaulted to 'n' = no scaling/original size)
@@ -314,31 +312,73 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
         "clone+unlink": "use+unlink",
     }
     place = mode_map.get(place_mode, "use")
-    try:
-        preferred_place = str(base.get("data-place-mode") or "").strip().lower()
-        if preferred_place in ("deep", "copy"):
-            place = "deep"
-        elif preferred_place in ("use", "clone"):
-            place = "use"
-        elif preferred_place in ("use+unlink", "clone+unlink", "unlink"):
-            place = "use+unlink"
-    except Exception:
-        pass
+    if str(place_mode or "").strip().lower() not in ("copy", "deep", "use+unlink", "clone+unlink", "unlink"):
+        try:
+            preferred_place = str(base.get("data-place-mode") or "").strip().lower()
+            if preferred_place in ("deep", "copy"):
+                place = "deep"
+            elif preferred_place in ("use", "clone"):
+                place = "use"
+            elif preferred_place in ("use+unlink", "clone+unlink", "unlink"):
+                place = "use+unlink"
+        except Exception:
+            pass
     try:
         id_prefix = base.get("data-id-prefix") if "data-id-prefix" in dict(base.attrib or {}) else "af"
     except Exception:
         id_prefix = "af"
 
-    # 12) parent where we place the clone
-    #     - By default: same parent as the rect
-    #     - Override (DeckMaker overlays): parent_elem
-    # DEBUG (Phase 1 headers-dup/multivalue): detect when rect is orphan and parent falls back to root
-    try:
-        if parent_elem is None and rect is not None and rect.getparent() is None:
-            _l.w(f"[dbg.fa_fallback_root] rect orphan: base_id='{base_id}' rect_id='{rect_id}' rect_elem_id='{rect.get('id')}'")
-    except Exception:
-        pass
+    # 12) parent where we place the clone. DeckMaker overlays can override it.
     parent = parent_elem if parent_elem is not None else (rect.getparent() if rect.getparent() is not None else root)
+
+    if ignore_source_ancestors and place == "deep" and not getattr(fs, "clip", False):
+        try:
+            inv_parent = parent.composed_transform().inverse()
+        except Exception:
+            inv_parent = inkex.Transform()
+        try:
+            base_parent = base.getparent()
+            inv_base_parent = base_parent.composed_transform().inverse() if base_parent is not None else inkex.Transform()
+        except Exception:
+            inv_base_parent = inkex.Transform()
+
+        rx_l, ry_l, rw_l, rh_l = _bbox_with_transform(inv_parent, rx, ry, rw, rh)
+        ix_l, iy_l, iw_l, ih_l = _bbox_with_transform(inv_parent, inner_x, inner_y, inner_w, inner_h)
+        bx_l, by_l, bw_l, bh_l = _bbox_with_transform(inv_base_parent, bx, by, bw, bh)
+
+        if fit_mode == "n":
+            sx_l = sy_l = 1.0
+            fitted_w_l, fitted_h_l = bw_l, bh_l
+        else:
+            sx_l, sy_l = svg.compute_fit_scale(bw_l, bh_l, iw_l, ih_l, fit_mode)
+            fitted_w_l, fitted_h_l = bw_l * sx_l, bh_l * sy_l
+
+        try:
+            p0 = inv_parent.apply_to_point((rx, ry))
+            p1 = inv_parent.apply_to_point((rx + shift_x, ry + shift_y))
+            shift_lx, shift_ly = p1[0] - p0[0], p1[1] - p0[1]
+        except Exception:
+            shift_lx = shift_ly = 0.0
+
+        target_x_l = rx_l + ax * rw_l + shift_lx
+        target_y_l = ry_l + ay * rh_l + shift_ly
+        T_l = svg.build_fit_transform(
+            bx=bx_l, by=by_l, bw=bw_l, bh=bh_l,
+            target_x=target_x_l, target_y=target_y_l,
+            sx=sx_l, sy=sy_l, rot_deg=rot_deg,
+            mir_h=mir_h, mir_v=mir_v, anchor=(ax, ay),
+        )
+        placed = svg.deepcopy_place_local(
+            base,
+            parent,
+            T_l,
+            insert_after=(insert_after_elem if insert_after_elem is not None else rect),
+            id_prefix=id_prefix,
+        )
+        placed_bbox = (target_x_l - ax * fitted_w_l, target_y_l - ay * fitted_h_l, fitted_w_l, fitted_h_l)
+        if local_transform_spec is not None and placed is not None:
+            TFX.apply_transform_spec(root, placed, local_transform_spec, bbox=placed_bbox)
+        return (placed, placed_bbox) if return_bbox else placed
 
     # LOG: final params before place_node
     parent_id = parent.get("id") if parent is not None else None
@@ -392,17 +432,6 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
     # Instead, we create a <g> wrapper anchored to the placeholder origin and clip an inner <g>.
     from lxml import etree
 
-    # Helpers: doc/world bbox -> parent local bbox using inverse parent CTM
-    def _bbox_world_to_local(inv_T: inkex.Transform, x, y, w, h):
-        p1 = inv_T.apply_to_point((x, y))
-        p2 = inv_T.apply_to_point((x + w, y))
-        p3 = inv_T.apply_to_point((x, y + h))
-        p4 = inv_T.apply_to_point((x + w, y + h))
-        xs = [p1[0], p2[0], p3[0], p4[0]]
-        ys = [p1[1], p2[1], p3[1], p4[1]]
-        lx, ly = min(xs), min(ys)
-        return (lx, ly, max(xs) - lx, max(ys) - ly)
-
     # Parent CTM (document <- parent) and inverse (parent <- document)
     parent_ctm = inkex.Transform()
     try:
@@ -426,8 +455,8 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
         inv_parent = inkex.Transform()
 
     # Placeholder (original) and "inner" (with border) in parent LOCAL coords
-    rx_l, ry_l, rw_l, rh_l = _bbox_world_to_local(inv_parent, rx, ry, rw, rh)
-    ix_l, iy_l, iw_l, ih_l = _bbox_world_to_local(inv_parent, inner_x, inner_y, inner_w, inner_h)
+    rx_l, ry_l, rw_l, rh_l = _bbox_with_transform(inv_parent, rx, ry, rw, rh)
+    ix_l, iy_l, iw_l, ih_l = _bbox_with_transform(inv_parent, inner_x, inner_y, inner_w, inner_h)
 
     # Shift in parent local coords (vector, not bbox)
     try:
@@ -753,4 +782,3 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
     if local_transform_spec is not None and placed is not None:
         TFX.apply_transform_spec(root, placed, local_transform_spec)
     return (placed, None) if return_bbox else placed
-

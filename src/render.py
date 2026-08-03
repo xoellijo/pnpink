@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import log as LOG
 _l = LOG
-_DBG_FA_RECT_IDS = None
 import re
 import math
 import time
@@ -84,7 +83,7 @@ _gaps_has_offsets = LYT.gaps_has_offsets
 
 
 def _center_use_over_placeholder(u, placeholder):
-    return RHP.center_use_over_placeholder(u, placeholder, dbg_fa_rect_ids=_DBG_FA_RECT_IDS)
+    return RHP.center_use_over_placeholder(u, placeholder)
 
 
 def apply_field_in_clone(*args, **kwargs):
@@ -340,7 +339,7 @@ def render_phase(ctx):
             else:
                 new_idx = int(float(expr)) - 1
         except Exception as ex:
-            raise inkex.AbortExtension(f"Cursor de pÃ¡ginas invÃ¡lido at='{expr}': {ex}")
+            raise inkex.AbortExtension(f"Invalid page cursor at='{expr}': {ex}")
         if new_idx < 0:
             new_idx = 0
         planner_obj.page_index = int(new_idx)
@@ -786,7 +785,7 @@ def render_phase(ctx):
 
                 # 1) Source-like token (supports optional selector + fit suffix).
                 m_src = re.match(
-                    r"^\s*(?P<core>(?:@\{[^}]*\}|(?:Source|S)\s*\{[^}]*\}|https?://\S+?))\s*"
+                    r"^\s*(?P<core>(?:@\{[^}]*\}|(?:Source|S)\s*\{[^}]*\}|(?:https?://|gdrive://)\S+?))\s*"
                     r"(?P<sel>\[[^\]]*\])?\s*"
                     r"(?P<tmods>(?:\.(?:Transform|T)\s*\{[^{}]*\})*)\s*"
                     r"(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
@@ -844,15 +843,22 @@ def render_phase(ctx):
                             tmods += f".T{{m={getattr(s_tr_spec, 'mirror')}}}"
                         if getattr(s_tr_spec, "opacity", None):
                             tmods += f".T{{o={getattr(s_tr_spec, 'opacity')}}}"
+                        if getattr(s_tr_spec, "scale", None):
+                            _vals = [str(v).strip() for v in (getattr(s_tr_spec, "scale") or []) if str(v).strip()]
+                            if _vals:
+                                if len(_vals) == 1:
+                                    tmods += f".T{{s={_vals[0]}}}"
+                                else:
+                                    tmods += ".T{s=[" + " ".join(_vals) + "]}"
                         if getattr(s_tr_spec, "filter_ref", None):
                             tmods += f".T{{f={getattr(s_tr_spec, 'filter_ref')}}}"
                         if getattr(s_tr_spec, "soft", None):
                             _vals = [str(v).strip() for v in (getattr(s_tr_spec, "soft") or []) if str(v).strip()]
                             if _vals:
                                 if len(_vals) == 1:
-                                    tmods += f".T{{s={_vals[0]}}}"
+                                    tmods += f".T{{e={_vals[0]}}}"
                                 else:
-                                    tmods += ".T{s=[" + " ".join(_vals) + "]}"
+                                    tmods += ".T{e=[" + " ".join(_vals) + "]}"
                     if ops_norm:
                         return [f"{u}{tmods}{ops_norm}" for u in v_urls]
                     return [f"{u}{tmods}" for u in v_urls]
@@ -1275,22 +1281,33 @@ def render_phase(ctx):
             return records[mapped - 1]
         return None
 
-    def _exec_use_fa_paths(inst_node, use_jobs, fa_jobs, path_jobs, transform_jobs, *, warn_tag: str, owner_group=None, final_scale=None):
+    def _exec_use_fa_paths(inst_node, use_jobs, fa_jobs, path_jobs, transform_jobs, *, warn_tag: str, owner_group=None, final_scale=None, force_copy=False):
         """Center <use> elements, execute deferred Fit/Anchor jobs, then Paths jobs."""
-        def _apply_fa(scope_node, base_id, r_id, ops_full, place_mode, rect_elem, *, return_bbox=False):
+        def _apply_fa(scope_node, base_id, r_id, ops_full, place_mode, rect_elem, *, return_bbox=False, insert_after_elem=None):
             try:
-                return FA.apply_to_by_ids(scope_node, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem, return_bbox=return_bbox, final_scale=final_scale)
+                return FA.apply_to_by_ids(scope_node, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem, return_bbox=return_bbox, final_scale=final_scale, insert_after_elem=insert_after_elem)
             except Exception as ex:
                 msg = str(ex or "")
                 # Back/template passes can run on detached clones where defs are not reachable
                 # through the local scope. Retry against document root.
                 if "base id=" in msg and "not found" in msg:
-                    return FA.apply_to_by_ids(root, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem, return_bbox=return_bbox, final_scale=final_scale)
+                    return FA.apply_to_by_ids(
+                        root,
+                        base_id,
+                        r_id,
+                        ops_full,
+                        place=place_mode,
+                        rect_elem=rect_elem,
+                        return_bbox=return_bbox,
+                        final_scale=final_scale,
+                        insert_after_elem=insert_after_elem,
+                        ignore_source_ancestors=True,
+                    )
                 raise
 
         for placeholder, u, tr_spec in (use_jobs or []):
             try:
-                _center_use_over_placeholder(u, placeholder, dbg_fa_rect_ids=_DBG_FA_RECT_IDS)
+                _center_use_over_placeholder(u, placeholder)
             except Exception:
                 pass
             try:
@@ -1299,6 +1316,7 @@ def render_phase(ctx):
             except Exception as ex:
                 _l.w(f"{warn_tag} deferred transform failed target='{(u.get('id') if u is not None else '')}': {ex}")
         _fa_remove_later = []
+        _last_insert_after_by_rect = {}
         for _fa_idx, (base_id, r_id, ops_full, place_mode, placeholder_to_remove, rect_elem, tr_spec) in enumerate(fa_jobs or []):
             try:
                 try:
@@ -1307,18 +1325,31 @@ def render_phase(ctx):
                 except Exception:
                     ops_fit = ops_full
                 _styles = deferred_fa_styles.get((id(fa_jobs), int(_fa_idx))) or []
-                if _styles and str(place_mode or "").strip().lower() == "clone":
+                if _styles and str(place_mode or "").strip().lower() in ("clone", "use"):
+                    place_mode = "copy"
+                if TFX.has_text(tr_spec) and str(place_mode or "").strip().lower() in ("clone", "use"):
+                    place_mode = "copy"
+                if force_copy and str(place_mode or "").strip().lower() in ("clone", "use"):
                     place_mode = "copy"
                 _placed_bbox = None
-                _placed_res = _apply_fa(inst_node, base_id, r_id, ops_fit, place_mode, rect_elem, return_bbox=(tr_spec is not None))
+                _rect_key = id(rect_elem) if rect_elem is not None else str(r_id or "")
+                _insert_after_elem = _last_insert_after_by_rect.get(_rect_key)
+                _placed_res = _apply_fa(inst_node, base_id, r_id, ops_fit, place_mode, rect_elem, return_bbox=(tr_spec is not None), insert_after_elem=_insert_after_elem)
                 if isinstance(_placed_res, tuple) and len(_placed_res) == 2:
                     _placed, _placed_bbox = _placed_res
                 else:
                     _placed = _placed_res
+                if _placed is not None:
+                    _last_insert_after_by_rect[_rect_key] = _placed
                 if tr_spec is not None and _placed is not None:
                     TFX.apply_transform_spec(root, _placed, tr_spec, bbox=_placed_bbox)
-                for _prop, _value in _styles:
-                    _apply_style_to_node(_placed, _prop, _value)
+                for _style_target, _prop, _value in _styles:
+                    _style_node = _placed
+                    _st = str(_style_target or "").strip()
+                    if _st and _st != str(base_id or "").strip():
+                        _style_node = SVG.find_target_exact_in(_placed, _st)
+                    if _style_node is not None:
+                        _apply_style_to_node(_style_node, _prop, _value)
                 if placeholder_to_remove is not None:
                     _fa_remove_later.append(placeholder_to_remove)
             except Exception as ex:
@@ -1422,6 +1453,7 @@ def render_phase(ctx):
     ds_meta = getattr(ctx, 'ds_meta', {}) or {}
     split_boards_enabled = bool((ds_meta or {}).get('split_enabled', False))
     placed = 0
+    symbols_created = 0
     split_boards_used = False
     # Slot bookkeeping for extra passes (@back, @page)
     slot_records = []   # list of dicts: {slot_no, page_index, slot_in_page}
@@ -1483,6 +1515,85 @@ def render_phase(ctx):
         _set_cut_template_attrs(card_group, slot_x, slot_y, slot_w, slot_h, shape_id)
         return sx, sy
 
+    def _install_row_symbol(symbol_id: str, card_group, template_bbox) -> bool:
+        sid = str(symbol_id or "").strip()
+        if not sid or card_group is None:
+            return False
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*", sid):
+            _l.w(f"[symbols] invalid symbol id '{sid}'")
+            return False
+        bx, by, bw, bh = [float(v) for v in template_bbox]
+        if bw <= 0 or bh <= 0:
+            _l.w(f"[symbols] invalid bbox for symbol '{sid}'")
+            return False
+        defs = SVG.ensure_defs(root)
+        for ch in list(defs):
+            if str(ch.get("id") or "") == sid:
+                defs.remove(ch)
+        try:
+            import text as TXT
+            TXT._normalize_rich_visible_for_all_texts(card_group)
+        except Exception as ex:
+            _l.w(f"[symbols] rich-text normalize failed for '{sid}': {ex}")
+        sym = SVG.etree.SubElement(defs, inkex.addNS("symbol", "svg"))
+        sym.set("id", sid)
+        sym.set("viewBox", f"0 0 {bw:.6f} {bh:.6f}")
+        sym.set("data-bbox", f"0 0 {bw:.6f} {bh:.6f}")
+        sym.set("data-pnpink-symbol-row", "1")
+        try:
+            cur_t = inkex.Transform(card_group.get("transform") or "")
+        except Exception:
+            cur_t = inkex.Transform()
+        card_group.set("transform", str(inkex.Transform(f"translate({-bx},{-by})") @ cur_t))
+        sym.append(card_group)
+        _l.i(f"[symbols] row symbol '{sid}' created viewBox=0 0 {bw:.2f} {bh:.2f}")
+        return True
+
+    def _remove_display_none(style: str) -> str:
+        st = re.sub(r'(^|;)\s*display\s*:\s*none\s*(?=;|$)', r'\1', style or '')
+        st = re.sub(r';{2,}', ';', st).strip()
+        return st[:-1] if st.endswith(';') else st
+
+    def _set_display_none(el) -> None:
+        st = el.get('style') or ''
+        if 'display:' in st:
+            st = re.sub(r'(?:(^|;)\s*display\s*:\s*[^;]+)', lambda m: (m.group(1) + 'display:none'), st)
+        else:
+            st = (st.strip() + ';' if st.strip() and not st.strip().endswith(';') else st) + 'display:none'
+        el.set('style', st)
+
+    def _apply_anchor_visibility(scope, rect_hks, keep, *, target_index=None, extra_ids=None) -> None:
+        rect_ids = set(extra_ids or [])
+        for hk in (rect_hks or []):
+            targets = hk.get('target_ids') or [hk.get('target_id') or '']
+            for tid in _resolve_header_target_ids(scope, targets):
+                if tid:
+                    rect_ids.add(tid)
+        for rid in sorted(rect_ids):
+            try:
+                el = SVG.find_target_exact_in(scope, rid, target_index=target_index)
+                rid_eff = rid
+                if el is None:
+                    pref = rid + "_pnp"
+                    for cand in scope.iter():
+                        cid = cand.get('id') or ''
+                        if cid.startswith(pref):
+                            el = cand
+                            rid_eff = cid
+                            break
+                if el is None or SVG.is_text_like(el) or (el.tag in TEXT_LIKE):
+                    continue
+                base_rid = SVG.strip_pnp_suffix(rid_eff)
+                if (rid in keep) or (rid_eff in keep) or (base_rid in keep):
+                    st = el.get('style') or ''
+                    st2 = _remove_display_none(st)
+                    if st2 != st:
+                        el.set('style', st2)
+                    continue
+                _set_display_none(el)
+            except Exception:
+                pass
+
     def _parse_slot_selector(sel_raw: str):
         """Parse a @page selector cell.
 
@@ -1517,7 +1628,7 @@ def render_phase(ctx):
                     ops = "~5" + tail
             return slot_no, ops
 
-        # Form 2: ops-only â†’ bind to current slot/page.
+        # Form 2: ops-only -> bind to current slot/page.
         # Accept both long and short Fit/Anchor syntaxes.
         if s.startswith(('.', '~', '{')) or re.match(r"^[A-Za-z][\w\-.]*\s*\.Fit\s*\{", s):
             return 0, s
@@ -1538,7 +1649,7 @@ def render_phase(ctx):
                 continue
             slot_no, ops = _parse_slot_selector(raw)
             if slot_no is None:
-                _l.w(f"[@page] invalid selector '{raw}' in col '{ckey or ''}' â†’ skipped")
+                _l.w(f"[@page] invalid selector '{raw}' in col '{ckey or ''}' -> skipped")
                 continue
             if int(slot_no) == 0:
                 # ops-only: bind to current row/slot page (resolved later, once slot_no is known)
@@ -1563,7 +1674,7 @@ def render_phase(ctx):
                 continue
             slot_no, ops = _parse_slot_selector(raw)
             if slot_no is None:
-                _l.w(f"[@page @back] invalid selector '{raw}' in col '{ckey or ''}' â†’ skipped")
+                _l.w(f"[@page @back] invalid selector '{raw}' in col '{ckey or ''}' -> skipped")
                 continue
             if int(slot_no) == 0:
                 # ops-only @page @back: bind to this row's current front slot (resolved later)
@@ -1665,97 +1776,17 @@ def render_phase(ctx):
 
         _fill_instance_fields(inst, row_inst, row_map, use_jobs, fa_jobs, path_jobs, transform_jobs, clone_first=False)
         # Execute <use> centering and deferred FA on the base instance (still in temp group)
-        # DEBUG: collect rect/placeholder ids that FA will touch in this instance so we can detect early placeholder removals
-        global _DBG_FA_RECT_IDS
-        try:
-            _DBG_FA_RECT_IDS = set()
-            for (_b, _r, _ops, _pm, _ph_rm, _rect_elem, _tr_spec) in (fa_jobs or []):
-                if _ph_rm is not None:
-                    _pid = _ph_rm.get('id') or ''
-                    if _pid: _DBG_FA_RECT_IDS.add(_pid)
-                if _rect_elem is not None:
-                    _rid = _rect_elem.get('id') or ''
-                    if _rid: _DBG_FA_RECT_IDS.add(_rid)
-        except Exception:
-            _DBG_FA_RECT_IDS = None
         _fa_remove_later = _exec_use_fa_paths(inst, use_jobs, fa_jobs, path_jobs, transform_jobs, warn_tag='[@page]')
-        # Phase-1: never delete rect anchors. At the end of this instance, hide rect anchors unless any header uses '+'.
         try:
             _keep = _P1_KEEP_SET if isinstance(_P1_KEEP_SET, set) else set()
         except Exception:
             _keep = set()
-
-        # Collect candidate rect anchors from headers and from deferred FA placeholders.
-        _rect_ids = set()
-        try:
-            for _k, _raw in _iter_row_fields(headers, row_inst):
-                if not _k or _k.startswith('__dm_') or _k.startswith('_'):
-                    continue
-                _hk = parse_header_key_full(_k)
-                _h_targets = (_hk.get('target_ids') or [(_hk.get('target_id') or '')])
-                for _tid in _resolve_header_target_ids(inst, _h_targets):
-                    if _tid:
-                        _rect_ids.add(_tid)
-        except Exception:
-            pass
-        try:
-            for _ph in list(dict.fromkeys(_fa_remove_later)):
-                _pid = (_ph.get('id') or '').strip()
-                if _pid:
-                    _rect_ids.add(_pid)
-        except Exception:
-            pass
-
-        for _rid in sorted(_rect_ids):
-            try:
-                _e = SVG.find_target_exact_in(inst, _rid)
-                _rid_eff = _rid
-                if _e is None:
-                    # Phase1: ids inside instances may be suffixed (_pnpNNNN). If header uses the base id,
-                    # try to resolve a unique suffixed element in this instance.
-                    try:
-                        pref = _rid + "_pnp"
-                        for _cand in inst.iter():
-                            _cid = (_cand.get('id') or '')
-                            if _cid.startswith(pref):
-                                _e = _cand
-                                _rid_eff = _cid
-                                break
-                    except Exception:
-                        pass
-                if _e is None:
-                    continue
-                if SVG.is_text_like(_e) or (_e.tag in TEXT_LIKE):
-                    continue
-                base_rid = SVG.strip_pnp_suffix(_rid_eff)
-                if (_rid_eff in _keep) or (base_rid in _keep):
-                    # keep visible: also remove any existing display:none set in the template or by previous passes
-                    st = _e.get('style') or ''
-                    # remove display:none occurrences
-                    st2 = re.sub(r'(^|;)\s*display\s*:\s*none\s*(?=;|$)', r'\1', st)
-                    # normalize stray double semicolons
-                    st2 = re.sub(r';{2,}', ';', st2).strip()
-                    if st2.endswith(';'):
-                        st2 = st2[:-1]
-                    if st2 != st:
-                        _e.set('style', st2)
-                    continue  # keep visible
-                # apply display:none (but do it only now, after all measurements/placements)
-                st = _e.get('style') or ''
-                if 'display:' in st:
-                    # replace existing display
-                    st2 = re.sub(r"(?:(^|;)\s*display\s*:\s*[^;]+)", lambda m: (m.group(1) + "display:none"), st)
-                    _e.set('style', st2)
-                else:
-                    if st and not st.strip().endswith(';'):
-                        st = st.strip() + ';'
-                    _e.set('style', (st or '') + "display:none")
-            except Exception:
-                pass
-
-        # DEBUG: clear per-instance rect tracking
-        try: _DBG_FA_RECT_IDS = None
-        except Exception: pass
+        _apply_anchor_visibility(
+            inst,
+            compiled_rect_hks,
+            _keep,
+            extra_ids=[(ph.get('id') or '').strip() for ph in dict.fromkeys(_fa_remove_later) if ph is not None],
+        )
         # Phase-1: clear per-instance keep-visible set
         try:
             _P1_KEEP_SET = None
@@ -1885,7 +1916,7 @@ def render_phase(ctx):
                             prefix = (prefix or '').strip().lower()
                             name = (name or '').strip()
                         else:
-                            # icon://name  â†’ default set
+                            # icon://name -> default set
                             prefix = 'noto'
                             name = token.strip()
                         if prefix and name:
@@ -1917,6 +1948,14 @@ def render_phase(ctx):
     compiled_field_specs = _compile_field_specs(headers, front_field_indices)
     compiled_clone_specs = [s for s in compiled_field_specs if s.get("is_clone")]
     compiled_apply_specs = [s for s in compiled_field_specs if (not s.get("is_clone")) and (not s.get("is_internal"))]
+    style_targets = {
+        str(_tid or "").strip()
+        for _spec in compiled_apply_specs
+        for _tid in ((_spec.get("hk") or {}).get("target_ids") or [(_spec.get("hk") or {}).get("target_id") or ""])
+        if str((_spec.get("hk") or {}).get("prop") or "text").strip().lower() != "text"
+        and str(_tid or "").strip()
+        and not RAP._is_id_wildcard_token(str(_tid or "").strip())
+    }
     back_field_specs_by_col = {}
     for bt in back_templates or []:
         bt_col = _template_col_index(bt)
@@ -2127,8 +2166,10 @@ def render_phase(ctx):
         row_page   = (row.get("__dm_page__")   or "").strip()
         row_layout = (row.get("__dm_layout__") or "").strip()
         row_marks  = (row.get("__dm_marks__")  or "").strip()
+        row_symbol_id = str(row.get("__dm_symbol_id__") or "").strip()
+        is_symbol_row = bool(row_symbol_id)
         page_cursor_explicit = False
-        if (not row_page) and (not row_layout) and (not row_marks):
+        if (not is_symbol_row) and (not row_page) and (not row_layout) and (not row_marks):
             is_placeholder = True
             for v in _row_cells(row):
                 if str(v or "").strip() != "":
@@ -2187,13 +2228,13 @@ def render_phase(ctx):
                     if ps_for_cursor is not None:
                         _apply_page_cursor_from_page(planner, ps_for_cursor)
                         page_cursor_explicit = bool((getattr(ps_for_cursor, 'at', None) or '').strip())
-            _l.i(f"Grid {planner.plan.cols}x{planner.plan.rows}, gaps {planner.current.gaps.h}Ã—{planner.current.gaps.v} mm; slots/page {planner.slots_per_page()}")
+            _l.i(f"Grid {planner.plan.cols}x{planner.plan.rows}, gaps {planner.current.gaps.h}x{planner.current.gaps.v} mm; slots/page {planner.slots_per_page()}")
         if row_layout:
             _log_row_stage(idx, "apply LAYOUT tail")
             try:
                 ls = DSL.parse_layout_block(row_layout)
             except Exception as ex:
-                _l.w(f"layout tail invÃ¡lido '{row_layout}': {ex}")
+                _l.w(f"layout tail invalid '{row_layout}': {ex}")
                 ls = None
             if ls is not None:
                 if (not page_cursor_explicit) and int(planner.page_index) in page_states:
@@ -2207,7 +2248,7 @@ def render_phase(ctx):
                 _shape = (getattr(layout, 'smart_shape', None) or card.name or '').strip()
                 _orient = (getattr(layout, 'smart_hex_orient', None) or '').strip()
                 _shape_dbg = _shape if not _orient else f"{_shape}/{_orient}"
-                _l.i(f"Tail applied: g={layout.cols}x{layout.rows} inv=({layout.invert_cols},{layout.invert_rows}) rowMajor={layout.sweep_rows_first} k={gaps.h}Ã—{gaps.v} s='{_shape_dbg}'")
+                _l.i(f"Tail applied: g={layout.cols}x{layout.rows} inv=({layout.invert_cols},{layout.invert_rows}) rowMajor={layout.sweep_rows_first} k={gaps.h}x{gaps.v} s='{_shape_dbg}'")
         if row_marks:
             _log_row_stage(idx, "apply MARKS tail")
             if row_marks in ("0", "-"):
@@ -2216,10 +2257,10 @@ def render_phase(ctx):
                 try:
                     marks_current = DSL.parse_marks_block(row_marks)
                 except Exception as ex:
-                    _l.w(f"marks tail invÃ¡lido '{row_marks}': {ex}")
+                    _l.w(f"marks tail invalid '{row_marks}': {ex}")
         # Control-only row: apply Page/Layout/Marks but do not create an instance
         # when all payload cells (columns B+) are empty.
-        if (row_page or row_layout or row_marks) and not split_boards_enabled:
+        if (not is_symbol_row) and (row_page or row_layout or row_marks) and not split_boards_enabled:
             has_payload = False
             for v in _row_cells(row):
                 if str(v or "").strip() != "":
@@ -2228,92 +2269,99 @@ def render_phase(ctx):
             if not has_payload:
                 _log_row_stage(idx, "control-only row, no instance")
                 continue
-        # Collect any @page requests from this row (they'll be executed when their referenced slot is reached)
-        _queue_page_requests(row, row_map)
-
-        target_within = None
-        if str(row.get('__dm_target_slot__', '') or '').strip():
-            try:
-                target_within = int(row.get('__dm_target_slot__')) - 1
-            except Exception:
-                target_within = None
-        if target_within is not None:
-            sg = _slot_geom_for_within(planner, target_within)
-            if sg is None:
-                _l.w(f"[slots] target slot out of range: {int(target_within)+1} (per_page={len(getattr(planner,'local_slots',[]) or [])})")
-                continue
-            slot_x, slot_y, _slot_w_target, _slot_h_target = sg
-            slot_within_for_record = int(target_within)
-        else:
-            try:
-                n_before = int(row.get('__dm_holes_before__', 0) or 0)
-            except Exception:
-                n_before = 0
-            if n_before > 0:
-                for _ in range(n_before):
-                    planner.commit_slot()
-                _l.d(f"[holes] leading slots={n_before} row={idx}")
-            slot_x, slot_y = _get_or_advance_slot(planner)
+        if is_symbol_row:
+            target_within = None
+            slot_x = slot_y = 0.0
             _slot_w_target = _slot_h_target = None
-            slot_within_for_record = int(planner.slot_index)
+            slot_within_for_record = 0
+            slot_no = 0
+        else:
+            # Collect any @page requests from this row (they'll be executed when their referenced slot is reached)
+            _queue_page_requests(row, row_map)
 
-        # Register slot mapping (1-based global slot number)
-        slot_no = len(slot_records) + 1
-        if int(planner.page_index) not in page_states:
-            try:
-                page_states[int(planner.page_index)] = deepcopy(planner.current)
-            except Exception:
-                page_states[int(planner.page_index)] = None
-        slot_records.append({
-            'slot_no': int(slot_no),
-            'page_index': int(planner.page_index),
-            'slot_in_page': int(slot_within_for_record),
-            'state': deepcopy(planner.current),
-            'row': row,
-        })
-
-        # Execute any ops-only @page requests bound to this row's current slot/page.
-        # This supports long/short Fit/Anchor syntaxes without forcing a "~N" selector.
-        if '__dm_page_now__' in row:
-            reqs_now = row.pop('__dm_page_now__', []) or []
-            for rq in reqs_now:
+            target_within = None
+            if str(row.get('__dm_target_slot__', '') or '').strip():
                 try:
-                    _l.d("[@page] place ops-only on current page", {"slot": int(slot_no), "page": int(planner.page_index)+1, "bbox": (rq.get('te') or {}).get('bbox_id'), "ops": rq.get('ops')})
-                    _place_page_template_now(
-                        rq.get('te'),
-                        rq.get('row') or {},
-                        rq.get('ops') or '~5',
-                        int(planner.page_index),
-                        pass_tag='front',
-                        insert_after_elem=(out_layer[-1] if len(out_layer) > 0 else None),
-                    )
-                except Exception as ex:
-                    _l.w(f"[@page] placement failed (current slot {slot_no}): {ex}")
-
-        # Ops-only selectors for @page @back are bound to the current front slot.
-        # We enqueue them under this slot_no so they can be placed during the back pass.
-        if '__dm_page_back_now__' in row:
-            reqs_now = row.pop('__dm_page_back_now__', []) or []
-            if reqs_now:
-                pending_page_back_req.setdefault(int(slot_no), []).extend(reqs_now)
-                _l.d("[@page @back] queued ops-only to slot", {"slot": int(slot_no), "count": len(reqs_now)})
-
-        # Execute any pending @page requests whose selector points to this slot_no.
-        # This makes page membership deterministic and keeps Z-order tied to dataset order.
-        if int(slot_no) in pending_page_req:
-            reqs = pending_page_req.pop(int(slot_no), [])
-            for rq in (reqs or []):
+                    target_within = int(row.get('__dm_target_slot__')) - 1
+                except Exception:
+                    target_within = None
+            if target_within is not None:
+                sg = _slot_geom_for_within(planner, target_within)
+                if sg is None:
+                    _l.w(f"[slots] target slot out of range: {int(target_within)+1} (per_page={len(getattr(planner,'local_slots',[]) or [])})")
+                    continue
+                slot_x, slot_y, _slot_w_target, _slot_h_target = sg
+                slot_within_for_record = int(target_within)
+            else:
                 try:
-                    _place_page_template_now(
-                        rq.get('te'),
-                        rq.get('row') or {},
-                        rq.get('ops') or '~5',
-                        int(planner.page_index),
-                        pass_tag='front',
-                        insert_after_elem=(out_layer[-1] if len(out_layer) > 0 else None),
-                    )
-                except Exception as ex:
-                    _l.w(f"[@page] placement failed at slot {slot_no}: {ex}")
+                    n_before = int(row.get('__dm_holes_before__', 0) or 0)
+                except Exception:
+                    n_before = 0
+                if n_before > 0:
+                    for _ in range(n_before):
+                        planner.commit_slot()
+                    _l.d(f"[holes] leading slots={n_before} row={idx}")
+                slot_x, slot_y = _get_or_advance_slot(planner)
+                _slot_w_target = _slot_h_target = None
+                slot_within_for_record = int(planner.slot_index)
+
+            # Register slot mapping (1-based global slot number)
+            slot_no = len(slot_records) + 1
+            if int(planner.page_index) not in page_states:
+                try:
+                    page_states[int(planner.page_index)] = deepcopy(planner.current)
+                except Exception:
+                    page_states[int(planner.page_index)] = None
+            slot_records.append({
+                'slot_no': int(slot_no),
+                'page_index': int(planner.page_index),
+                'slot_in_page': int(slot_within_for_record),
+                'state': deepcopy(planner.current),
+                'row': row,
+            })
+
+            # Execute any ops-only @page requests bound to this row's current slot/page.
+            # This supports long/short Fit/Anchor syntaxes without forcing a "~N" selector.
+            if '__dm_page_now__' in row:
+                reqs_now = row.pop('__dm_page_now__', []) or []
+                for rq in reqs_now:
+                    try:
+                        _l.d("[@page] place ops-only on current page", {"slot": int(slot_no), "page": int(planner.page_index)+1, "bbox": (rq.get('te') or {}).get('bbox_id'), "ops": rq.get('ops')})
+                        _place_page_template_now(
+                            rq.get('te'),
+                            rq.get('row') or {},
+                            rq.get('ops') or '~5',
+                            int(planner.page_index),
+                            pass_tag='front',
+                            insert_after_elem=(out_layer[-1] if len(out_layer) > 0 else None),
+                        )
+                    except Exception as ex:
+                        _l.w(f"[@page] placement failed (current slot {slot_no}): {ex}")
+
+            # Ops-only selectors for @page @back are bound to the current front slot.
+            # We enqueue them under this slot_no so they can be placed during the back pass.
+            if '__dm_page_back_now__' in row:
+                reqs_now = row.pop('__dm_page_back_now__', []) or []
+                if reqs_now:
+                    pending_page_back_req.setdefault(int(slot_no), []).extend(reqs_now)
+                    _l.d("[@page @back] queued ops-only to slot", {"slot": int(slot_no), "count": len(reqs_now)})
+
+            # Execute any pending @page requests whose selector points to this slot_no.
+            # This makes page membership deterministic and keeps Z-order tied to dataset order.
+            if int(slot_no) in pending_page_req:
+                reqs = pending_page_req.pop(int(slot_no), [])
+                for rq in (reqs or []):
+                    try:
+                        _place_page_template_now(
+                            rq.get('te'),
+                            rq.get('row') or {},
+                            rq.get('ops') or '~5',
+                            int(planner.page_index),
+                            pass_tag='front',
+                            insert_after_elem=(out_layer[-1] if len(out_layer) > 0 else None),
+                        )
+                    except Exception as ex:
+                        _l.w(f"[@page] placement failed at slot {slot_no}: {ex}")
         _profile["pre_ms"] += (time.perf_counter() - _profile_phase_t0) * 1000.0
         _profile_phase_t0 = time.perf_counter()
         card_group = inkex.Group()
@@ -2387,7 +2435,12 @@ def render_phase(ctx):
             v, op_key, op_val = _normalize_style_value(prop, value)
             if not prop or v == "":
                 return
-            for el in node.iter():
+            tag0 = str(getattr(node, "tag", "") or "")
+            if tag0.endswith(("g", "svg", "symbol", "use")):
+                targets = node.iter()
+            else:
+                targets = (node,)
+            for el in targets:
                 tag = str(getattr(el, "tag", "") or "")
                 if tag.endswith("defs") or tag.endswith("clipPath") or tag.endswith("mask"):
                     continue
@@ -2396,6 +2449,41 @@ def render_phase(ctx):
                 if op_key:
                     smap[op_key] = op_val
                 SVG.style_set(el, smap)
+
+        def _fa_source_ids(job, base_id, wanted):
+            base_id = str(base_id or "").strip()
+            wanted = {str(x or "").strip() for x in (wanted or []) if str(x or "").strip()}
+            if not base_id or not wanted:
+                return []
+            node = None
+            try:
+                node = (job.get("target_index") or {}).get(base_id)
+            except Exception:
+                node = None
+            if node is None:
+                node = SVG.find_target_exact_in(job.get("node"), base_id)
+            if node is None:
+                node = SVG.find_target_exact_in(root, base_id)
+            ids = []
+
+            def _add(value):
+                value = str(value or "").strip()
+                if not value:
+                    return
+                for candidate in (value, SVG.strip_pnp_suffix(value)):
+                    if candidate in wanted and candidate not in ids:
+                        ids.append(candidate)
+
+            if node is None:
+                _add(base_id)
+                return ids
+            for el in node.iter():
+                _add(el.get("id"))
+                _add(el.get("data-origid"))
+                _add(el.get("data-field"))
+                if len(ids) >= len(wanted):
+                    break
+            return ids
 
         def _apply_field_any(spec, raw):
             key = spec.get("key") if isinstance(spec, dict) else str(spec or "")
@@ -2476,9 +2564,23 @@ def render_phase(ctx):
             if _prop != "text" and _target and _raw_s.strip() and _target in last_fa_by_target:
                 _j, _fa_idx = last_fa_by_target.get(_target)
                 if _j is not None and _fa_idx is not None:
-                    deferred_fa_styles.setdefault((id(_j.get('fa_jobs') or []), int(_fa_idx)), []).append((_prop, _raw_s))
+                    deferred_fa_styles.setdefault((id(_j.get('fa_jobs') or []), int(_fa_idx)), []).append((_target, _prop, _raw_s))
                     continue
+            _fa_len_before = {id(_j): len(_j.get('fa_jobs') or []) for _j in (inst_jobs or [])}
             _cnt, _st, _j, _fa_idx = _apply_field_any(_spec, _raw_s)
+            for _job in (inst_jobs or []):
+                _before = int(_fa_len_before.get(id(_job), 0) or 0)
+                _jobs = _job.get('fa_jobs') or []
+                for _new_idx in range(_before, len(_jobs)):
+                    try:
+                        _base_id = str((_jobs[_new_idx] or [None])[0] or "").strip()
+                    except Exception:
+                        _base_id = ""
+                    if _target:
+                        last_fa_by_target[_target] = (_job, _new_idx)
+                    if style_targets:
+                        for _alias in _fa_source_ids(_job, _base_id, style_targets):
+                            last_fa_by_target[_alias] = (_job, _new_idx)
             if _st == "fa" and _j is not None and _fa_idx is not None and _target:
                 last_fa_by_target[_target] = (_j, _fa_idx)
         _profile["fields_ms"] += (time.perf_counter() - _profile_phase_t0) * 1000.0
@@ -2561,6 +2663,53 @@ def render_phase(ctx):
             bb = an.bounding_box()
             bx, by, bw, bh = float(bb.left), float(bb.top), float(bb.width), float(bb.height)
         _profile["bbox_ms"] += (time.perf_counter() - _profile_phase_t0) * 1000.0
+        if is_symbol_row:
+            _fa_remove_later = []
+            _symbol_paths = 0
+            for j in inst_jobs:
+                _symbol_paths += len(j.get('path_jobs') or [])
+                _fa_remove_later.extend(_exec_use_fa_paths(
+                    j.get('node'),
+                    j.get('use_jobs') or [],
+                    j.get('fa_jobs') or [],
+                    [],
+                    j.get('transform_jobs') or [],
+                    warn_tag='[symbols]',
+                    owner_group=card_group,
+                    final_scale=None,
+                    force_copy=True,
+                ))
+            if _symbol_paths:
+                _l.w(f"[symbols] '{row_symbol_id}' skipped {_symbol_paths} path job(s); paths are page-layer objects")
+            for _ph in list(dict.fromkeys(_fa_remove_later)):
+                try:
+                    par = _ph.getparent()
+                    if par is not None and not _is_rect_elem(_ph):
+                        par.remove(_ph)
+                except Exception:
+                    pass
+            if compiled_rect_hks:
+                try:
+                    _keep = _P1_KEEP_SET if isinstance(_P1_KEEP_SET, set) else set()
+                    for _j in (inst_jobs or []):
+                        _scope = _j.get('node')
+                        if _scope is None:
+                            continue
+                        _apply_anchor_visibility(_scope, compiled_rect_hks, _keep, target_index=_j.get('target_index'))
+                except Exception:
+                    pass
+            _flatten_card_group(card_group, inst_main)
+            if _install_row_symbol(row_symbol_id, card_group, (bx, by, bw, bh)):
+                symbols_created += 1
+            try:
+                _P1_KEEP_SET = None
+                RAP._P1_KEEP_SET = _P1_KEEP_SET
+            except Exception:
+                pass
+            _profile["post_ms"] += (time.perf_counter() - _profile_phase_t0) * 1000.0
+            _profile["row_total_ms"] += (time.perf_counter() - _profile_row_t0) * 1000.0
+            _profile["rows"] += 1
+            continue
         # Split boards only when explicitly enabled via dataset marker (e.g. {{t=id @split}} / {{id!}}).
         inner_rect_now = _page_inner_rect_elem_for(int(planner.page_index))
         split_boards = False
@@ -2759,20 +2908,6 @@ def render_phase(ctx):
                 _l.w(f"[marks] render failed: {ex}")
         _profile["fit_marks_ms"] += (time.perf_counter() - _sub_t) * 1000.0
         _profile["fit_ms"] += (time.perf_counter() - _profile_phase_t0) * 1000.0
-        # DEBUG: collect rect/placeholder ids that FA will touch in this ROW so we can detect early placeholder removals
-        global _DBG_FA_RECT_IDS
-        try:
-            _DBG_FA_RECT_IDS = set()
-            for _jdbg in (inst_jobs or []):
-                for (_b, _r, _ops, _pm, _ph_rm, _rect_elem, _tr_spec) in (_jdbg.get('fa_jobs') or []):
-                    if _ph_rm is not None:
-                        _pid = _ph_rm.get('id') or ''
-                        if _pid: _DBG_FA_RECT_IDS.add(_pid)
-                    if _rect_elem is not None:
-                        _rid = _rect_elem.get('id') or ''
-                        if _rid: _DBG_FA_RECT_IDS.add(_rid)
-        except Exception:
-            _DBG_FA_RECT_IDS = None
         _profile_phase_t0 = time.perf_counter()
         _log_row_stage(idx, "fit-anchor")
         _fa_remove_later = []
@@ -2807,63 +2942,13 @@ def render_phase(ctx):
             _keep = set()
         _profile_phase_t0 = time.perf_counter()
 
-        # Collect header specs; wildcard targets are resolved per-scope.
-        _rect_hks = compiled_rect_hks
-
-        def _apply_anchor_visibility(_scope, _target_index=None):
-            _rect_ids = set()
-            for _hk in (_rect_hks or []):
-                _h_targets = (_hk.get('target_ids') or [(_hk.get('target_id') or '')])
-                for _tid in _resolve_header_target_ids(_scope, _h_targets):
-                    if _tid:
-                        _rect_ids.add(_tid)
-            for _rid in _rect_ids:
-                try:
-                    _e = SVG.find_target_exact_in(_scope, _rid, target_index=_target_index)
-                    _rid_eff = _rid
-                    if _e is None:
-                        # ids inside instances are suffixed (_pnpNNNN). Resolve a unique suffixed element in this scope.
-                        pref = _rid + "_pnp"
-                        for _cand in _scope.iter():
-                            _cid = (_cand.get('id') or '')
-                            if _cid.startswith(pref):
-                                _e = _cand
-                                _rid_eff = _cid
-                                break
-                    if _e is None:
-                        continue
-                    if SVG.is_text_like(_e) or (_e.tag in TEXT_LIKE):
-                        continue
-                    base_rid = SVG.strip_pnp_suffix(_rid_eff)
-                    if (_rid in _keep) or (base_rid in _keep):
-                        # keep visible: remove display:none if present
-                        st = _e.get('style') or ''
-                        st2 = re.sub(r'(^|;)\s*display\s*:\s*none\s*(?=;|$)', r'\1', st)
-                        st2 = re.sub(r';{2,}', ';', st2).strip()
-                        if st2.endswith(';'):
-                            st2 = st2[:-1]
-                        if st2 != st:
-                            _e.set('style', st2)
-                        continue
-                    # default: hide
-                    st = _e.get('style') or ''
-                    if 'display:' in st:
-                        st2 = re.sub(r'(?:(^|;)\s*display\s*:\s*[^;]+)', lambda m: (m.group(1) + 'display:none'), st)
-                        _e.set('style', st2)
-                    else:
-                        if st and not st.strip().endswith(';'):
-                            st = st.strip() + ';'
-                        _e.set('style', (st or '') + 'display:none')
-                except Exception:
-                    pass
-
         # Apply to every instantiated template scope (main + overlays) so anchors behave consistently.
-        if _rect_hks:
+        if compiled_rect_hks:
             try:
                 for _j in (inst_jobs or []):
                     _scope = _j.get('node')
                     if _scope is not None:
-                        _apply_anchor_visibility(_scope, _j.get('target_index'))
+                        _apply_anchor_visibility(_scope, compiled_rect_hks, _keep, target_index=_j.get('target_index'))
             except Exception:
                 pass
 
@@ -2875,9 +2960,6 @@ def render_phase(ctx):
             RAP._P1_KEEP_SET = _P1_KEEP_SET
         except Exception:
             pass
-        # DEBUG: clear per-instance rect tracking
-        try: _DBG_FA_RECT_IDS = None
-        except Exception: pass
         within = planner.slot_index
         if getattr(planner.current.layout, "sweep_rows_first", False):
             row1 = (within // planner.plan.cols)+1; col1 = (within % planner.plan.cols)+1
@@ -3253,7 +3335,7 @@ def render_phase(ctx):
             _profile_dataset_ms = (time.perf_counter() - _profile_dataset_t0) * 1000.0
             _profile_avg = float(_profile.get("row_total_ms") or 0.0) / float(_profile_rows)
             _l.i(
-                f"[render.profile] dataset={ds_idx} rows={_profile_rows} placed={placed} "
+                f"[render.profile] dataset={ds_idx} rows={_profile_rows} placed={placed} symbols={symbols_created} "
                 f"dataset_ms={_profile_dataset_ms:.1f} row_sum_ms={float(_profile.get('row_total_ms') or 0.0):.1f} "
                 f"avg_row_ms={_profile_avg:.2f} instances_ms={float(_profile.get('instances_ms') or 0.0):.1f}"
             )
@@ -3295,7 +3377,7 @@ def render_phase(ctx):
             )
     except Exception as ex:
         _l.w(f"[render.profile] failed: {ex}")
-    _l.i(f"[datasets] #{ds_idx}: placed={placed} cards; end_page={planner.page_index+1}")
+    _l.i(f"[datasets] #{ds_idx}: placed={placed} cards; symbols={symbols_created}; end_page={planner.page_index+1}")
     placed_total += placed
     start_page_index = planner.page_index + 1
     ctx.next_n = next_n
