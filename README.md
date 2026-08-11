@@ -34,8 +34,8 @@ PnPInk connects **one Inkscape template** to **Google Sheets or CSV data**. Each
 Design visually, connect text and graphics to your data, and generate a complete, print-ready batch in seconds. Change a name, replace a photo, rebalance a card, or redesign the template, then regenerate everything without rebuilding each item by hand.
 
 <p align="center">
-  <a href="site/assets/images/medusas_output.jpg">
-    <img src="site/assets/images/medusas_showcase.jpg" alt="One Inkscape template and Google Sheets dataset generating the complete Medusas card set" width="100%" />
+  <a href="docs/assets/images/medusas_output.jpg">
+    <img src="docs/assets/images/medusas_showcase.jpg" alt="One Inkscape template and Google Sheets dataset generating the complete Medusas card set" width="100%" />
   </a>
 </p>
 
