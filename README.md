@@ -1,107 +1,179 @@
-<img src="docs/assets/images/pnpink_logo.png" alt="PnPInk logo" align="left" width="120" hspace="10" />
+<p align="center">
+  <img src="docs/assets/images/pnpink_logo.png" alt="PnPInk logo" width="150" />
+</p>
 
-# PnPInk
-[![Latest release](https://img.shields.io/github/v/release/xoellijo/pnpink?label=latest%20release)](https://github.com/xoellijo/pnpink/releases)
+<h1 align="center">PnPInk</h1>
 
-PnPInk is a free, open-source, cross-platform data-merge engine for Inkscape.
+<p align="center"><strong>Design once. Generate cards, badges, labels, and dynamic PDFs.</strong></p>
 
-PnPInk is inspired by [CounterSheets](https://github.com/lifelike/countersheetsextension).
+<p align="center">
+  Connect Inkscape to Google Sheets or CSV and turn every row into finished artwork.
+</p>
 
-It turns Inkscape into a visual composition system where one SVG template plus structured data (CSV/Google Sheets/web sources) can generate rich, editable outputs at scale.
+<p align="center">
+  <a href="https://github.com/xoellijo/pnpink/releases"><img src="https://img.shields.io/github/v/release/xoellijo/pnpink?label=latest%20release" alt="Latest release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/xoellijo/pnpink" alt="MIT license" /></a>
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue" alt="Windows, macOS and Linux" />
+  <a href="https://github.com/xoellijo/pnpink/stargazers"><img src="https://img.shields.io/github/stars/xoellijo/pnpink?style=social" alt="GitHub stars" /></a>
+</p>
 
-PnPInk automates print-and-play production (cards, boards, punchboards, counters, tiles), but it also works for broader publishing tasks such as labels, data-driven sheets, and vector-heavy PDF compositions.
+<p align="center">
+  <a href="https://github.com/xoellijo/pnpink/releases/latest/download/pnpink_latest.zip"><strong>Download PnPInk</strong></a>
+  ·
+  <a href="https://xoellijo.github.io/pnpink/intro/"><strong>Read the documentation</strong></a>
+  ·
+  <a href="https://boardgamegeek.com/guild/4569"><strong>Join the community</strong></a>
+</p>
 
-It combines Inkscape's full graphic power (gradients, filters, paths, symbols, and layers) with a visual GUI and a data-driven workflow (Google Sheets/CSV plus internet resources), producing editable, print-ready layouts with pixel-precise results.
+---
 
-PnPInk also includes a simple but powerful DSL (domain-specific language) that enables advanced layouts without complex scripting.
+## One Design, Hundreds of Variations
 
-The key workflow is iterative: update the template or dataset parameters, re-run composition, and get refreshed layouts in seconds.
+PnPInk connects **one Inkscape template** to **Google Sheets or CSV data**. Each row can become a card, badge, label, certificate, ticket, game component, or any other personalized graphic.
 
-The DSL is designed to match how designers think, not how programmers write code: compact notation, visual intent first, and minimal cognitive load.
+Design visually, connect text and graphics to your data, and generate a complete, print-ready batch in seconds. Change a name, replace a photo, rebalance a card, or redesign the template, then regenerate everything without rebuilding each item by hand.
 
-<br clear="left" />
+<p align="center">
+  <a href="site/assets/images/medusas_output.jpg">
+    <img src="site/assets/images/medusas_showcase.jpg" alt="One Inkscape template and Google Sheets dataset generating the complete Medusas card set" width="100%" />
+  </a>
+</p>
 
-## Key Principles
+<p align="center"><em>One SVG template, one dataset, and every card variation generated automatically. Click to see the complete output.</em></p>
 
-1. `Open Source`: fully transparent, community-driven, and free to use.
-2. `Cross-Platform`: works on Windows, macOS, and Linux.
-3. `Non-Destructive`: everything remains fully editable SVG; nothing is baked or lost.
-4. `Accessible & Visual`: no programming required; GUI-based and intuitive.
-5. `Full Production Pipeline`: supports the full cycle, from quick prototypes to open distribution (PDF) and online sharing.
+Your output stays **real, editable SVG**. Nothing is locked into a proprietary format, and nothing is flattened until you choose to export.
 
-## Features
+| Design visually | Connect your content | Generate and publish |
+| --- | --- | --- |
+| Use the full creative power of Inkscape. | Drive every component from CSV or Google Sheets. | Create editable SVG, print-ready PDF, images, and cutting files. |
 
-- Standalone DeckMaker GUI for generation and export, with live progress, auto-generate, auto-open, and auto-export controls.
-- Fast data-driven generation from CSV or Google Sheets.
-- Placeholder-driven templates: map dataset columns to SVG IDs and regenerate entire sets instantly.
-- Precise `Fit` + `Anchor` controls for predictable placement and scaling inside target frames.
-- Front/back workflows (`@back`) for duplex cards and mirrored layouts.
-- Built-in bleed and margin controls for print-safe compositions.
-- Cutting and registration marks (`Marks`) generated directly from layout logic.
-- Cut-only plotter templates for Cricut and Silhouette Cameo workflows.
-- Reusable presets for page, grid, and component sizing.
-- Inline text icons: type icon names in text flow and render vector icons in-place.
-- Source catalogs: resolve assets by name from the dataset, including large free libraries (200K+ icons and 2M+ images, depending on source).
-- Hot SVG map generation from source expressions such as `osm://...` and `ofm://...`.
-- Spritesheet workflows for atlas-based assets and high-volume content pipelines.
-- Package formats (`.zvg` / `.pnp`) for portable projects with SVG, dataset, manifest, and assets.
-- Fully editable SVG output after generation, not flattened exports.
-- Professional export pipeline: PDF profiles, PDF/X CMYK, ICC profile handling, smart rasterization of filtered SVG content, SVG chunking for large decks, and additional formats such as PNG, JPEG, TIFF, WebP, PS, EPS, EMF, and WMF.
-- VDP-oriented performance optimizations capable of generating more than 60K items/minute on suitable templates and hardware.
-- Native Inkscape workflow: design, compose, iterate, inspect, and export without leaving the editor.
+## What Can You Create?
 
-One template and one dataset can produce hundreds of print-ready components in seconds, and every generated piece remains editable.
+- Card games, decks, and card backs
+- Boards, modular maps, and large split boards
+- Counters, tokens, tiles, and punchboards
+- Hex grids, labels, standees, and reference sheets
+- Prototypes for Cricut and Silhouette workflows
+- Event badges, ID cards, credentials, and personalized passes
+- Certificates, diplomas, tickets, invitations, and name tags
+- Product labels, price cards, catalog sheets, and mail pieces
+- High-volume variable-data publishing (VDP) and dynamic PDF batches
 
-## Recent Additions
+Whether you are testing ten prototype cards, preparing badges for an event, or producing thousands of personalized documents, the workflow stays the same.
 
-- `DeckMaker GUI`: a dedicated window for dataset selection, generation, SVG opening, export configuration, progress reporting, and throughput feedback in records/min.
-- `Export module`: professional PDF output with presets (`default`, `screen`, `ebook`, `printer`, `prepress`), PDF/X CMYK export, ICC selection, pure-black text handling, filter rasterization modes, parallel Inkscape shell workers, and chunk-aware processing for large SVG outputs.
-- `Additional export formats`: page-based export to PNG, JPEG, JPEG2000, TIFF, WebP, PDF, SVG, PS, EPS, EMF, and WMF.
-- `Cutting-plotter templates`: cut-only SVG/DXF/PNG templates for Cricut, Silhouette Cameo, and raster fallback workflows.
-- `Map sources`: on-demand SVG map generation using `osm://...` and `ofm://...` source expressions, usable like other PnPInk assets.
-- `Large-output handling`: optional SVG splitting into reusable parts so very large decks can be exported more reliably.
-- `VDP performance`: optimized generation paths for high-volume "Variable Data Printing", with measured throughput above 85K records/minute on suitable projects.
-- `Template optimization work`: generated outputs can reuse hoisted template images and shared text styles to reduce repeated SVG content.
+## From Google Sheets to Dynamic PDFs
 
-## Installation
+Keep names, text, numbers, image links, and other changing content in a shared spreadsheet. PnPInk combines each row with your Inkscape design and can produce editable SVG, print-ready PDF, images, and cutting files.
 
-1. Install [Inkscape](https://inkscape.org/release/) (container builds such as Flatpak are not supported).
-2. Download the latest installer ZIP directly: [pnpink_latest.zip](https://github.com/xoellijo/pnpink/releases/latest/download/pnpink_latest.zip).
-   If that direct link does not work, open [All Releases](https://github.com/xoellijo/pnpink/releases) and download `pnpink_latest.zip` from the `Assets` section.
-3. Extract the ZIP.
-4. Run:
+Use local artwork, reusable SVG symbols, Iconify icons, Wikimedia Commons images, public Google Drive files, spritesheets, or generated maps. The template controls the design; the spreadsheet controls what changes.
+
+## Why PnPInk?
+
+### Create, Don't Code
+
+Build your design in Inkscape and use familiar IDs to connect artwork with data. No programming is required. PnPInk's compact DSL is there when you want advanced automation—not as a barrier to getting started.
+
+### Change Everything in One Place
+
+Update the spreadsheet to change names, values, or artwork. Update the SVG to redesign the layout. Regenerate the project and every item follows automatically.
+
+### Keep Full Creative Control
+
+Use paths, typography, layers, gradients, filters, symbols, masks, and every other tool available in Inkscape. Generated results remain editable and inspectable.
+
+### Go from Prototype to Production
+
+Start with a quick prototype or a short event list, then move to bleed, duplex printing, registration marks, professional PDF export, ICC profiles, or plotter-ready cutting templates when needed.
+
+### Use Content from Anywhere
+
+Place local files, reusable SVG symbols, Iconify icons, Wikimedia Commons images, public Google Drive folders, spritesheets, and generated SVG maps directly from your dataset.
+
+### Stay Free and Independent
+
+PnPInk is free, open source, cross-platform, and built around open formats. Your project remains yours.
+
+## How It Works
+
+1. **Design a template** in Inkscape using IDs such as `name`, `photo`, `title`, `art`, or `back_art`.
+2. **Add your content** in CSV or Google Sheets using matching column names.
+3. **Run DeckMaker** to generate, inspect, and export the complete project.
+
+Then iterate: change the data or design and generate again.
+
+## Made for Real Production Work
+
+PnPInk grows with your project:
+
+- Precise Fit + Anchor placement for predictable sizing and alignment
+- Multiple icons and rich text inside the same field
+- Automatic page layouts, grids, bleed, margins, and cutting marks
+- Duplex front/back generation with mirrored print layouts
+- Reusable page, card, layout, and export presets
+- Portable `.pnp` and `.zvg` project packages
+- SVG maps from OpenStreetMap and OpenFreeMap sources
+- Large-output splitting and shared-resource optimization
+- PDF presets, PDF/X CMYK, ICC profiles, and smart filter rasterization
+- PNG, JPEG, TIFF, WebP, SVG, PS, EPS, EMF, WMF, and cutting exports
+- High-throughput paths for demanding variable-data projects
+
+Optimized templates can generate tens of thousands of records per minute on suitable hardware, while smaller projects benefit from the same repeatable workflow.
+
+## Install PnPInk
+
+### Requirements
+
+- [Inkscape](https://inkscape.org/release/) 1.2 or newer
+- Windows, macOS, or Linux
+- A standard Inkscape installation; sandboxed builds such as Flatpak are not currently supported
+
+### Installation
+
+1. Download [`pnpink_latest.zip`](https://github.com/xoellijo/pnpink/releases/latest/download/pnpink_latest.zip).
+2. Extract the ZIP.
+3. Run the installer for your platform:
    - Windows: `install_windows.bat`
    - macOS/Linux: `chmod +x install.sh && ./install.sh`
-   - Any OS: `python install.py` (or `python3 install.py`)
-5. Restart Inkscape and confirm `Extensions > PnPInk ...` appears.
+   - Any OS: `python install.py` or `python3 install.py`
+4. Restart Inkscape.
+5. Open `Extensions > PnPInk`.
 
-## First Recommended Run
+If the direct download is unavailable, choose `pnpink_latest.zip` from the [latest GitHub release](https://github.com/xoellijo/pnpink/releases).
 
-1. Start by opening the examples from `Extensions > PnPInk > Deckmaker > About > Open examples folder`.
-2. Try the prepared SVG examples with their companion CSV datasets, or open `.PNP` files, which self-contain the SVG template and CSV dataset and auto-generate when opened.
-3. Build your own template SVG with IDs (`title`, `cost`, `art`, etc.).
-4. Prepare a CSV/Sheet with matching columns.
-5. Run DeckMaker from `Extensions > PnPInk ...`.
-6. Regenerate as you iterate: tweak template or dataset settings, then compose again.
+## Your First Project
 
-## Documentation
+The fastest way to understand PnPInk is to generate something:
 
-- Start here (searchable docs site): [Introduction](https://xoellijo.github.io/pnpink/intro/)
-- Full PDF guide: [pnpink.pdf](https://xoellijo.github.io/pnpink/pnpink.pdf)
-- DeckMaker GUI: [DeckMaker GUI](https://xoellijo.github.io/pnpink/deckmaker-gui/)
-- Export pipeline: [Export](https://xoellijo.github.io/pnpink/export/)
-- SVG maps: [Maps](https://xoellijo.github.io/pnpink/dsl/maps/)
+1. Open `Extensions > PnPInk > DeckMaker > About > Open examples folder`.
+2. Choose one of the prepared `.pnp` projects or an SVG example with its CSV dataset.
+3. Run DeckMaker and open the generated SVG.
+4. Change a value or visual element and generate it again.
+
+`.pnp` packages contain the template, dataset, manifest, and project assets, making them ideal for learning and sharing complete projects.
+
+## Learn More
+
+- [Introduction](https://xoellijo.github.io/pnpink/intro/) — understand the core workflow
+- [Quick Start](https://xoellijo.github.io/pnpink/quickstart/) — build your first data-driven template
+- [DeckMaker GUI](https://xoellijo.github.io/pnpink/deckmaker-gui/) — generation and project controls
+- [Export](https://xoellijo.github.io/pnpink/export/) — PDF, images, cutting files, and production options
+- [Fit and Anchor](https://xoellijo.github.io/pnpink/dsl/fit-anchor/) — precise visual placement
+- [Full PDF guide](https://xoellijo.github.io/pnpink/pnpink.pdf) — offline documentation
 
 ## Project Status
 
-This repository is currently in `beta` release stage.
-It has been widely tested with Inkscape 1.2 through 1.5 on Windows and Linux environments.
-Until stabilization is explicitly announced, DSL changes may break backward compatibility and older datasets/templates may require updates.
+PnPInk is currently in beta and has been tested with Inkscape 1.2 through 1.5 on Windows and Linux. The project is evolving quickly, so advanced DSL syntax may occasionally change before the stable release.
 
-Join the community on the BGG Guild to follow progress, share use cases, and influence the roadmap:
+For production projects, keep a copy of the PnPInk version used to generate them.
 
-- [`PnPInk BGG Guild`](https://boardgamegeek.com/guild/4569)
+## Community
 
-## Long-Term Roadmap
+Share projects, ask questions, suggest features, and help shape the roadmap in the [PnPInk BoardGameGeek Guild](https://boardgamegeek.com/guild/4569).
 
-Potential long-term directions (no guarantees): exports for virtual tabletop platforms, local AI-assisted bulk production tools, deeper map workflows, and professional integrations for QR/barcode and labeling standards.
+If PnPInk helps your project, consider giving the repository a ⭐. It makes the project easier for other creators to discover.
+
+## Open Source
+
+PnPInk is released under the [MIT License](LICENSE).
+
+The project was inspired by [CounterSheets](https://github.com/lifelike/countersheetsextension) and continues that spirit of open, data-driven tabletop creation.
