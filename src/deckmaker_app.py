@@ -47,7 +47,7 @@ def _file_mtime_ns(path: str) -> int:
         return 0
 
 
-APP_VERSION = "Deckmaker v0.53"
+APP_VERSION = "Deckmaker v0.55"
 DOCS_INTRO_URL = "https://xoellijo.github.io/pnpink/intro/"
 DOCS_GUIDE_URL = "https://xoellijo.github.io/pnpink/quickstart/"
 OTHER_EXPORT_FORMATS = ("png", "jpeg", "jpeg2000", "pdf", "svg", "tiff", "webp", "avif", "ps", "eps", "emf", "wmf")

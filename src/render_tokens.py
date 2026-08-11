@@ -180,6 +180,46 @@ def parse_sprite_alias_token(raw_token: str):
     return name, dims, ops
 
 
+def split_multivalue(value: str):
+    out = []
+    current = []
+    depth_brace = depth_paren = depth_bracket = 0
+    quote = None
+    for ch in value or "":
+        if quote:
+            current.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ('"', "'"):
+            quote = ch
+            current.append(ch)
+            continue
+        if ch == '{':
+            depth_brace += 1
+        elif ch == '}':
+            depth_brace = max(0, depth_brace - 1)
+        elif ch == '(':
+            depth_paren += 1
+        elif ch == ')':
+            depth_paren = max(0, depth_paren - 1)
+        elif ch == '[':
+            depth_bracket += 1
+        elif ch == ']':
+            depth_bracket = max(0, depth_bracket - 1)
+        if ch.isspace() and depth_brace == 0 and depth_paren == 0 and depth_bracket == 0:
+            token = "".join(current).strip()
+            if token:
+                out.append(token)
+            current = []
+            continue
+        current.append(ch)
+    token = "".join(current).strip()
+    if token:
+        out.append(token)
+    return out
+
+
 def parse_object_token(token: str) -> Tuple[str, str, str]:
     m = re.match(r"""
         ^(?P<id>[A-Za-z_][-A-Za-z0-9_:.]*\*?)
@@ -607,6 +647,7 @@ def resolve_virtual_source_urls(sm, src_val: str, selector: Optional[str], *, wa
 __all__ = [
     "expand_index_expr",
     "parse_sprite_alias_token",
+    "split_multivalue",
     "parse_object_token",
     "split_paths_suffix",
     "split_transform_suffixes",

@@ -7,13 +7,15 @@
    viewBox="0 0 210 297"
    version="1.1"
    id="svg1"
-   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   inkscape:version="1.4.2 (f4327f4, 2025-05-13)"
    sodipodi:docname="the_big_one.svg"
+   ns0:xlink="http://www.w3.org/1999/xlink"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns:xlink="http://www.w3.org/1999/xlink"
    xmlns="http://www.w3.org/2000/svg"
-   xmlns:svg="http://www.w3.org/2000/svg">
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:ns0="xmlns">
   <sodipodi:namedview
      id="namedview1"
      pagecolor="#ffffff"
@@ -24,15 +26,15 @@
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
      inkscape:document-units="mm"
-     inkscape:zoom="0.45254834"
-     inkscape:cx="-13.258252"
-     inkscape:cy="549.11261"
+     inkscape:zoom="0.08"
+     inkscape:cx="3718.75"
+     inkscape:cy="868.75"
      inkscape:window-width="1920"
      inkscape:window-height="974"
      inkscape:window-x="-11"
      inkscape:window-y="-11"
      inkscape:window-maximized="1"
-     inkscape:current-layer="layer1">
+     inkscape:current-layer="svg1">
     <inkscape:page
        id="page1"
        x="0"
@@ -1211,6 +1213,18 @@
            id="path3646" />
       </g>
     </symbol>
+    <symbol
+       id="src_222">
+      <image
+         x="0"
+         y="0"
+         width="120"
+         height="120"
+         xlink:href="C:\Users\t148888\Documents\ink\img\bola_rosa.png"
+         href="C:\Users\t148888\Documents\ink\img\bola_rosa.png"
+         sodipodi:absref="C:\Users\t148888\Documents\ink\img\bola_rosa.png"
+         id="image3646" />
+    </symbol>
     <clipPath
        id="clip_fa_clip_main_icon_pnp214258"
        clipPathUnits="userSpaceOnUse">
@@ -1368,6 +1382,14 @@
        height="16"
        id="corazon"
        transform="matrix(0.0661458,0,0,0.0661458,166.30071,20.026363)" />
+    <rect
+       style="display:inline;opacity:1;fill:none;fill-opacity:1;stroke:#010101;stroke-width:0.1;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1;paint-order:stroke fill markers"
+       id="icon"
+       width="7"
+       height="7"
+       x="126.86845"
+       y="6.9999461"
+       ry="0" />
     <use
        xlink:href="#noto-activities.svg:noto--mahjong-red-dragon"
        width="16"
@@ -1643,7 +1665,7 @@
        x="0.53320241"
        y="0"
        inkscape:label="main_text"><tspan
-         x="-245.73797"
+         x="-241.08886"
          y="229.73633"
          id="tspan13">This is the template of a card. 
 </tspan><tspan
@@ -1667,22 +1689,22 @@
          x="-268.16883"
          y="225.3227"
          id="tspan18">vertical text example</tspan></text>
-    <rect
-       style="display:inline;fill:none;fill-opacity:1;stroke:#010101;stroke-width:0.1;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1;paint-order:stroke fill markers"
+    <use
+       x="0"
+       y="0"
+       xlink:href="#icon"
        id="clone_icon-1"
-       width="7"
-       height="7"
-       x="116.68643"
-       y="74.001282"
-       ry="0" />
-    <rect
-       style="display:inline;fill:none;fill-opacity:1;stroke:#010101;stroke-width:0.1;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1;paint-order:stroke fill markers"
+       transform="translate(-10.182012,67.001337)"
+       inkscape:label="test"
+       style="display:inline" />
+    <use
+       x="0"
+       y="0"
+       xlink:href="#icon"
        id="clone_icon"
-       width="7"
-       height="7"
-       x="116.67944"
-       y="74.001083"
-       ry="0" />
+       transform="translate(-10.189012,67.001137)"
+       inkscape:label="rect for placement of other elements. id is &quot;clone_icon&quot; (can be even a clone of other element)"
+       style="display:inline" />
     <path
        sodipodi:type="star"
        style="fill:none;stroke:#150000;stroke-width:0.10850643;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:6.2;stroke-opacity:1"
@@ -1763,7 +1785,7 @@
   </g>
   <g
      id="g20"
-     transform="matrix(1.0022375,0,0,0.80832886,46.910896,-117.4886)">
+     transform="matrix(1.0022375,0,0,0.80832886,65.927823,-137.33235)">
     <rect
        style="fill:#ccb58b;fill-opacity:1;stroke:#000000;stroke-width:13.798;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:6.2;stroke-dasharray:none"
        id="great_board"

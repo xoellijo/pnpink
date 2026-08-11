@@ -65,7 +65,7 @@ _make_use_for_wrap = RHP.make_use_for_wrap
 _parse_array_token = RAP._parse_array_token
 _resolve_array_item = RAP._resolve_array_item
 _build_array_group = RAP._build_array_group
-_split_multivalue = RAP._split_multivalue
+_split_multivalue = RTK.split_multivalue
 expand_value = RAP.expand_value
 _parse_header_default_spec = RAP._parse_header_default_spec
 _is_id_wildcard_token = RAP._is_id_wildcard_token
@@ -1283,28 +1283,6 @@ def render_phase(ctx):
 
     def _exec_use_fa_paths(inst_node, use_jobs, fa_jobs, path_jobs, transform_jobs, *, warn_tag: str, owner_group=None, final_scale=None, force_copy=False):
         """Center <use> elements, execute deferred Fit/Anchor jobs, then Paths jobs."""
-        def _apply_fa(scope_node, base_id, r_id, ops_full, place_mode, rect_elem, *, return_bbox=False, insert_after_elem=None):
-            try:
-                return FA.apply_to_by_ids(scope_node, base_id, r_id, ops_full, place=place_mode, rect_elem=rect_elem, return_bbox=return_bbox, final_scale=final_scale, insert_after_elem=insert_after_elem)
-            except Exception as ex:
-                msg = str(ex or "")
-                # Back/template passes can run on detached clones where defs are not reachable
-                # through the local scope. Retry against document root.
-                if "base id=" in msg and "not found" in msg:
-                    return FA.apply_to_by_ids(
-                        root,
-                        base_id,
-                        r_id,
-                        ops_full,
-                        place=place_mode,
-                        rect_elem=rect_elem,
-                        return_bbox=return_bbox,
-                        final_scale=final_scale,
-                        insert_after_elem=insert_after_elem,
-                        ignore_source_ancestors=True,
-                    )
-                raise
-
         for placeholder, u, tr_spec in (use_jobs or []):
             try:
                 _center_use_over_placeholder(u, placeholder)
@@ -1316,33 +1294,20 @@ def render_phase(ctx):
             except Exception as ex:
                 _l.w(f"{warn_tag} deferred transform failed target='{(u.get('id') if u is not None else '')}': {ex}")
         _fa_remove_later = []
-        _last_insert_after_by_rect = {}
+        placement_sequence = FA.PlacementSequence(root, final_scale=final_scale)
         for _fa_idx, (base_id, r_id, ops_full, place_mode, placeholder_to_remove, rect_elem, tr_spec) in enumerate(fa_jobs or []):
             try:
-                try:
-                    ops_fit, ops_tr = DSL.split_ops_fit_transform(ops_full)
-                    tr_spec = TFX.merge_specs([ops_tr, tr_spec])
-                except Exception:
-                    ops_fit = ops_full
                 _styles = deferred_fa_styles.get((id(fa_jobs), int(_fa_idx))) or []
-                if _styles and str(place_mode or "").strip().lower() in ("clone", "use"):
-                    place_mode = "copy"
-                if TFX.has_text(tr_spec) and str(place_mode or "").strip().lower() in ("clone", "use"):
-                    place_mode = "copy"
-                if force_copy and str(place_mode or "").strip().lower() in ("clone", "use"):
-                    place_mode = "copy"
-                _placed_bbox = None
-                _rect_key = id(rect_elem) if rect_elem is not None else str(r_id or "")
-                _insert_after_elem = _last_insert_after_by_rect.get(_rect_key)
-                _placed_res = _apply_fa(inst_node, base_id, r_id, ops_fit, place_mode, rect_elem, return_bbox=(tr_spec is not None), insert_after_elem=_insert_after_elem)
-                if isinstance(_placed_res, tuple) and len(_placed_res) == 2:
-                    _placed, _placed_bbox = _placed_res
-                else:
-                    _placed = _placed_res
-                if _placed is not None:
-                    _last_insert_after_by_rect[_rect_key] = _placed
-                if tr_spec is not None and _placed is not None:
-                    TFX.apply_transform_spec(root, _placed, tr_spec, bbox=_placed_bbox)
+                _placed = placement_sequence.apply(
+                    inst_node,
+                    base_id,
+                    r_id,
+                    ops_full,
+                    place_mode=place_mode,
+                    rect_elem=rect_elem,
+                    transform_spec=tr_spec,
+                    force_copy=bool(force_copy or _styles),
+                )
                 for _style_target, _prop, _value in _styles:
                     _style_node = _placed
                     _st = str(_style_target or "").strip()
@@ -2016,17 +1981,28 @@ def render_phase(ctx):
         if v and v not in composed_dynamic_ids:
             composed_dynamic_ids.append(v)
 
-    for _spec in compiled_apply_specs:
-        _hk = _spec.get("hk") or {}
-        for _tid in (_hk.get("target_ids") or [(_hk.get("target_id") or "")]):
-            _tid = str(_tid or "").strip()
-            if not _tid:
-                continue
-            if _is_id_wildcard_token(_tid):
-                for _expanded_tid in _expand_id_wildcard_in_scope(proto_root, _tid):
-                    _add_composed_dynamic_id(_expanded_tid)
-                continue
-            _add_composed_dynamic_id(_tid)
+    def _add_composed_dynamic_specs(specs, template_root) -> None:
+        for _spec in specs or []:
+            _hk = _spec.get("hk") or {}
+            for _tid in (_hk.get("target_ids") or [(_hk.get("target_id") or "")]):
+                _tid = str(_tid or "").strip()
+                if not _tid:
+                    continue
+                if _is_id_wildcard_token(_tid):
+                    for _expanded_tid in _expand_id_wildcard_in_scope(template_root, _tid):
+                        _add_composed_dynamic_id(_expanded_tid)
+                    continue
+                _add_composed_dynamic_id(_tid)
+
+    _add_composed_dynamic_specs(compiled_apply_specs, proto_root)
+    for _back_template in back_templates or []:
+        _back_col = _template_col_index(_back_template)
+        if _back_col is None:
+            continue
+        _add_composed_dynamic_specs(
+            back_field_specs_by_col.get(int(_back_col)),
+            (_back_template or {}).get("template_root"),
+        )
     for _bbox_id in [declared_bbox_id] + [
         (_tpl_entry or {}).get('bbox_id') or ''
         for _tpl_entry in list(overlay_templates or []) + list(back_templates or []) + list(page_templates or []) + list(page_back_templates or [])

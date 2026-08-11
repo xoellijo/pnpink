@@ -21,6 +21,7 @@ TEXT_LIKE = set(getattr(SVG, "TEXT_LIKE", ()))
 
 _parse_object_token = RTK.parse_object_token
 _parse_sprite_alias_token = RTK.parse_sprite_alias_token
+_split_multivalue = RTK.split_multivalue
 _split_paths_suffix = RTK.split_paths_suffix
 _split_transform_suffixes = RTK.split_transform_suffixes
 _fit_suffix_to_ops = RTK.fit_suffix_to_ops
@@ -297,55 +298,6 @@ def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, ss_r
             _l.w(f"[array] failed to place '{(base.get('id') if base is not None else '')}': {ex}")
 
     return g, gid
-
-def _split_multivalue(s: str) -> list:
-    """Split a cell into whitespace-separated tokens, without breaking inside {...}, (...), [...], or quotes."""
-    if not s:
-        return []
-    out = []
-    cur = []
-    depth_brace = depth_paren = depth_brack = 0
-    quote = None
-    i = 0
-    while i < len(s):
-        ch = s[i]
-        if quote:
-            cur.append(ch)
-            if ch == quote:
-                quote = None
-            i += 1
-            continue
-        if ch in ('"', "'"):
-            quote = ch
-            cur.append(ch)
-            i += 1
-            continue
-        if ch == '{':
-            depth_brace += 1
-        elif ch == '}':
-            depth_brace = max(0, depth_brace - 1)
-        elif ch == '(':
-            depth_paren += 1
-        elif ch == ')':
-            depth_paren = max(0, depth_paren - 1)
-        elif ch == '[':
-            depth_brack += 1
-        elif ch == ']':
-            depth_brack = max(0, depth_brack - 1)
-
-        if ch.isspace() and depth_brace == 0 and depth_paren == 0 and depth_brack == 0:
-            tok = "".join(cur).strip()
-            if tok:
-                out.append(tok)
-            cur = []
-            i += 1
-            continue
-        cur.append(ch)
-        i += 1
-    tok = "".join(cur).strip()
-    if tok:
-        out.append(tok)
-    return out
 
 def expand_value(raw: Optional[str], row: Dict[str, str]) -> str:
     s = "" if raw is None else str(raw)

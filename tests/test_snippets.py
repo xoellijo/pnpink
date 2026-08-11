@@ -167,6 +167,23 @@ class TestMultipleCalls(unittest.TestCase):
         self.assertEqual(out, 'prefix <b>One</b> mid Two + Three suffix')
 
 
+class TestConditionals(unittest.TestCase):
+    def test_modifier_braces_inside_conditional(self):
+        reg = S.load_definitions_from_comments([
+            '# :then(text) = ${text? then.T{t="${text}"}~[70%]6[-85% 0] : then~[60%]6[-80% 0]}'
+        ])
+
+        self.assertEqual(_expand(':then()', reg), 'then~[60%]6[-80% 0]')
+        self.assertEqual(
+            _expand(':then(x2)', reg),
+            'then.T{t="x2"}~[70%]6[-85% 0]',
+        )
+        self.assertEqual(
+            _expand(':gR_x::vp.T{t=2}  :then():', reg),
+            ':gR_x::vp.T{t=2}  then~[60%]6[-80% 0]:',
+        )
+
+
 # ---------------------------
 # ESPACIOS / FORMATO
 # ---------------------------

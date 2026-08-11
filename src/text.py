@@ -30,6 +30,7 @@ import dsl as DSL
 import sources as SRC
 import fit_anchor as FA
 import transform_fx as TFX
+import render_tokens as RTK
 import inkscape_cli as INKSCAPE
 import prefs
 _l = LOG
@@ -128,7 +129,7 @@ def _find_inline_token(s: str, pos: int) -> Optional[Tuple[int,int,str]]:
         if end_colon < 0:
             break
         inner = (s[j_id+1:end_colon] or "").strip()
-        if _parse_inline_id_token(inner) is not None:
+        if _parse_inline_multi_id_token(inner) is not None:
             id_hit = (j_id, end_colon+1, inner)
             break
         j_id = s.find(":", j_id + 1)
@@ -191,6 +192,13 @@ def _parse_inline_id_token(inner: str):
     else:
         suffix = DSL.SourceSuffix(kind="none")
     return (m.group("id") or "").strip(), suffix, tr
+
+def _parse_inline_multi_id_token(inner: str):
+    parts = RTK.split_multivalue(inner)
+    if not parts:
+        return None
+    parsed = [_parse_inline_id_token(part) for part in parts]
+    return parsed if all(item is not None for item in parsed) else None
 
 def _parse_source_inner_token(inner: str):
     """Parse inline source inner token (@{...} / S{...} / Source{...}) into (src_uri, suffix)."""
@@ -283,6 +291,14 @@ def _sanitize_rich_visible(s: str) -> str:
 
 
 @dataclass
+class InlineIconItem:
+    src_uri: str
+    suffix: "DSL.SourceSuffix"
+    parsed_transform: Optional["DSL.TransformSpec"] = None
+    symbol_id: Optional[str] = None
+    intrinsic_wh: Optional[Tuple[float,float]] = None
+
+@dataclass
 class TokenItem:
     spacer_id: str
     src_expr: str              # full DSL source token string, e.g. "@{icon://noto/cat}~^15"
@@ -292,6 +308,7 @@ class TokenItem:
     H_local: float
     is_doc_id: bool = False
     parsed_transform: Optional["DSL.TransformSpec"] = None
+    extra_icons: Optional[List[InlineIconItem]] = None
 
     # resolved runtime (filled later)
     symbol_id: Optional[str] = None
@@ -307,6 +324,37 @@ class TokenItem:
 class ProcessResult:
     icons_placed: int
     used_sources: Set[str]
+
+def _prepare_inline_fit(suffix, parsed_transform, src_expr):
+    fs_all = DSL.FitSpec()
+    tr_all = None
+    try:
+        if suffix and getattr(suffix, "kind", None) == "fit":
+            fs_all = suffix.fit or DSL.FitSpec()
+        elif suffix and getattr(suffix, "kind", None) == "ops":
+            ops_fit, tr_all = DSL.split_ops_fit_transform(suffix.ops or "")
+            fs_all = DSL.fit_spec_from_ops(ops_fit)
+    except Exception as ex:
+        _l.w(f"[inline_icons] fit suffix parse failed for {src_expr!r}: {ex}")
+        fs_all = DSL.FitSpec()
+        tr_all = None
+
+    icon_fit = copy.deepcopy(fs_all)
+    hole_fit = DSL.FitSpec(border=getattr(fs_all, "border", None), shift=getattr(fs_all, "shift", None))
+    icon_fit.border = None
+    icon_fit.shift = None
+    if icon_fit.mode is None:
+        icon_fit.mode = "i"
+    if icon_fit.anchor is None:
+        icon_fit.anchor = 5
+    return hole_fit, icon_fit, TFX.merge_specs([parsed_transform, tr_all])
+
+def _inline_placement_ops(suffix):
+    if suffix and getattr(suffix, "kind", None) == "fit":
+        return suffix.fit or DSL.FitSpec()
+    if suffix and getattr(suffix, "kind", None) == "ops":
+        return suffix.ops or ""
+    return ""
 
 # ----------------- helpers estilo / fuente -----------------
 def _read_effective_fontsize(el: SVG.etree._Element) -> float:
@@ -673,6 +721,7 @@ def _process_text_fragment(
         acc += s[pos:t0]
 
         # try parsing :@{...}: / :S{...}: / :Source{...}:  or :id:
+        extra_icons = None
         if inner.startswith("@{") or inner.lower().startswith("s{") or inner.lower().startswith("source{"):
             try:
                 src_uri, suffix = _parse_source_inner_token(inner)
@@ -704,17 +753,22 @@ def _process_text_fragment(
                     continue
                 is_doc_id = False
             else:
-                parsed_id = _parse_inline_id_token(inner)
-                if parsed_id is None:
+                parsed_ids = _parse_inline_multi_id_token(inner)
+                if parsed_ids is None:
                     acc += s[t0:t1]
                     _l.w(f"[inline_icons] invalid token kept as literal: {s[t0:t1]!r}")
                     pos = t1
                     continue
-                src_uri, suffix, parsed_transform = parsed_id
-                if callable(source_exists) and (not source_exists(src_uri)):
+                if callable(source_exists) and any(not source_exists(icon_id) for icon_id, _suffix, _transform in parsed_ids):
                     acc += s[t0:t1]
                     pos = t1
                     continue
+                src_uri, suffix, parsed_transform = parsed_ids[0]
+                if len(parsed_ids) > 1:
+                    extra_icons = [
+                        InlineIconItem(icon_id, icon_suffix, icon_transform)
+                        for icon_id, icon_suffix, icon_transform in parsed_ids[1:]
+                    ]
                 is_doc_id = True
 
         # volcar acc al atributo actual y “cerrar”
@@ -752,6 +806,7 @@ def _process_text_fragment(
             H_local=_read_effective_fontsize(node),
             is_doc_id=is_doc_id,
             parsed_transform=parsed_transform,
+            extra_icons=extra_icons,
         ))
 
         # continue after token: move remainder to a new tspan to preserve order
@@ -1210,7 +1265,11 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
     for t in texts_with_icons:
         items = _inject_spacers_in_place(t, spacer_glyph, source_exists=_inline_local_source_exists)
         for it in items:
-            used_sources.add(it.src_uri)
+            if it.src_uri:
+                used_sources.add(it.src_uri)
+            for icon in (it.extra_icons or []):
+                if icon.src_uri:
+                    used_sources.add(icon.src_uri)
             spacers.add(it.spacer_id)
         all_items.extend(items)
 
@@ -1227,33 +1286,16 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
     opened = 0
     placeholder_count = 0
     for it in all_items:
-        # 1) parse Fit/ops suffixes from token
-        fs_all = DSL.FitSpec()
-        tr_all = None
-        try:
-            if it.suffix and getattr(it.suffix, "kind", None) == "fit":
-                fs_all = it.suffix.fit or DSL.FitSpec()
-            elif it.suffix and getattr(it.suffix, "kind", None) == "ops":
-                ops_fit, tr_all = DSL.split_ops_fit_transform(it.suffix.ops or "")
-                fs_all = DSL.fit_spec_from_ops(ops_fit)
-        except Exception as ex:
-            _l.w(f"[inline_icons] fit suffix parse failed for {it.src_expr!r}: {ex}")
-            fs_all = DSL.FitSpec()
-            tr_all = None
-
-        # 2) split hole (border/shift) vs icon fit
-        hole_fs = DSL.FitSpec(border=getattr(fs_all, "border", None), shift=getattr(fs_all, "shift", None))
-        icon_fs = copy.deepcopy(fs_all)
-        icon_fs.border = None
-        icon_fs.shift = None
-        it.icon_transform = TFX.merge_specs([getattr(it, "parsed_transform", None), tr_all])
-        if icon_fs.mode is None:
-            icon_fs.mode = "i"
-        if icon_fs.anchor is None:
-            icon_fs.anchor = 5
-
-        it.hole_fit = hole_fs
-        it.icon_fit = icon_fs
+        shared_hole = bool(it.extra_icons)
+        if shared_hole:
+            it.hole_fit = DSL.FitSpec()
+            it.icon_fit = None
+            it.icon_transform = getattr(it, "parsed_transform", None)
+        else:
+            it.hole_fit, it.icon_fit, it.icon_transform = _prepare_inline_fit(
+                it.suffix, getattr(it, "parsed_transform", None), it.src_expr,
+            )
+        hole_fs = it.hole_fit
 
         # 3) resolver source → symbol_id + intrinsic size
         if it.is_doc_id:
@@ -1271,9 +1313,17 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
                 placeholder_count += 1
             it.intrinsic_wh = tuple(ref.intrinsic_box or (DEFAULT_H, DEFAULT_H))
 
-        iw, ih = it.intrinsic_wh
-        iw = max(1e-6, float(iw)); ih = max(1e-6, float(ih))
-        ratio = iw / ih
+        for icon in (it.extra_icons or []):
+            icon.symbol_id = icon.src_uri
+            bb = _icon_bbox_uu(doc_root, icon.symbol_id)
+            icon.intrinsic_wh = (float(bb.get("width", 1.0)), float(bb.get("height", 1.0)))
+
+        intrinsic_sizes = [it.intrinsic_wh] + [icon.intrinsic_wh for icon in (it.extra_icons or [])]
+        ratios = []
+        for iw, ih in intrinsic_sizes:
+            iw = max(1e-6, float(iw)); ih = max(1e-6, float(ih))
+            ratios.append(iw / ih)
+        ratio = max(ratios)
 
         # item's <text>
         t_el = (doc_root.xpath(f".//*[@id='{it.text_id}']") or [None])[0]
@@ -1354,6 +1404,7 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
 
     # Icon placement (FitAnchor over a hole-rect in a <g> rotated like the text)
     placed = 0
+    placement_sequence = FA.PlacementSequence(doc_root)
     for it in all_items:
         if not it.symbol_id or not it.hole_wh_doc:
             continue
@@ -1496,22 +1547,28 @@ def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=Fa
         rect.set("height", f"{H_loc:.6f}")
         rect.set("style", "fill:none;stroke:none")
 
-        # Apply FitAnchor to insert the icon inside the rect
-        try:
-            place_mode = "copy" if TFX.has_text(getattr(it, "icon_transform", None)) else "clone"
-            placed_res = FA.apply_to_by_ids(
-                doc_root, it.symbol_id, "", it.icon_fit,
-                rect_elem=rect, parent_elem=g, place=place_mode,
-                return_bbox=(getattr(it, "icon_transform", None) is not None),
-            )
-            if isinstance(placed_res, tuple) and len(placed_res) == 2:
-                placed_icon, placed_bbox = placed_res
-            else:
-                placed_icon, placed_bbox = placed_res, None
-            if getattr(it, "icon_transform", None) is not None and placed_icon is not None:
-                TFX.apply_transform_spec(doc_root, placed_icon, it.icon_transform, bbox=placed_bbox)
-        except Exception as ex:
-            _l.w(f"[inline_icons] fit_anchor failed for {it.src_expr!r}: {ex}")
+        if it.extra_icons:
+            icons_to_place = [
+                (it.src_uri, it.symbol_id, _inline_placement_ops(it.suffix), it.parsed_transform, it.is_doc_id),
+                *[
+                    (icon.src_uri, icon.symbol_id, _inline_placement_ops(icon.suffix), icon.parsed_transform, True)
+                    for icon in it.extra_icons
+                ],
+            ]
+        else:
+            icons_to_place = [(it.src_uri, it.symbol_id, it.icon_fit, it.icon_transform, it.is_doc_id)]
+        for icon_expr, symbol_id, icon_fit, icon_transform, is_doc_id in icons_to_place:
+            if not symbol_id:
+                continue
+            try:
+                placement_sequence.apply(
+                    doc_root, symbol_id, "", icon_fit,
+                    rect_elem=rect, parent_elem=g,
+                    transform_spec=icon_transform,
+                    ignore_source_ancestors=bool(is_doc_id),
+                )
+            except Exception as ex:
+                _l.w(f"[inline_icons] fit_anchor failed for {icon_expr!r}: {ex}")
 
         placed += 1
 

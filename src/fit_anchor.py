@@ -35,6 +35,75 @@ def _fa_find_in(scope, root, elem_id):
     return n
 
 
+class PlacementSequence:
+    def __init__(self, document_root=None, *, final_scale=None):
+        self.document_root = document_root
+        self.final_scale = final_scale
+        self._last_insert_after_by_rect = {}
+
+    @staticmethod
+    def _rect_key(rect_id, rect_elem):
+        return id(rect_elem) if rect_elem is not None else str(rect_id or "")
+
+    def apply(
+        self,
+        scope,
+        base_id,
+        rect_id,
+        ops_full,
+        *,
+        place_mode="clone",
+        rect_elem=None,
+        parent_elem=None,
+        transform_spec=None,
+        force_copy=False,
+        ignore_source_ancestors=False,
+    ):
+        ops_fit = ops_full
+        merged_transform = transform_spec
+        if not isinstance(ops_full, DSL.FitSpec):
+            try:
+                ops_fit, ops_transform = DSL.split_ops_fit_transform(ops_full)
+                merged_transform = TFX.merge_specs([ops_transform, transform_spec])
+            except Exception:
+                ops_fit = ops_full
+
+        effective_place = place_mode
+        if (force_copy or TFX.has_text(merged_transform)) and str(place_mode or "").strip().lower() in ("clone", "use"):
+            effective_place = "copy"
+
+        rect_key = self._rect_key(rect_id, rect_elem)
+        insert_after_elem = self._last_insert_after_by_rect.get(rect_key)
+        kwargs = dict(
+            place=effective_place,
+            rect_elem=rect_elem,
+            parent_elem=parent_elem,
+            return_bbox=(merged_transform is not None),
+            final_scale=self.final_scale,
+            insert_after_elem=insert_after_elem,
+            ignore_source_ancestors=bool(ignore_source_ancestors),
+        )
+        try:
+            placed_res = apply_to_by_ids(scope, base_id, rect_id, ops_fit, **kwargs)
+        except Exception as ex:
+            msg = str(ex or "")
+            if self.document_root is None or "base id=" not in msg or "not found" not in msg:
+                raise
+            kwargs["ignore_source_ancestors"] = True
+            placed_res = apply_to_by_ids(self.document_root, base_id, rect_id, ops_fit, **kwargs)
+
+        if isinstance(placed_res, tuple) and len(placed_res) == 2:
+            placed, placed_bbox = placed_res
+        else:
+            placed, placed_bbox = placed_res, None
+        if placed is not None:
+            self._last_insert_after_by_rect[rect_key] = placed
+        if merged_transform is not None and placed is not None:
+            transform_root = self.document_root if self.document_root is not None else _fa_root_of(scope)
+            TFX.apply_transform_spec(transform_root, placed, merged_transform, bbox=placed_bbox)
+        return placed
+
+
 def _is_long_fit_ops(ops: str) -> bool:
     s = (ops or "").strip()
     return bool(
@@ -213,14 +282,19 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
     if pad_top or pad_right or pad_bottom or pad_left:
         final_scale = kwargs.get("final_scale")
         if final_scale:
+            rel_top, rel_right, rel_bottom, rel_left = svg.border_percentage_sides(fs.border)
             try:
                 fsx, fsy = float(final_scale[0]), float(final_scale[1])
                 if abs(fsx) > 1e-9:
-                    pad_left /= abs(fsx)
-                    pad_right /= abs(fsx)
+                    if not rel_left:
+                        pad_left /= abs(fsx)
+                    if not rel_right:
+                        pad_right /= abs(fsx)
                 if abs(fsy) > 1e-9:
-                    pad_top /= abs(fsy)
-                    pad_bottom /= abs(fsy)
+                    if not rel_top:
+                        pad_top /= abs(fsy)
+                    if not rel_bottom:
+                        pad_bottom /= abs(fsy)
             except Exception:
                 pass
         inner_x, inner_y, inner_w, inner_h = svg.rect_with_pad(

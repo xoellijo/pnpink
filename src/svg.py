@@ -159,6 +159,28 @@ def _border_try_split_wxh(tok):
         return None
     return (_normalize_wxh_component(m.group('w')), _normalize_wxh_component(m.group('h')))
 
+def border_percentage_sides(tokens):
+    """Return percentage-relative sides as top, right, bottom, left flags."""
+    toks = [str(t).strip() for t in (tokens or []) if str(t).strip() != '']
+    if not toks:
+        return (False, False, False, False)
+    if len(toks) == 1:
+        wxh = _border_try_split_wxh(toks[0])
+        if wxh:
+            w_tok, h_tok = wxh
+            rel_h = '%' in w_tok
+            rel_v = '%' in h_tok
+            return (rel_v, rel_h, rel_v, rel_h)
+        rel = '%' in toks[0]
+        return (rel, rel, rel, rel)
+    if len(toks) == 2:
+        rel_v = '%' in toks[0]
+        rel_h = '%' in toks[1]
+        return (rel_v, rel_h, rel_v, rel_h)
+    if len(toks) == 3:
+        return ('%' in toks[0], '%' in toks[1], '%' in toks[2], '%' in toks[1])
+    return tuple('%' in tok for tok in toks[:4])
+
 def border_tokens_to_mm4(tokens, *, base_w_mm: float, base_h_mm: float):
     """Parse border tokens into [top,right,bottom,left] in mm.
 
@@ -2381,16 +2403,17 @@ def deepcopy_place(base, parent, T: inkex.Transform, *, insert_after=None, id_pr
                 dup.append(deepcopy(child))
         else:
             child = deepcopy(base)
-            try:
-                base_doc_t = base.composed_transform()
-            except Exception:
-                base_doc_t = inkex.Transform(base.get("transform") or "")
-            try:
-                parent_doc_t = parent.composed_transform()
-                parent_inv_t = parent_doc_t.inverse()
-            except Exception:
-                parent_inv_t = inkex.Transform()
-            child.set("transform", str(parent_inv_t @ base_doc_t))
+            if base.getparent() is not parent:
+                try:
+                    base_doc_t = base.composed_transform()
+                except Exception:
+                    base_doc_t = inkex.Transform(base.get("transform") or "")
+                try:
+                    parent_doc_t = parent.composed_transform()
+                    parent_inv_t = parent_doc_t.inverse()
+                except Exception:
+                    parent_inv_t = inkex.Transform()
+                child.set("transform", str(parent_inv_t @ base_doc_t))
             dup.append(child)
         if insert_after is not None and insert_after.getparent() is parent:
             parent.insert(parent.index(insert_after) + 1, dup)

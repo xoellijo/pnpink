@@ -318,7 +318,7 @@ def _resolve_mapping_expr(expr: str, mapping: Dict[str, Any]) -> Any:
 def _split_conditional_body(body: str) -> Tuple[str, Optional[str]]:
     """Split 'true : false' at a top-level ':'; keep legacy 'true' unchanged."""
     quote = ""
-    depth = 0
+    brace_depth = 0
     i = 0
     while i < len(body):
         ch = body[i]
@@ -334,15 +334,15 @@ def _split_conditional_body(body: str) -> Tuple[str, Optional[str]]:
             quote = ch
             i += 1
             continue
-        if body.startswith("${", i):
-            depth += 1
-            i += 2
-            continue
-        if ch == "}" and depth > 0:
-            depth -= 1
+        if ch == "{":
+            brace_depth += 1
             i += 1
             continue
-        if ch == ":" and depth == 0:
+        if ch == "}" and brace_depth > 0:
+            brace_depth -= 1
+            i += 1
+            continue
+        if ch == ":" and brace_depth == 0:
             return body[:i].strip(), body[i + 1:].strip()
         i += 1
     return body, None
@@ -397,25 +397,37 @@ def _apply_conditionals(tpl: str, mapping: Dict[str, Any]) -> str:
         while j < n and tpl[j].isspace():
             j += 1
 
-        # Scan body until '}', accounting for nested ${...}.
+        # Scan to the outer closing brace, balancing modifier and nested braces.
         body_start = j
-        depth = 0
+        brace_depth = 0
+        quote = ""
         found_close = False
         while j < n:
-            if tpl.startswith("${", j):
-                depth += 1
-                j += 2
-                continue
             ch = tpl[j]
-            if ch == "}" and depth == 0:
+            if quote:
+                if ch == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if ch == quote:
+                    quote = ""
+                j += 1
+                continue
+            if ch in ("'", '"'):
+                quote = ch
+                j += 1
+                continue
+            if ch == "{":
+                brace_depth += 1
+                j += 1
+                continue
+            if ch == "}" and brace_depth == 0:
                 found_close = True
                 break
-            elif ch == "}" and depth > 0:
-                depth -= 1
+            if ch == "}" and brace_depth > 0:
+                brace_depth -= 1
                 j += 1
                 continue
-            else:
-                j += 1
+            j += 1
 
         if not found_close:
             # no closing brace -> treat as literal '${'

@@ -1,4 +1,4 @@
-[Unreleased]
+[0.55]
 - Add dataset symbol rows with `symbol_id` in column A, generating a row into `<defs>` without consuming page layout slots.
 - Add `Transform{text=...}` / `Transform{t=...}` to replace text inside placed icons or groups; text transforms force real copies instead of shared clones.
 - Support `.T{...}` transforms in inline `:id...:` icon tokens.
