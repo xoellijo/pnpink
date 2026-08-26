@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from copy import deepcopy
 import math
 import re
 from typing import Dict, List, Optional, Tuple
@@ -306,6 +307,99 @@ def _upsert_linear_gradient(defs_parent, spec: GradientSpec):
             st.set("stop-opacity", op)
 
 
+_PAINT_URL_RE = re.compile(r"^\s*url\(\s*#([^)]+)\s*\)\s*$", re.IGNORECASE)
+
+
+def _inline_style_map(node) -> dict[str, str]:
+    out = {}
+    for part in str(node.get("style") or "").split(";"):
+        key, sep, value = part.partition(":")
+        if sep and key.strip():
+            out[key.strip()] = value.strip()
+    return out
+
+
+def _paint_value(node, prop: str) -> str:
+    inline = _inline_style_map(node)
+    if prop in inline:
+        return inline[prop]
+    return str(node.get(prop) or "").strip()
+
+
+def _set_paint_value(node, prop: str, value: str) -> None:
+    inline = _inline_style_map(node)
+    if prop in inline:
+        inline[prop] = value
+        SVG.style_set(node, inline)
+    else:
+        node.set(prop, value)
+
+
+def _bbox_key(bbox) -> str:
+    return " ".join(f"{float(value):.12g}" for value in bbox)
+
+
+def _object_bbox_gradient(root, gradient, bbox):
+    source_id = str(gradient.get("id") or "").strip()
+    bbox_key = _bbox_key(bbox)
+    for node in root.iter():
+        if (
+            node.get("data-dm-gradient-source") == source_id
+            and node.get("data-dm-gradient-bbox") == bbox_key
+        ):
+            return node
+
+    x, y, width, height = [float(value) for value in bbox]
+    if width <= 0.0 or height <= 0.0:
+        return None
+    try:
+        bbox_transform = inkex.Transform(f"matrix({width},0,0,{height},{x},{y})")
+        try:
+            inverse_bbox = bbox_transform.inverse()
+        except AttributeError:
+            inverse_bbox = -bbox_transform
+        normalized_transform = inverse_bbox @ inkex.Transform(gradient.get("gradientTransform") or "")
+    except Exception:
+        return None
+
+    converted = deepcopy(gradient)
+    try:
+        converted_id = root.get_unique_id(f"dm_bbox_gradient_{source_id}")
+    except Exception:
+        converted_id = f"dm_bbox_gradient_{source_id}_{len(list(root.iter()))}"
+    converted.set("id", converted_id)
+    converted.set("gradientUnits", "objectBoundingBox")
+    converted.set("gradientTransform", str(normalized_transform))
+    converted.set("data-dm-gradient-source", source_id)
+    converted.set("data-dm-gradient-bbox", bbox_key)
+    converted.attrib.pop("data-origid", None)
+    SVG.ensure_defs(root).append(converted)
+    return converted
+
+
+def normalize_user_space_gradients(root, node, bbox, properties=("fill", "stroke")) -> int:
+    """Use shared object-bbox variants for a node's user-space gradients."""
+    if root is None or node is None:
+        return 0
+    changed = 0
+    for prop in properties or ():
+        match = _PAINT_URL_RE.fullmatch(_paint_value(node, str(prop)))
+        if not match:
+            continue
+        gradient = SVG.find_id(root, match.group(1), include_defs=True)
+        tag = str(getattr(gradient, "tag", "") or "") if gradient is not None else ""
+        if not (tag.endswith("linearGradient") or tag.endswith("radialGradient")):
+            continue
+        if str(gradient.get("gradientUnits") or "objectBoundingBox") != "userSpaceOnUse":
+            continue
+        converted = _object_bbox_gradient(root, gradient, bbox)
+        if converted is None:
+            continue
+        _set_paint_value(node, str(prop), f"url(#{converted.get('id')})")
+        changed += 1
+    return changed
+
+
 def register_gradients_from_comments(comment_lines, defs_parent) -> Dict[str, GradientSpec]:
     """Scan comment directives and register linear gradients in <defs>.
 
@@ -345,4 +439,7 @@ def register_gradients_from_comments(comment_lines, defs_parent) -> Dict[str, Gr
     return out
 
 
-__all__ = ["GradientSpec", "GradientStopSpec", "register_gradients_from_comments"]
+__all__ = [
+    "GradientSpec", "GradientStopSpec", "register_gradients_from_comments",
+    "normalize_user_space_gradients",
+]

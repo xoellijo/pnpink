@@ -24,6 +24,7 @@ import dsl as DSL
 import fit_anchor as FA
 import paths as PATHS
 import transform_fx as TFX
+import text as TXT
 import render_apply as RAP
 import gui as PROGRESS
 import render_helpers as RHP
@@ -95,6 +96,8 @@ def render_phase(ctx):
     SM = ctx.SM
     ss_registry = getattr(ctx, 'spritesheets', None)
     doc_path = getattr(ctx, 'doc_path', None)
+    text_query_service = getattr(ctx, 'text_query_service', None)
+    deferred_text_geometry = getattr(ctx, 'deferred_text_geometry', None)
     ds_idx = ctx.ds_idx
     headers = ctx.headers
     rows_data = ctx.rows_data
@@ -1917,7 +1920,7 @@ def render_phase(ctx):
         str(_tid or "").strip()
         for _spec in compiled_apply_specs
         for _tid in ((_spec.get("hk") or {}).get("target_ids") or [(_spec.get("hk") or {}).get("target_id") or ""])
-        if str((_spec.get("hk") or {}).get("prop") or "text").strip().lower() != "text"
+        if str((_spec.get("hk") or {}).get("prop") or "text").strip().lower() not in ("text", "shape-inside")
         and str(_tid or "").strip()
         and not RAP._is_id_wildcard_token(str(_tid or "").strip())
     }
@@ -2010,6 +2013,14 @@ def render_phase(ctx):
         _bbox_id = str(_bbox_id or '').strip()
         _add_composed_dynamic_id(_bbox_id)
 
+    _composed_template_roots = [proto_root] + [
+        (_tpl_entry or {}).get('template_root')
+        for _tpl_entry in list(overlay_templates or []) + list(back_templates or []) + list(page_templates or []) + list(page_back_templates or [])
+    ]
+    for _template_root in _composed_template_roots:
+        for _dependency_id in TFX.shape_inside_dependency_ids(_template_root, composed_dynamic_ids):
+            _add_composed_dynamic_id(_dependency_id)
+
     composed_engine_enabled = template_engine in {"composed", "composed-instance"}
     composed_static_source_mode = "first_instance" if template_engine == "composed-instance" else "defs"
 
@@ -2091,6 +2102,7 @@ def render_phase(ctx):
         "fields_fast_count": 0,
         "fields_fast_plain_count": 0,
         "fields_generic_count": 0,
+        "text_prepare_ms": 0.0,
         "bbox_ms": 0.0,
         "fit_ms": 0.0,
         "fit_slot_ms": 0.0,
@@ -2105,6 +2117,14 @@ def render_phase(ctx):
         "row_total_ms": 0.0,
         "rows": 0,
     }
+    _field_profile = {}
+
+    def _record_generic_field(key, elapsed_ms):
+        name = str(key or "<empty>")
+        item = _field_profile.setdefault(name, [0, 0.0, 0.0])
+        item[0] += 1
+        item[1] += float(elapsed_ms)
+        item[2] = max(float(item[2]), float(elapsed_ms))
     _profile_dataset_t0 = time.perf_counter()
     _t_instances = time.perf_counter()
     instances = list(_iter_instances(rows_data))
@@ -2500,13 +2520,17 @@ def render_phase(ctx):
                     header_info=hk,
                 )
                 if st != 'miss':
-                    _profile["fields_generic_ms"] += (time.perf_counter() - _field_t0) * 1000.0
+                    _field_elapsed_ms = (time.perf_counter() - _field_t0) * 1000.0
+                    _profile["fields_generic_ms"] += _field_elapsed_ms
                     _profile["fields_generic_count"] += 1
+                    _record_generic_field(key, _field_elapsed_ms)
                     _fa_after = len(j.get('fa_jobs') or [])
                     _fa_idx = (_fa_after - 1) if st == 'fa' and _fa_after > _fa_before else None
                     return cnt, st, j, _fa_idx
-            _profile["fields_generic_ms"] += (time.perf_counter() - _field_t0) * 1000.0
+            _field_elapsed_ms = (time.perf_counter() - _field_t0) * 1000.0
+            _profile["fields_generic_ms"] += _field_elapsed_ms
             _profile["fields_generic_count"] += 1
+            _record_generic_field(key, _field_elapsed_ms)
             return 0, 'miss', None, None
 
         # Phase-1: per-row keep-visible set for rect anchors (populated by parse_header_key on headers with '+').
@@ -2537,7 +2561,7 @@ def render_phase(ctx):
             _targets = list(_hk.get("target_ids") or [(_hk.get("target_id") or "")])
             _target = _targets[0] if len(_targets) == 1 else ""
             _prop = str(_hk.get("prop") or "text").strip().lower()
-            if _prop != "text" and _target and _raw_s.strip() and _target in last_fa_by_target:
+            if _prop not in ("text", "shape-inside") and _target and _raw_s.strip() and _target in last_fa_by_target:
                 _j, _fa_idx = last_fa_by_target.get(_target)
                 if _j is not None and _fa_idx is not None:
                     deferred_fa_styles.setdefault((id(_j.get('fa_jobs') or []), int(_fa_idx)), []).append((_target, _prop, _raw_s))
@@ -2959,6 +2983,18 @@ def render_phase(ctx):
             unique_name = new_name
         placed_node.set('id', unique_name)
         placed_node.set(inkex.addNS('label','inkscape'), new_name)
+        if deferred_text_geometry is not None:
+            _text_prepare_t0 = time.perf_counter()
+            TXT.process_text_geometry(
+                card_group,
+                show_debug_rects=False,
+                source_manager=SM,
+                doc_path=doc_path,
+                query_service=text_query_service,
+                defer_apply=True,
+                prepared_geometry=deferred_text_geometry,
+            )
+            _profile["text_prepare_ms"] += (time.perf_counter() - _text_prepare_t0) * 1000.0
         placed += 1
         if target_within is not None:
             try:
@@ -3341,6 +3377,20 @@ def render_phase(ctx):
                 f"avg_fast_ms={float(_profile.get('fields_fast_ms') or 0.0) / max(1, int(_profile.get('fields_fast_count') or 0)):.4f} "
                 f"avg_generic_ms={float(_profile.get('fields_generic_ms') or 0.0) / max(1, int(_profile.get('fields_generic_count') or 0)):.4f}"
             )
+            _l.i(
+                f"[render.profile.text] dataset={ds_idx} "
+                f"prepare_total_ms={float(_profile.get('text_prepare_ms') or 0.0):.1f} "
+                f"prepare_avg_ms={float(_profile.get('text_prepare_ms') or 0.0) / _profile_rows:.2f}"
+            )
+            for _field_name, (_field_count, _field_total, _field_max) in sorted(
+                _field_profile.items(), key=lambda item: item[1][1], reverse=True
+            )[:10]:
+                _l.i(
+                    f"[render.profile.field] dataset={ds_idx} key='{_field_name}' "
+                    f"count={int(_field_count)} total_ms={float(_field_total):.1f} "
+                    f"avg_ms={float(_field_total) / max(1, int(_field_count)):.3f} "
+                    f"max_ms={float(_field_max):.1f}"
+                )
             _l.i(
                 f"[render.profile.fit] dataset={ds_idx} avg_ms "
                 f"slot={float(_profile.get('fit_slot_ms') or 0.0) / _profile_rows:.2f} "

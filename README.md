@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/xoellijo/pnpink/releases/latest/download/pnpink_latest.zip"><strong>Download PnPInk</strong></a>
+  <a href="https://github.com/xoellijo/pnpink/releases/latest"><strong>Install PnPInk</strong></a>
   ·
   <a href="https://xoellijo.github.io/pnpink/intro/"><strong>Read the documentation</strong></a>
   ·
@@ -129,16 +129,14 @@ Optimized templates can generate tens of thousands of records per minute on suit
 
 ### Installation
 
-1. Download [`pnpink_latest.zip`](https://github.com/xoellijo/pnpink/releases/latest/download/pnpink_latest.zip).
-2. Extract the ZIP.
-3. Run the installer for your platform:
-   - Windows: `install_windows.bat`
-   - macOS/Linux: `chmod +x install.sh && ./install.sh`
-   - Any OS: `python install.py` or `python3 install.py`
-4. Restart Inkscape.
-5. Open `Extensions > PnPInk`.
+Download just one launcher from the [latest release](https://github.com/xoellijo/pnpink/releases/latest):
 
-If the direct download is unavailable, choose `pnpink_latest.zip` from the [latest GitHub release](https://github.com/xoellijo/pnpink/releases).
+- Windows: run `pnpink_install.bat`. It installs a private portable Ghostscript only when none is available; use `--no-ghostscript` to skip this check.
+- macOS/Linux: run `chmod +x pnpink_install.sh && ./pnpink_install.sh`.
+
+The launchers remain stable and download the latest PnPInk release by default. To install a specific release using the new packaging scheme (`0.55` or newer), pass its version, for example `pnpink_install.bat 0.59`, `pnpink_install.bat --version 0.59`, or `./pnpink_install.sh 0.59`.
+
+Restart Inkscape, then open `Extensions > PnPInk`.
 
 ## Your First Project
 

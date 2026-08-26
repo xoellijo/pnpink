@@ -45,6 +45,7 @@ class EngineContext(SimpleNamespace):
 
 
 DM_OUTPUT_CHUNK_THRESHOLD_PAGES = 24
+TEXT_QUERY_BACKEND = "streaming_shell"
 
 
 def _resolve_dm_output_path(dm_output_raw: str, doc_path: str | None) -> str | None:
@@ -394,6 +395,15 @@ def run(self, __version__):
     _l.i(f"[dm] run tag={dm_tag}")
 
     SM = SRC.SourceManager(root, _doc_path, project_root=_runtime_python_dir(), defs_group_id=dm_defs_id)
+    text_query_service = None
+    deferred_text_geometry = None
+    if TEXT_QUERY_BACKEND == "streaming_shell":
+        try:
+            text_query_service = TXT.TM.StreamingShellQueryService()
+            deferred_text_geometry = TXT.DeferredTextGeometry(root)
+            _l.i("[text_measure] experimental backend=streaming_shell started")
+        except Exception as ex:
+            _l.w("[text_measure] streaming shell unavailable; backend=compact err=%s", ex)
 
     # ---------------- Global comment directives (snippets + spritesheets) ----------------
     # Multi-section datasets: the loader can split a single sheet into multiple sections.
@@ -1797,6 +1807,8 @@ def run(self, __version__):
             marks_pending_by_page=_marks_pending_by_page, flush_marks_for_page=_flush_marks_for_page,
             header_marks_current=marks_current,
             spritesheets=spritesheets,
+            text_query_service=text_query_service,
+            deferred_text_geometry=deferred_text_geometry,
         )
         REN.render_phase(_ctx)
         next_n = _ctx.next_n
@@ -1807,7 +1819,14 @@ def run(self, __version__):
 
     import traceback as _tb
     try:
-        res = TXT.inline_place_icons(out_layer, show_debug_rects=False, source_manager=SM, doc_path=_doc_path)
+        res = TXT.process_text_geometry(
+            out_layer,
+            show_debug_rects=False,
+            source_manager=SM,
+            doc_path=_doc_path,
+            query_service=text_query_service,
+            prepared_geometry=deferred_text_geometry,
+        )
         _l.i(
             f"[deckmaker.text] ONE-PASS placed={res.icons_placed} icons across output; "
             f"sources={sorted(res.used_sources)}"
@@ -1816,6 +1835,11 @@ def run(self, __version__):
         _l.w(f"[deckmaker.text] inline_icons ONE-PASS failed: {ex}")
         _l.w("[deckmaker.text] traceback:\n" + _tb.format_exc())
     finally:
+        if text_query_service is not None:
+            try:
+                text_query_service.close()
+            except Exception as ex:
+                _l.w("[text_measure] streaming shell close failed: %s", ex)
         try:
             SM.log_web_summary()
         except Exception:

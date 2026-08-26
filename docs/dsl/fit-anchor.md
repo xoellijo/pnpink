@@ -329,6 +329,12 @@ Places three objects in one placeholder flow, each with its own anchor.
 
 Builds an array object, lays it out locally, then applies Fit-Anchor as one grouped target.
 
+## Forcing a Group BBox
+
+If Inkex measures a group incorrectly, especially when it contains text, add a direct child `<rect>` whose SVG id or Inkscape label starts with `force_bbox`, `force-bbox`, or `forcebbox`. The prefix is case-insensitive. PnPInk uses that rectangle as the group's bbox, even when the rectangle is fully transparent.
+
+`data-bbox` still has higher priority. Only direct child rectangles are inspected, so ordinary groups keep their normal bbox behavior.
+
 ## Related Pages
 
 - [Transform](transform.md)

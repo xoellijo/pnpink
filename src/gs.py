@@ -129,6 +129,15 @@ def _platform_candidates() -> list[str]:
         if cand:
             out.append(cand)
 
+    if os.name == "nt":
+        local_app_data = str(os.environ.get("LocalAppData") or "").strip()
+        if local_app_data:
+            portable = _existing_file(
+                os.path.join(local_app_data, "PnPInk", "ghostscript", "bin", "gswin64c.exe")
+            )
+            if portable:
+                out.append(portable)
+
     names: list[str]
     if os.name == "nt":
         names = ["gswin64c.exe", "gswin32c.exe", "gs.exe", "gs"]

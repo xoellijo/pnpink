@@ -408,6 +408,14 @@ def test_parse_chain_con_legacy_ops():
     assert c.legacy_ops == "i^12"
     assert c.modules == []
 
+def test_parse_chain_transform_inside_modes():
+    for raw, expected in (("x", "x"), ("y", "y"), ("a", "a"), ("all", "a")):
+        c = parse_chain(f"frame.T{{i={raw}}}")
+        assert c.modules[0].spec.inside == expected
+
+    with pytest.raises(DSLError):
+        parse_chain("frame.T{i=z}")
+
 def test_tokenize_y_parse_casos_borde():
     with pytest.raises(DSLError):
         tokenize_chain("@{bad")

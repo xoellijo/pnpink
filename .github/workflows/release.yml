@@ -21,7 +21,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Resolve and validate version
+      - name: Resolve version
         id: meta
         shell: bash
         run: |
@@ -34,35 +34,8 @@ jobs:
           fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          export VERSION
 
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          import os
-
-          version = os.environ["VERSION"]
-          manifest_path = Path("manifest.json")
-          if not manifest_path.exists():
-              raise SystemExit("manifest.json not found")
-
-          # Accept UTF-8 with or without BOM.
-          data = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
-          missing = [k for k in ("name", "version", "channel") if k not in data]
-          if missing:
-              raise SystemExit(f"manifest.json missing keys: {', '.join(missing)}")
-
-          mver = str(data["version"]).strip()
-          ch = str(data["channel"]).strip().lower()
-          if mver != version:
-              raise SystemExit(
-                  f"Tag/manifest version mismatch: tag={version}, manifest={mver}"
-              )
-          if ch not in {"main", "dev"}:
-              raise SystemExit("manifest.json 'channel' must be 'main' or 'dev'")
-          PY
-
-      - name: Build payload and bundle ZIPs
+      - name: Build payload ZIPs
         id: package
         shell: bash
         run: |
@@ -91,37 +64,16 @@ jobs:
                           continue
                       zf.write(p, p.relative_to(root).as_posix())
 
-          bundle_name = f"pnpink_{version}.zip"
-          bundle_path = dist / bundle_name
-          bundle_files = [
-              "install.py",
-              "install.sh",
-              "install_windows.bat",
-              "README.md",
-              "LICENSE",
-              "manifest.json",
-          ]
-
-          missing = [f for f in bundle_files if not (root / f).exists()]
-          if missing:
-              raise SystemExit(f"Missing bundle file(s): {', '.join(missing)}")
-
-          with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-              for f in bundle_files:
-                  zf.write(root / f, f)
-              zf.write(payload_path, payload_name)
-
-          latest_name = "pnpink_latest.zip"
+          latest_name = "pnpink_payload_latest.zip"
           latest_path = dist / latest_name
-          latest_path.write_bytes(bundle_path.read_bytes())
+          latest_path.write_bytes(payload_path.read_bytes())
 
-          print(f"bundle_name={bundle_name}")
+          print(f"payload_name={payload_name}")
           print(f"latest_name={latest_name}")
           PY
 
-          LATEST_NAME="pnpink_latest.zip"
+          LATEST_NAME="pnpink_payload_latest.zip"
           test -f "dist/${LATEST_NAME}"
-          echo "installer_path=dist/${LATEST_NAME}" >> "$GITHUB_OUTPUT"
         env:
           VERSION: ${{ steps.meta.outputs.version }}
 
@@ -132,7 +84,11 @@ jobs:
           name: PnPInk ${{ steps.meta.outputs.tag }}
           prerelease: false
           files: |
-            ${{ steps.package.outputs.installer_path }}
+            dist/pnpink_payload_${{ steps.meta.outputs.version }}.zip
+            dist/pnpink_payload_latest.zip
+            install.py
+            pnpink_install.sh
+            pnpink_install.bat
           fail_on_unmatched_files: true
           overwrite_files: true
           generate_release_notes: true

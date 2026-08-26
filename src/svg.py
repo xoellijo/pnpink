@@ -1861,6 +1861,49 @@ def _flowed_text_outer_box_from_shape_rect(node):
     return (float(min(xs)), float(min(ys)), float(max(xs)-min(xs)), float(max(ys)-min(ys)))
 
 
+def _forced_group_bbox(node):
+    if node_kind(node) != "group":
+        return None
+    label_attr = inkex.addNS("label", "inkscape")
+    for child in list(node):
+        if _svg_local_name(child) != "rect":
+            continue
+        child_id = (child.get("id") or "").strip()
+        child_label = (child.get(label_attr) or child.get("inkscape:label") or "").strip()
+        if not re.match(r"^force[-_]?bbox", child_id, re.IGNORECASE) and not re.match(
+            r"^force[-_]?bbox", child_label, re.IGNORECASE
+        ):
+            continue
+        try:
+            x = float(child.get("x") or 0.0)
+            y = float(child.get("y") or 0.0)
+            w = float(child.get("width") or 0.0)
+            h = float(child.get("height") or 0.0)
+            if w <= 0.0 or h <= 0.0:
+                return None
+            try:
+                transform = child.composed_transform()
+            except Exception:
+                transform = inkex.Transform(child.get("transform") or "")
+            points = (
+                _apply_point_xy__safe(transform, x, y),
+                _apply_point_xy__safe(transform, x + w, y),
+                _apply_point_xy__safe(transform, x, y + h),
+                _apply_point_xy__safe(transform, x + w, y + h),
+            )
+            xs = [point[0] for point in points]
+            ys = [point[1] for point in points]
+            return (
+                float(min(xs)),
+                float(min(ys)),
+                float(max(xs) - min(xs)),
+                float(max(ys) - min(ys)),
+            )
+        except Exception:
+            return None
+    return None
+
+
 def visual_bbox(node):
     # If provided, data-bbox overrides computed bbox (used by array groups).
     try:
@@ -1872,6 +1915,11 @@ def visual_bbox(node):
                 return (bx, by, bw, bh)
     except Exception:
         pass
+    # Opt-in bbox contract for groups editable from the Inkscape GUI. Only direct
+    # child rectangles are inspected, so normal groups keep the existing path.
+    forced_bb = _forced_group_bbox(node)
+    if forced_bb is not None:
+        return forced_bb
     # Caso especial: flowed text / text-shape
     if node_kind(node) == "text-shape":
         bb = _flowed_text_outer_box_from_shape_rect(node)

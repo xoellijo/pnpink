@@ -82,6 +82,7 @@ class PlacementSequence:
             final_scale=self.final_scale,
             insert_after_elem=insert_after_elem,
             ignore_source_ancestors=bool(ignore_source_ancestors),
+            inside_spec=merged_transform,
         )
         try:
             placed_res = apply_to_by_ids(scope, base_id, rect_id, ops_fit, **kwargs)
@@ -194,6 +195,7 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
     root = _fa_root_of(scope)
     svgdoc = root
     local_transform_spec = None
+    inside_spec = kwargs.get("inside_spec")
 
     # 1) resolver base
     base = _fa_find_in(scope, root, base_id)
@@ -258,6 +260,13 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
 
     if fs is None:
         raise inkex.AbortExtension(f"{LOG_PREFIX} could not obtain FitSpec from ops='{ops_full}'")
+
+    effective_inside_spec = TFX.merge_specs([local_transform_spec, inside_spec])
+    if TFX.has_inside(effective_inside_spec):
+        prepared = TFX.prepare_inside_source(root, scope, base, effective_inside_spec)
+        if prepared is not base:
+            base = prepared
+            place_mode = "copy"
 
     # =========================================================
     # From here on: ONLY geometry with what already exists in svg.py

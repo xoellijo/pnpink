@@ -9,9 +9,9 @@ If you are new to Inkscape: Inkscape is a free, open-source vector editor based 
 If you do not have it installed yet, you can download it for Windows, macOS, and Linux from the official website:
 <https://inkscape.org>
 
-PnPInk works fully inside Inkscape. You design with normal SVG objects, and PnPInk handles replication, data filling, placement, and pagination automatically.
+PnPInk works inside Inkscape. You design with normal SVG objects, save that design as a template, and connect its object IDs to columns in a CSV or Google Sheet. PnPInk then handles replication, data filling, placement, and pagination automatically.
 
-The output remains editable SVG, and you can export using Inkscape formats such as PDF, PNG, JPG, and SVG.
+The generated document remains editable SVG. From there you can continue working in Inkscape or export PDF, PDF/X, PNG, JPEG, SVG, and other production formats supported by PnPInk's export pipeline.
 
 ## The core idea
 PnPInk is built around a simple workflow:
@@ -60,10 +60,7 @@ Typical usage:
 - rect IDs: image/icon anchors,
 - group IDs: visibility or variant control (advanced workflows).
 
-Useful Inkscape panels:
-
-- `Object > Objects...` (`Shift+Ctrl+O`): hierarchy, groups, layers, Z-order, IDs.
-- `Object > XML Editor` (`Shift+Ctrl+X`): direct SVG/XML attributes.
+The most useful panel for normal template work is `Object > Layers and Objects` (`Shift+Ctrl+L`), where you can inspect hierarchy, groups, layers, IDs, and Z-order. Use `Object > XML Editor` (`Shift+Ctrl+X`) only when you need direct access to SVG attributes that are not exposed by the normal object controls.
 
 ## Minimal working example
 
@@ -77,7 +74,7 @@ To avoid confusion, this guide uses a consistent visual notation:
 In dataset tables, headers and first-column cells are also color-highlighted.
 
 ### Conceptual template structure
-Use a basic Inkscape file named `hello_word.svg`.
+Use a basic Inkscape file named `hello_world.svg`. Save it to disk before creating the local CSV so DeckMaker can resolve both files from the same project location.
 
 In Inkscape, the structure can look like this:
 
@@ -160,10 +157,7 @@ Once basics work, you can start controlling page and layout with a short express
 {A4 b=[-5]}.L{p=4x3 g=2}
 ```
 
-At a glance:
-
-- `{A4 b=[-5]}`: A4 page with 5 mm inner margin at every side.
-- `.L{p=4x3 g=2}`: layout of cards in a pattern of 4x3 grid with 2 mm gap.
+In this expression, `{A4 b=[-5]}` selects an A4 page with a 5 mm inner margin on every side, and `.L{p=4x3 g=2}` arranges the cards in a 4-by-3 grid with 2 mm gaps.
 
 This short notation is part of the PnPInk DSL (Domain Language). It lets you control placement, scaling, rotations, grids, gaps, bleeds, marks, and more.
 

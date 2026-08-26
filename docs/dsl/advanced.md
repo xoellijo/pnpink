@@ -93,3 +93,9 @@ Token forms implemented:
 - `:@{...}:` uses a Source token with optional fit suffix.
 - `:S{...}:` and `:Source{...}:` are equivalent source forms.
 - `:id1~... id2~...:` places multiple existing SVG ids inside one shared inline hole. Each icon applies its own Fit-Anchor operations relative to that hole, and later icons are rendered above earlier icons.
+
+## Forced BBox for Groups with Text
+
+Inkex versions shipped with Inkscape 1.2 through 1.4.x can measure groups containing text incorrectly. The failure is not limited to returning a zero-sized text bbox: the resulting group bbox can also be unpredictable.
+
+As a workaround, add a direct child `<rect>` whose SVG id or Inkscape label starts with `force_bbox`, `force-bbox`, or `forcebbox` (case-insensitive). PnPInk uses that rectangle as the group's bbox even when it is fully transparent. An explicit `data-bbox` still has higher priority.

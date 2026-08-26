@@ -1,3 +1,13 @@
+[Unreleased]
+- Add dynamic `shape-inside` frames through `textID[shape-inside]` and `Transform{inside=x|y|a}`, including empty-frame removal, inline-icon-aware sizing, variable-height layouts, and reusable gradients.
+- Add `force_bbox` guide rectangles, with case-insensitive separator variants, to work around unreliable Inkscape bounding boxes for groups containing text.
+- Support multiple inline icons sharing one text slot with the same Fit/Anchor/Transform behavior used by multi-value cells.
+- Improve snippet parsing so nested braces inside conditional expressions and transforms are handled correctly.
+- Speed up text geometry discovery with a persistent Inkscape shell, compact per-card probes, parallel warm-up, and focused profiling while retaining the previous fallback path.
+- Replace the legacy installers with stable `pnpink_install.bat` and `pnpink_install.sh` launchers that download the latest or a selected release; Windows can install a private Ghostscript unless `--no-ghostscript` is used.
+- Simplify the Python installer by removing obsolete development-version coexistence and manifest rewriting machinery.
+- Rewrite the README and getting-started documentation around approachable card, event-badge, and variable-data PDF workflows, with expanded advanced DSL guidance.
+
 [0.55]
 - Add dataset symbol rows with `symbol_id` in column A, generating a row into `<defs>` without consuming page layout slots.
 - Add `Transform{text=...}` / `Transform{t=...}` to replace text inside placed icons or groups; text transforms force real copies instead of shared clones.

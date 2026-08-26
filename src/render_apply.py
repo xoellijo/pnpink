@@ -12,6 +12,7 @@ import svg as SVG
 import layouts as LYT
 import dsl as DSL
 import fit_anchor as FA
+import transform_fx as TFX
 import render_helpers as RHP
 import render_tokens as RTK
 
@@ -68,13 +69,14 @@ def _parse_array_token(token: str):
         if m_gap:
             items.extend([None] * int(m_gap.group(1)))
             return
+        tt2, transform_spec = _split_transform_suffixes(tt2)
         try:
             base_txt, _place, ops_txt = _parse_object_token(tt2)
             base_txt = (base_txt or "").strip()
             ops_txt = (ops_txt or "").strip()
             if not base_txt:
                 return
-            items.append({"id": base_txt, "ops": ops_txt})
+            items.append({"id": base_txt, "ops": ops_txt, "transform": transform_spec})
             return
         except Exception:
             pass
@@ -83,7 +85,7 @@ def _parse_array_token(token: str):
         ops_txt = ops_txt.strip()
         if not base_txt:
             return
-        items.append({"id": base_txt, "ops": ops_txt})
+        items.append({"id": base_txt, "ops": ops_txt, "transform": transform_spec})
 
     def _expand_array_body_expr(expr: str):
         out_exprs = []
@@ -166,13 +168,25 @@ def _resolve_array_item(root_doc, inst_node, item_id: str, sm=None, ss_registry=
         s, _place, _ops = _parse_object_token(s)
     except Exception:
         pass
-    base = SVG.find_target_exact_in(inst_node, s)
-    if base is None:
-        base = SVG.find_target_exact_in(root_doc, s)
+    base, _owner, _text_node, relation = TFX.resolve_related_target(
+        root_doc, inst_node, s, private=True
+    )
+    if relation and base is None:
+        _l.w(f"[array] related target not found: '{s}'")
     return base
 
 
-def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, ss_registry=None, group_id_prefix='dm_array'):
+def _array_anchor_from_ops(ops: str) -> int:
+    try:
+        anchor = DSL.fit_spec_from_ops(str(ops or "")).anchor
+        if anchor is not None and 1 <= int(anchor) <= 9:
+            return int(anchor)
+    except Exception:
+        pass
+    return 5
+
+
+def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, ss_registry=None, group_id_prefix='dm_array', outer_anchor=5):
     if not items:
         return None, None
     g = inkex.Group()
@@ -182,6 +196,7 @@ def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, ss_r
         gid = f"{group_id_prefix}_{id(g)}"
     g.set('id', gid)
     inst_node.append(g)
+    dynamic_inside = any(TFX.has_inside(it.get("transform")) for it in items if isinstance(it, dict))
 
     resolved = []
     ref_w = ref_h = 0.0
@@ -191,6 +206,7 @@ def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, ss_r
             continue
         item_id = (it.get("id") if isinstance(it, dict) else None) or ""
         item_ops = (it.get("ops") if isinstance(it, dict) else "") or ""
+        item_transform = it.get("transform") if isinstance(it, dict) else None
         base = _resolve_array_item(root_doc, inst_node, item_id, sm=sm, ss_registry=ss_registry)
         if base is None:
             _l.w(f"[array] target not found: '{item_id}'")
@@ -200,7 +216,7 @@ def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, ss_r
             bx, by, bw, bh = SVG.visual_bbox(base)
         except Exception:
             bx = by = 0.0; bw = bh = 0.0
-        resolved.append((base, bx, by, bw, bh, item_ops))
+        resolved.append((base, bx, by, bw, bh, item_ops, item_transform))
         if ref_w <= 0.0 and bw > 0.0:
             ref_w = float(bw)
             ref_h = float(bh)
@@ -269,6 +285,13 @@ def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, ss_r
         bb_h = ch
     try:
         g.set('data-bbox', f"{minx} {miny} {bb_w} {bb_h}")
+        if dynamic_inside:
+            g.set('data-dm-array-cols', str(cols))
+            g.set('data-dm-array-rows', str(rows))
+            g.set('data-dm-array-gap-x', f"{gh0}")
+            g.set('data-dm-array-gap-y', f"{gv0}")
+            g.set('data-dm-array-sweep-rows', "1" if bool(getattr(layout_obj, "sweep_rows_first", True)) else "0")
+            g.set('data-dm-array-anchor', str(int(outer_anchor) if 1 <= int(outer_anchor) <= 9 else 5))
     except Exception:
         pass
 
@@ -277,7 +300,7 @@ def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, ss_r
             continue
         if idx >= len(slots):
             break
-        base, _bx, _by, _bw, _bh, item_ops = entry
+        base, _bx, _by, _bw, _bh, item_ops, item_transform = entry
         sx, sy, sw, sh = slots[idx]
         try:
             rect = SVG.etree.Element(inkex.addNS('rect', 'svg'))
@@ -285,15 +308,19 @@ def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, ss_r
             rect.set('width', f"{sw}"); rect.set('height', f"{sh}")
             ops_body = (item_ops or "").strip()
             ops_full = f"~{ops_body}" if ops_body else "~i"
-            FA.apply_to_by_ids(
+            placement = FA.PlacementSequence(root_doc)
+            placed = placement.apply(
                 root_doc,
                 base.get('id') or '',
-                rect_id="",
-                ops_full=ops_full,
-                place="clone",
+                "",
+                ops_full,
+                place_mode="clone",
                 rect_elem=rect,
                 parent_elem=g,
+                transform_spec=item_transform,
             )
+            if placed is not None and dynamic_inside:
+                placed.set('data-dm-array-item', str(idx))
         except Exception as ex:
             _l.w(f"[array] failed to place '{(base.get('id') if base is not None else '')}': {ex}")
 
@@ -836,6 +863,20 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
     tgt = SVG.find_target_exact_in(inst, target_id, target_index=target_index)
     if tgt is None:
         return 0, "miss"
+    related_owner = None
+    related_text = None
+    related_kind = ""
+    if str(prop or "").strip().lower() == "shape-inside":
+        if not str(value or "").strip() and not any((_default_expr, _default_id, _default_ops, _global_ops, _default_raw)):
+            return 0, "skip"
+        related_text = tgt
+        tgt, related_owner, related_text = TFX.ensure_private_shape_inside(root_doc, inst, related_text)
+        if tgt is None:
+            _l.w(f"field '{key}': text id='{target_id}' has no rectangular shape-inside target")
+            return 0, "miss"
+        related_kind = "shape-inside"
+        target_id = str(tgt.get("id") or target_id)
+        prop = "text"
     if SVG.is_text_like(tgt) or (tgt.tag in TEXT_LIKE):
         if (
             prop == "text"
@@ -955,6 +996,11 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
     # Header-global ops ('id=~...') are merged later per token in FA queue stage.
     # Doing it there gives deterministic precedence with iterator/item ops.
     if not raw_token:
+        if related_kind == "shape-inside" and transform_spec is not None:
+            changed = TFX.apply_transform_spec(root_doc, tgt, transform_spec)
+            if TFX.has_inside(transform_spec):
+                changed = TFX.mark_inside_owner(related_owner, tgt, related_text, transform_spec) or changed
+            return (1 if changed else 0), ("transform" if changed else "skip")
         if raw_paths_spec:
             try:
                 tgt.set('data-dm-keep-paths', '1')
@@ -992,7 +1038,9 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
         if (not header_plus) and (not has_fa_sig):
             try:
                 _base_id, _place, _ops_tok = _parse_object_token(raw_token)
-                _src_local = root_doc.find(".//*[@id='%s']" % _base_id)
+                _src_local, _owner, _text_node, _relation = TFX.resolve_related_target(
+                    root_doc, inst, _base_id, private=False
+                )
                 if _src_local is not None:
                     force_fa_default = True
             except Exception:
@@ -1074,7 +1122,8 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                 ops_full = _merge_header_global_ops(ops_body)
                 g_node, g_id = _build_array_group(
                     inst, root_doc, arr.get('items'), arr.get('layout'),
-                    sm=sm, ss_registry=ss_registry
+                    sm=sm, ss_registry=ss_registry,
+                    outer_anchor=_array_anchor_from_ops(ops_full),
                 )
                 if g_id:
                     # Use deep-copy for arrays so the temp group can be removed safely.
@@ -1088,6 +1137,17 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
             except Exception:
                 _l.w(f"[deckmaker.fa] placeholder '{key}': invalid token '{tok_core}'")
                 continue
+            related_base, _related_owner, _related_text, relation = TFX.resolve_related_target(
+                root_doc, inst, base_id, private=True
+            )
+            if relation:
+                if related_base is None:
+                    _l.w(f"[deckmaker.fa] placeholder '{key}': related source '{base_id}' not found")
+                    continue
+                base_id = str(related_base.get("id") or "").strip()
+                if not base_id:
+                    _l.w(f"[deckmaker.fa] placeholder '{key}': related source has no id")
+                    continue
             ops_body = (ops_tok or "") or default_ops
             ops_full = _merge_header_global_ops(ops_body)
             fa_jobs.append((base_id, rect_id_val, ops_full, place, None, rect_elem_for_fa, transform_spec))

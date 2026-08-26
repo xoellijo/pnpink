@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import math
 import re
 from copy import deepcopy
 from typing import Iterable
 
 import inkex
+import gradients as GRD
 import log as LOG
 import svg as SVG
 
@@ -39,11 +41,566 @@ def merge_specs(specs: Iterable[object]) -> object | None:
             out.filter_ref = str(getattr(sp, "filter_ref") or "").strip()
         if getattr(sp, "text", None) is not None:
             out.text = [str(v) for v in (getattr(sp, "text") or [])]
+        if getattr(sp, "inside", None):
+            out.inside = str(getattr(sp, "inside") or "").strip().lower()
     return out
 
 
 def has_text(spec) -> bool:
     return bool(spec is not None and getattr(spec, "text", None) is not None)
+
+
+def has_inside(spec) -> bool:
+    return bool(spec is not None and getattr(spec, "inside", None) in ("x", "y", "a"))
+
+
+def _shape_inside_id(node) -> str:
+    style = str(node.get("style") or "")
+    match = re.search(r"shape-inside\s*:\s*url\(\s*#([^)]+)\s*\)", style, re.IGNORECASE)
+    return (match.group(1) or "").strip() if match else ""
+
+
+def shape_inside_dependency_ids(scope, target_ids) -> set[str]:
+    dependencies = set()
+    if scope is None:
+        return dependencies
+    for target_id in target_ids or ():
+        node = SVG.find_target_exact_in(scope, str(target_id or "").strip())
+        if node is None:
+            continue
+        frame_id = _shape_inside_id(node)
+        if frame_id:
+            dependencies.add(frame_id)
+    return dependencies
+
+
+_RELATED_TARGET_RE = re.compile(
+    r"^(?P<id>[A-Za-z_][-A-Za-z0-9_:.]*)(?:\[(?P<relation>[A-Za-z_][A-Za-z0-9_-]*)\])?$",
+    re.IGNORECASE,
+)
+
+
+def split_related_target(reference: str) -> tuple[str, str]:
+    match = _RELATED_TARGET_RE.fullmatch(str(reference or "").strip())
+    if not match:
+        return str(reference or "").strip(), ""
+    return (match.group("id") or "").strip(), (match.group("relation") or "").strip().lower()
+
+
+def _rewrite_shape_inside_id(text_node, frame_id: str) -> bool:
+    style = str(text_node.get("style") or "")
+    match = re.search(r"shape-inside\s*:\s*url\(\s*#([^)]+)\s*\)", style, re.IGNORECASE)
+    if not match:
+        return False
+    text_node.set("style", style[:match.start(1)] + str(frame_id) + style[match.end(1):])
+    return True
+
+
+def _inside_defs(node) -> bool:
+    current = node
+    while current is not None:
+        if str(getattr(current, "tag", "") or "").endswith("defs"):
+            return True
+        current = current.getparent() if hasattr(current, "getparent") else None
+    return False
+
+
+def _move_shape_source_to_defs(frame_source) -> None:
+    parent = frame_source.getparent() if hasattr(frame_source, "getparent") else None
+    if parent is None or _inside_defs(frame_source):
+        return
+    defs = next(
+        (child for child in list(parent) if str(getattr(child, "tag", "") or "").endswith("defs")),
+        None,
+    )
+    if defs is None:
+        defs = SVG.etree.SubElement(parent, inkex.addNS("defs", "svg"))
+    parent.remove(frame_source)
+    frame_source.set("data-dm-shape-inside-visible-source", "1")
+    defs.append(frame_source)
+
+
+def ensure_private_shape_inside(root, scope, text_node):
+    """Return an instance-private shape-inside frame, its owner, and the text."""
+    if root is None or text_node is None:
+        return None, None, text_node
+    frame_id = _shape_inside_id(text_node)
+    if not frame_id:
+        return None, None, text_node
+
+    current = text_node.getparent() if hasattr(text_node, "getparent") else None
+    while current is not None:
+        if current.get("data-dm-shape-inside-owner") == "1":
+            frame = SVG.find_id(current, frame_id, include_defs=True)
+            if frame is not None:
+                return frame, current, text_node
+        if current is scope:
+            break
+        current = current.getparent() if hasattr(current, "getparent") else None
+
+    frame_source = SVG.find_id(scope, frame_id, include_defs=True) if scope is not None else None
+    if frame_source is None and scope is not None:
+        frame_source = SVG.find_target_exact_in(scope, frame_id)
+    if frame_source is None:
+        frame_source = SVG.find_id(root, frame_id, include_defs=True)
+    if frame_source is None:
+        frame_source = SVG.find_target_exact_in(root, frame_id)
+    if frame_source is None or not str(getattr(frame_source, "tag", "") or "").endswith("rect"):
+        return None, None, text_node
+    parent = text_node.getparent() if hasattr(text_node, "getparent") else None
+    if parent is None:
+        return None, None, text_node
+
+    text_key = str(text_node.get("data-origid") or text_node.get("id") or "text").strip()
+    frame_key = str(frame_source.get("data-origid") or frame_source.get("id") or "frame").strip()
+    try:
+        private_id = root.get_unique_id(f"dm_shape_{text_key}_{frame_key}")
+        owner_id = root.get_unique_id(f"dm_shape_owner_{text_key}")
+    except Exception:
+        private_id = f"dm_shape_{text_key}_{frame_key}_{id(text_node)}"
+        owner_id = f"dm_shape_owner_{text_key}_{id(text_node)}"
+
+    owner = inkex.Group()
+    owner.set("id", owner_id)
+    owner.set("data-dm-shape-inside-owner", "1")
+    source_was_visible = frame_source.get("data-dm-shape-inside-visible-source") == "1" or not _inside_defs(frame_source)
+    frame = deepcopy(frame_source)
+    frame.set("id", private_id)
+    frame.set("data-origid", frame_key)
+    frame.set("data-dm-shape-inside-private", "1")
+    frame.attrib.pop("data-dm-shape-inside-visible-source", None)
+    try:
+        GRD.normalize_user_space_gradients(
+            root,
+            frame,
+            (
+                float(frame.get("x") or 0.0),
+                float(frame.get("y") or 0.0),
+                float(frame.get("width") or 0.0),
+                float(frame.get("height") or 0.0),
+            ),
+        )
+    except Exception as ex:
+        _l.w(f"[transform.inside] gradient normalization failed frame='{frame_key}': {ex}")
+    if source_was_visible:
+        owner.append(frame)
+    else:
+        defs = SVG.etree.SubElement(owner, inkex.addNS("defs", "svg"))
+        defs.append(frame)
+
+    index = parent.index(text_node)
+    parent.remove(text_node)
+    parent.insert(index, owner)
+    owner.append(text_node)
+    if not _rewrite_shape_inside_id(text_node, private_id):
+        parent.remove(owner)
+        parent.insert(index, text_node)
+        return None, None, text_node
+    if source_was_visible:
+        _move_shape_source_to_defs(frame_source)
+    return frame, owner, text_node
+
+
+def resolve_related_target(root, scope, reference: str, *, private: bool = False):
+    target_id, relation = split_related_target(reference)
+    target = SVG.find_target_exact_in(scope, target_id) if scope is not None else None
+    if target is None:
+        target = SVG.find_target_exact_in(root, target_id)
+    if not relation:
+        return target, None, target, ""
+    if relation != "shape-inside" or target is None:
+        return None, None, target, relation
+    if private:
+        frame, owner, text_node = ensure_private_shape_inside(root, scope, target)
+    else:
+        frame_id = _shape_inside_id(target)
+        frame = SVG.find_id(scope, frame_id, include_defs=True) if scope is not None else None
+        if frame is None:
+            frame = SVG.find_id(root, frame_id, include_defs=True)
+        owner, text_node = None, target
+    return frame, owner, text_node, relation
+
+
+def mark_inside_owner(owner, frame, text_node, spec) -> bool:
+    mode = str(getattr(spec, "inside", None) or "").strip().lower()
+    if mode not in ("x", "y", "a") or owner is None or frame is None or text_node is None:
+        return False
+    owner.set("data-dm-inside-owner", mode)
+    frame.set("data-dm-inside-frame", mode)
+    text_node.set("data-dm-inside-text", "1")
+    try:
+        bx, by, bw, bh = _rect_world_bbox(frame)
+        owner.set("data-bbox", f"{bx} {by} {bw} {bh}")
+    except Exception:
+        pass
+    return True
+
+
+def _node_world_transform(node):
+    chain = []
+    current = node
+    while current is not None:
+        chain.append(current)
+        current = current.getparent() if hasattr(current, "getparent") else None
+    transform = inkex.Transform()
+    for item in reversed(chain):
+        try:
+            transform = transform @ inkex.Transform(item.get("transform") or "")
+        except Exception:
+            pass
+    return transform
+
+
+def _world_copy(node):
+    out = deepcopy(node)
+    try:
+        out.set("transform", str(_node_world_transform(node)))
+    except Exception:
+        out.set("transform", str(inkex.Transform(node.get("transform") or "")))
+    return out
+
+
+def _point_xy(point):
+    try:
+        return float(point.x), float(point.y)
+    except Exception:
+        return float(point[0]), float(point[1])
+
+
+def _rect_world_bbox(frame):
+    x = float(frame.get("x") or 0.0)
+    y = float(frame.get("y") or 0.0)
+    width = float(frame.get("width") or 0.0)
+    height = float(frame.get("height") or 0.0)
+    transform = _node_world_transform(frame)
+    points = [
+        _point_xy(transform.apply_to_point(point))
+        for point in ((x, y), (x + width, y), (x, y + height), (x + width, y + height))
+    ]
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+
+
+def prepare_inside_source(root, scope, base, spec):
+    mode = str(getattr(spec, "inside", None) or "").strip().lower()
+    if mode not in ("x", "y", "a") or base is None:
+        return base
+    if not str(getattr(base, "tag", "") or "").endswith("rect"):
+        _l.w(f"[transform.inside] id='{base.get('id') or ''}' is not a rect")
+        return base
+
+    frame_ids = {
+        str(base.get("id") or "").strip(),
+        str(base.get("data-origid") or "").strip(),
+    }
+    frame_ids.discard("")
+    search_scope = scope if scope is not None else root
+    linked = []
+    try:
+        for node in search_scope.iter():
+            tag = str(getattr(node, "tag", "") or "")
+            if tag.endswith("text") and _shape_inside_id(node) in frame_ids:
+                linked.append(node)
+    except Exception:
+        linked = []
+    if not linked and search_scope is not root:
+        try:
+            for node in root.iter():
+                tag = str(getattr(node, "tag", "") or "")
+                if tag.endswith("text") and _shape_inside_id(node) in frame_ids:
+                    linked.append(node)
+        except Exception:
+            pass
+    if not linked:
+        _l.w(f"[transform.inside] no shape-inside text links to frame='{base.get('id') or ''}'")
+        return base
+
+    group = inkex.Group()
+    group.set("data-dm-inside-owner", mode)
+    group_transform = _node_world_transform(linked[0])
+    group.set("transform", str(group_transform))
+    frame = deepcopy(base)
+    frame.set("data-dm-inside-frame", mode)
+    group.append(frame)
+    try:
+        bx, by, bw, bh = _rect_world_bbox(frame)
+        group.set("data-bbox", f"{bx} {by} {bw} {bh}")
+    except Exception:
+        pass
+    try:
+        inverse_group = group_transform.inverse()
+    except AttributeError:
+        inverse_group = -group_transform
+    for text_node in linked:
+        text_copy = deepcopy(text_node)
+        relative_transform = inverse_group @ _node_world_transform(text_node)
+        if str(relative_transform).strip():
+            text_copy.set("transform", str(relative_transform))
+        else:
+            text_copy.attrib.pop("transform", None)
+        text_copy.set("data-dm-inside-text", "1")
+        group.append(text_copy)
+    return group
+
+
+def _style_value(node, name: str) -> str:
+    try:
+        value = SVG.style_map(node).get(name)
+        return str(value or "").strip()
+    except Exception:
+        return ""
+
+
+def _set_rect_world_bbox(frame, left, top, right, bottom) -> bool:
+    try:
+        transform = _node_world_transform(frame)
+        if abs(float(getattr(transform, "b", 0.0))) > 1e-9 or abs(float(getattr(transform, "c", 0.0))) > 1e-9:
+            _l.w(f"[transform.inside] rotated/skewed frame='{frame.get('id') or ''}' is not supported")
+            return False
+        try:
+            inverse = transform.inverse()
+        except AttributeError:
+            inverse = -transform
+        p1 = inverse.apply_to_point((left, top))
+        p2 = inverse.apply_to_point((right, bottom))
+        x1, y1 = _point_xy(p1)
+        x2, y2 = _point_xy(p2)
+        frame.set("x", f"{min(x1, x2):.9g}")
+        frame.set("y", f"{min(y1, y2):.9g}")
+        frame.set("width", f"{abs(x2 - x1):.9g}")
+        frame.set("height", f"{abs(y2 - y1):.9g}")
+        return True
+    except Exception:
+        return False
+
+
+def _inside_array_ancestor(node):
+    current = node.getparent() if node is not None else None
+    while current is not None:
+        if current.get("data-dm-array-cols"):
+            return current
+        current = current.getparent() if hasattr(current, "getparent") else None
+    return None
+
+
+def _array_item_ancestor(node, array_group):
+    current = node
+    while current is not None and current is not array_group:
+        if current.get("data-dm-array-item") is not None:
+            return current
+        current = current.getparent() if hasattr(current, "getparent") else None
+    return None
+
+
+def _world_bbox_in_group(bbox, group):
+    left, top, width, height = bbox
+    transform = _node_world_transform(group)
+    try:
+        inverse = transform.inverse()
+    except AttributeError:
+        inverse = -transform
+    points = [
+        _point_xy(inverse.apply_to_point(point))
+        for point in ((left, top), (left + width, top), (left, top + height), (left + width, top + height))
+    ]
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+
+
+def _bbox_in_group(frame, group):
+    return _world_bbox_in_group(_rect_world_bbox(frame), group)
+
+
+def _repack_inside_arrays(array_groups, empty_items) -> None:
+    for group in array_groups:
+        try:
+            old_left, old_top, old_width, old_height = [
+                float(value) for value in str(group.get("data-bbox") or "").replace(",", " ").split()
+            ]
+        except Exception:
+            old_left = old_top = old_width = old_height = 0.0
+        for item in list(empty_items.get(group, ())):
+            parent = item.getparent()
+            if parent is not None:
+                parent.remove(item)
+        entries = []
+        for item in group:
+            if item.get("data-dm-array-item") is None:
+                continue
+            frame = next((node for node in item.iter() if node.get("data-dm-inside-frame") in ("x", "y", "a")), None)
+            try:
+                bbox = _bbox_in_group(frame, group) if frame is not None else _world_bbox_in_group(SVG.visual_bbox(item), group)
+                entries.append((int(item.get("data-dm-array-item") or 0), item, bbox))
+            except Exception:
+                continue
+        if not entries:
+            continue
+        entries.sort(key=lambda entry: entry[0])
+        cols = max(1, int(group.get("data-dm-array-cols") or 1))
+        rows = max(1, int(group.get("data-dm-array-rows") or 1))
+        sweep_rows = group.get("data-dm-array-sweep-rows") != "0"
+        gap_x = float(group.get("data-dm-array-gap-x") or 0.0)
+        gap_y = float(group.get("data-dm-array-gap-y") or 0.0)
+        assigned = []
+        for position, entry in enumerate(entries):
+            if sweep_rows:
+                row, col = divmod(position, cols)
+            else:
+                col, row = divmod(position, rows)
+            assigned.append((entry, row, col))
+        used_rows = max(row for _entry, row, _col in assigned) + 1
+        used_cols = max(col for _entry, _row, col in assigned) + 1
+        row_heights = [0.0] * used_rows
+        col_widths = [0.0] * used_cols
+        for (_index, _item, (_x, _y, width, height)), row, col in assigned:
+            row_heights[row] = max(row_heights[row], height)
+            col_widths[col] = max(col_widths[col], width)
+        current_left = min(entry[2][0] for entry in entries)
+        current_top = min(entry[2][1] for entry in entries)
+        total_width = sum(col_widths) + gap_x * max(0, used_cols - 1)
+        total_height = sum(row_heights) + gap_y * max(0, used_rows - 1)
+        try:
+            anchor = int(group.get("data-dm-array-anchor") or 5)
+        except Exception:
+            anchor = 5
+        if old_width <= 0.0 or old_height <= 0.0:
+            old_left, old_top, old_width, old_height = current_left, current_top, total_width, total_height
+        anchor_x, anchor_y = SVG.keypad_to_anchor(anchor)
+        origin_x = old_left + (old_width - total_width) * anchor_x
+        origin_y = old_top + (old_height - total_height) * anchor_y
+        col_starts = [origin_x]
+        row_starts = [origin_y]
+        for col in range(1, used_cols):
+            col_starts.append(col_starts[-1] + col_widths[col - 1] + gap_x)
+        for row in range(1, used_rows):
+            row_starts.append(row_starts[-1] + row_heights[row - 1] + gap_y)
+        for (_index, item, (left, top, _width, _height)), row, col in assigned:
+            dx = col_starts[col] - left
+            dy = row_starts[row] - top
+            old_transform = inkex.Transform(item.get("transform") or "")
+            item.set("transform", str(inkex.Transform(f"translate({dx},{dy})") @ old_transform))
+        group.set("data-bbox", f"{origin_x} {origin_y} {total_width} {total_height}")
+
+
+def pending_inside_text_ids(root) -> set[str]:
+    ids = set()
+    for node in root.iter():
+        if node.get("data-dm-inside-text") == "1":
+            ids.add(SVG.ensure_id(root, node, "dm_inside_text"))
+    return ids
+
+
+def discard_empty_inside(root) -> int:
+    owners = [node for node in root.iter() if node.get("data-dm-inside-owner") in ("x", "y", "a")]
+    if not owners:
+        return 0
+    changed = 0
+    affected_arrays = set()
+    empty_array_items = {}
+    for owner in owners:
+        texts = [node for node in owner.iter() if node.get("data-dm-inside-text") == "1"]
+        if texts and any("".join(node.itertext()).strip() for node in texts):
+            continue
+        array_group = _inside_array_ancestor(owner)
+        if array_group is not None:
+            affected_arrays.add(array_group)
+            item = _array_item_ancestor(owner, array_group)
+            if item is not None:
+                empty_array_items.setdefault(array_group, set()).add(item)
+                changed += 1
+                continue
+        parent = owner.getparent()
+        if parent is not None:
+            parent.remove(owner)
+            changed += 1
+    if affected_arrays:
+        _repack_inside_arrays(affected_arrays, empty_array_items)
+    return changed
+
+
+def apply_deferred_inside(root, bboxes) -> int:
+    owners = [node for node in root.iter() if node.get("data-dm-inside-owner") in ("x", "y", "a")]
+    if not owners:
+        return 0
+    text_ids = pending_inside_text_ids(root)
+    changed = 0
+    affected_arrays = set()
+    empty_array_items = {}
+    cleanup_nodes = []
+    for owner in owners:
+        mode = owner.get("data-dm-inside-owner") or ""
+        frame = next((node for node in owner.iter() if node.get("data-dm-inside-frame") == mode), None)
+        texts = [node for node in owner.iter() if node.get("data-dm-inside-text") == "1"]
+        if frame is None or not texts:
+            continue
+        array_group = _inside_array_ancestor(owner)
+        if array_group is not None:
+            affected_arrays.add(array_group)
+        if not any("".join(node.itertext()).strip() for node in texts):
+            item = _array_item_ancestor(owner, array_group) if array_group is not None else None
+            if item is not None:
+                empty_array_items.setdefault(array_group, set()).add(item)
+            else:
+                parent = owner.getparent()
+                if parent is not None:
+                    parent.remove(owner)
+            changed += 1
+            continue
+        measured = [bboxes[node.get("id")] for node in texts if node.get("id") in bboxes]
+        if not measured:
+            _l.w(f"[transform.inside] query-all returned no bbox for frame='{frame.get('id') or ''}'")
+            continue
+        text_left = min(float(bb["x"]) for bb in measured)
+        text_right = max(float(bb["x"]) + float(bb["width"]) for bb in measured)
+        text_bottom = max(float(bb["y"]) + float(bb["height"]) for bb in measured)
+        frame_left, frame_top, frame_width, frame_height = _rect_world_bbox(frame)
+        frame_right = frame_left + frame_width
+        frame_bottom = frame_top + frame_height
+        original_left, original_right, original_bottom = frame_left, frame_right, frame_bottom
+        try:
+            padding = max(float(_style_value(texts[0], "shape-padding") or 0.0), 0.0)
+        except Exception:
+            padding = 0.0
+        padding_x = padding_y = padding
+        try:
+            transform = _node_world_transform(frame)
+            padding_x *= math.hypot(float(transform.a), float(transform.b))
+            padding_y *= math.hypot(float(transform.c), float(transform.d))
+        except Exception:
+            pass
+        epsilon = 0.01
+        if mode in ("x", "a"):
+            align = (_style_value(texts[0], "text-align") or "start").lower()
+            direction = (_style_value(texts[0], "direction") or "ltr").lower()
+            trim_from_left = align == "right" or (align == "end" and direction != "rtl") or (align == "start" and direction == "rtl")
+            if trim_from_left:
+                frame_left = max(original_left, min(frame_right, text_left - padding_x - epsilon))
+            elif align in ("center", "middle"):
+                center = (frame_left + frame_right) * 0.5
+                half = min(frame_width * 0.5, max(center - text_left, text_right - center) + padding_x + epsilon)
+                frame_left, frame_right = center - half, center + half
+            elif align not in ("justify",):
+                frame_right = min(original_right, max(frame_left, text_right + padding_x + epsilon))
+        if mode in ("y", "a"):
+            frame_bottom = min(original_bottom, max(frame_top, text_bottom + padding_y + epsilon))
+        if _set_rect_world_bbox(frame, frame_left, frame_top, frame_right, frame_bottom):
+            changed += 1
+        cleanup_nodes.extend([owner, frame, *texts])
+    _repack_inside_arrays(affected_arrays, empty_array_items)
+    for node in cleanup_nodes:
+        if node.getparent() is None and node is not root:
+            continue
+        for attr in ("data-dm-inside-owner", "data-dm-inside-frame", "data-dm-inside-text"):
+            node.attrib.pop(attr, None)
+    for group in affected_arrays:
+        for node in group.iter():
+            node.attrib.pop("data-dm-array-item", None)
+        for attr in ("data-dm-array-cols", "data-dm-array-rows", "data-dm-array-gap-x", "data-dm-array-gap-y", "data-dm-array-sweep-rows", "data-dm-array-anchor"):
+            group.attrib.pop(attr, None)
+    _l.i(f"[transform.inside] frames={len(owners)} changed={changed} queried_texts={len(text_ids)}")
+    return changed
 
 
 def _is_text_root(node) -> bool:
@@ -595,7 +1152,8 @@ def apply_transform_spec(root, node, spec, *, bbox=None) -> bool:
                 f"scale={getattr(spec, 'scale', None)} "
                 f"filter={getattr(spec, 'filter_ref', None)} "
                 f"opacity={getattr(spec, 'opacity', None)} "
-                f"text={getattr(spec, 'text', None)}"
+                f"text={getattr(spec, 'text', None)} "
+                f"inside={getattr(spec, 'inside', None)}"
             )
     except Exception:
         pass
@@ -603,4 +1161,8 @@ def apply_transform_spec(root, node, spec, *, bbox=None) -> bool:
     return changed
 
 
-__all__ = ["merge_specs", "has_text", "apply_transform_spec"]
+__all__ = [
+    "merge_specs", "has_text", "has_inside", "split_related_target",
+    "shape_inside_dependency_ids", "ensure_private_shape_inside", "resolve_related_target", "mark_inside_owner",
+    "prepare_inside_source", "pending_inside_text_ids", "discard_empty_inside", "apply_deferred_inside", "apply_transform_spec",
+]

@@ -13,6 +13,8 @@ theme:
 nav:
   - Home: index.md
   - Introduction: intro.md
+  - Basic Workflow: quickstart.md
+  - DeckMaker GUI: deckmaker-gui.md
   - Dataset:
       - Format and Sources: dataset-overview.md
       - Dataset Reference: dataset.md
@@ -32,9 +34,6 @@ nav:
       - Marks: dsl/marks.md
       - Gradients (Experimental): dsl/gradients.md
       - Advanced: dsl/advanced.md
-  - PnPInk Overview: pnpink-general.md
-  - Basic Workflow: quickstart.md
-  - DeckMaker GUI: deckmaker-gui.md
   - Export: export.md
   - Extensions and Tools: extensions.md
   - Snippets: snippets.md

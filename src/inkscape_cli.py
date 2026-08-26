@@ -439,6 +439,7 @@ class ShellQuerySession:
         self.output_q: queue.Queue[str] = queue.Queue()
         self.readers: list[threading.Thread] = []
         self.current_svg: str | None = None
+        self.ready = False
 
     def __enter__(self):
         kwargs = {
@@ -494,6 +495,38 @@ class ShellQuerySession:
         self.proc.stdin.write(command.rstrip("\n") + "\n")
         self.proc.stdin.flush()
 
+    def _read_until_prompt(self, *, timeout_s: float) -> str:
+        deadline = time.perf_counter() + max(0.1, float(timeout_s))
+        chunks: list[str] = []
+        while time.perf_counter() < deadline:
+            if self.proc is not None and self.proc.poll() is not None:
+                break
+            try:
+                chunks.append(self.output_q.get(timeout=0.02))
+            except queue.Empty:
+                continue
+            text = "".join(chunks)
+            if text.endswith("\n> ") or (len(text) < 500 and text.endswith("> ")):
+                return text
+        return "".join(chunks)
+
+    def wait_ready(self, *, timeout_s: float = 20.0) -> None:
+        if self.ready:
+            return
+        output = self._read_until_prompt(timeout_s=timeout_s)
+        if not output.endswith("> "):
+            raise RuntimeError("Inkscape shell did not become ready")
+        self.ready = True
+
+    def _action(self, command: str, *, timeout_s: float) -> str:
+        self.wait_ready(timeout_s=timeout_s)
+        self._drain()
+        self._send(command)
+        output = self._read_until_prompt(timeout_s=timeout_s)
+        if not output.endswith("> "):
+            raise RuntimeError(f"Inkscape shell action timed out: {command}")
+        return output
+
     def _read_until_bboxes(self, ids: set[str], *, timeout_s: float) -> tuple[dict[str, dict[str, float]], str]:
         deadline = time.perf_counter() + max(0.1, float(timeout_s))
         chunks: list[str] = []
@@ -539,21 +572,22 @@ class ShellQuerySession:
         *,
         timeout_s: float = 8.0,
         open_delay_s: float = 0.0,
+        log_query: bool = True,
     ) -> dict[str, dict[str, float]]:
         ids = set(ids or set())
         if not ids:
             return {}
-        self._drain()
         t0 = time.perf_counter()
-        self._send(f"file-open:{svg_path}")
+        self._action(f"file-open:{svg_path}", timeout_s=timeout_s)
         self.current_svg = os.path.normcase(os.path.normpath(str(svg_path)))
         if open_delay_s and open_delay_s > 0:
             time.sleep(float(open_delay_s))
-        self._send("query-all")
-        bbs, out = self._read_until_bboxes(ids, timeout_s=timeout_s)
+        out = self._action("query-all", timeout_s=timeout_s)
+        bbs = _parse_query_all(out, ids)
         dt = (time.perf_counter() - t0) * 1000.0
-        _l.i("[inkscape_shell_query] query file='%s' ids=%d bboxes=%d ms=%.1f", svg_path, len(ids), len(bbs), dt)
-        _l.i("[inkscape_shell_query] raw_output=%s", repr((out or "")[:2000]))
+        if log_query:
+            _l.i("[inkscape_shell_query] query file='%s' ids=%d bboxes=%d ms=%.1f", svg_path, len(ids), len(bbs), dt)
+            _l.i("[inkscape_shell_query] raw_output=%s", repr((out or "")[:2000]))
         if not bbs and out:
             _l.w("[inkscape_shell_query] no bboxes; output=%s", out[:1000])
         return bbs

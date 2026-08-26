@@ -4,6 +4,8 @@ DeckMaker is the user-facing PnPInk window used to generate decks from an SVG te
 
 The window title shows the running DeckMaker version and the current template file name. The full template path is not shown in the form because the extension is launched from the active Inkscape document.
 
+Before opening DeckMaker for a local project, save the SVG to disk and place a CSV with the same base name beside it. For example, `cards.svg` and `cards.csv` form one automatically discoverable project. Keep the SVG template open when launching the extension; DeckMaker always uses the active document as its visual source.
+
 ## Deck tab
 
 The Deck tab contains the data source controls, the main actions, and the live activity log.
@@ -17,6 +19,8 @@ The Deck tab contains the data source controls, the main actions, and the live a
 | `Source` | Selects how the dataset is loaded. Supported values are empty/default, local CSV, Google Sheet OAuth, and Google Sheet public. |
 
 For local CSV workflows, the spreadsheet fields can be left empty when the source is resolved from the template or from the selected file.
+
+For a first run, choose the local/default source, leave the Google fields empty, and click `Generate`. The generated SVG is written beside the template, normally with `_output.svg` appended to the base name. Use `Open SVG` to inspect that file, then return to the original SVG or CSV for corrections and generate again.
 
 ### Actions
 

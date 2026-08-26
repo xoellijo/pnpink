@@ -76,6 +76,7 @@ class TransformSpec:
     soft: Optional[List[str]] = None
     filter_ref: Optional[str] = None
     text: Optional[List[str]] = None
+    inside: Optional[str] = None   # 'x'|'y'|'a'
 
 @dataclass
 class GridSpec:
@@ -681,6 +682,14 @@ def _transform_from_dict(args: Dict[str, Any]) -> TransformSpec:
     if raw_text is not None:
         vals = [str(v).strip() for v in _as_list(raw_text)]
         ts.text = vals
+
+    raw_inside = args.get("inside") if "inside" in args else args.get("i")
+    if raw_inside is not None:
+        inside = str(raw_inside or "").strip().lower()
+        aliases = {"x": "x", "y": "y", "a": "a", "all": "a"}
+        if inside not in aliases:
+            raise DSLError("inside requires x, y or a")
+        ts.inside = aliases[inside]
 
     raw_scale = None
     if "scale" in args:

@@ -57,6 +57,7 @@ Current parameters are:
 - `edge` or `e`
 - `filter` or `f`
 - `text` or `t`
+- `inside` or `i`
 
 ## Rotate and Mirror
 
@@ -162,6 +163,36 @@ With a list, values are applied to the first text node, second text node, and so
 This is intended for reusable icons or groups that contain small labels.
 When `text` is used, PnPInk places a real copy instead of a shared clone, so each instance can have its own text.
 The original template object is not modified.
+
+## Dynamic Shape-Inside Frames
+
+`inside` trims a rectangular frame to the text linked to it through Inkscape's `shape-inside` property:
+
+```txt
+frame.T{i=x}
+frame.T{i=y}
+frame.T{i=a}
+```
+
+- `i=x` trims horizontally. Left-aligned text keeps the left edge, right-aligned text keeps the right edge, and centered text trims both sides.
+- `i=y` keeps the top edge and trims the bottom.
+- `i=a` applies both rules.
+
+PnPInk places the frame and its linked text together and lets Inkscape flow the final text. Its text ID is registered in the same shared measurement batch used by inline-icons, so all requested text geometry is resolved by one `inkscape --query-all` call. Future text-geometry features can register another consumer in that batch without adding another Inkscape process. An empty linked text removes the placed frame and text. Arrays containing dynamic frames are packed again with their final widths and heights after that same measurement. The source must be a `<rect>` and its text must reference it with `shape-inside:url(#frame_id)`.
+
+The hidden frame can be addressed through the visible text ID with the virtual `shape-inside` property. PnPInk resolves it automatically and creates a private frame only for instances that modify it:
+
+```txt
+placeholder, description
+description[shape-inside]~[90%]i.T{i=a}, Text for this instance
+```
+
+Property-only headers inherit the previous target ID, so the same operation can be split into two columns:
+
+```txt
+description, [shape-inside]
+Text for this instance, .T{i=a}
+```
 
 ## Typical Use
 

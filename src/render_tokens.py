@@ -222,7 +222,7 @@ def split_multivalue(value: str):
 
 def parse_object_token(token: str) -> Tuple[str, str, str]:
     m = re.match(r"""
-        ^(?P<id>[A-Za-z_][-A-Za-z0-9_:.]*\*?)
+        ^(?P<id>[A-Za-z_][-A-Za-z0-9_:.]*\*?(?:\[[A-Za-z_][A-Za-z0-9_-]*\])?)
         (?P<mode>[=+])?
         (?:
             ~(?P<ops_tilde>.+)
@@ -230,7 +230,7 @@ def parse_object_token(token: str) -> Tuple[str, str, str]:
             (?P<ops_compact>[\^!\|].*)
         )?
         \s*$
-    """, token or "", re.VERBOSE)
+    """, token or "", re.VERBOSE | re.IGNORECASE)
     if not m:
         raise ValueError(f"Invalid object token: '{token}'")
     base_id = m.group("id")
@@ -254,6 +254,36 @@ def split_transform_suffixes(token: str):
     s = str(token or "").strip()
     if not s:
         return "", None
+    specs = []
+    rx = re.compile(r"^(?P<base>.*?)(?P<mod>\.(?:Transform|T)\s*\{[^{}]*\})\s*$", re.IGNORECASE)
+
+    def _peel_transform_suffixes(value: str) -> str:
+        current = value
+        while True:
+            match = rx.match(current)
+            if not match:
+                break
+            mod_txt = (match.group("mod") or "").strip()
+            try:
+                chain = DSL.maybe_parse_chain("X" + mod_txt)
+            except Exception:
+                chain = None
+            if chain is None:
+                break
+            module = next(
+                (
+                    item for item in (getattr(chain, "modules", None) or [])
+                    if str(getattr(item, "name", "")).lower() in ("transform", "t")
+                ),
+                None,
+            )
+            if module is None or getattr(module, "spec", None) is None:
+                break
+            specs.insert(0, getattr(module, "spec"))
+            current = (match.group("base") or "").strip()
+        return current
+
+    s = _peel_transform_suffixes(s)
     tail = ""
     m_tail = re.match(
         r"^(?P<core>.*?)(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*))?\s*$",
@@ -263,24 +293,7 @@ def split_transform_suffixes(token: str):
     if m_tail:
         s = (m_tail.group("core") or "").strip()
         tail = (m_tail.group("tail") or "").strip()
-    specs = []
-    rx = re.compile(r"^(?P<base>.*?)(?P<mod>\.(?:Transform|T)\s*\{[^{}]*\})\s*$", re.IGNORECASE)
-    while True:
-        m = rx.match(s)
-        if not m:
-            break
-        mod_txt = (m.group("mod") or "").strip()
-        try:
-            ch = DSL.maybe_parse_chain("X" + mod_txt)
-        except Exception:
-            ch = None
-        if ch is None:
-            break
-        mod = next((mm for mm in (getattr(ch, "modules", None) or []) if str(getattr(mm, "name", "")).lower() in ("transform", "t")), None)
-        if mod is None or getattr(mod, "spec", None) is None:
-            break
-        specs.insert(0, getattr(mod, "spec"))
-        s = (m.group("base") or "").strip()
+    s = _peel_transform_suffixes(s)
     out = s
     if tail:
         out = (out + tail).strip()

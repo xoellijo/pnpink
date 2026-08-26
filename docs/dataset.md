@@ -15,10 +15,7 @@ IDs must be unique and follow XML rules (letters first, no spaces).
 ## Dataset Structure
 Dataset structure defines where parsing starts and how sections are separated.
 
-PnPInk supports two forms:
-
-- **Marker mode** (recommended, supports multiple datasets).
-- **Shorthand mode** (single dataset only).
+PnPInk supports **marker mode**, which is recommended for explicit or multi-section datasets, and **shorthand mode**, which provides a compact header for a single dataset.
 
 For source selection (CSV vs Google Sheets and tab lookup), see
 [Dataset Format and Sources](dataset-overview.md).
@@ -38,10 +35,7 @@ Examples (equivalent):
 {{card_bbox}}
 ```
 
-Notes:
-
-- Only one main template bbox is supported per dataset marker.
-- Extra DSL tails are allowed after the marker (see Leading Cell below).
+Each marker supports one main template bbox. Additional DSL expressions may follow the marker in the same leading cell, as described later in this chapter.
 
 ### Main Template BBox and Z-Order
 This is a core concept: one main bbox drives slot logic for the section.
@@ -164,10 +158,7 @@ This is equivalent to:
 card_bg[fill],card_bg[stroke],card_bg[stroke-width]
 ```
 
-Special properties:
-
-- `id[text]` or just `id` replaces text.
-- `id[xml]` replaces rich XML content inside text-like objects.
+Two text-related forms are worth distinguishing: `id[text]`, or simply `id`, replaces normal text content, whereas `id[xml]` replaces rich XML content inside a text-like object.
 
 ### Header Fan-Out and Wildcards
 Use this when one dataset column must feed several placeholders.
@@ -202,10 +193,7 @@ Template columns declare template bbox IDs and modifiers:
 {back_bg @page @back}
 ```
 
-Supported modifiers:
-
-- `@page` page-anchored templates
-- `@back` back-pass templates
+The `@page` modifier creates a page-anchored template, while `@back` assigns the template to the back pass. They can be combined when an element belongs once on every back page.
 
 Template columns are rendered as additional instances; they do not replace the main template column logic.
 For duplex backs, see [@back -- Back-Side Templates](#back-side-templates).

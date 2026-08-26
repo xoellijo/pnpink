@@ -26,28 +26,19 @@ Visible in Inkscape as:
 
 `Extensions > PnPInk > Spritesheet`
 
-Purpose:
-
-- open the interactive spritesheet GUI,
-- define grid cuts and frame extraction workflows for atlas-like image sources.
+Spritesheet opens an interactive tool for defining grid cuts and extracting frames from atlas-like image sources. Use it when one source image contains many regularly arranged icons, tiles, or card faces.
 
 ## Project/package tools
 
 ### PnPInk ZVG Import / Export
 File format: `.zvg`
 
-Purpose:
-
-- package an SVG project with local assets for reproducible sharing,
-- reopen packaged work as a portable project.
+ZVG packages an SVG project together with its local assets so another user can reopen the work reproducibly as a portable project.
 
 ### PnPInk PNP Import / Export
 File format: `.pnp`
 
-Purpose:
-
-- package a lighter regeneration-oriented project,
-- preserve the SVG + dataset workflow with smaller payloads when possible.
+PNP is a lighter, regeneration-oriented package that preserves the SVG and dataset workflow while keeping the payload smaller when the project does not need every source asset embedded.
 
 See also [Packages](dsl/packages.md).
 
@@ -71,10 +62,7 @@ Visible in Inkscape as:
 
 `Extensions > PnPInk > Docs and Examples`
 
-Purpose:
-
-- open the installed PnPInk folder in the system browser,
-- provide quick access to examples and local documentation.
+This command opens the installed PnPInk folder and provides quick access to bundled examples and local documentation. It is a useful starting point when you want to inspect a working project rather than build one from an empty file.
 
 ## Operational notes
 
