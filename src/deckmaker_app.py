@@ -34,6 +34,7 @@ import gui as GUI
 import deckmaker_runner as RUNNER
 from deckmaker_types import AppRequest, ExportOptions
 import temp_paths as TEMPPATHS
+import text_measure as TM
 
 _l = LOG
 
@@ -104,6 +105,7 @@ class DeckMakerApp:
         self._ui_queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
         self._server_stop = threading.Event()
         self._render_thread: Optional[threading.Thread] = None
+        self._text_query_service = TM.TextQueryService()
         self._activity_listener = None
         self._progress_listener = None
         self._live_activity_text = ""
@@ -135,7 +137,6 @@ class DeckMakerApp:
         self.export_jpeg_quality_var = tk.StringVar(value=str(prefs.get_export_jpeg_quality()))
         self.inkscape_workers_var = tk.StringVar(value=str(prefs.get_inkscape_shell_workers()))
         self.template_engine_var = tk.StringVar(value=prefs.get_template_engine())
-        self.inline_bbox_backend_var = tk.StringVar(value=prefs.get_inline_icons_bbox_backend())
         self.console_log_level_var = tk.StringVar(value=prefs.get_console_level())
         self.file_log_level_var = tk.StringVar(value=prefs.get_file_level())
         self.split_svg_output_var = tk.BooleanVar(value=prefs.get_split_svg_output())
@@ -518,18 +519,8 @@ class DeckMakerApp:
         )
         template_combo.grid(row=0, column=3, sticky="w")
         template_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_advanced_prefs_changed())
-        ttk.Label(advanced_box, text="BBox backend").grid(row=0, column=4, sticky="w", padx=(12, 6))
-        bbox_combo = ttk.Combobox(
-            advanced_box,
-            textvariable=self.inline_bbox_backend_var,
-            values=("query_all", "shell_per_text"),
-            state="readonly",
-            width=14,
-        )
-        bbox_combo.grid(row=0, column=5, sticky="w")
-        bbox_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_advanced_prefs_changed())
-        advanced_box.columnconfigure(5, weight=1)
-        ttk.Button(advanced_box, text="Open preferences", command=self._open_preferences_file).grid(row=0, column=6, sticky="w", padx=(12, 0))
+        advanced_box.columnconfigure(4, weight=1)
+        ttk.Button(advanced_box, text="Open preferences", command=self._open_preferences_file).grid(row=0, column=5, sticky="w", padx=(12, 0))
 
         logs_box = ttk.LabelFrame(other_tab, text="Logs", padding=8)
         logs_box.grid(row=2, column=0, sticky="ew", pady=(0, 12))
@@ -1031,11 +1022,13 @@ class DeckMakerApp:
                 return False
             if "effective=csv" in line:
                 self._queue_ui_log("Dataset source: local CSV")
+                self._queue_ui_activity("Rendering output SVG...")
                 return True
             if "effective=gsheet" in line:
                 m_mode = re.search(r"mode=([A-Za-z0-9_-]+)", line)
                 mode = str(m_mode.group(1) if m_mode else "").strip() or "unknown"
                 self._queue_ui_log(f"Dataset source: Google Sheet ({mode})")
+                self._queue_ui_activity("Rendering output SVG...")
                 return True
             return False
 
@@ -1630,16 +1623,10 @@ class DeckMakerApp:
         if template_engine not in {"legacy", "composed", "composed-instance"}:
             template_engine = "legacy"
             self.template_engine_var.set(template_engine)
-        bbox_backend = str(self.inline_bbox_backend_var.get() or "query_all").strip().lower()
-        if bbox_backend not in {"query_all", "shell_per_text"}:
-            bbox_backend = "query_all"
-            self.inline_bbox_backend_var.set(bbox_backend)
         prefs.set("template_engine", template_engine, save=True)
-        prefs.set("inline_icons_bbox_backend", bbox_backend, save=True)
         self._log(
             "Preference saved: "
-            f"workers={workers}, template_engine={template_engine}, "
-            f"bbox_backend={bbox_backend}"
+            f"workers={workers}, template_engine={template_engine}"
         )
 
     def _on_log_prefs_changed(self):
@@ -1899,6 +1886,8 @@ class DeckMakerApp:
         sheet_id = self.sheet_id_var.get().strip()
         if not sheet_id or sheet_id != self._warm_sheet_id:
             return
+        if self._render_thread and self._render_thread.is_alive():
+            return
 
         def worker():
             try:
@@ -1906,7 +1895,7 @@ class DeckMakerApp:
 
                 self._queue_ui_activity("Checking Google Sheets session...")
                 self._queue_ui_log("Checking Google Sheets session...")
-                ok = GS.warm_session()
+                ok = GS.warm_session(spreadsheet_id=sheet_id)
                 if ok:
                     self.root.after(0, lambda: self.status_var.set("Google Sheets session ready"))
                     self._queue_ui_activity("Google Sheets session ready")
@@ -2038,9 +2027,14 @@ class DeckMakerApp:
             self._queue_ui_activity("Loading template and dataset...")
             self._queue_ui_log("Loading template and dataset...")
             effect = RUNNER.EngineEffect(req.template, req.sheet_id, req.sheet_range, req.log_level, req.dataset_source_mode, snapshot_path=req.snapshot_path)
-            self._queue_ui_activity("Rendering output SVG...")
-            self._queue_ui_log("Rendering output SVG...")
-            ENG.run(effect, APP_VERSION)
+            if req.sheet_id:
+                mode = str(req.dataset_source_mode or "Google").strip().upper()
+                self._queue_ui_activity(f"Loading Google Sheet ({mode})...")
+                self._queue_ui_log(f"Loading Google Sheet ({mode})...")
+            else:
+                self._queue_ui_activity("Loading local dataset...")
+                self._queue_ui_log("Loading local dataset...")
+            ENG.run(effect, APP_VERSION, text_query_service=self._text_query_service)
             try:
                 access_mode = str(getattr(effect.options, "_dataset_access_mode", "") or "").strip().lower()
                 if req.sheet_id:
@@ -2358,6 +2352,12 @@ class DeckMakerApp:
     def _on_close(self):
         self._server_stop.set()
         self._stop_web_activity_monitor()
+        self._text_query_service.close()
+        try:
+            import gsheets_client_pkce as GS
+            GS.close_session()
+        except Exception:
+            pass
         self.root.destroy()
 
     def run(self):

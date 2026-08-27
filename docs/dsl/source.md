@@ -68,6 +68,8 @@ Behavior:
 - If the file is found by the same lookup rules above, it is treated as a source token.
 - If not found, the token is kept as normal literal text (`:bola.png:`).
 
+For complete inline-icon syntax, shared holes, Fit-Anchor placement and text transforms, see [Text](../text.md#inline-icons).
+
 ## SVG Node Import (Optional)
 For SVG sources only, you can target a specific node with `#id`:
 

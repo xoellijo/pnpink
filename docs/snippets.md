@@ -87,27 +87,8 @@ Snippets can call other snippets and are expanded inside-out.
 :C(:B(Name) red) -> <span fill='red'><b>Name</b></span>
 ```
 
-## Practical SVG Text Helpers
-These helpers are optional, but they are the fastest way to build rich text consistently.
-
-Current default rich-text helpers for `<tspan>` rich text:
-
-```txt
-# =====================
-# RICH TEXT SNIPPETS
-# =====================
-# :Tb(text) = <tspan font-weight='bold'>${text}</tspan>        ## bold text
-# :Ti(text) = <tspan font-style='italic'>${text}</tspan>       ## italic text
-# :Td(text) = <tspan baseline-shift='sub' font-size='65%'>${text}</tspan>
-# :Tu(text) = <tspan baseline-shift='super' font-size='65%'>${text}</tspan>
-# :Ts(text) = <tspan text-decoration='underline'>${text}</tspan>
-# :Tx(text) = <tspan text-decoration='line-through'>${text}</tspan>
-# :Tf(text font size) = <tspan font-family='${font}' ${size? font-size='${size}'}>${text}</tspan>
-# :Tp(text size) = <tspan ${size? font-size='${size}'}>${text}</tspan>
-# :Tc(text fill stroke width) = <tspan fill='${fill}' ${stroke? stroke='${stroke}' : stroke='${fill}'} ${width? stroke-width='${width}'} paint-order='stroke'>${text}</tspan>
-```
-
-Nested expansion is supported and resolved from inner to outer calls.
+## SVG Text Helpers
+PnPInk's default rich-text helpers turn calls such as `:Tb(...)`, `:Tc(...)` and `:Tpath(...)` into normal SVG `<tspan>` markup. Their purpose, combinations and expanded forms are documented with the rest of the text workflow in [Text](text.md#rich-text-with-snippets). This page remains the reference for defining your own snippets, passing bracketed multi-value arguments, nesting calls and using conditionals.
 
 ## Processing Order
 Processing order matters when snippets and `${var}` are combined in the same cell.

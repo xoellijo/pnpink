@@ -626,7 +626,7 @@ def _rasterize_filtered_nodes_png_alpha(
     except TypeError:
         doc.write(svg_path)
 
-    all_bboxes = SVG.query_all(doc, set(export_node_ids) | image_ids, inkscape_bin=inkscape_exe, minimize_for_ids=False)
+    all_bboxes = SVG.query_all(doc, set(export_node_ids) | image_ids, inkscape_bin=inkscape_exe)
     bbox_by_id = {node_id: all_bboxes[node_id] for node_id in export_node_ids if node_id in all_bboxes}
     image_bboxes = {image_id: all_bboxes[image_id] for image_id in image_ids if image_id in all_bboxes}
     raster_dir = TEMPPATHS.make_work_dir("filter_raster", stem=Path(svg_path).stem)
@@ -791,7 +791,7 @@ def _rasterize_filtered_nodes_area(
     except TypeError:
         doc.write(svg_path)
 
-    all_bboxes = SVG.query_all(doc, set(export_node_ids), inkscape_bin=inkscape_exe, minimize_for_ids=False)
+    all_bboxes = SVG.query_all(doc, set(export_node_ids), inkscape_bin=inkscape_exe)
     bbox_by_id = {node_id: all_bboxes[node_id] for node_id in export_node_ids if node_id in all_bboxes}
     raster_dir = TEMPPATHS.make_work_dir("filter_raster_area", stem=Path(svg_path).stem)
     exe_dir = os.path.dirname(inkscape_exe) or None

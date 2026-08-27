@@ -677,6 +677,10 @@ def _choose_sheet_and_range(effect, sheet_id: str, selector: Optional[str]) -> s
 
 def _fetch_gsheet_matrix_oauth(effect, sheet_id: str, selector: Optional[str], client_id_env: Optional[str]) -> List[List[str]]:
     rng = _choose_sheet_and_range(effect, sheet_id, selector)
+    try:
+        effect.options._dataset_effective_range = rng
+    except Exception:
+        pass
     values = _gs.fetch_sheet(sheet_id, rng, client_id_env or None)
     matrix = [[("" if v is None else str(v)) for v in r] for r in values]
     # Raw dataset log (user request)
@@ -838,6 +842,10 @@ def load_datasets(effect, doc_path: Optional[str] = None):
 
     # 1) Read matrix
     used_access_mode = ""
+    try:
+        options._dataset_effective_range = ""
+    except Exception:
+        pass
     if sheet_id:
         mode_hint = str(getattr(options, 'dataset_source_mode', '') or '').strip().lower()
         access_hint = "oauth" if mode_hint in {"oauth", "google_sheet_oauth"} else ""
@@ -862,7 +870,7 @@ def load_datasets(effect, doc_path: Optional[str] = None):
         try:
             sel_kind, sel_val = _split_selector(range_a1)
             if used_access_mode == "oauth":
-                eff_range = _choose_sheet_and_range(effect, sheet_id, range_a1)
+                eff_range = str(getattr(options, "_dataset_effective_range", "") or range_a1 or "")
                 _l.i(
                     f"[datasets.source] effective=gsheet mode=oauth sheet_id='{sheet_id}' "
                     f"selector_kind='{sel_kind or 'auto'}' selector='{sel_val or ''}' range='{eff_range}'"

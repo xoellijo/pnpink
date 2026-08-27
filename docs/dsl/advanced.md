@@ -74,28 +74,13 @@ Supported order is flexible, but the parser expects:
 4. Optional copy/hole tail (`[10 3- 5]` or trailing number).
 
 ## Inline Icon Tokens in Text
-These tokens allow icon insertion directly in flowing text while preserving typographic behavior.
-
-Text rendering supports inline icon tokens:
-
-```txt
-:heart_icon:
-:@{icon://noto/heart-suit}:
-:@{icon://noto/star}~i5^10:
-:blue_planet.T{t=1}:
-:icon1~1 icon2~3:
-```
-
-Token forms implemented:
-
-- `:id:` uses an existing SVG id.
-- `:id.T{t=...}:` replaces text inside the placed icon; icons with text changes are placed as real copies.
-- `:@{...}:` uses a Source token with optional fit suffix.
-- `:S{...}:` and `:Source{...}:` are equivalent source forms.
-- `:id1~... id2~...:` places multiple existing SVG ids inside one shared inline hole. Each icon applies its own Fit-Anchor operations relative to that hole, and later icons are rendered above earlier icons.
+Inline icons accept existing SVG IDs, local and web sources, Fit-Anchor suffixes, text transforms and several layered icons sharing one typographic hole. See [Text](../text.md#inline-icons) for the complete user-facing syntax and examples.
 
 ## Forced BBox for Groups with Text
 
 Inkex versions shipped with Inkscape 1.2 through 1.4.x can measure groups containing text incorrectly. The failure is not limited to returning a zero-sized text bbox: the resulting group bbox can also be unpredictable.
 
 As a workaround, add a direct child `<rect>` whose SVG id or Inkscape label starts with `force_bbox`, `force-bbox`, or `forcebbox` (case-insensitive). PnPInk uses that rectangle as the group's bbox even when it is fully transparent. An explicit `data-bbox` still has higher priority.
+
+## Path Decorations for Rich Text
+Rich-text `<tspan>` elements can generate styled paths behind or in front of their rendered text through the `pnp:decoration` attributes. See [Text](../text.md#decorating-part-of-a-text) for layers, padding, style sources, limitations and the `:Tpath(...)` helper.

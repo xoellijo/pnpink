@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import log as LOG
 _l = LOG
-import os, sys, re
+import os, sys, re, time
 from copy import deepcopy
 from types import SimpleNamespace
 from typing import List
@@ -45,7 +45,6 @@ class EngineContext(SimpleNamespace):
 
 
 DM_OUTPUT_CHUNK_THRESHOLD_PAGES = 24
-TEXT_QUERY_BACKEND = "streaming_shell"
 
 
 def _resolve_dm_output_path(dm_output_raw: str, doc_path: str | None) -> str | None:
@@ -92,7 +91,7 @@ def _write_svg_atomic(doc, out_path: str) -> None:
     os.replace(tmp, out_path)
 
 
-def run(self, __version__):
+def run(self, __version__, *, text_query_service=None):
     """Run the DeckMaker render pipeline for the Tkinter app flow."""
     prefs.reload()
     _l.get_logger(self, console_level=self.options.log_level, file_level='global', tag_override='deckmaker')
@@ -118,6 +117,7 @@ def run(self, __version__):
     SM = None
 
     _l.s("DATASET: load")
+    dataset_load_started = time.perf_counter()
     preloaded_datasets = getattr(self, "_dm_preloaded_datasets", None)
     if preloaded_datasets is not None:
         datasets = preloaded_datasets
@@ -126,6 +126,7 @@ def run(self, __version__):
         datasets = DS.load_datasets(self, _doc_path)
     if not datasets:
         raise inkex.AbortExtension("Dataset has no valid header.")
+    _l.i("[datasets] load_ms=%.1f", (time.perf_counter() - dataset_load_started) * 1000.0)
     try:
         translated_headers = DHEAD.translate_datasets(datasets, root)
         if translated_headers:
@@ -269,7 +270,7 @@ def run(self, __version__):
                 self._dm_output_disabled = True
                 self._dm_preloaded_datasets = datasets
                 try:
-                    run(self, __version__)
+                    run(self, __version__, text_query_service=text_query_service)
                 finally:
                     if old_preloaded is _missing:
                         try:
@@ -395,15 +396,11 @@ def run(self, __version__):
     _l.i(f"[dm] run tag={dm_tag}")
 
     SM = SRC.SourceManager(root, _doc_path, project_root=_runtime_python_dir(), defs_group_id=dm_defs_id)
-    text_query_service = None
-    deferred_text_geometry = None
-    if TEXT_QUERY_BACKEND == "streaming_shell":
-        try:
-            text_query_service = TXT.TM.StreamingShellQueryService()
-            deferred_text_geometry = TXT.DeferredTextGeometry(root)
-            _l.i("[text_measure] experimental backend=streaming_shell started")
-        except Exception as ex:
-            _l.w("[text_measure] streaming shell unavailable; backend=compact err=%s", ex)
+    owns_text_query_service = text_query_service is None
+    if owns_text_query_service:
+        text_query_service = TXT.TM.TextQueryService()
+    deferred_text_geometry = TXT.DeferredTextGeometry(root)
+    _l.d("[text_measure] persistent Inkscape shell owner=%s", "render" if owns_text_query_service else "deckmaker")
 
     # ---------------- Global comment directives (snippets + spritesheets) ----------------
     # Multi-section datasets: the loader can split a single sheet into multiple sections.
@@ -567,6 +564,14 @@ def run(self, __version__):
     use_seq = [0]
     next_n = SVG.scan_max_pnp_suffix(root) + 1
     placed_total = 0
+
+    # Start external-source discovery for every section before rendering the first
+    # one, so slow folder listings overlap symbol/template generation.
+    for dataset in datasets:
+        try:
+            SM.prefetch_dataset_rows((dataset or {}).get("rows", []) or [])
+        except Exception as ex:
+            _l.w(f"[sources.web] early prefetch failed: {ex}")
 
     # ---------------- Page cursor ----------------
     # Start placing on the first existing page (index 0), so output content
@@ -1817,29 +1822,25 @@ def run(self, __version__):
         continue
     _l.i(f"[datasets] total placed={placed_total} across {len(datasets)} dataset section(s).")
 
-    import traceback as _tb
     try:
-        res = TXT.process_text_geometry(
-            out_layer,
-            show_debug_rects=False,
-            source_manager=SM,
-            doc_path=_doc_path,
-            query_service=text_query_service,
-            prepared_geometry=deferred_text_geometry,
-        )
+        if deferred_text_geometry.has_work:
+            res = TXT.process_text_geometry(
+                out_layer,
+                show_debug_rects=False,
+                source_manager=SM,
+                doc_path=_doc_path,
+                query_service=text_query_service,
+                prepared_geometry=deferred_text_geometry,
+            )
+        else:
+            res = TXT.ProcessResult(0, set())
         _l.i(
             f"[deckmaker.text] ONE-PASS placed={res.icons_placed} icons across output; "
             f"sources={sorted(res.used_sources)}"
         )
-    except Exception as ex:
-        _l.w(f"[deckmaker.text] inline_icons ONE-PASS failed: {ex}")
-        _l.w("[deckmaker.text] traceback:\n" + _tb.format_exc())
     finally:
-        if text_query_service is not None:
-            try:
-                text_query_service.close()
-            except Exception as ex:
-                _l.w("[text_measure] streaming shell close failed: %s", ex)
+        if owns_text_query_service:
+            text_query_service.close()
         try:
             SM.log_web_summary()
         except Exception:

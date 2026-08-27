@@ -1,12 +1,19 @@
 [Unreleased]
+- Add path-based rich-text decorations through `pnp:decoration` and `:Tpath(...)`, with copied paint styles, front/behind layers, CSS-like padding, and shared persistent-shell measurement.
+- Reuse a warm Google Sheets OAuth/HTTPS session for DeckMaker's lifetime, cache sheet titles, remove duplicate range resolution, and show dataset loading separately from SVG rendering.
+- Resolve Google Drive folder sources asynchronously across dataset sections, refresh each folder once per generation, and invalidate changed cached files through Drive modification metadata.
 - Add dynamic `shape-inside` frames through `textID[shape-inside]` and `Transform{inside=x|y|a}`, including empty-frame removal, inline-icon-aware sizing, variable-height layouts, and reusable gradients.
+- Preserve the original flow geometry when fitting transformed `shape-inside` text, so compressed or stretched text cannot disappear after its visible frame is trimmed.
 - Add `force_bbox` guide rectangles, with case-insensitive separator variants, to work around unreliable Inkscape bounding boxes for groups containing text.
 - Support multiple inline icons sharing one text slot with the same Fit/Anchor/Transform behavior used by multi-value cells.
 - Improve snippet parsing so nested braces inside conditional expressions and transforms are handled correctly.
-- Speed up text geometry discovery with a persistent Inkscape shell, compact per-card probes, parallel warm-up, and focused profiling while retaining the previous fallback path.
+- Speed up text geometry discovery with a persistent Inkscape shell, compact per-card probes, parallel warm-up, and focused profiling.
+- Make the persistent-shell pipeline the only text-geometry path, removing the monolithic CLI fallback, experimental backend selector, and unused query-tree minimization code.
+- Reuse the text-measurement Inkscape helper across DeckMaker generations, skip text scans when a card has no geometry consumers, and move per-card/per-page diagnostics from INFO to DEBUG.
+- Align the DeckMaker INX label with version 0.55 and make release builds reject mismatched application or extension versions.
 - Replace the legacy installers with stable `pnpink_install.bat` and `pnpink_install.sh` launchers that download the latest or a selected release; Windows can install a private Ghostscript unless `--no-ghostscript` is used.
 - Simplify the Python installer by removing obsolete development-version coexistence and manifest rewriting machinery.
-- Rewrite the README and getting-started documentation around approachable card, event-badge, and variable-data PDF workflows, with expanded advanced DSL guidance.
+- Rewrite the README and getting-started documentation around approachable card, event-badge, and variable-data PDF workflows, and consolidate plain text, rich text, snippets, inline icons, dynamic frames, and path decorations in a dedicated Text guide.
 
 [0.55]
 - Add dataset symbol rows with `symbol_id` in column A, generating a row into `<defs>` without consuming page layout slots.

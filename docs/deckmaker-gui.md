@@ -82,7 +82,6 @@ Useful advanced keys:
 | Key | Values | Purpose |
 | --- | --- | --- |
 | `template_engine` | `legacy`, `composed`, `composed-instance` | Template instantiation engine. `legacy` is the normal engine. `composed` is experimental and intentionally fails on unsupported templates. `composed-instance` keeps composed clones anchored to the first generated instance instead of `<defs>`. |
-| `inline_icons_bbox_backend` | `query_all`, `shell_per_text` | Inline icon bbox measurement backend. Use `query_all` for normal work. `shell_per_text` is kept for investigation only. |
 | `inline_icons_extra_ratio` | decimal | Extra inline icon text advance as a fraction of text height. Negative values bring surrounding text closer without resizing the icon, for example `-0.10`. Default: `0.00`. |
 | `inkscape_shell_workers` | integer >= 1 | Parallel Inkscape shell workers used during export. |
 | `split_svg_output` | `0`, `1` | Enables generated SVG parts. |
@@ -93,7 +92,5 @@ Useful advanced keys:
 If generation appears to use old settings, close the DeckMaker window before editing `preferences.ini`. The GUI should not save preferences on close, but explicit GUI interactions still save the corresponding preference.
 
 If Inkscape hangs while opening a very large generated SVG, check whether the Export panel is being restored by the Inkscape profile. On Windows this state is stored in `%APPDATA%\inkscape\dialogs-state-ex.ini`; closing the Export panel or resetting that dialog state avoids the hang. CLI export and isolated-profile launches are not affected.
-
-If inline icons are missing or misaligned, check `inline_icons_bbox_backend`. The supported backend is `query_all`. The `shell_per_text` backend is experimental because Inkscape shell has shown inconsistent bbox results for inline text spacers.
 
 If the composed template engine fails with an "unsupported template" error, switch `template_engine` back to `legacy`.

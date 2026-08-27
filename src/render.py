@@ -2129,6 +2129,32 @@ def render_phase(ctx):
     _t_instances = time.perf_counter()
     instances = list(_iter_instances(rows_data))
     _profile["instances_ms"] = (time.perf_counter() - _t_instances) * 1000.0
+    text_geometry_possible = False
+    if deferred_text_geometry is not None:
+        text_geometry_possible = any(
+            TXT.scope_needs_text_geometry(template_root)
+            for template_root in _composed_template_roots
+            if template_root is not None
+        )
+        if not text_geometry_possible:
+            def _text_geometry_hint(value) -> bool:
+                text = str(value or "")
+                lower = text.lower()
+                has_inside_transform = (
+                    (".t{" in lower or ".transform{" in lower)
+                    and re.search(r"(?:^|[,{;\s])(?:i|inside)\s*=", lower) is not None
+                )
+                return ":" in text or has_inside_transform
+
+            text_geometry_possible = any(_text_geometry_hint(header) for header in headers)
+        if not text_geometry_possible:
+            text_geometry_possible = any(
+                _text_geometry_hint(value)
+                for instance in instances
+                for key, value in instance.items()
+                if not str(key or "").startswith("__dm_")
+            )
+        _l.d("[text_measure] dataset_geometry_possible=%s", text_geometry_possible)
     progress_total = int(len(instances))
     progress_step = max(1, progress_total // 200) if progress_total > 0 else 1
     if progress_total > 0:
@@ -2983,7 +3009,7 @@ def render_phase(ctx):
             unique_name = new_name
         placed_node.set('id', unique_name)
         placed_node.set(inkex.addNS('label','inkscape'), new_name)
-        if deferred_text_geometry is not None:
+        if text_geometry_possible and TXT.scope_needs_text_geometry(card_group):
             _text_prepare_t0 = time.perf_counter()
             TXT.process_text_geometry(
                 card_group,

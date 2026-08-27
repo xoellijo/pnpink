@@ -7,13 +7,13 @@ text.py ? inline icons with in-place ?I? spacer (no rich text rebuild)
 - Converts rich-visible -> DOM in *all* <text> nodes in scope (with or without :icon:),
   sanitizing unquoted attributes and EMITTING WARNING if conversion fails.
 - Inserts in-place <tspan id=...> spacers where :icon: appears (does not touch the rest).
-- Single shared query (SVG.query_all) for inline spacers and other text-geometry consumers.
+- Measures inline spacers and dynamic text frames through one persistent Inkscape shell.
 - Icon centered in the hole [I + letter-spacing]; baseline and center computed
   in local <text> axes (robust against rotations).
 """
 
 from __future__ import annotations
-import os, sys, re, math, copy, tempfile, time
+import os, sys, re, math, copy
 from dataclasses import dataclass
 from typing import Optional, Tuple, List, Dict, Set, Callable
 from pathlib import Path
@@ -31,11 +31,11 @@ import sources as SRC
 import fit_anchor as FA
 import transform_fx as TFX
 import text_measure as TM
+import text_decoration as TDEC
 import render_tokens as RTK
-import inkscape_cli as INKSCAPE
 import prefs
 _l = LOG
-__version__ = "text.py v7.51 (in-place; 1-query; baseline I; rich-visible→DOM all+warnings; vector placement; sin label)"
+__version__ = "text.py v7.52 (in-place; persistent-shell measurement; baseline I; vector placement)"
 
 # --------- tweaks ----------
 NBSP = "\u00A0"
@@ -335,7 +335,8 @@ class DeferredTextGeometry:
     used_sources: Set[str] = None
     tasks: list = None
     measured_ids: Set[str] = None
-    stream_failed: bool = False
+    decorations: list = None
+    needs_inside_cleanup: bool = False
     id_index: Dict[str, SVG.etree._Element] = None
 
     def __post_init__(self):
@@ -344,26 +345,46 @@ class DeferredTextGeometry:
         self.used_sources = set()
         self.tasks = []
         self.measured_ids = set()
+        self.decorations = []
         self.id_index = {
             str(node.get("id")): node
             for node in self.doc_root.xpath(".//*[@id]")
             if node.get("id")
         }
 
-    def add(self, all_items, spacers, used_sources, tasks, *, stream_failed=False) -> None:
+    def add(self, all_items, spacers, used_sources, tasks, decorations=None) -> None:
         self.all_items.extend(all_items or [])
         self.spacers.update(spacers or set())
         self.used_sources.update(used_sources or set())
         self.tasks.extend(tasks or [])
+        self.decorations.extend(decorations or [])
         for task in tasks or []:
             self.measured_ids.update(task.ids)
-        self.stream_failed = bool(self.stream_failed or stream_failed)
 
     def index_scope(self, scope) -> None:
         for node in scope.iter():
             element_id = str(node.get("id") or "").strip()
             if element_id:
                 self.id_index[element_id] = node
+
+    @property
+    def has_work(self) -> bool:
+        return bool(self.tasks or self.all_items or self.decorations or self.needs_inside_cleanup)
+
+
+def scope_needs_text_geometry(root_scope: SVG.etree._Element) -> bool:
+    if TDEC.scope_has_decorations(root_scope):
+        return True
+    for node in root_scope.iter():
+        if node.get("data-dm-inside-text") == "1" or node.get("data-dm-inside-owner") in ("x", "y", "a"):
+            return True
+        tag = str(getattr(node, "tag", "") or "")
+        if not tag.endswith("text"):
+            continue
+        visible = "".join(node.itertext())
+        if ":" in visible and _find_inline_token(visible, 0):
+            return True
+    return False
 
 def _prepare_inline_fit(suffix, parsed_transform, src_expr):
     fs_all = DSL.FitSpec()
@@ -523,7 +544,7 @@ def _rich_visible_fragment_nodes(fragment: str, owner_id: Optional[str]) -> Opti
     if visible_sane != fragment:
         _l.w("id=%s â€” se detectaron atributos sin comillas en <tspan> (saneados automÃ¡ticamente)", owner_id)
     visible_sane = _escape_text_nodes_only(visible_sane)
-    wrapper = f"<svg xmlns='{NS['svg']}'><text xmlns='{NS['svg']}'>{visible_sane}</text></svg>"
+    wrapper = f"<svg xmlns='{NS['svg']}' xmlns:pnp='{NS['pnp']}'><text xmlns='{NS['svg']}'>{visible_sane}</text></svg>"
     try:
         doc = SVG.etree.fromstring(wrapper.encode("utf-8"))
     except Exception as ex:
@@ -606,7 +627,7 @@ def _maybe_parse_rich_visible_into_dom(text_el: SVG.etree._Element) -> bool:
         # Escape text outside tags so any stray '&' does not break XML
         visible_sane = _escape_text_nodes_only(visible_sane)
 
-        wrapper = f"<svg xmlns='{NS['svg']}'><text xmlns='{NS['svg']}'>{visible_sane}</text></svg>"
+        wrapper = f"<svg xmlns='{NS['svg']}' xmlns:pnp='{NS['pnp']}'><text xmlns='{NS['svg']}'>{visible_sane}</text></svg>"
         try:
             doc = SVG.etree.fromstring(wrapper.encode("utf-8"))
         except Exception as ex:
@@ -667,7 +688,7 @@ def _normalize_rich_visible_for_all_texts(root_scope: SVG.etree._Element) -> int
         except Exception as ex:
             _l.w("normalize failed id=%s: %s", t.get("id"), ex)
     if count:
-        _l.i("normalized rich-visible→DOM en %d <text>(s)", count)
+        _l.d("normalized rich-visible→DOM en %d <text>(s)", count)
     return count
 
 # ---------- in-place: insert spacers without rebuilding ----------
@@ -972,52 +993,7 @@ def _populate_inline_probe_defs(
                 pending.append(subref)
 
 
-def _inline_probe_tree_for_text(doc_root: SVG.etree._Element, text_el: SVG.etree._Element, id_index: Dict[str, SVG.etree._Element]):
-    """Build a small SVG with one text node in the same ancestor transform chain."""
-    nsmap = getattr(doc_root, "nsmap", None) or None
-    root = SVG.etree.Element(doc_root.tag, nsmap=nsmap)
-    for k, v in (doc_root.attrib or {}).items():
-        root.set(k, v)
-
-    defs = SVG.etree.SubElement(root, f"{{{NS['svg']}}}defs")
-
-    # Keep document/page context and CSS. Text metrics can depend on both.
-    try:
-        for nv in doc_root.xpath("./sodipodi:namedview", namespaces=SVG.NSS):
-            root.append(copy.deepcopy(nv))
-    except Exception:
-        pass
-    try:
-        for st in doc_root.xpath(".//svg:style", namespaces=SVG.NSS):
-            defs.append(copy.deepcopy(st))
-    except Exception:
-        pass
-
-    chain = []
-    cur = text_el
-    while cur is not None and cur is not doc_root:
-        chain.append(cur)
-        cur = cur.getparent()
-    chain.reverse()
-
-    parent_new = root
-    for node in chain:
-        if node is text_el:
-            parent_new.append(copy.deepcopy(text_el))
-            break
-        shallow = SVG.etree.Element(node.tag, nsmap=getattr(node, "nsmap", None) or None)
-        for k, v in (node.attrib or {}).items():
-            shallow.set(k, v)
-        parent_new.append(shallow)
-        parent_new = shallow
-
-    _append_inline_probe_terminal_sentinels(root)
-    _populate_inline_probe_defs(root, defs, id_index)
-
-    return SVG.etree.ElementTree(root)
-
-
-def _inline_probe_tree_for_texts(
+def _build_probe_tree(
     doc_root: SVG.etree._Element,
     text_els: List[SVG.etree._Element],
     id_index: Dict[str, SVG.etree._Element],
@@ -1094,7 +1070,7 @@ def _inline_probe_tree_for_texts(
     return SVG.etree.ElementTree(root), offsets
 
 
-def _compact_text_probe(tree, ids: Set[str], id_index=None):
+def _build_text_probe(tree, ids: Set[str], id_index=None):
     doc_root = tree.getroot()
     if id_index is None:
         id_index = {str(node.get("id")): node for node in doc_root.xpath(".//*[@id]") if node.get("id")}
@@ -1111,91 +1087,8 @@ def _compact_text_probe(tree, ids: Set[str], id_index=None):
                     text_els.append(current)
                 break
             current = current.getparent() if hasattr(current, "getparent") else None
-    probe_tree, offsets = _inline_probe_tree_for_texts(doc_root, text_els, id_index)
+    probe_tree, offsets = _build_probe_tree(doc_root, text_els, id_index)
     return probe_tree, len(text_els), {element_id: offsets[element_id] for element_id in ids if element_id in offsets}
-
-
-def _query_inline_spacers_shell_per_text(tree, all_items: List[TokenItem], *, timeout_s: float = 2.5) -> Dict[str, Dict[str, float]]:
-    """Experimental bbox backend: reuse one Inkscape shell and query one text subtree at a time.
-
-    REMEMBER TO ISSUE:
-    In our tests, `inkscape --shell` is not reliable for inline-icon spacer `<tspan>` metrics.
-    The problematic node is the synthetic `...__hole__N` tspan used to reserve horizontal
-    space for the icon. Shell mode consistently returned an incorrect bbox for that node:
-
-    - `query-all` in shell reported the spacer height as `1`
-    - direct `query-height:<id>` in shell also reported `1`
-    - in some cases direct `query-x/y/width:<id>` in shell appeared to resolve to the wrong box
-    - plain CLI `inkscape --query-all <svg>` on an equivalent compact probe SVG returned the
-      expected values
-
-    This means the issue is not our stdout parser and not just the bulk `query-all` format; it
-    appears to be an Inkscape shell-mode measurement bug for these text/tspan probes.
-
-    If shell mode is revisited in the future, please file an upstream bug with a minimal probe
-    SVG reproducing the bad bbox for the terminal spacer tspan.
-    """
-    ids_by_text: Dict[str, Set[str]] = {}
-    for it in all_items:
-        if it.text_id and it.spacer_id:
-            ids_by_text.setdefault(it.text_id, set()).add(it.spacer_id)
-    if not ids_by_text:
-        return {}
-    doc_root = tree.getroot()
-    id_index = {str(n.get("id")): n for n in doc_root.xpath(".//*[@id]") if n.get("id")}
-
-    exe = INKSCAPE.find_executable()
-    if not exe:
-        raise RuntimeError("Inkscape executable not found")
-
-    fd, tmp = tempfile.mkstemp(prefix="pnp_inline_icons_", suffix=".svg")
-    os.close(fd)
-    _l.i("[inline_icons.shell_per_text] tmp_svg='%s'", tmp)
-    out: Dict[str, Dict[str, float]] = {}
-    total_write_ms = 0.0
-    total_query_ms = 0.0
-    t_all = time.perf_counter()
-    try:
-        env = INKSCAPE.clean_launch_env(isolated_profile=True)
-        with INKSCAPE.ShellQuerySession(exe, exe_dir=os.path.dirname(exe) or None, env=env) as shell:
-            for idx, (text_id, ids) in enumerate(ids_by_text.items(), start=1):
-                t0 = time.perf_counter()
-                text_el = id_index.get(text_id)
-                if text_el is None:
-                    raise RuntimeError(f"text not found for id '{text_id}'")
-                mini = _inline_probe_tree_for_text(doc_root, text_el, id_index)
-                mini.write(tmp, pretty_print=False, xml_declaration=True, encoding="UTF-8")
-                write_ms = (time.perf_counter() - t0) * 1000.0
-
-                t1 = time.perf_counter()
-                bbs = shell.query_all(tmp, ids, timeout_s=timeout_s, open_delay_s=0.0)
-                query_ms = (time.perf_counter() - t1) * 1000.0
-                if not bbs:
-                    raise RuntimeError(f"no bboxes from shell for text '{text_id}'")
-                direct_metrics = {}
-                if len(ids) == 1:
-                    sid = next(iter(ids))
-                    try:
-                        direct_metrics, _ = shell.query_metrics(tmp, sid, timeout_s=max(2.0, timeout_s), open_delay_s=0.0)
-                    except Exception as ex:
-                        _l.w("[inline_icons.shell_per_text] direct query failed text=%s id=%s err=%s", text_id, sid, ex)
-
-                total_write_ms += write_ms
-                total_query_ms += query_ms
-                out.update(bbs)
-                _l.i(
-                    "[inline_icons.shell_per_text] text=%s/%s id='%s' ids=%d bboxes=%d write_ms=%.1f query_ms=%.1f direct=%s tmp_svg='%s'",
-                    idx, len(ids_by_text), text_id, len(ids), len(bbs), write_ms, query_ms, direct_metrics or {}, tmp,
-                )
-    finally:
-        _l.i("[inline_icons.shell_per_text] preserved tmp_svg='%s'", tmp)
-
-    total_ms = (time.perf_counter() - t_all) * 1000.0
-    _l.i(
-        "[inline_icons.shell_per_text] total texts=%d ids=%d bboxes=%d write_ms=%.1f query_ms=%.1f total_ms=%.1f",
-        len(ids_by_text), sum(len(v) for v in ids_by_text.values()), len(out), total_write_ms, total_query_ms, total_ms,
-    )
-    return out
 
 
 # ----------------- main -----------------
@@ -1206,24 +1099,33 @@ def process_text_geometry(root_scope: SVG.etree._Element, show_debug_rects: bool
     tree = root_scope.getroottree()
     SVG.ensure_xlink_ns(doc_root)
     if defer_apply:
-        inside_ids = {
-            SVG.ensure_id(doc_root, node, "dm_inside_text")
-            for node in root_scope.iter()
-            if node.get("data-dm-inside-text") == "1"
-            and "".join(node.itertext()).strip()
-        }
+        inside_ids = set()
+        has_inside_owner = False
+        for node in root_scope.iter():
+            if node.get("data-dm-inside-owner") in ("x", "y", "a"):
+                has_inside_owner = True
+            if node.get("data-dm-inside-text") == "1" and "".join(node.itertext()).strip():
+                inside_ids.add(SVG.ensure_id(doc_root, node, "dm_inside_text"))
+        if prepared_geometry is not None and has_inside_owner:
+            prepared_geometry.needs_inside_cleanup = True
     else:
         empty_inside_changed = TFX.discard_empty_inside(doc_root)
         if empty_inside_changed:
             _l.i("[text_measure] transform_inside empty_removed=%d", empty_inside_changed)
         inside_ids = TFX.pending_inside_text_ids(doc_root)
 
-    _l.i("scope=%s — in-place pipeline (spacer glyph=%r)", root_scope.get('id'), spacer_glyph)
+    _l.d("scope=%s — in-place pipeline (spacer glyph=%r)", root_scope.get('id'), spacer_glyph)
 
     # Normalize rich-visible content to DOM for every <text>.
     normalized = _normalize_rich_visible_for_all_texts(root_scope)
     if normalized:
-        _l.i("normalized=%d texts (rich-visible→DOM)", normalized)
+        _l.d("normalized=%d texts (rich-visible→DOM)", normalized)
+
+    decorations = TDEC.collect(
+        root_scope,
+        doc_root,
+        mark_prepared=defer_apply,
+    )
 
     # Process only <text> nodes containing inline source tokens.
     texts_with_icons: List[SVG.etree._Element] = []
@@ -1235,10 +1137,16 @@ def process_text_geometry(root_scope: SVG.etree._Element, show_debug_rects: bool
         if (":" in vis) and _find_inline_token(vis, 0):
             texts_with_icons.append(t)
 
-    has_prepared = bool(prepared_geometry is not None and prepared_geometry.all_items)
-    if not texts_with_icons and not inside_ids and not has_prepared:
-        _l.i("No <text> with :@{...}: tokens found.")
+    has_prepared = bool(
+        not defer_apply
+        and prepared_geometry is not None
+        and prepared_geometry.has_work
+    )
+    if not texts_with_icons and not inside_ids and not decorations and not has_prepared:
+        _l.d("No <text> with :@{...}: tokens found.")
         return ProcessResult(0, set())
+    if query_service is None:
+        raise RuntimeError("Text geometry requires TextQueryService")
 
     if texts_with_icons and source_manager is None:
         source_manager = SRC.SourceManager(doc_root, doc_path, project_root=None)
@@ -1309,54 +1217,47 @@ def process_text_geometry(root_scope: SVG.etree._Element, show_debug_rects: bool
         all_items.extend(items)
 
     if not all_items:
-        _l.i("[inline_icons] stage=parse_tokens texts=%d tokens=0", len(texts_with_icons))
-        if not inside_ids and not has_prepared:
-            _l.i("Found texts but zero tokens after insert.")
+        _l.d("[inline_icons] stage=parse_tokens texts=%d tokens=0", len(texts_with_icons))
+        if not inside_ids and not decorations and not has_prepared:
+            _l.d("Found texts but zero tokens after insert.")
             return ProcessResult(0, set())
-    _l.i("[inline_icons] stage=parse_tokens texts=%d tokens=%d", len(texts_with_icons), len(all_items))
-    _l.i("[inline_icons] stage=holes holes=%d", len(spacers))
+    _l.d("[inline_icons] stage=parse_tokens texts=%d tokens=%d", len(texts_with_icons), len(all_items))
+    _l.d("[inline_icons] stage=holes holes=%d", len(spacers))
 
     # compute sizes and APPLY HOLES (letter-spacing in the spacer)
     # Resolve sources with the same behavior as @{...}: placeholders and logs in sources.py
 
     opened = 0
     placeholder_count = 0
-    stream_tasks = []
-    stream_failed = False
-    stream_ids_by_text: Dict[str, Set[str]] = {}
-    stream_remaining: Dict[str, int] = {}
-    stream_id_index = None
-    if query_service is not None:
-        if prepared_geometry is not None:
-            prepared_geometry.index_scope(root_scope)
-            stream_id_index = prepared_geometry.id_index
-        else:
-            stream_id_index = {
-                str(node.get("id")): node
-                for node in doc_root.xpath(".//*[@id]")
-                if node.get("id")
-            }
-        for item in all_items:
-            stream_ids_by_text.setdefault(item.text_id, set()).add(item.spacer_id)
-            stream_remaining[item.text_id] = stream_remaining.get(item.text_id, 0) + 1
-        previously_measured = prepared_geometry.measured_ids if prepared_geometry is not None else set()
-        for text_id in inside_ids:
-            if text_id not in previously_measured:
-                stream_ids_by_text.setdefault(text_id, set()).add(text_id)
+    query_tasks = []
+    ids_by_text: Dict[str, Set[str]] = {}
+    remaining_by_text: Dict[str, int] = {}
+    if prepared_geometry is not None:
+        prepared_geometry.index_scope(root_scope)
+        id_index = prepared_geometry.id_index
+    else:
+        id_index = {
+            str(node.get("id")): node
+            for node in doc_root.xpath(".//*[@id]")
+            if node.get("id")
+        }
+    for item in all_items:
+        ids_by_text.setdefault(item.text_id, set()).add(item.spacer_id)
+        remaining_by_text[item.text_id] = remaining_by_text.get(item.text_id, 0) + 1
+    previously_measured = prepared_geometry.measured_ids if prepared_geometry is not None else set()
+    for text_id in inside_ids:
+        if text_id not in previously_measured:
+            ids_by_text.setdefault(text_id, set()).add(text_id)
+    for decoration in decorations:
+        if decoration.tspan_id not in previously_measured:
+            ids_by_text.setdefault(decoration.text_id, set()).add(decoration.tspan_id)
 
-    def _submit_stream_text(text_id: str) -> None:
-        nonlocal stream_failed
-        if query_service is None or stream_failed:
-            return
-        ids = stream_ids_by_text.pop(text_id, set())
+    def _submit_text_probe(text_id: str) -> None:
+        ids = ids_by_text.pop(text_id, set())
         if not ids:
             return
-        try:
-            probe_tree, _probe_texts, probe_offsets = _compact_text_probe(tree, ids, stream_id_index)
-            stream_tasks.append(query_service.submit(probe_tree, ids, probe_offsets))
-        except Exception as ex:
-            stream_failed = True
-            _l.w("[text_measure.stream] submit_failed text='%s': %s", text_id, ex)
+        probe_tree, _probe_texts, probe_offsets = _build_text_probe(tree, ids, id_index)
+        query_tasks.append(query_service.submit(probe_tree, ids, probe_offsets))
 
     for it in all_items:
         shared_hole = bool(it.extra_icons)
@@ -1444,30 +1345,24 @@ def process_text_geometry(root_scope: SVG.etree._Element, show_debug_rects: bool
         else:
             _l.w("spacer not found for id=%s", it.spacer_id)
 
-        if query_service is not None:
-            remaining = stream_remaining.get(it.text_id, 0) - 1
-            stream_remaining[it.text_id] = remaining
-            if remaining <= 0 and not defer_apply:
-                _submit_stream_text(it.text_id)
+        remaining = remaining_by_text.get(it.text_id, 0) - 1
+        remaining_by_text[it.text_id] = remaining
+        if remaining <= 0 and not defer_apply:
+            _submit_text_probe(it.text_id)
 
-    if query_service is not None and not stream_failed:
-        if defer_apply:
-            scope_ids = set()
-            for values in stream_ids_by_text.values():
-                scope_ids.update(values)
-            if scope_ids:
-                try:
-                    probe_tree, _probe_texts, probe_offsets = _compact_text_probe(
-                        tree, scope_ids, stream_id_index
-                    )
-                    stream_tasks.append(query_service.submit(probe_tree, scope_ids, probe_offsets))
-                    stream_ids_by_text.clear()
-                except Exception as ex:
-                    stream_failed = True
-                    _l.w("[text_measure.stream] scope_submit_failed scope='%s': %s", root_scope.get("id"), ex)
-        else:
-            for text_id in list(stream_ids_by_text):
-                _submit_stream_text(text_id)
+    if defer_apply:
+        scope_ids = set()
+        for values in ids_by_text.values():
+            scope_ids.update(values)
+        if scope_ids:
+            probe_tree, _probe_texts, probe_offsets = _build_text_probe(
+                tree, scope_ids, id_index
+            )
+            query_tasks.append(query_service.submit(probe_tree, scope_ids, probe_offsets))
+            ids_by_text.clear()
+    else:
+        for text_id in list(ids_by_text):
+            _submit_text_probe(text_id)
 
     if defer_apply:
         if prepared_geometry is None:
@@ -1476,8 +1371,8 @@ def process_text_geometry(root_scope: SVG.etree._Element, show_debug_rects: bool
             all_items,
             spacers,
             used_sources,
-            stream_tasks,
-            stream_failed=stream_failed,
+            query_tasks,
+            decorations,
         )
         return ProcessResult(0, used_sources)
 
@@ -1485,8 +1380,8 @@ def process_text_geometry(root_scope: SVG.etree._Element, show_debug_rects: bool
         all_items = list(prepared_geometry.all_items) + all_items
         spacers.update(prepared_geometry.spacers)
         used_sources.update(prepared_geometry.used_sources)
-        stream_tasks = list(prepared_geometry.tasks) + stream_tasks
-        stream_failed = bool(stream_failed or prepared_geometry.stream_failed)
+        query_tasks = list(prepared_geometry.tasks) + query_tasks
+        decorations = list(prepared_geometry.decorations) + decorations
 
     cache_hits = getattr(source_manager, "_cache_hits", None)
     cache_misses = getattr(source_manager, "_cache_misses", None)
@@ -1496,40 +1391,21 @@ def process_text_geometry(root_scope: SVG.etree._Element, show_debug_rects: bool
         _l.i("[inline_icons] stage=cache placeholders=%d cache_hits=? cache_misses=?", placeholder_count)
     _l.i("huecos aplicados=%d", opened)
 
-# PASO B: medir todos los consumidores de geometría de texto (1 query)
+# PASO B: collect geometry measured by the persistent Inkscape shell.
     batch = TM.TextBBoxBatch(doc_root)
     batch.register("inline_icons", spacers)
     batch.register("transform_inside", inside_ids)
+    batch.register("text_decorations", [item.tspan_id for item in decorations])
     ids_text = sorted(batch.ids)
-    text_query_backend = "streaming_shell" if query_service is not None else "compact"
-    _l.i("[text_measure] stage=query ids=%d backend=%s consumers=%s", len(ids_text), text_query_backend, ",".join(batch.consumers))
-    if text_query_backend == "streaming_shell" and not stream_failed:
-        raw_bboxes, probe_offsets, stream_errors = query_service.collect(stream_tasks)
-        if not stream_errors:
-            batch.set_pixel_bboxes(raw_bboxes)
-            batch.translate_bboxes(probe_offsets)
-        else:
-            stream_failed = True
-            _l.w("[text_measure.stream] fallback=compact errors=%s", [str(ex) for ex in stream_errors[:3]])
-
-    if text_query_backend == "compact" or stream_failed:
-        probe_started = time.perf_counter()
-        probe_tree, probe_texts, probe_offsets = _compact_text_probe(tree, batch.ids)
-        probe_ms = (time.perf_counter() - probe_started) * 1000.0
-        _l.i(
-            "[text_measure] compact_probe texts=%d ids=%d build_ms=%.1f",
-            probe_texts,
-            len(batch.ids),
-            probe_ms,
+    _l.i("[text_measure] stage=collect ids=%d consumers=%s", len(ids_text), ",".join(batch.consumers))
+    raw_bboxes, probe_offsets = query_service.collect(query_tasks)
+    batch.set_probe_bboxes(raw_bboxes, probe_offsets)
+    if batch.missing_ids:
+        _l.w(
+            "[text_measure] missing=%d ids=%s",
+            len(batch.missing_ids),
+            sorted(batch.missing_ids),
         )
-        batch.query_all(probe_tree, minimize_for_ids=False)
-        batch.translate_bboxes(probe_offsets)
-        if batch.missing_ids:
-            _l.w(
-                "[text_measure] compact_probe missing=%d ids=%s; continuing_without_live_fallback",
-                len(batch.missing_ids),
-                sorted(batch.missing_ids),
-            )
     bbs_doc = batch.bboxes_for("inline_icons")
     _l.i("[text_measure] stage=bboxes inline_icons=%d transform_inside=%d", len(bbs_doc), len(batch.bboxes_for("transform_inside")))
 
@@ -1725,20 +1601,31 @@ def process_text_geometry(root_scope: SVG.etree._Element, show_debug_rects: bool
         if text_id in inside_bboxes:
             TM.extend_bbox_map(inside_bboxes, text_id, hole_bbox)
     inside_changed = TFX.apply_deferred_inside(doc_root, inside_bboxes)
+    decorations_changed = TDEC.apply(
+        doc_root,
+        decorations,
+        batch.bboxes_for("text_decorations"),
+    )
     _l.i("[text_measure] transform_inside changed=%d", inside_changed)
+    _l.i("[text_decoration] paths=%d", decorations_changed)
     _l.i("inline_icons placed=%d", placed)
     _l.i("[inline_icons] stage=insert_use use_count=%d", placed)
     return ProcessResult(placed, used_sources)
 
 
 def inline_place_icons(root_scope: SVG.etree._Element, show_debug_rects: bool=False, spacer_glyph: Optional[str]=None, *, source_manager: Optional[SRC.SourceManager]=None, doc_path: Optional[str]=None) -> ProcessResult:
-    return process_text_geometry(
-        root_scope,
-        show_debug_rects=show_debug_rects,
-        spacer_glyph=spacer_glyph,
-        source_manager=source_manager,
-        doc_path=doc_path,
-    )
+    query_service = TM.TextQueryService()
+    try:
+        return process_text_geometry(
+            root_scope,
+            show_debug_rects=show_debug_rects,
+            spacer_glyph=spacer_glyph,
+            source_manager=source_manager,
+            doc_path=doc_path,
+            query_service=query_service,
+        )
+    finally:
+        query_service.close()
 
 # ------------- CLI / effect -------------
 class TextEffect(inkex.EffectExtension):
@@ -1752,7 +1639,7 @@ class TextEffect(inkex.EffectExtension):
         _l.get_logger(self, console_level=self.options.console_level, file_level=self.options.file_level, tag_override="text")
         _l.i("LOADED %s — %s", __file__, __version__)
         root = self.document.getroot()
-        res = process_text_geometry(
+        res = inline_place_icons(
             root,
             show_debug_rects=bool(self.options.debug),
             spacer_glyph=(self.options.spacer_glyph or DEFAULT_SPACER_GLYPH)

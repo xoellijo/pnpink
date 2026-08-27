@@ -193,6 +193,7 @@ def _split_call_args(inner: str) -> List[str]:
     keep_quote = False
     token_started = False
     par = 0
+    bracket = 0
     i = 0
     while i < len(inner):
         ch = inner[i]
@@ -222,7 +223,13 @@ def _split_call_args(inner: str) -> List[str]:
         elif ch == ")" and par > 0:
             par -= 1
             buf.append(ch)
-        elif ch.isspace() and par == 0:
+        elif ch == "[":
+            bracket += 1
+            buf.append(ch)
+        elif ch == "]" and bracket > 0:
+            bracket -= 1
+            buf.append(ch)
+        elif ch.isspace() and par == 0 and bracket == 0:
             if token_started:
                 out.append("".join(buf))
                 buf = []

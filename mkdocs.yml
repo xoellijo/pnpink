@@ -18,6 +18,7 @@ nav:
   - Dataset:
       - Format and Sources: dataset-overview.md
       - Dataset Reference: dataset.md
+  - Text: text.md
   - Package Formats (`.zvg` / `.pnp`): dsl/packages.md
   - DSL:
       - DSL Nomenclature: dsl/nomenclature.md

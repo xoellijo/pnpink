@@ -71,7 +71,6 @@ _DEFAULTS = {
     "map_ofm_max_zoom": "14",
     "map_osm_max_tile_grid": "4",
     "map_ofm_max_tile_grid": "4",
-    "inline_icons_bbox_backend": "query_all",
     "inline_icons_show_debug_rects": "0",
     "inline_icons_extra_ratio": "0.00",
     "template_engine": "composed",
@@ -121,7 +120,6 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     ("map_ofm_max_zoom", ("Default maximum vector-tile zoom for ofm:// maps. Values: integer 0..22",)),
     ("map_osm_max_tile_grid", ("Default maximum tile grid per axis for automatic osm:// zoom selection. Values: integer >= 1",)),
     ("map_ofm_max_tile_grid", ("Default maximum tile grid per axis for automatic ofm:// zoom selection. Values: integer >= 1",)),
-    ("inline_icons_bbox_backend", ("Inline icon bbox measurement backend. Values: query_all | shell_per_text",)),
     ("inline_icons_show_debug_rects", ("Show inline-icon hole debug rectangles. Values: 0 | 1",)),
     ("inline_icons_extra_ratio", ("Extra inline icon text advance as a fraction of text height. Negative values bring surrounding text closer without resizing the icon. Default: 0.00",)),
     ("template_engine", ("Template instantiation engine. Values: legacy | composed | composed-instance", "composed is the default; unsupported individual templates fall back to legacy.")),
@@ -676,13 +674,6 @@ def get_map_max_tile_grid(provider: str, default: int = 4) -> int:
     except Exception:
         value = int(default)
     return max(1, min(value, 32))
-
-
-def get_inline_icons_bbox_backend(default: str = "query_all") -> str:
-    value = str(get("inline_icons_bbox_backend", default) or default).strip().lower()
-    if value not in {"query_all", "shell_per_text"}:
-        return str(default or "query_all")
-    return value
 
 
 def get_template_engine(default: str = "legacy") -> str:

@@ -55,6 +55,14 @@ jobs:
           if not inx_files:
               raise SystemExit("No src/inx/*.inx files found; aborting release.")
 
+          expected_app_version = f'APP_VERSION = "Deckmaker v{version}"'
+          if expected_app_version not in (src / "deckmaker_app.py").read_text(encoding="utf-8"):
+              raise SystemExit(f"src/deckmaker_app.py is not versioned as {version}.")
+
+          expected_inx_name = f"<_name>DeckMaker v{version}</_name>"
+          if not any(expected_inx_name in path.read_text(encoding="utf-8") for path in inx_files):
+              raise SystemExit(f"No INX menu entry is versioned as {version}.")
+
           payload_name = f"pnpink_payload_{version}.zip"
           payload_path = dist / payload_name
           with zipfile.ZipFile(payload_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:

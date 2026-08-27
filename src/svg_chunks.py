@@ -161,7 +161,7 @@ def _slice_record_count(items: Iterable[SvgPageSlice]) -> int:
 
 def _log_page_slices(items: Iterable[SvgPageSlice]) -> None:
     for item in items:
-        _l.i(
+        _l.d(
             "[svg_chunks] page=%d page_id='%s' est_bytes=%d nodes=%d box=(%.2f,%.2f %.2fx%.2f)",
             int(item.page_no),
             item.page_id,
@@ -176,7 +176,7 @@ def _log_page_slices(items: Iterable[SvgPageSlice]) -> None:
 
 def _log_chunk_groups(groups: list[list[SvgPageSlice]]) -> None:
     for idx, group in enumerate(groups, start=1):
-        _l.i(
+        _l.d(
             "[svg_chunks] chunk=%d pages=%s est_bytes=%d records=%d",
             idx,
             _slice_pages_label(group),
@@ -827,7 +827,7 @@ def _assign_output_nodes_to_pages(doc, root, generated_pages: list[dict], candid
     import svg as SVG
 
     query_ids = {node_id for node_id, _node in candidate_nodes}
-    bboxes = SVG.query_all(doc, query_ids, inkscape_bin=inkscape_exe, minimize_for_ids=False) if inkscape_exe else {}
+    bboxes = SVG.query_all(doc, query_ids, inkscape_bin=inkscape_exe) if inkscape_exe else {}
     id_map = {}
     for el in root.iter():
         el_id = str(el.get("id") or "").strip()
@@ -1267,9 +1267,12 @@ def normalize_output_doc(doc, *, source_svg_path: str, keep_pages: set[int] | No
     root.set("height", f"{root_h:.6f}{height_unit}")
     root.set("viewBox", f"0 0 {root_w:.6f} {root_h:.6f}")
     copied_static_defs = _ensure_missing_composed_static_defs(root, composed_static_sources)
+    selected_page_numbers = [int(page_no) for page_no, _page in page_layout.selected]
     _l.i(
-        "[svg_chunks] normalize pages=%s grouped_mode=%s out_children=%d static_defs=%d root=(%s x %s)",
-        ",".join(str(int(page_no)) for page_no, _page in page_layout.selected),
+        "[svg_chunks] normalize pages=%d first=%d last=%d grouped_mode=%s out_children=%d static_defs=%d root=(%s x %s)",
+        len(selected_page_numbers),
+        min(selected_page_numbers),
+        max(selected_page_numbers),
         "page" if page_groups else "legacy",
         len([child for child in list(out_root) if isinstance(getattr(child, 'tag', None), str)]),
         int(copied_static_defs),

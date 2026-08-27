@@ -36,21 +36,6 @@ def _parse_query_all(stdout: str, want_ids: set[str] | None = None) -> dict[str,
     return out
 
 
-def _parse_last_float_lines(stdout: str, count: int) -> list[float]:
-    vals: list[float] = []
-    for line in (stdout or "").splitlines():
-        s = line.strip()
-        if not s:
-            continue
-        try:
-            vals.append(float(s))
-        except Exception:
-            continue
-    if count <= 0:
-        return vals
-    return vals[-count:]
-
-
 def find_executable() -> str | None:
     names = ["inkscape.exe", "inkscape"] if os.name == "nt" else ["inkscape"]
     for name in names:
@@ -546,25 +531,6 @@ class ShellQuerySession:
         text = "".join(chunks)
         return _parse_query_all(text, ids), text
 
-    def _read_until_float_count(self, count: int, *, timeout_s: float) -> tuple[list[float], str]:
-        deadline = time.perf_counter() + max(0.1, float(timeout_s))
-        chunks: list[str] = []
-        vals: list[float] = []
-        while time.perf_counter() < deadline:
-            if self.proc is not None and self.proc.poll() is not None:
-                break
-            try:
-                chunk = self.output_q.get(timeout=0.05)
-            except queue.Empty:
-                continue
-            chunks.append(chunk)
-            text = "".join(chunks)
-            vals = _parse_last_float_lines(text, count)
-            if len(vals) >= count:
-                return vals[-count:], text
-        text = "".join(chunks)
-        return _parse_last_float_lines(text, count), text
-
     def query_all(
         self,
         svg_path: str,
@@ -591,39 +557,6 @@ class ShellQuerySession:
         if not bbs and out:
             _l.w("[inkscape_shell_query] no bboxes; output=%s", out[:1000])
         return bbs
-
-    def query_metrics(
-        self,
-        svg_path: str,
-        node_id: str,
-        *,
-        timeout_s: float = 4.0,
-        open_delay_s: float = 0.0,
-    ) -> tuple[dict[str, float], str]:
-        node_id = str(node_id or "").strip()
-        if not node_id:
-            return {}, ""
-        self._drain()
-        self._send(f"file-open:{svg_path}")
-        self.current_svg = os.path.normcase(os.path.normpath(str(svg_path)))
-        if open_delay_s and open_delay_s > 0:
-            time.sleep(float(open_delay_s))
-        self._send(f"query-x:{node_id}")
-        self._send(f"query-y:{node_id}")
-        self._send(f"query-width:{node_id}")
-        self._send(f"query-height:{node_id}")
-        vals, out = self._read_until_float_count(4, timeout_s=timeout_s)
-        metrics: dict[str, float] = {}
-        if len(vals) >= 4:
-            metrics = {
-                "x": float(vals[-4]),
-                "y": float(vals[-3]),
-                "width": float(vals[-2]),
-                "height": float(vals[-1]),
-            }
-        _l.i("[inkscape_shell_query] direct_metrics id='%s' metrics=%s", node_id, metrics or {})
-        _l.i("[inkscape_shell_query] direct_raw_output=%s", repr((out or "")[:1000]))
-        return metrics, out
 
     def close(self) -> None:
         proc = self.proc

@@ -17,6 +17,7 @@ NS_SVG = 'http://www.w3.org/2000/svg'
 NS_XLINK = 'http://www.w3.org/1999/xlink'
 NS_INKSCAPE = 'http://www.inkscape.org/namespaces/inkscape'
 NS_SODIPODI = 'http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd'
+NS_PNP = 'https://pnpink.org/namespaces/pnpink'
 
 # Common fully-qualified attribute names
 XML_SPACE = f'{{{NS_XML}}}space'

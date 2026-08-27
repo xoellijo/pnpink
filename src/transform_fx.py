@@ -352,6 +352,34 @@ def _style_value(node, name: str) -> str:
         return ""
 
 
+def _separate_inside_flow_frame(root, owner, frame, texts) -> object | None:
+    frame_id = str(frame.get("id") or "").strip()
+    if not frame_id:
+        return None
+    linked = [text for text in texts if _shape_inside_id(text) == frame_id]
+    if not linked:
+        return None
+    try:
+        flow_id = root.get_unique_id(f"{frame_id}_flow")
+    except Exception:
+        flow_id = f"{frame_id}_flow_{id(frame)}"
+    flow = deepcopy(frame)
+    flow.set("id", flow_id)
+    flow.set("data-dm-shape-inside-flow", frame_id)
+    for attr in ("data-dm-inside-frame", "data-dm-shape-inside-private"):
+        flow.attrib.pop(attr, None)
+    defs = next(
+        (child for child in list(owner) if str(getattr(child, "tag", "") or "").endswith("defs")),
+        None,
+    )
+    if defs is None:
+        defs = SVG.etree.SubElement(owner, inkex.addNS("defs", "svg"))
+    defs.append(flow)
+    for text in linked:
+        _rewrite_shape_inside_id(text, flow_id)
+    return flow
+
+
 def _set_rect_world_bbox(frame, left, top, right, bottom) -> bool:
     try:
         transform = _node_world_transform(frame)
@@ -585,6 +613,10 @@ def apply_deferred_inside(root, bboxes) -> int:
                 frame_right = min(original_right, max(frame_left, text_right + padding_x + epsilon))
         if mode in ("y", "a"):
             frame_bottom = min(original_bottom, max(frame_top, text_bottom + padding_y + epsilon))
+        flow = _separate_inside_flow_frame(root, owner, frame, texts)
+        if flow is None:
+            _l.w(f"[transform.inside] could not preserve flow frame='{frame.get('id') or ''}'")
+            continue
         if _set_rect_world_bbox(frame, frame_left, frame_top, frame_right, frame_bottom):
             changed += 1
         cleanup_nodes.extend([owner, frame, *texts])

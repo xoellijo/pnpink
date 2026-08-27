@@ -85,6 +85,30 @@ def _legacy_app_dir() -> str:
 TOKENS_FILE = os.path.join(_legacy_app_dir(), "tokens.json")
 _MEM_ENTRY: Optional[Dict[str, Any]] = None
 _AUTH_LOCK = threading.RLock()
+_HTTP_LOCK = threading.RLock()
+_HTTP_SESSION = None
+_SHEET_TITLES_CACHE: Dict[str, list[str]] = {}
+
+
+def _http_session():
+    global _HTTP_SESSION
+    with _HTTP_LOCK:
+        if _HTTP_SESSION is None:
+            _HTTP_SESSION = requests.Session()
+        return _HTTP_SESSION
+
+
+def close_session() -> None:
+    global _HTTP_SESSION
+    with _HTTP_LOCK:
+        session = _HTTP_SESSION
+        _HTTP_SESSION = None
+        _SHEET_TITLES_CACHE.clear()
+    if session is not None:
+        try:
+            session.close()
+        except Exception:
+            pass
 
 def _load_store() -> Dict[str, Any]:
     try:
@@ -105,7 +129,10 @@ def _get_entry() -> Dict[str, Any]:
     global _MEM_ENTRY
     if _MEM_ENTRY:
         return dict(_MEM_ENTRY)
-    return _load_store().get("google_sheets_pkce", {})
+    entry = _load_store().get("google_sheets_pkce", {})
+    if entry:
+        _MEM_ENTRY = dict(entry)
+    return dict(entry)
 
 def _set_entry(entry: Dict[str, Any]) -> None:
     global _MEM_ENTRY
@@ -367,10 +394,13 @@ def _ensure_tokens(client_id: Optional[str] = None) -> Dict[str, Any]:
         entry = _authorize_with_pkce(cid)
         _set_entry(entry)
         return entry
-def warm_session(client_id: Optional[str] = None) -> bool:
-    """Preload/refresh Google Sheets auth once for resident apps."""
+def warm_session(client_id: Optional[str] = None, spreadsheet_id: Optional[str] = None) -> bool:
+    """Preload auth, HTTPS connection, and optional sheet metadata."""
     try:
         _ensure_tokens(client_id)
+        _http_session()
+        if str(spreadsheet_id or "").strip():
+            list_sheet_titles(str(spreadsheet_id).strip(), client_id)
         return True
     except Exception:
         import traceback
@@ -399,12 +429,12 @@ def fetch_sheet(spreadsheet_id: str, range_a1: str, client_id: Optional[str] = N
         f"{urllib.parse.quote(range_a1, safe='!:$')}?{urllib.parse.urlencode(params)}"
     )
     hdr = _auth_header(client_id)
-    r = NET.requests_get(url, headers=hdr, timeout=30, retries=4, log_prefix="[gsheets]")
+    r = NET.requests_get(url, session=_http_session(), headers=hdr, timeout=30, retries=4, log_prefix="[gsheets]")
     if r.status_code == 401:
         # intentar una vez tras refresh/relogin
         _ensure_tokens(client_id)
         hdr = _auth_header(client_id)
-        r = NET.requests_get(url, headers=hdr, timeout=30, retries=4, log_prefix="[gsheets]")
+        r = NET.requests_get(url, session=_http_session(), headers=hdr, timeout=30, retries=4, log_prefix="[gsheets]")
     r.raise_for_status()
     data = r.json() or {}
     values = data.get("values", [])
@@ -416,16 +446,24 @@ def list_sheet_titles(spreadsheet_id: str, client_id: Optional[str] = None):
     """
     Devuelve la lista de títulos de pestañas (sheets) del spreadsheet.
     """
+    cache_key = str(spreadsheet_id or "").strip()
+    with _HTTP_LOCK:
+        cached = _SHEET_TITLES_CACHE.get(cache_key)
+        if cached is not None:
+            return list(cached)
     url = f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}?fields=sheets(properties(title))"
     hdr = _auth_header(client_id)
-    r = NET.requests_get(url, headers=hdr, timeout=30, retries=4, log_prefix="[gsheets]")
+    r = NET.requests_get(url, session=_http_session(), headers=hdr, timeout=30, retries=4, log_prefix="[gsheets]")
     if r.status_code == 401:
         _ensure_tokens(client_id)
         hdr = _auth_header(client_id)
-        r = NET.requests_get(url, headers=hdr, timeout=30, retries=4, log_prefix="[gsheets]")
+        r = NET.requests_get(url, session=_http_session(), headers=hdr, timeout=30, retries=4, log_prefix="[gsheets]")
     r.raise_for_status()
     data = r.json() or {}
-    return [s.get("properties", {}).get("title", "") for s in data.get("sheets", []) if isinstance(s, dict)]
+    titles = [s.get("properties", {}).get("title", "") for s in data.get("sheets", []) if isinstance(s, dict)]
+    with _HTTP_LOCK:
+        _SHEET_TITLES_CACHE[cache_key] = list(titles)
+    return titles
 
 # ------------------------------------------------------------------
 # Test manual opcional

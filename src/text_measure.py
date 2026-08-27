@@ -16,33 +16,34 @@ _l = LOG
 
 
 @dataclass
-class ShellProbeTask:
+class ProbeTask:
     svg_bytes: bytes
     ids: set[str]
     offsets: dict
     bboxes: dict = field(default_factory=dict)
+    query_ms: float = 0.0
     error: Exception | None = None
     done: threading.Event = field(default_factory=threading.Event)
 
 
-class StreamingShellQueryService:
+class TextQueryService:
     def __init__(self, *, timeout_s: float = 20.0):
         self.timeout_s = float(timeout_s)
-        self._queue: queue.Queue[ShellProbeTask | None] = queue.Queue()
+        self._queue: queue.Queue[ProbeTask | None] = queue.Queue()
         self._thread = threading.Thread(target=self._run, name="pnpink-text-query", daemon=True)
         self._started = time.perf_counter()
         self._closed = False
         self._fatal_error: Exception | None = None
-        self._query_times_ms = []
+        self._ready = threading.Event()
         self._thread.start()
 
-    def submit(self, probe_tree, ids, offsets) -> ShellProbeTask:
+    def submit(self, probe_tree, ids, offsets) -> ProbeTask:
         if self._closed:
             raise RuntimeError("Text query service is closed")
         svg_bytes = SVG.etree.tostring(
             probe_tree.getroot(), encoding="UTF-8", xml_declaration=True
         )
-        task = ShellProbeTask(svg_bytes, set(ids or set()), dict(offsets or {}))
+        task = ProbeTask(svg_bytes, set(ids or set()), dict(offsets or {}))
         if self._fatal_error is not None:
             task.error = self._fatal_error
             task.done.set()
@@ -66,8 +67,9 @@ class StreamingShellQueryService:
                 env=env,
             ) as shell:
                 shell.wait_ready(timeout_s=self.timeout_s)
+                self._ready.set()
                 _l.i(
-                    "[text_measure.stream] shell_ready_ms=%.1f exe='%s'",
+                    "[text_measure] shell_ready_ms=%.1f exe='%s'",
                     (time.perf_counter() - self._started) * 1000.0,
                     shell_exe,
                 )
@@ -86,9 +88,9 @@ class StreamingShellQueryService:
                             log_query=False,
                         )
                         elapsed_ms = (time.perf_counter() - started) * 1000.0
-                        self._query_times_ms.append(elapsed_ms)
+                        current_task.query_ms = elapsed_ms
                         _l.d(
-                            "[text_measure.stream] ids=%d bboxes=%d query_ms=%.1f",
+                            "[text_measure] ids=%d bboxes=%d query_ms=%.1f",
                             len(current_task.ids),
                             len(current_task.bboxes),
                             elapsed_ms,
@@ -100,6 +102,7 @@ class StreamingShellQueryService:
                         current_task = None
         except Exception as ex:
             self._fatal_error = ex
+            self._ready.set()
             if current_task is not None:
                 current_task.error = ex
                 current_task.done.set()
@@ -112,14 +115,14 @@ class StreamingShellQueryService:
                     continue
                 pending.error = ex
                 pending.done.set()
-            _l.w("[text_measure.stream] worker_failed: %s", ex)
+            _l.w("[text_measure] worker_failed: %s", ex)
         finally:
             try:
                 os.unlink(temp_svg)
             except Exception:
                 pass
 
-    def collect(self, tasks) -> tuple[dict, dict, list[Exception]]:
+    def collect(self, tasks) -> tuple[dict, dict]:
         bboxes = {}
         offsets = {}
         errors = []
@@ -135,15 +138,25 @@ class StreamingShellQueryService:
             bboxes.update(task.bboxes)
             offsets.update(task.offsets)
         _l.i(
-            "[text_measure.stream] collect tasks=%d bboxes=%d errors=%d wait_ms=%.1f query_total_ms=%.1f query_max_ms=%.1f",
+            "[text_measure] collect tasks=%d bboxes=%d errors=%d wait_ms=%.1f query_total_ms=%.1f query_max_ms=%.1f",
             len(tasks or []),
             len(bboxes),
             len(errors),
             (time.perf_counter() - wait_started) * 1000.0,
-            sum(self._query_times_ms),
-            max(self._query_times_ms or [0.0]),
+            sum(float(task.query_ms or 0.0) for task in (tasks or [])),
+            max([float(task.query_ms or 0.0) for task in (tasks or [])] or [0.0]),
         )
-        return bboxes, offsets, errors
+        if errors:
+            details = "; ".join(str(error) for error in errors[:3])
+            raise RuntimeError(f"Text geometry measurement failed: {details}")
+        return bboxes, offsets
+
+    def wait_ready(self, timeout_s: float | None = None) -> None:
+        timeout = self.timeout_s if timeout_s is None else float(timeout_s)
+        if not self._ready.wait(timeout=max(0.0, timeout)):
+            raise RuntimeError("Timed out starting the text geometry helper")
+        if self._fatal_error is not None:
+            raise RuntimeError(f"Text geometry helper failed: {self._fatal_error}")
 
     def close(self) -> None:
         if self._closed:
@@ -214,26 +227,12 @@ class TextBBoxBatch:
     def missing_ids(self) -> set[str]:
         return self.ids - set(self._bboxes)
 
-    def set_pixel_bboxes(self, bboxes) -> None:
+    def set_probe_bboxes(self, bboxes, offsets=None) -> None:
         scale_x, scale_y = _uu_per_px_xy(self.doc_root)
         self._bboxes = {
             element_id: _scale_bbox(bbox, scale_x, scale_y)
             for element_id, bbox in (bboxes or {}).items()
         }
-
-    def query_all(self, tree, *, minimize_for_ids: bool = False) -> None:
-        ids = self.ids
-        if not ids:
-            self._bboxes = {}
-            return
-        _l.i(
-            "[text_measure] query-all ids=%d consumers=%s",
-            len(ids),
-            ",".join(self.consumers),
-        )
-        self.set_pixel_bboxes(SVG.query_all(tree, ids, minimize_for_ids=minimize_for_ids))
-
-    def translate_bboxes(self, offsets) -> None:
         for element_id, offset in (offsets or {}).items():
             bbox = self._bboxes.get(element_id)
             if bbox is None:

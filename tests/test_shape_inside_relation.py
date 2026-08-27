@@ -12,6 +12,7 @@ import render_tokens as RTK
 import svg as SVG
 import text as TXT
 import transform_fx as TFX
+import text_decoration as TDEC
 
 
 def _document():
@@ -154,7 +155,7 @@ def test_dynamic_inside_array_repack_preserves_bottom_center_anchor():
     assert (second.x, second.y) == (35.0, 90.0)
 
 
-def test_compact_text_probe_keeps_shape_owner_and_drops_unrelated_art():
+def test_text_probe_keeps_shape_owner_and_drops_unrelated_art():
     raw = b'''<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">
       <defs>
         <linearGradient id="paint"><stop offset="0" stop-color="#000"/></linearGradient>
@@ -169,7 +170,7 @@ def test_compact_text_probe_keeps_shape_owner_and_drops_unrelated_art():
     </svg>'''
     root = inkex.load_svg(io.BytesIO(raw)).getroot()
 
-    probe, text_count, offsets = TXT._compact_text_probe(root.getroottree(), {"description", "description__hole__1"})
+    probe, text_count, offsets = TXT._build_text_probe(root.getroottree(), {"description", "description__hole__1"})
     probe_root = probe.getroot()
 
     assert text_count == 1
@@ -276,3 +277,42 @@ def test_inside_source_uses_text_coordinate_system():
     assert prepared.get("transform")
     assert not (prepared_text.get("transform") or "").strip()
     assert prepared.get("data-bbox") == "20.0 10.0 50.0 12.5"
+
+
+def test_deferred_inside_keeps_original_flow_frame_for_scaled_text():
+    root, scope = _document()
+    source = root.find(".//*[@id='frame']")
+    source.getparent().remove(source)
+    scope.insert(0, source)
+    text = root.find(".//*[@id='description']")
+    text.set("transform", "scale(0.5,1)")
+    text.set("style", text.get("style") + ";shape-padding:2")
+    frame, owner, text = TFX.ensure_private_shape_inside(root, scope, text)
+    spec = type("InsideSpec", (), {"inside": "a"})()
+    assert TFX.mark_inside_owner(owner, frame, text, spec)
+
+    assert TFX.apply_deferred_inside(
+        root,
+        {text.get("id"): {"x": 2.0, "y": 2.0, "width": 40.0, "height": 10.0}},
+    ) == 1
+
+    flow = next(node for node in owner.iter() if node.get("data-dm-shape-inside-flow") == frame.get("id"))
+    assert flow.get("width") == "100"
+    assert flow.get("height") == "50"
+    assert float(frame.get("width")) == 44.01
+    assert float(frame.get("height")) == 14.01
+    assert f"url(#{flow.get('id')})" in text.get("style")
+
+
+def test_rich_xml_parses_pnp_text_decoration_attributes():
+    root, _scope = _document()
+    text = root.find(".//*[@id='description']")
+
+    SVG.replace_xml(
+        text,
+        "<tspan pnp:decoration='#brush' pnp:decoration-layer='front'>Marked</tspan>",
+    )
+
+    tspan = next(node for node in text if str(node.tag).endswith("tspan"))
+    assert tspan.get(TDEC.DECORATION_ATTR) == "#brush"
+    assert tspan.get(TDEC.LAYER_ATTR) == "front"

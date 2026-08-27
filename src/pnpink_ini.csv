@@ -12,6 +12,7 @@
 # :Tf(text font size) = <tspan font-family='${font}' ${size? font-size='${size}'}>${text}</tspan>
 # :Tp(text size) = <tspan ${size? font-size='${size}'}>${text}</tspan>
 # :Tc(text fill stroke width) = <tspan fill='${fill}' ${stroke? stroke='${stroke}' : stroke='${fill}'} ${width? stroke-width='${width}'} paint-order='stroke'>${text}</tspan>
+# :Tpath(text pathstyleID border front) = <tspan pnp:decoration='#${pathstyleID}' pnp:decoration-padding='${border}' pnp:decoration-layer='${front}'>${text}</tspan>
 # =====================
 
 # =====================

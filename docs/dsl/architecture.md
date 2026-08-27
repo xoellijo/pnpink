@@ -38,7 +38,7 @@ Page state is global. Layout state is per dataset. Fit is per element.
 
 ## Shared Text Measurement
 
-Text features that need rendered geometry register their element IDs in a shared measurement batch. Inline-icon spacers and `Transform{inside=...}` shape-inside text currently use this batch. PnPInk sends the union of IDs through one `inkscape --query-all` call, converts its results to document units once, and returns each consumer only its requested bboxes. New consumers, such as path-based text labels, should extend this batch instead of launching another Inkscape query.
+Text features that need rendered geometry register their element IDs in a shared measurement batch. Inline-icon spacers, `Transform{inside=...}` shape-inside text, and path decorations on rich-text `tspan` elements all use this batch. DeckMaker starts one persistent `inkscape --shell` helper for the lifetime of the application and reuses it across every Generate run. While cards are generated, PnPInk queues small per-card probe SVGs in that process. The final stage only collects results, converts them to document units, and returns each consumer its requested bboxes. Standalone extension runs own a temporary helper for that run. Future text-geometry consumers should join this pipeline instead of launching another Inkscape process.
 
 ## Sources
 Sources are resolved once and then treated as normal placement targets.

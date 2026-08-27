@@ -47,6 +47,7 @@ NSS.setdefault('xlink', getattr(CONST, 'NS_XLINK', 'http://www.w3.org/1999/xlink
 NSS.setdefault('inkscape', getattr(CONST, 'NS_INKSCAPE', 'http://www.inkscape.org/namespaces/inkscape'))
 NSS.setdefault('sodipodi', getattr(CONST, 'NS_SODIPODI', 'http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd'))
 NSS.setdefault('xml', getattr(CONST, 'NS_XML', 'http://www.w3.org/XML/1998/namespace'))
+NSS.setdefault('pnp', getattr(CONST, 'NS_PNP', 'https://pnpink.org/namespaces/pnpink'))
 try:
     from inkex import etree
 except ImportError:
@@ -872,7 +873,7 @@ def ensure_page_for(nv, pages, page_index, w_px, h_px,
         info = {"id":pid,"x":x,"y":y,"w":w_px,"h":h_px,"el":el}
         pages.append(info); created = info
         try:
-            _l.i(f"[svg.ensure_page_for] created page idx={len(pages)} id='{pid}' x={x:.2f} y={y:.2f} w={w_px:.2f} h={h_px:.2f} gap={gap_px:.2f}")
+            _l.d(f"[svg.ensure_page_for] created page idx={len(pages)} id='{pid}' x={x:.2f} y={y:.2f} w={w_px:.2f} h={h_px:.2f} gap={gap_px:.2f}")
         except Exception:
             pass
     return created
@@ -1212,7 +1213,7 @@ def _parse_fragment(fragment: str):
     if fragment is None: return None
     frag = fragment.strip()
     if not frag: return None
-    wrapped = f"<g>{frag}</g>"
+    wrapped = f"<g xmlns:pnp='{CONST.NS_PNP}'>{frag}</g>"
     try:
         node = etree.fromstring(wrapped.encode("utf-8")); return node
     except Exception as e:
@@ -1504,124 +1505,6 @@ def _write_temp_svg(tree: etree._ElementTree) -> str:
     tree.write(path, pretty_print=False, xml_declaration=True, encoding="UTF-8")
     return path
 
-def _build_minimal_tree_for_ids(tree: etree._ElementTree, ids: set) -> etree._ElementTree:
-    """
-    Build a reduced SVG tree that keeps:
-      - requested ids and their ancestor chain
-      - all <defs> nodes and their ancestor chain
-      - root
-    This drastically reduces `inkscape --query-all` cost for small id sets.
-    """
-    root_src = tree.getroot()
-    root = deepcopy(root_src)
-    keep = {root}
-
-    # Keep requested ids (if present) and ancestors.
-    for _id in (ids or set()):
-        hits = root.xpath(f".//*[@id='{_id}']")
-        for n in hits:
-            cur = n
-            while cur is not None:
-                keep.add(cur)
-                cur = cur.getparent()
-
-    # Keep defs and ancestors (references may depend on defs).
-    for d in root.findall(".//svg:defs", namespaces=NSS):
-        cur = d
-        while cur is not None:
-            keep.add(cur)
-            cur = cur.getparent()
-
-    # Keep global style nodes and ancestors (text metrics depend on CSS).
-    for st in root.findall(".//svg:style", namespaces=NSS):
-        cur = st
-        while cur is not None:
-            keep.add(cur)
-            cur = cur.getparent()
-
-    # Keep namedview/pages context: Inkscape query coordinates can depend on
-    # document page setup (especially multi-page docs).
-    for nv in root.findall(".//sodipodi:namedview", namespaces=NSS):
-        cur = nv
-        while cur is not None:
-            keep.add(cur)
-            cur = cur.getparent()
-        for n in nv.iter():
-            keep.add(n)
-
-    def _lname(tag) -> str:
-        if not isinstance(tag, str):
-            return ""
-        if "}" in tag:
-            return tag.rsplit("}", 1)[1]
-        return tag
-
-    # Text layout depends on sibling tspans/runs. If a queried id is inside a text-like
-    # container, keep that whole subtree to preserve measured positions.
-    text_like_roots = set()
-    for _id in (ids or set()):
-        hits = root.xpath(f".//*[@id='{_id}']")
-        for n in hits:
-            cur = n
-            while cur is not None:
-                ln = _lname(cur.tag).lower()
-                if ln in ("text", "flowroot"):
-                    text_like_roots.add(cur)
-                    break
-                cur = cur.getparent()
-    for troot in text_like_roots:
-        for n in troot.iter():
-            keep.add(n)
-
-    # Keep referenced nodes used by kept content (e.g. shape-inside, textPath,
-    # clipPath, masks, gradients, markers, href uses).
-    _url_ref_re = re.compile(r"url\(#([^)]+)\)")
-
-    def _add_with_ancestors(n):
-        cur = n
-        while cur is not None:
-            keep.add(cur)
-            cur = cur.getparent()
-
-    def _find_by_id(_id: str):
-        if not _id:
-            return None
-        hits = root.xpath(f".//*[@id='{_id}']")
-        return hits[0] if hits else None
-
-    changed = True
-    while changed:
-        changed = False
-        for n in list(keep):
-            try:
-                attrs = dict(n.attrib or {})
-            except Exception:
-                attrs = {}
-            refs = []
-            for _, v in attrs.items():
-                sv = str(v or "")
-                refs.extend(_url_ref_re.findall(sv))
-                if sv.startswith("#") and len(sv) > 1:
-                    refs.append(sv[1:])
-            for rid in refs:
-                tgt = _find_by_id(str(rid).strip())
-                if tgt is not None and tgt not in keep:
-                    _add_with_ancestors(tgt)
-                    # Keep full subtree of the referenced node.
-                    for d in tgt.iter():
-                        keep.add(d)
-                    changed = True
-
-    def _prune(node):
-        for ch in list(node):
-            if ch in keep:
-                _prune(ch)
-            else:
-                node.remove(ch)
-
-    _prune(root)
-    return etree.ElementTree(root)
-
 def _parse_query_all(stdout: str, want_ids: set) -> dict:
     out = {}
     for line in (stdout or "").splitlines():
@@ -1635,22 +1518,14 @@ def _parse_query_all(stdout: str, want_ids: set) -> dict:
         except Exception: pass
     return out
 
-def query_all(tree: etree._ElementTree, ids: set, inkscape_bin: str = None, *, minimize_for_ids: bool = False) -> dict:
+def query_all(tree: etree._ElementTree, ids: set, inkscape_bin: str = None) -> dict:
     """Devuelve bboxes de `ids` usando solo stdout de `inkscape --query-all`."""
     if not ids:
         return {}
 
-    work_tree = tree
-    if minimize_for_ids:
-        try:
-            work_tree = _build_minimal_tree_for_ids(tree, ids)
-        except Exception as ex:
-            _l.w("[svg.query_all] minimize_for_ids failed, fallback to full tree: %s", ex)
-            work_tree = tree
-
-    tmp = _write_temp_svg(work_tree)
+    tmp = _write_temp_svg(tree)
     try:
-        _l.i("[svg.query_all] tmp_svg='%s' ids=%d minimized=%s", tmp, len(ids), bool(minimize_for_ids))
+        _l.i("[svg.query_all] tmp_svg='%s' ids=%d", tmp, len(ids))
         exe = inkscape_bin or INKSCAPE.find_executable() or "inkscape"
         cmd = [exe, "--query-all", tmp]
         _l.i("[svg.query_all] cmd=%s", " ".join(cmd))

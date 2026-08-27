@@ -178,7 +178,7 @@ frame.T{i=a}
 - `i=y` keeps the top edge and trims the bottom.
 - `i=a` applies both rules.
 
-PnPInk places the frame and its linked text together and lets Inkscape flow the final text. Its text ID is registered in the same shared measurement batch used by inline-icons, so all requested text geometry is resolved by one `inkscape --query-all` call. Future text-geometry features can register another consumer in that batch without adding another Inkscape process. An empty linked text removes the placed frame and text. Arrays containing dynamic frames are packed again with their final widths and heights after that same measurement. The source must be a `<rect>` and its text must reference it with `shape-inside:url(#frame_id)`.
+PnPInk places the frame and linked text together, lets Inkscape flow the final content, removes empty frames and repacks arrays after their final dimensions are known. Text-level compression and stretching are preserved safely while the visible frame is trimmed. See [Text](../text.md#flowed-text-and-dynamic-frames) for the complete Inkscape setup, virtual property syntax, padding behavior and layout examples.
 
 The hidden frame can be addressed through the visible text ID with the virtual `shape-inside` property. PnPInk resolves it automatically and creates a private frame only for instances that modify it:
 
