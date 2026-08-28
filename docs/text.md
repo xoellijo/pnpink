@@ -50,21 +50,21 @@ Rich XML is intentionally explicit: PnPInk does not invent an HTML-like markup l
 Writing `<tspan>` repeatedly is powerful but inconvenient. Snippets let a project define its own small text language while still generating normal SVG markup. PnPInk includes common helpers through `pnpink_ini.csv`:
 
 ```txt
-:Tb(Bold text)
-:Ti(Italic text)
-:Td(subscript)
-:Tu(superscript)
-:Ts(underlined)
-:Tx(struck through)
-:Tf(Text "Noto Sans" 12px)
-:Tp(Text 80%)
-:Tc(Text #ffcc00 #000000 0.4)
+:TB(Bold text)
+:TI(Italic text)
+:TL(subscript)
+:TH(superscript)
+:TU(underlined)
+:TX(struck through)
+:TF(Text "Noto Sans" 12px)
+:TS(Text 80%)
+:TC(Text #ffcc00 #000000 0.4)
 ```
 
 Their expanded forms are regular `<tspan>` elements. Calls can be nested, so a short dataset value can describe several combined styles:
 
 ```txt
-:Tc(:Tb(Important) #ffd84d #513a00 0.35)
+:TC(:TB(Important) #ffd84d #513a00 0.35)
 ```
 
 You can define project-specific helpers in dataset comment lines. This example creates a highlighted label while making the optional size conditional:
@@ -166,7 +166,11 @@ Text-level scale transforms created in Inkscape are supported. This is useful fo
 
 ## Decorating Part of a Text { #decorating-part-of-a-text }
 
-A `<tspan>` can generate a path behind or in front of only its own rendered text. The referenced path is a style source: its stroke paint, joins, caps, dashes, markers, gradient, filter and opacity are copied, while the generated stroke width adapts to the measured text height.
+A `<tspan>` can generate artwork behind or in front of only its own rendered text. The referenced element acts as a visual template and may be a path, a group of paths, or a rectangle.
+
+A path copies its stroke paint, joins, caps, dashes, markers, gradient, filter and opacity, while the generated stroke width adapts to the measured text height. `round` and `square` caps are included in the width calculation, so their visible ends remain aligned with the padded text bounds. SVG start/end markers retain their own marker geometry and may intentionally extend beyond those bounds.
+
+A group generates one coincident path for every descendant path, preserving nested order, group opacity, filters and relative stroke widths. This makes layered brushes, bordered strokes and highlight-plus-texture combinations reusable as one decoration template. A rectangle instead creates a real `<rect>` fitted to the padded span and copies its fill, stroke, gradient, filter, opacity and proportional corner radii. Its centered stroke is inset so the visible border remains inside the requested bounds; use `fill:none` or a transparent fill for outline-only treatments.
 
 ```xml
 <tspan
@@ -179,16 +183,22 @@ A `<tspan>` can generate a path behind or in front of only its own rendered text
 
 `behind` is the default. Use `front` for translucent stamps, scratches or overlays. Padding follows CSS order: one value applies to every side, two mean vertical/horizontal, three mean top/horizontal/bottom, and four mean top/right/bottom/left. Values accept `em`, `%`, explicit SVG units or bare millimetres; surrounding brackets are optional.
 
-The style path may remain in `<defs>` so it is not drawn by itself. Keep a decorated span on one rendered line: a wrapped `<tspan>` currently receives one path spanning its combined bbox.
+The style source may remain in `<defs>` so it is not drawn by itself. Keep a decorated span on one rendered line: a wrapped `<tspan>` currently receives one decoration spanning its combined bbox.
 
-The default `:Tpath` helper keeps the XML readable:
+The default `:TM` helper keeps the XML readable. Only `text` and `styleID` are required; `border` and `front` are optional:
 
 ```txt
-:Tpath(Highlighted yellowBrushPath [0.15em 0.25em -0.05em])
-:Tpath(Stamped redStampPath [2 3] front)
+:TM(Highlighted yellowBrushPath)
+:TM(Highlighted yellowBrushPath [0.15em 0.25em -0.05em])
+:TM(Stamped redStampPath [2 3] front)
+:TM(Stamped redStampPath front=front)
 ```
 
-It expands to the `pnp:decoration` attributes shown above. The older `:Tp(text size)` helper remains the shorthand for a plain sized `<tspan>`.
+The named `front=front` form is useful when a front layer is needed without border padding. `TM` expands to the `pnp:decoration` attributes shown above. `TS(text size)` is the shorthand for a plain sized `<tspan>`.
+
+Without an explicit border, decorators add `1 pt` around all four sides of the
+measured letters so strokes and rectangles do not sit flush against the glyphs.
+Pass `0` as the border to recover the exact measured bounds.
 
 ## Text Inside Reusable Artwork
 

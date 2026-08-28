@@ -6,12 +6,12 @@ Definition (only supported format):
   # :Name(arg1 arg2=def ...) = template WITHOUT quotes
 
 Examples:
-  # :Tb(text) = <tspan font-weight='bold'>${text}</tspan>
-  # :Tf(text font size) = <tspan font-family='${font}'${size? font-size='${size}'}>${text}</tspan>
+  # :TB(text) = <tspan font-weight='bold'>${text}</tspan>
+  # :TF(text font size) = <tspan font-family='${font}'${size? font-size='${size}'}>${text}</tspan>
 
 Calls in text:
-  :Tb(Hello)
-  :Tf(Title Noto 12px)
+  :TB(Hello)
+  :TF(Title Noto 12px)
 
 Features:
   - Nesting (inner first), with safety limits.
@@ -349,7 +349,14 @@ def _split_conditional_body(body: str) -> Tuple[str, Optional[str]]:
             brace_depth -= 1
             i += 1
             continue
-        if ch == ":" and brace_depth == 0:
+        if (
+            ch == ":"
+            and brace_depth == 0
+            and i > 0
+            and i + 1 < len(body)
+            and body[i - 1].isspace()
+            and body[i + 1].isspace()
+        ):
             return body[:i].strip(), body[i + 1:].strip()
         i += 1
     return body, None
@@ -414,6 +421,14 @@ def _apply_conditionals(tpl: str, mapping: Dict[str, Any]) -> str:
             if quote:
                 if ch == "\\" and j + 1 < n:
                     j += 2
+                    continue
+                if ch == "$" and j + 1 < n and tpl[j + 1] == "{":
+                    brace_depth += 1
+                    j += 2
+                    continue
+                if ch == "}" and brace_depth > 0:
+                    brace_depth -= 1
+                    j += 1
                     continue
                 if ch == quote:
                     quote = ""

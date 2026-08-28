@@ -183,6 +183,36 @@ class TestConditionals(unittest.TestCase):
             ':gR_x::vp.T{t=2}  then~[60%]6[-80% 0]:',
         )
 
+    def test_text_decorator_optional_border_and_front(self):
+        reg = S.load_definitions_from_comments([
+            "# :TM(text styleID border= front=) = <tspan pnp:decoration='#${styleID}' ${border? pnp:decoration-padding='${border}'} ${front? pnp:decoration-layer='${front}'}>${text}</tspan>"
+        ])
+
+        self.assertEqual(
+            _expand(':TM("Marked text" brush)', reg),
+            "<tspan pnp:decoration='#brush'  >Marked text</tspan>",
+        )
+        self.assertEqual(
+            _expand(':TM("Marked text" brush [1 2])', reg),
+            "<tspan pnp:decoration='#brush' pnp:decoration-padding='[1 2]' >Marked text</tspan>",
+        )
+        self.assertEqual(
+            _expand(':TM("Marked text" brush [1 2] front)', reg),
+            "<tspan pnp:decoration='#brush' pnp:decoration-padding='[1 2]' pnp:decoration-layer='front'>Marked text</tspan>",
+        )
+        self.assertEqual(
+            _expand(':TM("Marked text" brush front=front)', reg),
+            "<tspan pnp:decoration='#brush'  pnp:decoration-layer='front'>Marked text</tspan>",
+        )
+
+    def test_conditional_body_keeps_xml_namespace_colons(self):
+        reg = S.load_definitions_from_comments([
+            "# :N(value) = <x ${value? pnp:attr='${value}'}/>"
+        ])
+
+        self.assertEqual(_expand(':N()', reg), "<x />")
+        self.assertEqual(_expand(':N(ok)', reg), "<x pnp:attr='ok'/>")
+
 
 # ---------------------------
 # ESPACIOS / FORMATO

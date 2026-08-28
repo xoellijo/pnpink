@@ -7,7 +7,9 @@ import re
 import inkex
 
 import const as CONST
+import gradients as GRD
 import log as LOG
+import style_templates as STPL
 import svg as SVG
 
 
@@ -18,15 +20,7 @@ LAYER_ATTR = f"{{{CONST.NS_PNP}}}decoration-layer"
 PADDING_ATTR = f"{{{CONST.NS_PNP}}}decoration-padding"
 _PREPARED_ATTR = "data-dm-decoration-prepared"
 _URL_ID_RE = re.compile(r"^url\(\s*#([^)]+)\s*\)$", re.IGNORECASE)
-_STYLE_ATTRS = {
-    "class", "style", "fill", "fill-opacity", "fill-rule", "color",
-    "stroke", "stroke-opacity", "stroke-linecap", "stroke-linejoin",
-    "stroke-miterlimit", "stroke-dasharray", "stroke-dashoffset",
-    "marker-start", "marker-mid", "marker-end", "filter", "opacity",
-    "paint-order", "vector-effect", "shape-rendering",
-}
-
-
+_DEFAULT_PADDING = "1pt"
 @dataclass
 class DecorationItem:
     tspan: SVG.etree._Element
@@ -108,11 +102,11 @@ def _padding_tokens(value: str) -> list[str]:
     return tokens[:4]
 
 
-def _measure(doc_root, token: str, base: float) -> float:
+def _measure(doc_root, token: str, base: float, *, em_base: float | None = None) -> float:
     value = str(token or "").strip().lower()
     try:
         if value.endswith("em"):
-            return float(value[:-2]) * float(base)
+            return float(value[:-2]) * float(base if em_base is None else em_base)
         if value.endswith("%"):
             return float(value[:-1]) * float(base) / 100.0
         if re.fullmatch(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)", value):
@@ -126,10 +120,10 @@ def _measure(doc_root, token: str, base: float) -> float:
 def _padding(doc_root, value: str, width: float, height: float):
     top, right, bottom, left = _padding_tokens(value)
     return (
-        _measure(doc_root, top, height),
-        _measure(doc_root, right, width),
-        _measure(doc_root, bottom, height),
-        _measure(doc_root, left, width),
+        _measure(doc_root, top, height, em_base=height),
+        _measure(doc_root, right, width, em_base=height),
+        _measure(doc_root, bottom, height, em_base=height),
+        _measure(doc_root, left, width, em_base=height),
     )
 
 
@@ -161,23 +155,68 @@ def _oriented_size(bbox, axis_x, axis_y):
     return max(projected_x, 1e-9), max(projected_y, 1e-9)
 
 
-def _copy_style(source, path) -> None:
-    for key, value in (source.attrib or {}).items():
-        local = str(key).rsplit("}", 1)[-1]
-        if local in _STYLE_ATTRS:
-            path.set(key, value)
-    style = SVG.style_map(path)
-    style.pop("display", None)
-    style.pop("visibility", None)
-    SVG.style_set(path, style)
-
-
 def _parent_inverse_transform(parent):
     transform = SVG.composed_transform(parent)
     try:
         return transform.inverse()
     except AttributeError:
         return -transform
+
+
+def _path_decoration(doc_root, source, parent, axis_x, center_x, center_y, width, stroke_width):
+    plan = STPL.path_layer_plan(doc_root, source, stroke_width)
+    if not plan:
+        return None
+    extension = STPL.cap_extension(plan)
+    line_width = max(1e-9, float(width) - extension * 2.0)
+    start_x = center_x - axis_x[0] * line_width * 0.5
+    start_y = center_y - axis_x[1] * line_width * 0.5
+    end_x = center_x + axis_x[0] * line_width * 0.5
+    end_y = center_y + axis_x[1] * line_width * 0.5
+    d_attr = f"M {start_x:.9g},{start_y:.9g} L {end_x:.9g},{end_y:.9g}"
+    node = STPL.instantiate_path_stack(source, d_attr, plan)
+    if node is None:
+        return None
+    node.set("transform", str(_parent_inverse_transform(parent)))
+    return node
+
+
+def _rect_decoration(doc_root, source, parent, axis_x, axis_y, center_x, center_y, width, height):
+    stroke = STPL.style_value(source, "stroke", "none").lower()
+    source_stroke = 0.0 if stroke in ("", "none") else STPL.length_uu(
+        doc_root,
+        STPL.style_value(source, "stroke-width", "1"),
+        1.0,
+    )
+    rect_width = max(1e-9, float(width) - source_stroke)
+    rect_height = max(1e-9, float(height) - source_stroke)
+    rect = SVG.etree.Element(f"{{{CONST.NS_SVG}}}rect")
+    rect.set("x", f"{-rect_width * 0.5:.9g}")
+    rect.set("y", f"{-rect_height * 0.5:.9g}")
+    rect.set("width", f"{rect_width:.9g}")
+    rect.set("height", f"{rect_height:.9g}")
+    rx, ry = STPL.rect_corner_radii(source, rect_width, rect_height)
+    if rx > 0.0:
+        rect.set("rx", f"{rx:.9g}")
+    if ry > 0.0:
+        rect.set("ry", f"{ry:.9g}")
+    STPL.copy_style(source, rect)
+    world = inkex.Transform(
+        f"matrix({axis_x[0]:.12g},{axis_x[1]:.12g},"
+        f"{axis_y[0]:.12g},{axis_y[1]:.12g},{center_x:.12g},{center_y:.12g})"
+    )
+    rect.set("transform", str(_parent_inverse_transform(parent) @ world))
+    GRD.normalize_user_space_gradients(
+        doc_root,
+        rect,
+        (
+            STPL.length_uu(doc_root, source.get("x"), 0.0),
+            STPL.length_uu(doc_root, source.get("y"), 0.0),
+            STPL.length_uu(doc_root, source.get("width"), 0.0),
+            STPL.length_uu(doc_root, source.get("height"), 0.0),
+        ),
+    )
+    return rect
 
 
 def apply(doc_root, items, bboxes) -> int:
@@ -187,7 +226,7 @@ def apply(doc_root, items, bboxes) -> int:
         bbox = (bboxes or {}).get(item.tspan_id)
         tspan = item.tspan
         text = SVG.find_id(doc_root, item.text_id, include_defs=False)
-        source = SVG.find_id(doc_root, _source_id(item.source_ref), include_defs=True)
+        source = STPL.resolve(doc_root, _source_id(item.source_ref))
         if bbox is None or text is None or source is None:
             _l.w(
                 "[text_decoration] unresolved tspan=%s source=%r bbox=%s",
@@ -199,39 +238,48 @@ def apply(doc_root, items, bboxes) -> int:
             continue
         axis_x, axis_y = _axes(tspan)
         width, height = _oriented_size(bbox, axis_x, axis_y)
-        top, right, bottom, left = _padding(doc_root, item.padding, width, height)
+        top, right, bottom, left = _padding(
+            doc_root, item.padding or _DEFAULT_PADDING, width, height
+        )
         width = max(1e-9, width + left + right)
         stroke_width = max(1e-9, height + top + bottom)
         center_x = float(bbox["x"]) + float(bbox["width"]) * 0.5
         center_y = float(bbox["y"]) + float(bbox["height"]) * 0.5
         center_x += axis_y[0] * (bottom - top) * 0.5
         center_y += axis_y[1] * (bottom - top) * 0.5
-        start_x = center_x - axis_x[0] * width * 0.5
-        start_y = center_y - axis_x[1] * width * 0.5
-        end_x = center_x + axis_x[0] * width * 0.5
-        end_y = center_y + axis_x[1] * width * 0.5
-
-        path = SVG.etree.Element(f"{{{CONST.NS_SVG}}}path")
-        path.set("id", SVG.ensure_id(doc_root, path, "dm_text_decoration"))
-        path.set("d", f"M {start_x:.9g},{start_y:.9g} L {end_x:.9g},{end_y:.9g}")
-        path.set("transform", str(_parent_inverse_transform(parent)))
-        path.set("data-dm-text-decoration", item.tspan_id)
-        _copy_style(source, path)
-        style = SVG.style_map(path)
-        style["stroke-width"] = f"{stroke_width:.9g}"
-        style.setdefault("fill", "none")
-        SVG.style_set(path, style)
+        source_kind = STPL.local_name(source)
+        if source_kind in ("path", "g"):
+            decoration = _path_decoration(
+                doc_root, source, parent, axis_x,
+                center_x, center_y, width, stroke_width,
+            )
+        elif source_kind == "rect":
+            decoration = _rect_decoration(
+                doc_root, source, parent, axis_x, axis_y,
+                center_x, center_y, width, stroke_width,
+            )
+        else:
+            _l.w(
+                "[text_decoration] unsupported source type=%r source=%r",
+                source_kind, item.source_ref,
+            )
+            continue
+        if decoration is None:
+            _l.w("[text_decoration] source=%r produced no geometry", item.source_ref)
+            continue
+        decoration.set("id", SVG.ensure_id(doc_root, decoration, "dm_text_decoration"))
+        decoration.set("data-dm-text-decoration", item.tspan_id)
 
         key = id(text)
         if key not in positions:
             positions[key] = [parent.index(text), parent.index(text) + 1]
         if item.layer == "front":
             index = positions[key][1]
-            parent.insert(index, path)
+            parent.insert(index, decoration)
             positions[key][1] += 1
         else:
             index = positions[key][0]
-            parent.insert(index, path)
+            parent.insert(index, decoration)
             positions[key][0] += 1
             positions[key][1] += 1
         tspan.attrib.pop(_PREPARED_ATTR, None)

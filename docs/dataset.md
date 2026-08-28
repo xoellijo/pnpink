@@ -95,6 +95,7 @@ Rules:
 - `id+` keeps the original anchor rect visible (otherwise anchors are hidden).
 - `id[prop]` sets a property. Default is `text`.
 - `id=...` declares a **default value** or default Fit ops for that column.
+- `id=.L{...}~...` supplies a default Layout and Fit ops to array values in that column.
 - `id-*` in headers expands to all matching IDs by prefix.
 - `id1 id2 id3` in a single header applies the same cell value to all listed IDs.
 
@@ -104,7 +105,13 @@ Examples:
 id=default_id
 id=~i5
 id=default_id~i5
+id=.L{3x1}~i5
 ```
+
+With `id=.L{3x1}~i5`, a cell containing `[icon1 icon2 icon3]` is laid out as a
+three-column array and then fitted inside the placeholder. A `.L{...}` written
+in the cell overrides the header Layout; item-local Fit options likewise keep
+their existing priority over header defaults.
 
 ### Style Property Columns
 Use `id[property]` to change SVG style properties from the dataset.

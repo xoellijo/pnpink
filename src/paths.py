@@ -14,6 +14,7 @@ _l = LOG
 import layouts as LYT
 import svg as SVG
 import prefs
+import style_templates as STPL
 
 _PT = Tuple[float, float]
 _SIDE_ORDER = ('a', 'b', 'c', 'd', 'e', 'f')
@@ -179,23 +180,10 @@ def resolve_style_templates(root, style_id: Optional[str]):
     If it points to a path, use that single path.
     """
     sid = str(style_id or '').strip()
-    if not sid:
-        return []
-    el = root.find(f".//*[@id='{sid}']")
-    if el is None:
+    out = STPL.resolve_path_templates(root, sid)
+    if not out and sid:
         _l.w(f"[paths] style id '{sid}' not found")
-        return []
-    if _is_g(el):
-        out = []
-        try:
-            paths = el.findall(".//{%s}path" % inkex.NSS['svg']) or el.findall('.//path')
-            for p in paths:
-                if _is_path(p):
-                    out.append(p)
-        except Exception:
-            out = []
-        return out
-    return [el] if _is_path(el) else []
+    return out
 
 
 def _document_order_index(root, node) -> int:
@@ -212,20 +200,7 @@ def _document_order_index(root, node) -> int:
 
 def instantiate_styled_path(template_el, d_attr: str):
     """Create a new <path> with style cloned from template_el and geometry d_attr."""
-    p = SVG.etree.Element(inkex.addNS('path', 'svg'))
-    if template_el is None:
-        p.set('d', d_attr)
-        p.set('style', 'fill:none;stroke:#000000;stroke-width:1;')
-        return p
-    for k, v in dict(template_el.attrib or {}).items():
-        if k in ('id', 'd', 'transform', inkex.addNS('label', 'inkscape')):
-            continue
-        try:
-            p.set(k, v)
-        except Exception:
-            pass
-    p.set('d', d_attr)
-    return p
+    return STPL.instantiate_path(template_el, d_attr)
 
 
 def build_path_items_for_target(

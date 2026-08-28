@@ -4,6 +4,7 @@ import io
 from copy import deepcopy
 
 import inkex
+import pytest
 
 import dataset
 import gradients as GRD
@@ -13,6 +14,7 @@ import svg as SVG
 import text as TXT
 import transform_fx as TFX
 import text_decoration as TDEC
+import style_templates as STPL
 
 
 def _document():
@@ -153,6 +155,21 @@ def test_dynamic_inside_array_repack_preserves_bottom_center_anchor():
     second = transforms[1].apply_to_point((0, 50))
     assert (first.x, first.y) == (35.0, 60.0)
     assert (second.x, second.y) == (35.0, 90.0)
+
+
+def test_array_build_resolves_items_in_detached_instance():
+    root, scope = _document()
+    detached = deepcopy(scope)
+
+    group, group_id = RAP._build_array_group(
+        detached,
+        root,
+        [{"id": "placeholder", "ops": "", "transform": None}],
+        "1x1",
+    )
+
+    assert group_id == group.get("id")
+    assert len(group) == 1
 
 
 def test_text_probe_keeps_shape_owner_and_drops_unrelated_art():
@@ -297,6 +314,7 @@ def test_deferred_inside_keeps_original_flow_frame_for_scaled_text():
     ) == 1
 
     flow = next(node for node in owner.iter() if node.get("data-dm-shape-inside-flow") == frame.get("id"))
+    assert owner.index(flow.getparent()) < owner.index(text)
     assert flow.get("width") == "100"
     assert flow.get("height") == "50"
     assert float(frame.get("width")) == 44.01
@@ -316,3 +334,104 @@ def test_rich_xml_parses_pnp_text_decoration_attributes():
     tspan = next(node for node in text if str(node.tag).endswith("tspan"))
     assert tspan.get(TDEC.DECORATION_ATTR) == "#brush"
     assert tspan.get(TDEC.LAYER_ATTR) == "front"
+
+
+def test_text_decoration_em_padding_uses_text_height():
+    root, _scope = _document()
+
+    assert TDEC._padding(root, "[10% 0.5em]", 100.0, 10.0) == (
+        1.0,
+        5.0,
+        1.0,
+        5.0,
+    )
+
+
+def _decoration_document(source_xml: str, padding: str = ""):
+    raw = f'''<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">
+      <defs>{source_xml}</defs>
+      <g id="card"><text id="owner"><tspan id="span">Marked</tspan></text></g>
+    </svg>'''.encode()
+    root = inkex.load_svg(io.BytesIO(raw)).getroot()
+    tspan = root.find(".//*[@id='span']")
+    item = TDEC.DecorationItem(tspan, "span", "owner", "#style-source", "behind", padding)
+    assert TDEC.apply(root, [item], {"span": {"x": 10.0, "y": 20.0, "width": 100.0, "height": 10.0}}) == 1
+    return root, root.find(".//*[@data-dm-text-decoration='span']")
+
+
+def test_text_decoration_round_cap_stays_inside_measured_width():
+    root, decoration = _decoration_document(
+        '<path id="style-source" style="stroke:#900;stroke-width:3;stroke-linecap:round;fill:none"/>'
+    )
+
+    stroke_width = 10.0 + 2.0 * float(root.unittouu("1pt"))
+    padded_width = 100.0 + 2.0 * float(root.unittouu("1pt"))
+    numbers = [float(value) for value in __import__("re").findall(r"[-+]?\d+(?:\.\d+)?", decoration.get("d"))]
+    assert numbers[0] == pytest.approx(60.0 - (padded_width - stroke_width) * 0.5)
+    assert numbers[1] == pytest.approx(25.0)
+    assert numbers[2] == pytest.approx(60.0 + (padded_width - stroke_width) * 0.5)
+    assert numbers[3] == pytest.approx(25.0)
+    assert float(SVG.style_map(decoration)["stroke-width"]) == pytest.approx(stroke_width)
+
+
+def test_text_decoration_explicit_zero_padding_keeps_tight_height():
+    _root, decoration = _decoration_document(
+        '<path id="style-source" style="stroke:#900;stroke-width:3;stroke-linecap:butt;fill:none"/>',
+        "0",
+    )
+
+    assert SVG.style_map(decoration)["stroke-width"] == "10"
+
+
+def test_text_decoration_group_preserves_layers_and_relative_strokes():
+    root, decoration = _decoration_document(
+        '''<g id="style-source" opacity="0.7" stroke="#900">
+          <path style="stroke-width:10;stroke-linecap:round"/>
+          <g filter="url(#engrave)"><path style="stroke-width:5;stroke-linecap:butt"/></g>
+        </g>'''
+    )
+
+    assert STPL.local_name(decoration) == "g"
+    assert decoration.get("opacity") == "0.7"
+    paths = [node for node in decoration.iter() if STPL.local_name(node) == "path"]
+    stroke_width = 10.0 + 2.0 * float(root.unittouu("1pt"))
+    assert float(SVG.style_map(paths[0])["stroke-width"]) == pytest.approx(stroke_width)
+    assert float(SVG.style_map(paths[1])["stroke-width"]) == pytest.approx(stroke_width * 0.5)
+    assert paths[0].get("d") == paths[1].get("d")
+    assert next(node for node in decoration.iter() if node is not decoration and STPL.local_name(node) == "g").get("filter") == "url(#engrave)"
+
+
+def test_text_decoration_rect_keeps_visual_bounds_and_corner_ratio():
+    root, decoration = _decoration_document(
+        '<rect id="style-source" width="100" height="50" rx="10" ry="5" style="fill:#d9a441;fill-opacity:.5;stroke:#421;stroke-width:2"/>'
+    )
+
+    assert STPL.local_name(decoration) == "rect"
+    expected_width = 98.0 + 2.0 * float(root.unittouu("1pt"))
+    expected_height = 8.0 + 2.0 * float(root.unittouu("1pt"))
+    assert float(decoration.get("width")) == pytest.approx(expected_width)
+    assert float(decoration.get("height")) == pytest.approx(expected_height)
+    assert float(decoration.get("rx")) == pytest.approx(expected_width * 0.1)
+    assert float(decoration.get("ry")) == pytest.approx(expected_height * 0.1)
+    assert SVG.style_map(decoration)["fill"] == "#d9a441"
+
+
+def test_text_decoration_rect_gradient_uses_style_source_bbox():
+    root, decoration = _decoration_document(
+        '''<linearGradient id="paint" gradientUnits="userSpaceOnUse"
+             x1="10" y1="20" x2="110" y2="20">
+          <stop offset="0" stop-color="#fff000"/>
+          <stop offset="1" stop-color="#ff8000"/>
+        </linearGradient>
+        <rect id="style-source" x="10" y="20" width="100" height="50"
+              style="fill:url(#paint);stroke:none"/>'''
+    )
+
+    fill = SVG.style_map(decoration)["fill"]
+    gradient_id = fill.removeprefix("url(#").removesuffix(")")
+    converted = SVG.find_id(root, gradient_id, include_defs=True)
+
+    assert gradient_id != "paint"
+    assert converted.get("gradientUnits") == "objectBoundingBox"
+    assert converted.get("data-dm-gradient-source") == "paint"
+    assert converted.get("data-dm-gradient-bbox") == "10 20 100 50"

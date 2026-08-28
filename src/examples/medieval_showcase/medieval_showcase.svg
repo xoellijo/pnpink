@@ -1,0 +1,870 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="210mm"
+   height="297mm"
+   viewBox="0 0 210 297"
+   version="1.1"
+   id="svg1"
+   xml:space="preserve"
+   sodipodi:docname="medieval_showcase.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+   id="namedview1"
+   pagecolor="#17100d"
+   bordercolor="#c99b45"
+   inkscape:document-units="mm"
+   inkscape:current-layer="svg1"
+   borderopacity="0.25"
+   inkscape:showpageshadow="2"
+   inkscape:pageopacity="0.0"
+   inkscape:pagecheckerboard="0"
+   inkscape:deskcolor="#d1d1d1"
+   inkscape:zoom="22.435241"
+   inkscape:cx="329.92736"
+   inkscape:cy="70.536349"
+   inkscape:window-width="1920"
+   inkscape:window-height="974"
+   inkscape:window-x="-11"
+   inkscape:window-y="-11"
+   inkscape:window-maximized="1" />
+  <defs
+   id="defs1"><linearGradient
+   id="linearGradient1"
+   inkscape:collect="always"><stop
+     style="stop-color:#fff81b;stop-opacity:0.74592394;"
+     offset="0"
+     id="stop19" /><stop
+     style="stop-color:#fffa40;stop-opacity:0.30434781;"
+     offset="0.37387386"
+     id="stop22" /><stop
+     style="stop-color:#fffd72;stop-opacity:0.2486413;"
+     offset="0.79112613"
+     id="stop20" /><stop
+     style="stop-color:#fff943;stop-opacity:0.85326087;"
+     offset="0.99324322"
+     id="stop21" /></linearGradient>
+    <linearGradient
+   id="leather"
+   x1="0"
+   y1="0"
+   x2="1"
+   y2="1">
+      <stop
+   offset="0"
+   stop-color="#26100f"
+   id="stop1" /><stop
+   offset="0.42"
+   stop-color="#5a171d"
+   id="stop2" />
+      <stop
+   offset="0.72"
+   stop-color="#240d12"
+   id="stop3" /><stop
+   offset="1"
+   stop-color="#0d0909"
+   id="stop4" />
+    </linearGradient>
+    <linearGradient
+   id="gold"
+   x1="0"
+   y1="0"
+   x2="0"
+   y2="1">
+      <stop
+   offset="0"
+   stop-color="#fff1ad"
+   id="stop5" /><stop
+   offset="0.2"
+   stop-color="#d9a63e"
+   id="stop6" />
+      <stop
+   offset="0.48"
+   stop-color="#7c4815"
+   id="stop7" /><stop
+   offset="0.7"
+   stop-color="#e4bb59"
+   id="stop8" />
+      <stop
+   offset="1"
+   stop-color="#6f3d12"
+   id="stop9" />
+    </linearGradient>
+    <linearGradient
+   id="parchment"
+   x1="0"
+   y1="0"
+   x2="1"
+   y2="1">
+      <stop
+   offset="0"
+   stop-color="#fff0c9"
+   id="stop10" /><stop
+   offset="0.45"
+   stop-color="#e2bd7b"
+   id="stop11" />
+      <stop
+   offset="1"
+   stop-color="#9f6835"
+   id="stop12" />
+    </linearGradient>
+    <linearGradient
+   id="art_fade"
+   x1="0"
+   y1="0"
+   x2="0"
+   y2="1">
+      <stop
+   offset="0"
+   stop-color="#160b0b"
+   stop-opacity="0"
+   id="stop13" />
+      <stop
+   offset="1"
+   stop-color="#160b0b"
+   stop-opacity="0.96"
+   id="stop14" />
+    </linearGradient>
+    <radialGradient
+   id="jewel"
+   cx="0.34"
+   cy="0.25"
+   r="0.75">
+      <stop
+   offset="0"
+   stop-color="#ffffff"
+   id="stop15" /><stop
+   offset="0.2"
+   stop-color="#ed5763"
+   id="stop16" />
+      <stop
+   offset="0.64"
+   stop-color="#7c0d24"
+   id="stop17" /><stop
+   offset="1"
+   stop-color="#25050d"
+   id="stop18" />
+    </radialGradient>
+    <filter
+   id="card_shadow"
+   x="-0.047480316"
+   y="-0.033914511"
+   width="1.0949606"
+   height="1.0802025">
+      <feGaussianBlur
+   in="SourceAlpha"
+   stdDeviation="1.1"
+   result="b"
+   id="feGaussianBlur18" />
+      <feOffset
+   dy="1.1"
+   result="o"
+   id="feOffset18" /><feColorMatrix
+   in="o"
+   values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .8 0"
+   result="s"
+   id="feColorMatrix18" />
+      <feMerge
+   id="feMerge19"><feMergeNode
+     in="s"
+     id="feMergeNode18" /><feMergeNode
+     in="SourceGraphic"
+     id="feMergeNode19" /></feMerge>
+    </filter>
+    <filter
+   id="gold_bevel"
+   x="-0.15"
+   y="-0.55"
+   width="1.3"
+   height="2.1"
+   color-interpolation-filters="sRGB">
+      <feGaussianBlur
+   in="SourceAlpha"
+   stdDeviation="0.28"
+   result="blur"
+   id="feGaussianBlur19" />
+      <feSpecularLighting
+   in="blur"
+   surfaceScale="3"
+   specularConstant="1.1"
+   specularExponent="18"
+   lighting-color="#fff2bd"
+   result="light"
+   id="feSpecularLighting19">
+        <feDistantLight
+   azimuth="225"
+   elevation="52"
+   id="feDistantLight19" />
+      </feSpecularLighting>
+      <feComposite
+   in="light"
+   in2="SourceAlpha"
+   operator="in"
+   result="shine"
+   id="feComposite19" />
+      <feGaussianBlur
+   in="SourceAlpha"
+   stdDeviation="0.22"
+   result="shadowBlur"
+   id="feGaussianBlur20" />
+      <feOffset
+   in="shadowBlur"
+   dy="0.42"
+   result="shadow"
+   id="feOffset20" />
+      <feMerge
+   id="feMerge22"><feMergeNode
+     in="shadow"
+     id="feMergeNode20" /><feMergeNode
+     in="SourceGraphic"
+     id="feMergeNode21" /><feMergeNode
+     in="shine"
+     id="feMergeNode22" /></feMerge>
+    </filter>
+    <filter
+   id="engraved"
+   x="-0.11141617"
+   y="-0.30444445"
+   width="1.2548836"
+   height="1.7385185">
+      <feGaussianBlur
+   in="SourceAlpha"
+   stdDeviation="0.28"
+   result="blur"
+   id="feGaussianBlur22" />
+      <feOffset
+   dx="0.25"
+   dy="0.35"
+   result="shadow"
+   id="feOffset22" />
+      <feSpecularLighting
+   in="blur"
+   surfaceScale="2"
+   specularConstant="0.8"
+   specularExponent="12"
+   lighting-color="#ffe7a0"
+   result="spec"
+   id="feSpecularLighting22"><feDistantLight
+     azimuth="230"
+     elevation="45"
+     id="feDistantLight22" /></feSpecularLighting>
+      <feComposite
+   in="spec"
+   in2="SourceAlpha"
+   operator="in"
+   result="spec2"
+   id="feComposite22" />
+      <feMerge
+   id="feMerge25"><feMergeNode
+     in="shadow"
+     id="feMergeNode23" /><feMergeNode
+     in="SourceGraphic"
+     id="feMergeNode24" /><feMergeNode
+     in="spec2"
+     id="feMergeNode25" /></feMerge>
+    </filter>
+    <filter
+   id="plate_tone"
+   x="-0.0043782838"
+   y="-0.0065445025"
+   width="1.0087566"
+   height="1.013089">
+      <feColorMatrix
+   type="saturate"
+   values="0.78"
+   id="feColorMatrix25" />
+      <feComponentTransfer
+   id="feComponentTransfer25"><feFuncR
+     type="gamma"
+     amplitude="1.08"
+     exponent="0.92"
+     offset="0"
+     id="feFuncR25" /><feFuncG
+     type="gamma"
+     amplitude="1.02"
+     exponent="0.96"
+     offset="0"
+     id="feFuncG25" /><feFuncB
+     type="gamma"
+     amplitude="0.86"
+     exponent="1.05"
+     offset="0"
+     id="feFuncB25" /></feComponentTransfer>
+    </filter>
+    <filter
+   id="decorator_glow"
+   x="-0.082066665"
+   y="-6.3339499"
+   width="1.1641333"
+   height="13.660591">
+      <feGaussianBlur
+   stdDeviation="0.38"
+   result="blur"
+   id="feGaussianBlur25" /><feMerge
+   id="feMerge27"><feMergeNode
+     in="blur"
+     id="feMergeNode26" /><feMergeNode
+     in="SourceGraphic"
+     id="feMergeNode27" /></feMerge>
+    </filter>
+    <clipPath
+   id="source_hide_clip"><rect
+     x="-1"
+     y="-1"
+     width="0.01"
+     height="0.01"
+     id="rect27" /></clipPath>
+    <path
+   id="brush_gold"
+   d="M0,0 C7,-.65 19,.7 30,0"
+   fill="none"
+   stroke="#d3a446"
+   stroke-width="3.1"
+   stroke-linecap="round"
+   opacity=".56"
+   filter="url(#decorator_glow)" />
+    <path
+   id="brush_ruby"
+   d="M0,0 C9,.8 21,-.8 30,0"
+   fill="none"
+   stroke="#8f1830"
+   stroke-width="3.2"
+   stroke-linecap="round"
+   opacity=".62" />
+    <path
+   id="brush_ink"
+   d="M0,0 C8,-.45 22,.45 30,0"
+   fill="none"
+   stroke="#2b1511"
+   stroke-width="1.1"
+   stroke-linecap="round"
+   opacity=".88" />
+  <radialGradient
+   inkscape:collect="always"
+   xlink:href="#jewel"
+   id="radialGradient47"
+   cx="14.7488"
+   cy="15.395"
+   r="2.115"
+   fx="14.7488"
+   fy="15.395"
+   gradientUnits="userSpaceOnUse"
+   gradientTransform="matrix(1.25,0,0,1.25,-3.5669975,-3.691929)" /><radialGradient
+   inkscape:collect="always"
+   xlink:href="#jewel"
+   id="radialGradient48"
+   cx="67.848803"
+   cy="15.395"
+   r="2.115"
+   fx="67.848803"
+   fy="15.395"
+   gradientUnits="userSpaceOnUse"
+   gradientTransform="matrix(1.25,0,0,1.25,-17.391885,-3.7081161)" /><filter
+   inkscape:label="Ridged Border"
+   inkscape:menu="Bevels"
+   inkscape:menu-tooltip="Ridged border with inner bevel"
+   style="color-interpolation-filters:sRGB;"
+   id="filter69"
+   x="-0.00025539919"
+   y="-0.0038779897"
+   width="1.0005108"
+   height="1.007756"><feMorphology
+     radius="4.3"
+     in="SourceAlpha"
+     result="result91"
+     id="feMorphology68" /><feComposite
+     operator="out"
+     in="SourceGraphic"
+     in2="result91"
+     id="feComposite68" /><feGaussianBlur
+     result="result0"
+     stdDeviation="1"
+     id="feGaussianBlur68" /><feDiffuseLighting
+     diffuseConstant="1"
+     id="feDiffuseLighting68"><feDistantLight
+       elevation="50"
+       azimuth="225"
+       id="feDistantLight68" /></feDiffuseLighting><feBlend
+     mode="multiply"
+     in2="SourceGraphic"
+     id="feBlend68" /><feGaussianBlur
+     result="result10"
+     stdDeviation="0.5"
+     id="feGaussianBlur69" /><feComposite
+     operator="in"
+     in="result10"
+     in2="SourceAlpha"
+     id="feComposite69" /></filter><linearGradient
+   inkscape:collect="always"
+   xlink:href="#linearGradient1"
+   id="linearGradient20"
+   x1="-48.754215"
+   y1="51.187298"
+   x2="-41.872654"
+   y2="51.187298"
+   gradientUnits="userSpaceOnUse"
+   gradientTransform="matrix(1.4327155,0,0,0.70873756,154.05765,-20.92628)" /><linearGradient
+   inkscape:collect="always"
+   xlink:href="#linearGradient1"
+   id="linearGradient24"
+   x1="84.651604"
+   y1="17.465731"
+   x2="91.067108"
+   y2="17.465731"
+   gradientUnits="userSpaceOnUse"
+   gradientTransform="matrix(1,0,0,0.72463769,0,4.5853334)" /></defs>
+
+  <g
+   id="card_template"
+   inkscape:label="The Gilded Codex — medieval showcase">
+    <g
+   id="text_frame_sources"
+   clip-path="url(#source_hide_clip)">
+      <rect
+   id="lore_frame1"
+   x="14.1"
+   y="63"
+   width="55.3"
+   height="10"
+   rx="1.25"
+   fill="#f0d8a5"
+   fill-opacity=".96"
+   stroke="#b88737"
+   stroke-width=".32" />
+      <text
+   id="lore1"
+   style="font-size:2.2px;line-height:1.08;font-family:Georgia, serif;text-align:start;white-space:pre-wrap;shape-inside:url(#lore_frame1);shape-padding:1.05;display:inline;fill:#24130e"
+   xml:space="preserve"><tspan
+     x="15.150391"
+     y="65.848666"
+     id="tspan4">Dynamic medieval text.</tspan></text>
+      <rect
+   id="lore_frame2"
+   x="14.1"
+   y="63"
+   width="55.3"
+   height="10"
+   rx="1.25"
+   fill="#ead09a"
+   fill-opacity=".96"
+   stroke="#b88737"
+   stroke-width=".32" />
+      <text
+   id="lore2"
+   style="font-size:2.2px;line-height:1.08;font-family:Georgia, serif;text-align:start;white-space:pre-wrap;shape-inside:url(#lore_frame2);shape-padding:1.05;display:inline;fill:#24130e"
+   xml:space="preserve"><tspan
+     x="15.150391"
+     y="65.848666"
+     id="tspan5">Rich text and icons.</tspan></text>
+      <rect
+   id="lore_frame3"
+   x="14.1"
+   y="63"
+   width="55.3"
+   height="10"
+   rx="1.25"
+   fill="#dfc184"
+   fill-opacity=".96"
+   stroke="#b88737"
+   stroke-width=".32" />
+      <text
+   id="lore3"
+   style="font-size:2.2px;line-height:1.08;font-family:Georgia, serif;text-align:start;white-space:pre-wrap;shape-inside:url(#lore_frame3);shape-padding:1.05;display:inline;fill:#24130e"
+   xml:space="preserve"><tspan
+     x="15.150391"
+     y="65.848666"
+     id="tspan6">Measured decorator.</tspan></text>
+    </g>
+
+    <rect
+   id="card_bbox"
+   x="10"
+   y="10"
+   width="63.5"
+   height="88.9"
+   rx="3.2"
+   fill="url(#leather)"
+   stroke="#21100c"
+   stroke-width=".75"
+   filter="url(#card_shadow)" />
+    <rect
+   x="11.05"
+   y="11.05"
+   width="61.4"
+   height="86.8"
+   rx="2.55"
+   fill="none"
+   stroke="url(#gold)"
+   stroke-width="1.05"
+   id="rect29" />
+    <rect
+   x="12.05"
+   y="12.05"
+   width="59.4"
+   height="84.8"
+   rx="2.1"
+   fill="none"
+   stroke="#f2d179"
+   stroke-opacity=".42"
+   stroke-width=".23"
+   id="rect30" />
+    <path
+   d="M13.2 20.7H70.3M13.2 61.3H70.3M13.2 94.8H70.3"
+   stroke="#d8ad55"
+   stroke-width=".28"
+   opacity=".78"
+   id="path30" />
+    <path
+   d="M13.2 21.5V14.2h7.3M70.3 21.5V14.2H63M13.2 87.8v7h7.3M70.3 87.8v7H63"
+   fill="none"
+   stroke="#d8ad55"
+   stroke-width=".75"
+   id="path31" />
+    <circle
+   cx="15.433002"
+   cy="16.433071"
+   r="1.5625"
+   fill="url(#jewel)"
+   stroke="#e9ca73"
+   stroke-width="0.4"
+   id="circle31"
+   style="fill:url(#radialGradient47);stroke-width:0.3;stroke-dasharray:none" />
+    <circle
+   cx="67.983116"
+   cy="16.416883"
+   r="1.5625"
+   fill="url(#jewel)"
+   stroke="#e9ca73"
+   stroke-width="0.4"
+   id="circle32"
+   style="fill:url(#radialGradient48);stroke-width:0.3;stroke-dasharray:none" />
+
+    <text
+   id="title"
+   x="41.75"
+   y="17.9007"
+   text-anchor="middle"
+   fill="#e6b950"
+   stroke="#4a270d"
+   stroke-width="0.1"
+   font-family="'Cinzel Decorative', Cinzel, Georgia, serif"
+   font-size="3.72px"
+   font-weight="700"
+   letter-spacing="0.06"
+   style="font-size:17.6389px;fill:#f8b311;fill-opacity:1;paint-order:stroke fill;filter:url(#filter69)"
+   transform="matrix(0.19140564,0,0,0.21306275,33.814528,14.297579)">THE GILDED CODEX</text>
+    <text
+   id="subtitle"
+   x="41.75"
+   y="19.883566"
+   text-anchor="middle"
+   fill="#e9d49f"
+   font-family="Cinzel, Georgia, serif"
+   font-size="1.55px"
+   font-weight="600"
+   letter-spacing="0.42">A GENERATIVE CHRONICLE</text>
+    <g
+   id="serial_badge"
+   filter="url(#engraved)">
+      <path
+   d="M63.7 18.4h5.5l1.15 1.35-1.15 1.35h-5.5l-1.15-1.35z"
+   fill="#2a100f"
+   stroke="#d6aa4e"
+   stroke-width=".3"
+   id="path32" />
+      <text
+   id="serial"
+   x="66.45"
+   y="20.35"
+   text-anchor="middle"
+   fill="#f4d980"
+   font-family="Cinzel,Georgia,serif"
+   font-size="1.55">I</text>
+    </g>
+
+    <rect
+   id="art"
+   x="13.2"
+   y="22.1"
+   width="57.1"
+   height="38.2"
+   rx="1.05"
+   fill="#291510"
+   stroke="#d9ad52"
+   stroke-width=".5"
+   filter="url(#plate_tone)" />
+    <path
+   d="M13.2 22.1h57.1v38.2H13.2zm2.05 2.05v34.1h53v-34.1z"
+   fill="#160b0b"
+   fill-rule="evenodd"
+   opacity=".62"
+   pointer-events="none"
+   id="path33" />
+    <path
+   d="M15.25 24.15h53v34.1h-53z"
+   fill="none"
+   stroke="#f0d27b"
+   stroke-opacity=".6"
+   stroke-width=".22"
+   pointer-events="none"
+   id="path34" />
+    <rect
+   x="15.25"
+   y="49.2"
+   width="53"
+   height="9.05"
+   fill="url(#art_fade)"
+   pointer-events="none"
+   id="rect34" />
+    <text
+   id="era"
+   x="17"
+   y="56.85"
+   fill="#f7df9f"
+   font-family="Cinzel,Georgia,serif"
+   font-size="1.65"
+   font-weight="700"
+   letter-spacing=".3">EUROPE · XII CENTURY</text>
+
+    <rect
+   id="icon_row"
+   x="49.704632"
+   y="62.674599"
+   width="20.012911"
+   height="4.4940095"
+   rx="1.0006455"
+   fill="#1a090a"
+   fill-opacity="0.82"
+   stroke="#e4bd62"
+   stroke-width="0.237089" />
+    <rect
+   id="icon_column"
+   x="63.08329"
+   y="24.673075"
+   width="4.6999998"
+   height="19.200001"
+   rx="1"
+   fill="#1a090a"
+   fill-opacity="0.82"
+   stroke="#e4bd62"
+   stroke-width="0.25"
+   style="fill:#000000;fill-opacity:0.69547874;stroke-width:0;stroke-dasharray:none" />
+
+
+    <path
+   id="icon_arc"
+   d="m 15.044225,27.139574 c 8.015437,-2.88897 15.028942,-2.88897 23.044378,0"
+   fill="none"
+   stroke="#ffffff"
+   stroke-opacity="0"
+   stroke-width="3.40267" /><rect
+   id="text_stack"
+   x="13.35"
+   y="62.25"
+   width="56.8"
+   height="31.3"
+   rx="1.65"
+   fill="#120908"
+   fill-opacity=".62"
+   stroke="#d4a84f"
+   stroke-opacity=".5"
+   stroke-width=".28" />
+    <text
+   x="41.75"
+   y="96.3"
+   text-anchor="middle"
+   fill="#bda56f"
+   font-family="Cinzel,Georgia,serif"
+   font-size="1.18"
+   letter-spacing=".24"
+   id="text34">DESIGN ONCE · CREATE EVERY VARIATION</text>
+
+    <defs
+   id="defs46">
+      <g
+   id="icon_crown"
+   data-bbox="0 0 10 10">
+        <rect
+   id="force_bbox_crown"
+   width="10"
+   height="10"
+   fill="#000"
+   fill-opacity="0" />
+        <path
+   d="M1.1 3.1l2.1 2L5 1.2l1.8 3.9 2.1-2-.85 4.6h-6.1z"
+   fill="url(#gold)"
+   stroke="#49240b"
+   stroke-width=".45"
+   id="path35" />
+        <path
+   d="M2 7.7h6v1.1H2z"
+   rx=".3"
+   fill="#d9a541"
+   stroke="#49240b"
+   stroke-width=".35"
+   id="path36" />
+      </g>
+      <g
+   id="icon_shield"
+   data-bbox="0 0 10 10">
+        <rect
+   id="force_bbox_shield"
+   width="10"
+   height="10"
+   fill="#000"
+   fill-opacity="0" />
+        <path
+   d="M5 .7 8.6 2v2.7C8.6 7 7.1 8.5 5 9.4 2.9 8.5 1.4 7 1.4 4.7V2z"
+   fill="#842035"
+   stroke="#efcf75"
+   stroke-width=".55"
+   id="path37" />
+        <path
+   d="M5 1.2v7.5M2 4.3h6"
+   stroke="#efcf75"
+   stroke-width=".65"
+   id="path38" />
+      </g>
+      <g
+   id="icon_key"
+   data-bbox="0 0 10 10">
+        <rect
+   id="force_bbox_key"
+   width="10"
+   height="10"
+   fill="#000"
+   fill-opacity="0" />
+        <circle
+   cx="3.05"
+   cy="3.1"
+   r="1.8"
+   fill="none"
+   stroke="#e0b557"
+   stroke-width="1"
+   id="circle38" />
+        <path
+   d="M4.4 4.45 8.8 8.8M6.9 6.9l1.15-1.15M7.8 7.8l1.1-1.1"
+   stroke="#e0b557"
+   stroke-width="1"
+   stroke-linecap="round"
+   id="path39" />
+      </g>
+      <g
+   id="icon_scroll"
+   data-bbox="0 0 10 10">
+        <rect
+   id="force_bbox_scroll"
+   width="10"
+   height="10"
+   fill="#000"
+   fill-opacity="0" />
+        <path
+   d="M2 1.4h5.4v6.8H2.7c-1.3 0-1.3-1.7 0-1.7h3.6V2.6H2z"
+   fill="#ead098"
+   stroke="#6a3c19"
+   stroke-width=".48"
+   id="path40" />
+        <path
+   d="M3.1 3.6h2.2M3.1 4.8h2.2"
+   stroke="#7d4b27"
+   stroke-width=".35"
+   id="path41" />
+      </g>
+      <g
+   id="icon_coin"
+   data-bbox="0 0 10 10">
+        <rect
+   id="force_bbox_coin"
+   width="10"
+   height="10"
+   fill="#000"
+   fill-opacity="0" />
+        <circle
+   cx="5"
+   cy="5"
+   r="3.75"
+   fill="url(#gold)"
+   stroke="#4b260a"
+   stroke-width=".55"
+   id="circle41" /><circle
+   cx="5"
+   cy="5"
+   r="2.7"
+   fill="none"
+   stroke="#fff0a1"
+   stroke-opacity=".6"
+   stroke-width=".35"
+   id="circle42" />
+        <path
+   d="M5 2.6 5.7 4l1.55.2-1.12 1.08.27 1.54L5 6.1l-1.4.72.27-1.54L2.75 4.2 4.3 4z"
+   fill="#6c3510"
+   id="path42" />
+      </g>
+      <g
+   id="icon_fleur"
+   data-bbox="0 0 10 10">
+        <rect
+   id="force_bbox_fleur"
+   width="10"
+   height="10"
+   fill="#000"
+   fill-opacity="0" />
+        <path
+   d="M5 9V5.2C3.6 5.6 2.2 5 1.7 3.8c1.5-.2 2.5.1 3.3 1.1C4.1 3.4 4.1 2 5 .7c.9 1.3.9 2.7 0 4.2.8-1 1.8-1.3 3.3-1.1C7.8 5 6.4 5.6 5 5.2"
+   fill="#d9aa42"
+   stroke="#4c270c"
+   stroke-width=".48"
+   id="path43" />
+        <path
+   d="M2.5 7h5M3.25 8.2h3.5"
+   stroke="#efd47c"
+   stroke-width=".65"
+   stroke-linecap="round"
+   id="path44" />
+      </g>
+      <g
+   id="icon_sword"
+   data-bbox="0 0 10 10">
+        <rect
+   id="force_bbox_sword"
+   width="10"
+   height="10"
+   fill="#000"
+   fill-opacity="0" />
+        <path
+   d="M7.9 1.1 6.8 5.9 4.9 7.8 3.8 6.7 5.7 4.8z"
+   fill="#d9dde1"
+   stroke="#3c2a20"
+   stroke-width=".42"
+   id="path45" />
+        <path
+   d="m3.1 6.05 2.15 2.15M2.55 8.55l1.1-1.1M1.85 9.2l1.3-1.3"
+   stroke="#d7a94b"
+   stroke-width=".8"
+   stroke-linecap="round"
+   id="path46" />
+      </g>
+    </defs>
+  </g><path
+   style="fill:#f3fa64;fill-opacity:0.501232;stroke:url(#linearGradient20);stroke-width:1.20922;stroke-linecap:square;stroke-linejoin:bevel;stroke-dasharray:none;paint-order:fill markers stroke"
+   d="m 85.066589,15.380022 8.091119,0.02255"
+   id="brush_path_yellow"
+   sodipodi:nodetypes="cc"
+   inkscape:label="brush_path_yellow" />
+<rect
+   style="fill:url(#linearGradient24);stroke:#fff81b;stroke-width:2.55377e-08;stroke-linecap:square;stroke-linejoin:bevel;stroke-dasharray:none;stroke-opacity:0.560345;paint-order:fill markers stroke"
+   id="brush_rect_yellow"
+   width="6.4159999"
+   height="1.1793202"
+   x="84.651604"
+   y="16.652" /><rect
+   style="fill:none;stroke:#fff826;stroke-width:0.1;stroke-linecap:square;stroke-linejoin:bevel;stroke-dasharray:none;stroke-opacity:1;paint-order:fill markers stroke"
+   id="brush_rect_border"
+   width="6.4159999"
+   height="1.1793202"
+   x="83.34375"
+   y="19.84375" /></svg>

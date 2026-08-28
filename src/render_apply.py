@@ -186,6 +186,12 @@ def _array_anchor_from_ops(ops: str) -> int:
     return 5
 
 
+def _array_layout_with_header_default(array_spec, header_layout):
+    if isinstance(array_spec, dict) and array_spec.get("layout") is not None:
+        return array_spec.get("layout")
+    return header_layout
+
+
 def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, ss_registry=None, group_id_prefix='dm_array', outer_anchor=5):
     if not items:
         return None, None
@@ -310,7 +316,7 @@ def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, ss_r
             ops_full = f"~{ops_body}" if ops_body else "~i"
             placement = FA.PlacementSequence(root_doc)
             placed = placement.apply(
-                root_doc,
+                inst_node,
                 base.get('id') or '',
                 "",
                 ops_full,
@@ -569,6 +575,52 @@ def _parse_header_default_spec(spec: str, target_id: str) -> Tuple[Optional[str]
             return None, "", "", s
     return default_id, (default_ops or ""), (global_ops or ""), (default_expr or "")
 
+
+def _split_header_global_layout(spec: str):
+    """Extract a leading header-global Layout module and its remaining suffix."""
+    s = (spec or "").strip()
+    match = re.match(r"^\.(?:Layout|L)\s*\{", s, re.IGNORECASE)
+    if not match:
+        return None, s
+
+    open_index = s.find("{", match.start())
+    depth = 0
+    quote = None
+    escaped = False
+    close_index = -1
+    for index in range(open_index, len(s)):
+        char = s[index]
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+            continue
+        if char in ("'", '"'):
+            quote = char
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                close_index = index
+                break
+
+    if close_index < 0:
+        return None, s
+
+    module = s[:close_index + 1]
+    try:
+        layout = DSL.parse_layout_block(module.lstrip("."))
+    except Exception:
+        return None, s
+    return layout, s[close_index + 1:].strip()
+
 def _is_id_wildcard_token(token: str) -> bool:
     t = (token or "").strip()
     return bool(re.match(r"^[A-Za-z_][-A-Za-z0-9_:.]*\*$", t))
@@ -730,12 +782,14 @@ def parse_header_key_full(key: str) -> Dict[str, object]:
       - '=' default declaration: 'ph_id=...' (defaults and/or global fit).
 
     Returns dict:
-      {target_id, target_ids, prop, header_plus, default_id, default_ops, global_ops, default_expr, default_raw}
+      {target_id, target_ids, prop, header_plus, default_id, default_ops,
+       global_ops, global_layout, default_expr, default_raw}
     """
     raw = (key or "").strip()
     if not raw:
         return {'target_id': '', 'target_ids': [], 'prop': 'text', 'header_plus': False,
-                'default_id': None, 'default_ops': '', 'global_ops': '', 'default_expr': '', 'default_raw': ''}
+                'default_id': None, 'default_ops': '', 'global_ops': '', 'global_layout': None,
+                'default_expr': '', 'default_raw': ''}
 
     # Split default declaration first so '=~[12x12]' is never confused with header '[prop]'.
     left, has_eq, right = raw.partition("=")
@@ -777,13 +831,18 @@ def parse_header_key_full(key: str) -> Dict[str, object]:
     default_id = None
     default_ops = ""
     global_ops = ""
+    global_layout = None
     default_expr = ""
     if has_eq:
-        default_id, default_ops, global_ops, default_expr = _parse_header_default_spec(right, target_id)
+        global_layout, remaining_default = _split_header_global_layout(right)
+        default_id, default_ops, global_ops, default_expr = _parse_header_default_spec(
+            remaining_default, target_id
+        )
 
     return {'target_id': target_id, 'target_ids': target_ids, 'prop': prop, 'header_plus': header_plus,
             'default_id': default_id, 'default_ops': (default_ops or ''), 'global_ops': (global_ops or ''),
-            'default_expr': (default_expr or ''), 'default_raw': (right or '')}
+            'global_layout': global_layout, 'default_expr': (default_expr or ''),
+            'default_raw': (right or '')}
 
 def parse_header_key(key: str) -> Tuple[str, str, bool]:
     info = parse_header_key_full(key)
@@ -828,12 +887,14 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
         _default_id = hk.get('default_id') if isinstance(hk, dict) else None
         _default_ops = (hk.get('default_ops') or '') if isinstance(hk, dict) else ''
         _global_ops = (hk.get('global_ops') or '') if isinstance(hk, dict) else ''
+        _global_layout = hk.get('global_layout') if isinstance(hk, dict) else None
         _default_expr = (hk.get('default_expr') or '') if isinstance(hk, dict) else ''
         _default_raw = (hk.get('default_raw') or '') if isinstance(hk, dict) else ''
     except Exception:
         _default_id = None
         _default_ops = ''
         _global_ops = ''
+        _global_layout = None
         _default_expr = ''
         _default_raw = ''
     value = expand_value(raw_val, row)
@@ -1121,7 +1182,8 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                 ops_body = (arr.get('ops') or "") or default_ops
                 ops_full = _merge_header_global_ops(ops_body)
                 g_node, g_id = _build_array_group(
-                    inst, root_doc, arr.get('items'), arr.get('layout'),
+                    inst, root_doc, arr.get('items'),
+                    _array_layout_with_header_default(arr, _global_layout),
                     sm=sm, ss_registry=ss_registry,
                     outer_anchor=_array_anchor_from_ops(ops_full),
                 )

@@ -14,7 +14,7 @@ rect1,rect1+=~[2]a,,text1,[fill],[stroke],text2,,text3
 7,:dib(Hexactinellae),,-1,#f9faf5bf,#21211fff,Hexactinellae,,Designed by Haeckel
 7,:dib(Basimycetes),,-5,#f3f3f3d9,#e9eae5ff,Basimycetes,,Designed by Haeckel
 7,:dib(Hexacoralla 69),,-10,#f9faf5bf,#21211fff,Hexacoralla, 69,Designed by Haeckel
-{} ?,:dib(Muscinae),,:Tp(Medusas 20),#f9faf5b9,#51665cff,Muscinae,,Created with PnPInk
+{} ?,:dib(Muscinae),,:TS(Medusas 20),#f9faf5b9,#51665cff,Muscinae,,Created with PnPInk
 {A3^}.L{g=4 s=poker}.M{},:dib(Discomedusae 8),,0,#86b5cfbf,#a71312ff,Discomedusae, 8,Designed by Haeckel
 ,:dib(Florideae),,1,#f7bec6d9,#f54148ff,Florideae,,Designed by Haeckel
 ,:dib(Leptomedusae),,2,#b4ecead9,#326f89ff,Leptomedusae,,Designed by Haeckel
@@ -29,4 +29,4 @@ rect1,rect1+=~[2]a,,text1,[fill],[stroke],text2,,text3
 ,:dib(Hexactinellae),,-1,#f9faf5bf,#21211fff,Hexactinellae,,Designed by Haeckel
 ,:dib(Basimycetes),,-5,#f3f3f3d9,#e9eae5ff,Basimycetes,,Designed by Haeckel
 ,:dib(Hexacoralla 69),,-10,#f9faf5bf,#21211fff,Hexacoralla, 69,Designed by Haeckel
-,:dib(Muscinae),,:Tp(Medusas 20),#f9faf5b9,#51665cff,Muscinae,,Created with PnPInk
+,:dib(Muscinae),,:TS(Medusas 20),#f9faf5b9,#51665cff,Muscinae,,Created with PnPInk

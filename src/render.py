@@ -214,6 +214,7 @@ def render_phase(ctx):
                 and not str((hk or {}).get("default_id") or "")
                 and not str((hk or {}).get("default_ops") or "")
                 and not str((hk or {}).get("global_ops") or "")
+                and (hk or {}).get("global_layout") is None
                 and not str((hk or {}).get("default_expr") or "")
                 and not str((hk or {}).get("default_raw") or "")
                 and len(target_ids) == 1

@@ -1600,14 +1600,14 @@ def process_text_geometry(root_scope: SVG.etree._Element, show_debug_rects: bool
     for text_id, hole_bbox in hole_bboxes_by_text.items():
         if text_id in inside_bboxes:
             TM.extend_bbox_map(inside_bboxes, text_id, hole_bbox)
-    inside_changed = TFX.apply_deferred_inside(doc_root, inside_bboxes)
     decorations_changed = TDEC.apply(
         doc_root,
         decorations,
         batch.bboxes_for("text_decorations"),
     )
+    inside_changed = TFX.apply_deferred_inside(doc_root, inside_bboxes)
     _l.i("[text_measure] transform_inside changed=%d", inside_changed)
-    _l.i("[text_decoration] paths=%d", decorations_changed)
+    _l.i("[text_decoration] nodes=%d", decorations_changed)
     _l.i("inline_icons placed=%d", placed)
     _l.i("[inline_icons] stage=insert_use use_count=%d", placed)
     return ProcessResult(placed, used_sources)

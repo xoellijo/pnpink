@@ -373,7 +373,11 @@ def _separate_inside_flow_frame(root, owner, frame, texts) -> object | None:
         None,
     )
     if defs is None:
-        defs = SVG.etree.SubElement(owner, inkex.addNS("defs", "svg"))
+        defs = SVG.etree.Element(inkex.addNS("defs", "svg"))
+        owner.insert(0, defs)
+    elif owner.index(defs) != 0:
+        owner.remove(defs)
+        owner.insert(0, defs)
     defs.append(flow)
     for text in linked:
         _rewrite_shape_inside_id(text, flow_id)

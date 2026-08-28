@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  xmlns:svg="http://www.w3.org/2000/svg"
+  xmlns:xlink="http://www.w3.org/1999/xlink"
+  xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+  xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+  xmlns:pnp="https://pnpink.org/namespaces/pnpink"
+  width="210mm"
+  height="297mm"
+  viewBox="0 0 210 297"
+  version="1.1"
+  id="svg1"
+  xml:space="preserve"
+  sodipodi:docname="text_showcase.svg">
+  <sodipodi:namedview
+    id="namedview1"
+    pagecolor="#16141d"
+    bordercolor="#5ce1e6"
+    inkscape:document-units="mm"
+    inkscape:current-layer="card_template"/>
+  <defs id="defs1">
+    <linearGradient id="card_gradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#171321"/>
+      <stop offset="0.55" stop-color="#25213a"/>
+      <stop offset="1" stop-color="#090a11"/>
+    </linearGradient>
+    <linearGradient id="art_fade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#090a11" stop-opacity="0"/>
+      <stop offset="1" stop-color="#090a11" stop-opacity="0.95"/>
+    </linearGradient>
+    <linearGradient id="brush_gold_gradient" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff4fb3" stop-opacity="0.15"/>
+      <stop offset="0.22" stop-color="#ff4fb3"/>
+      <stop offset="0.72" stop-color="#ffd75e"/>
+      <stop offset="1" stop-color="#ffd75e" stop-opacity="0.1"/>
+    </linearGradient>
+    <linearGradient id="brush_cyan_gradient" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#5ce1e6" stop-opacity="0.1"/>
+      <stop offset="0.35" stop-color="#5ce1e6"/>
+      <stop offset="0.8" stop-color="#8c7cff"/>
+      <stop offset="1" stop-color="#8c7cff" stop-opacity="0.1"/>
+    </linearGradient>
+    <filter id="brush_glow" x="-0.3" y="-1" width="1.6" height="3">
+      <feGaussianBlur stdDeviation="0.55" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="soft_shadow" x="-0.2" y="-0.2" width="1.4" height="1.5">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="0.9" result="blur"/>
+      <feOffset dy="0.8" result="offset"/>
+      <feColorMatrix in="offset" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .65 0" result="shadow"/>
+      <feMerge><feMergeNode in="shadow"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="art_clip"><rect x="13" y="22" width="57.5" height="38" rx="1.7"/></clipPath>
+    <clipPath id="source_hide_clip"><rect x="-1" y="-1" width="0.01" height="0.01"/></clipPath>
+    <path id="brush_gold" d="M 0,0 C 10,-1 20,1 30,0" fill="none" stroke="#ffd75e" stroke-width="3.4" stroke-linecap="round" opacity="0.72"/>
+    <path id="brush_cyan" d="M 0,0 C 8,1 22,-1 30,0" fill="none" stroke="#5ce1e6" stroke-width="3.4" stroke-linecap="round" opacity="0.68"/>
+    <path id="brush_front" d="M 0,0 L 30,0" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="square" opacity="0.25" style="mix-blend-mode:screen"/>
+  </defs>
+
+  <g id="card_template" inkscape:label="NATURA text showcase card">
+    <g id="text_frame_sources" clip-path="url(#source_hide_clip)">
+    <rect id="ability_frame1" x="13.8" y="63.2" width="55.9" height="12" rx="1.6" fill="#201d2e" fill-opacity="0.96" stroke="#ff4fb3" stroke-opacity="0.55" stroke-width="0.32"/>
+    <text id="ability1" style="font-family:Calibri,sans-serif;font-size:2.65px;line-height:1.08;text-align:start;white-space:pre-wrap;shape-inside:url(#ability_frame1);shape-padding:1.35;fill:#f8f6ff;stroke:none"><tspan>Stackable text frame</tspan></text>
+
+    <rect id="ability_frame2" x="13.8" y="63.2" width="55.9" height="12" rx="1.6" fill="#171f2d" fill-opacity="0.96" stroke="#5ce1e6" stroke-opacity="0.55" stroke-width="0.32"/>
+    <text id="ability2" style="font-family:Calibri,sans-serif;font-size:2.65px;line-height:1.08;text-align:start;white-space:pre-wrap;shape-inside:url(#ability_frame2);shape-padding:1.35;fill:#f8f6ff;stroke:none"><tspan>Inline icon frame</tspan></text>
+
+    <rect id="ability_frame3" x="13.8" y="63.2" width="55.9" height="12" rx="1.6" fill="#211b2b" fill-opacity="0.96" stroke="#8c7cff" stroke-opacity="0.55" stroke-width="0.32"/>
+    <text id="ability3" style="font-family:Calibri,sans-serif;font-size:2.65px;line-height:1.08;text-align:start;white-space:pre-wrap;shape-inside:url(#ability_frame3);shape-padding:1.35;fill:#f8f6ff;stroke:none"><tspan>Decorator frame</tspan></text>
+    </g>
+
+    <rect id="card_bbox" x="10" y="10" width="63.5" height="88.9" rx="3.4" fill="url(#card_gradient)" stroke="#5ce1e6" stroke-width="0.7" filter="url(#soft_shadow)"/>
+    <rect x="11.2" y="11.2" width="61.1" height="86.5" rx="2.7" fill="none" stroke="#ffffff" stroke-opacity="0.15" stroke-width="0.25"/>
+    <path id="accent_bar" d="M 13,19.9 H 70.5" stroke="#ff4fb3" stroke-width="1.2" stroke-linecap="round"/>
+    <path d="M 14,62 H 69.5" stroke="#ffffff" stroke-opacity="0.16" stroke-width="0.25"/>
+    <circle cx="65.8" cy="15.6" r="3.2" fill="none" stroke="#ffffff" stroke-opacity="0.28" stroke-width="0.25"/>
+    <circle cx="65.8" cy="15.6" r="1.55" fill="#5ce1e6" fill-opacity="0.26" stroke="#5ce1e6" stroke-width="0.25"/>
+
+    <text id="title" x="13.6" y="16.6" fill="#ffffff" font-family="Bahnschrift,Montserrat,sans-serif" font-size="4.65" font-weight="700" letter-spacing="0.15">NATURA SYSTEM</text>
+    <text id="subtitle" x="13.8" y="19.1" fill="#bcb7ce" font-family="Bahnschrift,Montserrat,sans-serif" font-size="1.75" font-weight="500" letter-spacing="0.38">GENERATIVE SPECIMEN</text>
+    <g id="serial_badge">
+      <rect x="62.2" y="13.55" width="7.2" height="4.1" rx="2.05" fill="#5ce1e6" fill-opacity="0.16" stroke="#5ce1e6" stroke-opacity="0.6" stroke-width="0.25"/>
+      <text id="serial" x="65.8" y="16.25" fill="#ffffff" font-family="Consolas,monospace" font-size="1.85" text-anchor="middle">01</text>
+    </g>
+
+    <rect id="art" x="13" y="22" width="57.5" height="38" rx="1.7" fill="#11111a" stroke="#ffffff" stroke-opacity="0.2" stroke-width="0.28"/>
+    <rect x="13" y="49" width="57.5" height="11" rx="1.7" fill="url(#art_fade)" pointer-events="none"/>
+    <text x="15" y="57.85" fill="#ffffff" fill-opacity="0.7" font-family="Consolas,monospace" font-size="1.45" letter-spacing="0.22">PUBLIC DOMAIN PLATE // WIKIMEDIA COMMONS</text>
+    <path d="M 15,54.7 H 25" stroke="#5ce1e6" stroke-width="0.45" stroke-linecap="round"/>
+    <rect id="icon_row" x="15" y="51.3" width="20" height="5.2" rx="1.1" fill="#090a11" fill-opacity="0.72" stroke="#ffffff" stroke-opacity="0.55" stroke-width="0.25"/>
+    <rect id="icon_column" x="64.2" y="24" width="4.8" height="20" rx="1.1" fill="#090a11" fill-opacity="0.72" stroke="#ffffff" stroke-opacity="0.55" stroke-width="0.25"/>
+    <rect id="icon_grid" x="15" y="24" width="10" height="10" rx="1.1" fill="#090a11" fill-opacity="0.72" stroke="#ffffff" stroke-opacity="0.55" stroke-width="0.25"/>
+
+    <rect id="text_stack" x="13.8" y="63.2" width="55.9" height="29.2" rx="1.8" fill="#090a11" fill-opacity="0.58" stroke="#ffffff" stroke-opacity="0.13" stroke-width="0.25"/>
+    <text x="14.2" y="96.25" fill="#8e899e" font-family="Consolas,monospace" font-size="1.35" letter-spacing="0.16">PNPINK / TEXT GEOMETRY LAB / NO MANUAL REFLOW</text>
+
+    <defs>
+    <g id="icon_stack" data-bbox="0 0 10 10">
+      <rect id="force_bbox_stack" x="0" y="0" width="10" height="10" fill="#000000" fill-opacity="0" stroke="none"/>
+      <rect x="1.2" y="5.8" width="7.6" height="2.2" rx="0.6" fill="#ff4fb3"/>
+      <rect x="2" y="3.3" width="6" height="2.2" rx="0.6" fill="#ffd75e"/>
+      <rect x="2.8" y="0.8" width="4.4" height="2.2" rx="0.6" fill="#5ce1e6"/>
+    </g>
+    <g id="icon_orbit" data-bbox="0 0 10 10">
+      <rect id="force_bbox_orbit" x="0" y="0" width="10" height="10" fill="#000000" fill-opacity="0" stroke="none"/>
+      <circle cx="5" cy="5" r="2.15" fill="#8c7cff" stroke="#ffffff" stroke-width="0.35"/>
+      <ellipse cx="5" cy="5" rx="4.3" ry="1.8" fill="none" stroke="#5ce1e6" stroke-width="0.55" transform="rotate(-18 5 5)"/>
+      <circle cx="8.2" cy="3.1" r="0.75" fill="#ffd75e"/>
+    </g>
+    <g id="icon_badge" data-bbox="0 0 10 10">
+      <rect id="force_bbox_badge" x="0" y="0" width="10" height="10" fill="#000000" fill-opacity="0" stroke="none"/>
+      <path d="M 5,0.7 6.2,3.5 9.2,3.8 6.9,5.8 7.6,8.8 5,7.2 2.4,8.8 3.1,5.8 0.8,3.8 3.8,3.5 Z" fill="#ffd75e" stroke="#241a33" stroke-width="0.45"/>
+    </g>
+    <g id="icon_rotate" data-bbox="0 0 10 10">
+      <rect id="force_bbox_rotate" x="0" y="0" width="10" height="10" fill="#000000" fill-opacity="0" stroke="none"/>
+      <path d="M 7.9,3.2 A 3.5,3.5 0 1 0 8.2,6.2" fill="none" stroke="#5ce1e6" stroke-width="1.15" stroke-linecap="round"/>
+      <path d="M 7.4,0.9 9.3,3.5 6.2,4.1 Z" fill="#ff4fb3"/>
+    </g>
+    <g id="icon_spark" data-bbox="0 0 10 10">
+      <rect id="force_bbox_spark" x="0" y="0" width="10" height="10" fill="#000000" fill-opacity="0" stroke="none"/>
+      <path d="M 5,0.5 6.1,3.7 9.5,5 6.1,6.2 5,9.5 3.8,6.2 0.5,5 3.8,3.7 Z" fill="#ffffff" stroke="#8c7cff" stroke-width="0.5"/>
+    </g>
+    </defs>
+  </g>
+</svg>

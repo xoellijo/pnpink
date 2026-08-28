@@ -38,12 +38,12 @@ Snippets support positional args, named args, defaults, and nesting.
 
 ```txt
 # :Join(a b) = ${a}/${b}
-# :Tf(text font size) = <tspan font-family='${font}'${size? font-size='${size}'}>${text}</tspan>
+# :TF(text font size) = <tspan font-family='${font}'${size? font-size='${size}'}>${text}</tspan>
 
 :Join(cards heroes)                -> cards/heroes
-:Tf(Title Noto 16px)               -> <tspan font-family='Noto' font-size='16px'>Title</tspan>
-:Tf(Title Noto)                    -> <tspan font-family='Noto'>Title</tspan>
-:Tf(text=Title font=Noto size=12)  -> named arguments are valid
+:TF(Title Noto 16px)               -> <tspan font-family='Noto' font-size='16px'>Title</tspan>
+:TF(Title Noto)                    -> <tspan font-family='Noto'>Title</tspan>
+:TF(text=Title font=Noto size=12)  -> named arguments are valid
 ```
 
 Conditional blocks use `${var? true}` and render only when `var` is non-empty.
@@ -88,7 +88,7 @@ Snippets can call other snippets and are expanded inside-out.
 ```
 
 ## SVG Text Helpers
-PnPInk's default rich-text helpers turn calls such as `:Tb(...)`, `:Tc(...)` and `:Tpath(...)` into normal SVG `<tspan>` markup. Their purpose, combinations and expanded forms are documented with the rest of the text workflow in [Text](text.md#rich-text-with-snippets). This page remains the reference for defining your own snippets, passing bracketed multi-value arguments, nesting calls and using conditionals.
+PnPInk's default rich-text helpers turn calls such as `:TB(...)`, `:TC(...)` and `:TM(...)` into normal SVG `<tspan>` markup. Their purpose, combinations and expanded forms are documented with the rest of the text workflow in [Text](text.md#rich-text-with-snippets). This page remains the reference for defining your own snippets, passing bracketed multi-value arguments, nesting calls and using conditionals.
 
 ## Processing Order
 Processing order matters when snippets and `${var}` are combined in the same cell.

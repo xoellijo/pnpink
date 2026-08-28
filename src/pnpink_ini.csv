@@ -3,16 +3,35 @@
 # =====================
 # RICH TEXT SNIPPETS
 # =====================
-# :Tb(text) = <tspan font-weight='bold'>${text}</tspan>	## snippet to create bold text
-# :Ti(text) = <tspan font-style='italic'>${text}</tspan> ## snippet to create italic text
-# :Td(text) = <tspan baseline-shift='sub' font-size='65%'>${text}</tspan>
-# :Tu(text) = <tspan baseline-shift='super' font-size='65%'>${text}</tspan>
-# :Ts(text) = <tspan text-decoration='underline'>${text}</tspan>
-# :Tx(text) = <tspan text-decoration='line-through'>${text}</tspan>
-# :Tf(text font size) = <tspan font-family='${font}' ${size? font-size='${size}'}>${text}</tspan>
-# :Tp(text size) = <tspan ${size? font-size='${size}'}>${text}</tspan>
-# :Tc(text fill stroke width) = <tspan fill='${fill}' ${stroke? stroke='${stroke}' : stroke='${fill}'} ${width? stroke-width='${width}'} paint-order='stroke'>${text}</tspan>
-# :Tpath(text pathstyleID border front) = <tspan pnp:decoration='#${pathstyleID}' pnp:decoration-padding='${border}' pnp:decoration-layer='${front}'>${text}</tspan>
+## Bold text:
+# :TB(text) = <tspan font-weight='bold'>${text}</tspan>
+
+## Italic text:
+# :TI(text) = <tspan font-style='italic'>${text}</tspan>
+
+## Low text (subscript):
+# :TL(text) = <tspan baseline-shift='sub' font-size='65%'>${text}</tspan>
+
+## High text (superscript):
+# :TH(text) = <tspan baseline-shift='super' font-size='65%'>${text}</tspan>
+
+## Underlined text:
+# :TU(text) = <tspan text-decoration='underline'>${text}</tspan>
+
+## Crossed-out text:
+# :TX(text) = <tspan text-decoration='line-through'>${text}</tspan>
+
+## Font family:
+# :TF(text font size) = <tspan font-family='${font}' ${size? font-size='${size}'}>${text}</tspan>
+
+## Text size:
+# :TS(text size) = <tspan ${size? font-size='${size}'}>${text}</tspan>
+
+## Text color and outline:
+# :TC(text fill stroke width) = <tspan fill='${fill}' ${stroke? stroke='${stroke}' : stroke='${fill}'} ${width? stroke-width='${width}'} paint-order='stroke'>${text}</tspan>
+
+## Marked text:
+# :TM(text styleID border= front=) = <tspan pnp:decoration='#${styleID}' ${border? pnp:decoration-padding='${border}'} ${front? pnp:decoration-layer='${front}'}>${text}</tspan>
 # =====================
 
 # =====================

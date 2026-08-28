@@ -83,4 +83,4 @@ Inkex versions shipped with Inkscape 1.2 through 1.4.x can measure groups contai
 As a workaround, add a direct child `<rect>` whose SVG id or Inkscape label starts with `force_bbox`, `force-bbox`, or `forcebbox` (case-insensitive). PnPInk uses that rectangle as the group's bbox even when it is fully transparent. An explicit `data-bbox` still has higher priority.
 
 ## Path Decorations for Rich Text
-Rich-text `<tspan>` elements can generate styled paths behind or in front of their rendered text through the `pnp:decoration` attributes. See [Text](../text.md#decorating-part-of-a-text) for layers, padding, style sources, limitations and the `:Tpath(...)` helper.
+Rich-text `<tspan>` elements can generate styled artwork behind or in front of their rendered text through the `pnp:decoration` attributes. See [Text](../text.md#decorating-part-of-a-text) for layers, padding, style sources, limitations and the `:TM(...)` helper.
