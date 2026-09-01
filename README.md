@@ -33,13 +33,52 @@ PnPInk connects **one Inkscape template** to **Google Sheets or CSV data**. Each
 
 Design visually, connect text and graphics to your data, and generate a complete, print-ready batch in seconds. Change a name, replace a photo, rebalance a card, or redesign the template, then regenerate everything without rebuilding each item by hand.
 
-<p align="center">
-  <a href="docs/assets/images/medusas_output.jpg">
-    <img src="docs/assets/images/medusas_showcase.jpg" alt="One Inkscape template and Google Sheets dataset generating the complete Medusas card set" width="100%" />
-  </a>
-</p>
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <a href="docs/assets/images/template.jpg" title="Design one reusable SVG template visually in Inkscape">
+        <img src="docs/assets/images/template.jpg" alt="Medieval card template being designed in Inkscape" title="Design one reusable SVG template visually in Inkscape" width="100%" />
+      </a><br />
+      <sub><strong>Design once in Inkscape</strong></sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <a href="docs/assets/images/dataset-csv.jpg" title="Describe every card variation in an ordinary CSV spreadsheet">
+        <img src="docs/assets/images/dataset-csv.jpg" alt="PnPInk CSV dataset open in LibreOffice Calc" title="Describe every card variation in an ordinary CSV spreadsheet" width="100%" />
+      </a><br />
+      <sub><strong>Drive variations from CSV or Google Sheets</strong></sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <a href="docs/assets/images/deckmaker-gen.jpg" title="Generate the complete deck from the template and dataset with DeckMaker">
+        <img src="docs/assets/images/deckmaker-gen.jpg" alt="DeckMaker generation screen" title="Generate the complete deck from the template and dataset with DeckMaker" width="100%" />
+      </a><br />
+      <sub><strong>Generate the complete project</strong></sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <a href="docs/assets/images/deckmaker-export.jpg" title="Choose PDF, PDF/X, image and cutting-plotter export options">
+        <img src="docs/assets/images/deckmaker-export.jpg" alt="DeckMaker export options" title="Choose PDF, PDF/X, image and cutting-plotter export options" width="100%" />
+      </a><br />
+      <sub><strong>Export for screen, print or cutting</strong></sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <a href="docs/assets/images/pnpink-output.jpg" title="Open the generated SVG in Inkscape and keep editing every element">
+        <img src="docs/assets/images/pnpink-output.jpg" alt="Generated medieval card set remaining fully editable in Inkscape" title="Open the generated SVG in Inkscape and keep editing every element" width="100%" />
+      </a><br />
+      <sub><strong>Keep the generated SVG fully editable</strong></sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <a href="docs/assets/images/pnpink-output.pdf" title="Open the exported PDF; PnPInk can also export images and production formats">
+        <img src="docs/assets/images/pnpink-pdf-output.jpg" alt="Preview of the final PDF exported by PnPInk" title="Open the exported PDF; PnPInk can also export images and production formats" width="100%" />
+      </a><br />
+      <sub><strong>Export to PDF or any supported format</strong></sub>
+    </td>
+  </tr>
+</table>
 
-<p align="center"><em>One SVG template, one dataset, and every card variation generated automatically. Click to see the complete output.</em></p>
+<p align="center"><em>One SVG template, one dataset, and every variation generated automatically. Hover for details; click any panel to open it at full size.</em></p>
 
 Your output stays **real, editable SVG**. Nothing is locked into a proprietary format, and nothing is flattened until you choose to export.
 
