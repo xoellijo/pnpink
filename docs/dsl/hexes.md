@@ -16,10 +16,14 @@ Hex workflows often use two different line systems:
 
 Hex layouts are enabled from `Layout` using the shape field:
 
-```txt
-{A4}.L{p=6x5 s=hexgrid}
-{A4}.L{p=6x5 s=hextiles}
-```
+<div class="csv-dataset dataset-body-only dataset-first-column" markdown>
+
+|  |
+| --- |
+| {A4}.L{p=6x5 s=hexgrid} |
+| {A4}.L{p=6x5 s=hextiles} |
+
+</div>
 
 You can combine them with normal layout options such as `p=`, `g=` and `o=`.
 
@@ -38,9 +42,13 @@ PnPInk automatically applies the stagger needed for a practical hex arrangement,
 
 Example:
 
-```txt
-{A3^ @2}.L{s=hexgrid} 300
-```
+<div class="csv-dataset dataset-body-only dataset-first-column" markdown>
+
+|  |
+| --- |
+| {A3^ @2}.L{s=hexgrid} 300 |
+
+</div>
 
 ## Hextiles
 
@@ -58,9 +66,13 @@ Compared with `hexgrid`, `hextiles` is oriented to production: neighboring tiles
 
 Example:
 
-```txt
-{A4}.L{p=5x6 s=hextiles}
-```
+<div class="csv-dataset dataset-body-only dataset-first-column" markdown>
+
+|  |
+| --- |
+| {A4}.L{p=5x6 s=hextiles} |
+
+</div>
 
 ## Cut Lines In and Out of the Shape
 
@@ -73,10 +85,14 @@ Marks can draw line segments on both sides of the tile edge:
 
 This is controlled with `len=`.
 
-```txt
-.M{len=3}
-.M{len=[3 2]}
-```
+<div class="csv-dataset dataset-body-only dataset-first-column" markdown>
+
+|  |
+| --- |
+| .M{len=3} |
+| .M{len=[3 2]} |
+
+</div>
 
 Meaning:
 
@@ -93,9 +109,13 @@ This makes it easier to produce:
 
 You can also combine this with distance and border adjustments:
 
-```txt
-{A4}.L{p=5x6 s=hextiles}.M{len=[3 2] d=2 b=0}
-```
+<div class="csv-dataset dataset-body-only dataset-first-column" markdown>
+
+|  |
+| --- |
+| {A4}.L{p=5x6 s=hextiles}.M{len=[3 2] d=2 b=0} |
+
+</div>
 
 In practice:
 
@@ -115,9 +135,13 @@ It follows the placed slots of the page and is mainly intended for cutting and r
 
 Example:
 
-```txt
-{A4}.L{p=5x6 s=hextiles}.M{len=[3 2] d=2}
-```
+<div class="csv-dataset dataset-body-only dataset-first-column" markdown>
+
+|  |
+| --- |
+| {A4}.L{p=5x6 s=hextiles}.M{len=[3 2] d=2} |
+
+</div>
 
 ### Paths
 
@@ -127,9 +151,13 @@ It draws local geometry on that placed hex: edges, center lines, vertex connecti
 
 Example:
 
-```txt
-tile_id.P{path_style [a 5c 79]}
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| tile_id.P{path_style [a 5c 79]} |
+
+</div>
 
 See [Paths](paths.md) for the complete token system.
 

@@ -29,11 +29,15 @@ Split-board datasets may omit headers when they only need the template plus a le
 
 Examples (equivalent):
 
-```txt
-{{t=card_bbox}}
-{{template_bbox=card_bbox}}
-{{card_bbox}}
-```
+<div class="csv-dataset dataset-header-only dataset-first-column" markdown>
+
+| Column A |
+| --- |
+| {{t=card_bbox}} |
+| {{template_bbox=card_bbox}} |
+| {{card_bbox}} |
+
+</div>
 
 Each marker supports one main template bbox. Additional DSL expressions may follow the marker in the same leading cell, as described later in this chapter.
 
@@ -57,15 +61,21 @@ If there is no marker row, the first non-empty, non-comment row is treated as th
 
 In shorthand mode, column A contains the template bbox id:
 
-```txt
-card_bbox, title, cost, art
-```
+<div class="csv-dataset dataset-header-only" markdown>
+
+| card_bbox | title | cost | art |
+| --- | --- | --- | --- |
+
+</div>
 
 This is equivalent to:
 
-```txt
-{{t=card_bbox}}, title, cost, art
-```
+<div class="csv-dataset dataset-header-only" markdown>
+
+| {{t=card_bbox}} | title | cost | art |
+| --- | --- | --- | --- |
+
+</div>
 
 ## Header Types
 Header type determines whether a column edits fields or instantiates templates.
@@ -80,15 +90,12 @@ Use this syntax for the most common per-row updates (text, source, and defaults)
 
 Headers can include modifiers:
 
-```txt
-title
-art+
-price[xml]
-card_bg[fill]
-line[stroke]
-bg=default_bg
-art=art_placeholder~i5
-```
+<div class="csv-dataset dataset-header-only" markdown>
+
+| title | art+ | price[xml] | card_bg[fill] | line[stroke] | bg=default_bg | art=art_placeholder~i5 |
+| --- | --- | --- | --- | --- | --- | --- |
+
+</div>
 
 Rules:
 
@@ -101,12 +108,12 @@ Rules:
 
 Examples:
 
-```txt
-id=default_id
-id=~i5
-id=default_id~i5
-id=.L{3x1}~i5
-```
+<div class="csv-dataset dataset-header-only" markdown>
+
+| id=default_id | id=~i5 | id=default_id~i5 | id=.L{3x1}~i5 |
+| --- | --- | --- | --- |
+
+</div>
 
 With `id=.L{3x1}~i5`, a cell containing `[icon1 icon2 icon3]` is laid out as a
 three-column array and then fitted inside the placeholder. A `.L{...}` written
@@ -116,21 +123,22 @@ their existing priority over header defaults.
 ### Style Property Columns
 Use `id[property]` to change SVG style properties from the dataset.
 
-```txt
-card_bg[fill]
-card_bg[stroke]
-card_bg[stroke-width]
-title[fill]
-title[font-size]
-line[stroke]
-```
+<div class="csv-dataset dataset-header-only" markdown>
+
+| card_bg[fill] | card_bg[stroke] | card_bg[stroke-width] | title[fill] | title[font-size] | line[stroke] |
+| --- | --- | --- | --- | --- | --- |
+
+</div>
 
 Examples:
 
-```csv
-card_bg[fill],title[fill],line[stroke],line[stroke-width]
-#f4ead2,#12110f,b8a300ff,2
-```
+<div class="csv-dataset" markdown>
+
+| card_bg[fill] | title[fill] | line[stroke] | line[stroke-width] |
+| --- | --- | --- | --- |
+| #f4ead2 | #12110f | b8a300ff | 2 |
+
+</div>
 
 Style columns update the target element's `style` attribute.
 When a style property is changed, PnPInk keeps that element visible automatically; you do not need to add `+`.
@@ -154,16 +162,22 @@ For example, `ff000080` becomes red with partial `fill-opacity` or `stroke-opaci
 
 Property-only shorthand inherits the previous target id:
 
-```csv
-card_bg[fill],[stroke],[stroke-width]
-#f4ead2,#222222,0.4
-```
+<div class="csv-dataset" markdown>
+
+| card_bg[fill] | [stroke] | [stroke-width] |
+| --- | --- | --- |
+| #f4ead2 | #222222 | 0.4 |
+
+</div>
 
 This is equivalent to:
 
-```csv
-card_bg[fill],card_bg[stroke],card_bg[stroke-width]
-```
+<div class="csv-dataset dataset-header-only" markdown>
+
+| card_bg[fill] | card_bg[stroke] | card_bg[stroke-width] |
+| --- | --- | --- |
+
+</div>
 
 Two text-related forms are worth distinguishing: `id[text]`, or simply `id`, replaces normal text content, whereas `id[xml]` replaces rich XML content inside a text-like object.
 
@@ -172,19 +186,25 @@ Use this when one dataset column must feed several placeholders.
 
 Examples:
 
-```txt
-ph-1 ph-2 ph-3
-id1
-```
+<div class="csv-dataset" markdown>
+
+| ph-1 ph-2 ph-3 |
+| --- |
+| id1 |
+
+</div>
 
 `id1` is applied to all three placeholders.
 
 Wildcard headers are also supported:
 
-```txt
-main_icon-*
-Ic(heart-suit)
-```
+<div class="csv-dataset" markdown>
+
+| main_icon-* |
+| --- |
+| Ic(heart-suit) |
+
+</div>
 
 This applies the value to every placeholder whose ID starts with `main_icon-`.
 All normal header modifiers (`+`, `[xml]`, `=...`) remain valid.
@@ -194,11 +214,12 @@ Use template columns when you need extra template instances, back passes, or pag
 
 Template columns declare template bbox IDs and modifiers:
 
-```txt
-{card_back @back}
-{page_title @page}
-{back_bg @page @back}
-```
+<div class="csv-dataset dataset-header-only" markdown>
+
+| {card_back @back} | {page_title @page} | {back_bg @page @back} |
+| --- | --- | --- |
+
+</div>
 
 The `@page` modifier creates a page-anchored template, while `@back` assigns the template to the back pass. They can be combined when an element belongs once on every back page.
 
@@ -218,18 +239,26 @@ Rules are global: same behavior everywhere, with no inside/outside dataset disti
 
 Disabled block:
 
-```csv
-####
-disabled rows here
-####
-```
+<div class="csv-dataset dataset-first-column" markdown>
+
+|  |
+| --- |
+| #### |
+| disabled rows here |
+| #### |
+
+</div>
 
 If the block is not closed, it disables everything until the end of the file/sheet (EOF):
 
-```csv
-####
-disabled rows until the end of the file/sheet
-```
+<div class="csv-dataset dataset-first-column" markdown>
+
+|  |
+| --- |
+| #### |
+| disabled rows until the end of the file/sheet |
+
+</div>
 
 Comments inside the dataset header row work slightly differently:
 
@@ -252,14 +281,18 @@ Column A in data rows can carry row-level DSL:
 
 Examples:
 
-```txt
-{A4 b=[-5]} L{p=3x3 g=2} M{mk_cut} 2
-{} ?                  -> fill one page with the current row (e.g. backs)
-[3 - 2-]            -> 3 copies, then 1 hole, then 2 holes
-[1..5 7..100]       -> keep iterator items 1..5 and 7..100 (skip 6)
-[1..4 3- 7..9]      -> keep 1..4, then 3 holes, then keep 7..9
-alien_card           -> build this row as symbol "alien_card" in <defs>
-```
+<div class="csv-dataset dataset-first-column dataset-comments" markdown>
+
+| Column A | Meaning |
+| --- | --- |
+| {A4 b=[-5]} L{p=3x3 g=2} M{mk_cut} 2 | # Page, layout, marks and 2 copies |
+| {} ? | # Fill one page with the current row, for example backs |
+| [3 - 2-] | # 3 copies, then 1 hole, then 2 more holes |
+| [1..5 7..100] | # Keep iterator items 1..5 and 7..100; skip 6 |
+| [1..4 3- 7..9] | # Keep 1..4, then 3 holes, then keep 7..9 |
+| alien_card | # Build this row as symbol `alien_card` in `<defs>` |
+
+</div>
 
 Symbol rows do not consume layout slots and do not create page marks.
 If the same symbol id is defined again, the later row overwrites the previous generated symbol.
@@ -275,10 +308,14 @@ Hole syntax in the final `[...]`:
 
 Examples:
 
-```txt
-[3 - 2-]    -> 3 copies, then 1 hole, then 2 more holes
-[2 3- 5]    -> 2 copies, then 3 holes, then 5 more copies
-```
+<div class="csv-dataset dataset-first-column dataset-comments" markdown>
+
+| Column A | Meaning |
+| --- | --- |
+| [3 - 2-] | # 3 copies, then 1 hole, then 2 more holes |
+| [2 3- 5] | # 2 copies, then 3 holes, then 5 more copies |
+
+</div>
 
 When the final `[...]` contains numeric ranges (`..`), it filters row iterators (`*[...]`).
 Hole markers (`-`, `N-`) can still be mixed in the same block and are applied after the accumulated selected run.
@@ -292,21 +329,27 @@ see [Iterators](dsl/iterators.md), section **Row Sequencing from Column A**.
 If a row uses only column-A controls and all payload cells (columns B+) are empty,
 PnPInk applies the controls but does **not** generate a card/instance for that row.
 
-```txt
-card_bbox,title,cost
-{A4},,
-,Fireball,3
-```
+<div class="csv-dataset" markdown>
+
+| card_bbox | title | cost |
+| --- | --- | --- |
+| {A4} |  |  |
+|  | Fireball | 3 |
+
+</div>
 
 ## @back -- Back-Side Templates (Back Pass) {#back-side-templates}
 Use `@back` for duplex backs: card backs, tile backs, alternate reverse sides, and any back-side artwork that must align with the front layout.
 
 An `@back` header is a **control column** and a **section boundary**:
 
-```csv
-rect1,front_art,{rect1 @back},rect1=~[1]a
-{A4}.L{s=miniEuro g=2}.M{},*@{front_*.png},.M{},back.png
-```
+<div class="csv-dataset" markdown>
+
+| rect1 | front_art | {rect1 @back} | rect1=~[1]a |
+| --- | --- | --- | --- |
+| {A4}.L{s=miniEuro g=2}.M{} | *@{front_*.png} | .M{} | back.png |
+
+</div>
 
 In this example:
 
@@ -334,9 +377,12 @@ This means front and back use the same card-generation behavior, except for the 
 ### Back Column Section
 Columns after `{bbox @back}` belong to that back template until another template-control header starts.
 
-```csv
-front_title,front_art,{bbox_back @back},back_bg=~a,back_icon~i5,back_text
-```
+<div class="csv-dataset dataset-header-only" markdown>
+
+| front_title | front_art | {bbox_back @back} | back_bg=~a | back_icon~i5 | back_text |
+| --- | --- | --- | --- | --- | --- |
+
+</div>
 
 Back-side columns support the same features as front columns:
 
@@ -366,27 +412,37 @@ Accepted control values:
 
 Examples:
 
-```csv
-{rect1 @back},rect1=~[1]a
-.M{},back.png
-```
+<div class="csv-dataset" markdown>
+
+| {rect1 @back} | rect1=~[1]a |
+| --- | --- |
+| .M{} | back.png |
+
+</div>
 
 Same back image for every generated front, with back marks.
 
-```csv
-{rect1 @back},rect1=~[1]a
-.M{} [2..? 1],*@{back_*.png}
-```
+<div class="csv-dataset" markdown>
+
+| {rect1 @back} | rect1=~[1]a |
+| --- | --- |
+| .M{} [2..? 1] | *@{back_*.png} |
+
+</div>
 
 Use the next iterator item as the back for each card, wrapping the last one to the first item in the same dataset row expansion.
 
 The selector in the back control cell uses the same 1-based list/range grammar as column-A iterator selectors:
 
-```txt
-[1..5 5..1 8..3]
-[2..? 1]
-[5..1]
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| [1..5 5..1 8..3] |
+| [2..? 1] |
+| [5..1] |
+
+</div>
 
 It is evaluated against the generated instances of the same dataset row expansion, not against unrelated rows.
 For the selector grammar, see [Iterators and Copies -> Selector syntax in the final `[...]`](dsl/iterators.md#iterator-selector-syntax).
@@ -395,10 +451,13 @@ For the selector grammar, see [Iterators and Copies -> Selector syntax in the fi
 Back sections work with iterators.
 If the front row expands through `*@{...}`, the back section can also use iterator values.
 
-```csv
-rect1,{rect1 @back},rect1=~[1]a
-{A4}.L{s=square g=2}.M{},.M{} [2..? 1],*@{embedded_*.png}
-```
+<div class="csv-dataset" markdown>
+
+| rect1 | {rect1 @back} | rect1=~[1]a |
+| --- | --- | --- |
+| {A4}.L{s=square g=2}.M{} | .M{} [2..? 1] | *@{embedded_*.png} |
+
+</div>
 
 Here each front card uses its own front data from the row expansion.
 The back field uses the control selector `[2..? 1]`, so backs are shifted by one position inside that same expanded row.
@@ -406,10 +465,13 @@ The back field uses the control selector `[2..? 1]`, so backs are shifted by one
 ### Marks on Backs
 Back marks are declared in the `{bbox @back}` control cell:
 
-```csv
-{rect1 @back},rect1=~[1]a
-.M{ len=[3 0] d=2 },back.png
-```
+<div class="csv-dataset" markdown>
+
+| {rect1 @back} | rect1=~[1]a |
+| --- | --- |
+| .M{ len=[3 0] d=2 } | back.png |
+
+</div>
 
 Back marks follow the mirrored back layout, so exterior side marks remain exterior after duplex mirroring.
 For mark parameters, see [Marks](dsl/marks.md).
@@ -419,9 +481,12 @@ Use `@page` for elements that belong to the page frame, not to per-card slots.
 
 A template column marked with `@page` is anchored to the **page frame**, not to the slot grid.
 
-```txt
-{page_title @page}
-```
+<div class="csv-dataset dataset-fragment dataset-header-only" markdown>
+
+| ... | {page_title @page} | ... |
+| --- | --- | --- |
+
+</div>
 
 Page-anchored templates:
 
@@ -434,20 +499,27 @@ The slot determines which page the template belongs to; the rest is Fit/Anchor o
 
 Selectors can be a single slot index, range, or list:
 
-```txt
-~1
-~[1 3 5]
-~[2..4]
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| ~1 |
+| ~[1 3 5] |
+| ~[2..4] |
+
+</div>
 
 If multiple rows target the same page, only the first is rendered (a warning is logged).
 
 ## Combining @page and @back
 Combining both modifiers is common for back-page backgrounds and page-level back labels.
 
-```txt
-{back_bg @page @back}
-```
+<div class="csv-dataset dataset-header-only" markdown>
+
+| {back_bg @page @back} |
+| --- |
+
+</div>
 
 This places a page-anchored element on back pages, aligned to the front page sequence.
 
@@ -456,21 +528,31 @@ This mode is **not automatic**.
 
 Enable it explicitly in the dataset marker:
 
-```txt
-{{t=board_bbox @split}}
-```
+<div class="csv-dataset dataset-header-only dataset-first-column" markdown>
+
+| {{t=board_bbox @split}} |
+| --- |
+
+</div>
 
 Alias (short form):
 
-```txt
-{{t=board_bbox!}}
-```
+<div class="csv-dataset dataset-header-only dataset-first-column" markdown>
+
+| {{t=board_bbox!}} |
+| --- |
+
+</div>
 
 Then define page/layout/marks in the first cell as usual, for example:
 
-```txt
-{letter}.L{0x0 b=-10}.M{}
-```
+<div class="csv-dataset dataset-body-only dataset-first-column" markdown>
+
+|  |
+| --- |
+| {letter}.L{0x0 b=-10}.M{} |
+
+</div>
 
 When split mode is enabled and the template is larger than the target page, the engine:
 

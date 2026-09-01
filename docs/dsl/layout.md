@@ -12,28 +12,51 @@ Layout is used in three places:
 
 In the first dataset column, Page/Layout settings are inherited by following rows until another first-column cell changes them.
 
-```txt
-{A4}.L{p=5x8 s=hexgrid}       ## Page module: impose dataset rows into page slots
-```
+<div class="csv-dataset dataset-body-only dataset-first-column" markdown>
+
+|  |
+| --- |
+| {A4}.L{p=5x8 s=hexgrid} |
+
+</div>
+
+Page module: impose dataset rows into page slots.
 
 Inside any cell, Layout can place a set of objects in a grid, using the placeholder rectangle defined by that dataset column header:
 
-```txt
-placeholder_rect
-[obj1 obj2 ...].L{}           ## local array layout inside placeholder_rect (dataset header)
-```
+<div class="csv-dataset" markdown>
+
+| placeholder_rect |
+| --- |
+| [obj1 obj2 ...].L{} |
+
+</div>
+
+The cell creates a local array layout inside `placeholder_rect`.
 
 For spritesheet definitions, usually declared in comment lines before the dataset, Layout works like the inverse of page imposition: it cuts pieces from an image, page, PDF, etc.
 
-```txt
-# @cards = @{cards.png}.L{p=4x3 g=2}   ## split image source into a 4 columns x 3 rows spritesheet
-```
+<div class="csv-dataset dataset-first-column" markdown>
+
+| Comment/directive row |
+| --- |
+| # @cards = @{cards.png}.L{p=4x3 g=2} |
+
+</div>
+
+This splits the image source into a 4 columns x 3 rows spritesheet.
 
 Then frames can be referenced as source objects, fitted, or transformed:
 
-```txt
-@cards[B3]                    ## frame at column B, row 3
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| @cards[B3] |
+
+</div>
+
+This references the frame at column B, row 3.
 
 ## Pattern (p=)
 `p` is the structural core of layout.
@@ -59,11 +82,15 @@ p=-?x-?      ## auto-fit, reversed: right-to-left and bottom-to-top
 ## Slot Selectors
 Layout slots can be addressed with spreadsheet-style cell references.
 
-```txt
-{A4}.L{4x3} [A3 B2 7]      ## explicit unordered slot list
-{A4}.L{4x3} [A3 7]         ## place A3, then 7 more slots in layout order
-{A4}.L{4x3} [A6 2- 5]      ## place A6, skip 2 slots, then place 5 more
-```
+<div class="csv-dataset dataset-first-column dataset-comments" markdown>
+
+| Column A | Meaning |
+| --- | --- |
+| {A4}.L{4x3} [A3 B2 7] | # Explicit unordered slot list |
+| {A4}.L{4x3} [A3 7] | # Place A3, then 7 more slots in layout order |
+| {A4}.L{4x3} [A6 2- 5] | # Place A6, skip 2 slots, then place 5 more |
+
+</div>
 
 Use `:` for rectangular ranges and `..` for linear walks following layout order.
 

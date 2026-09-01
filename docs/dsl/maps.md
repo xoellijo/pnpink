@@ -8,20 +8,22 @@ PnPInk resolves the selected area automatically, downloads the needed vector til
 
 All map sources use one of these forms:
 
-```txt
-@{ osm://[lat1 lon1 lat2 lon2] }
-@{ ofm://[lat1 lon1 lat2 lon2] }
+<div class="csv-dataset dataset-body-only" markdown>
 
-@{ osm://madrid }
-@{ ofm://spain }
+|  |
+| --- |
+| @{ osm://[lat1 lon1 lat2 lon2] } |
+| @{ ofm://[lat1 lon1 lat2 lon2] } |
+| @{ osm://madrid } |
+| @{ ofm://spain } |
+| @{ osm://spain/z4 } |
+| @{ ofm://madrid/z8 } |
+| @{ ofm://shikoku/t1 } |
+| @{ ofm://shikoku/z10/t2 } |
+| @{ ofm://shikoku/z8/t1 view=all-labels+water_name[bay lake] } |
+| @{ ofm://asturias view=mountains smooth=3 } |
 
-@{ osm://spain/z4 }
-@{ ofm://madrid/z8 }
-@{ ofm://shikoku/t1 }
-@{ ofm://shikoku/z10/t2 }
-@{ ofm://shikoku/z8/t1 view=all-labels+water_name[bay lake] }
-@{ ofm://asturias view=mountains smooth=3 }
-```
+</div>
 
 - `osm://[...]` and `ofm://[...]`
   - use a bounding box defined by two opposite corners
@@ -40,16 +42,20 @@ If no zoom is forced, PnPInk chooses it automatically. `/t1` forces the automati
 
 `/zN` and `/tN` are part of the map URL. `view=` and `smooth=` are Source parameters:
 
-```txt
-@{ ofm://berlin/z12/t4 view=all-labels }
-@{ ofm://berlin view=nude+transport+places }
-@{ ofm://berlin view=all-landuses+landuse[residential industrial] }
-@{ ofm://shikoku view=all-label+water_name[bay lake] }
-@{ ofm://asturias view=mountains smooth=0 }     ## no smoothing
-@{ ofm://asturias view=mountains smooth=1 }     ## curve every point
-@{ ofm://asturias view=mountains smooth=4 }     ## roughly 4 points -> 1 curve
-@{ ofm://asturias view=mountains s=3/2 }        ## roughly 3 points -> 2 curves
-```
+<div class="csv-dataset dataset-body-only dataset-comments" markdown>
+
+|  | Meaning |
+| --- | --- |
+| @{ ofm://berlin/z12/t4 view=all-labels } | # Forced zoom/tile grid with labels |
+| @{ ofm://berlin view=nude+transport+places } | # Combine view presets |
+| @{ ofm://berlin view=all-landuses+landuse[residential industrial] } | # Include selected landuse kinds |
+| @{ ofm://shikoku view=all-label+water_name[bay lake] } | # Add selected water labels |
+| @{ ofm://asturias view=mountains smooth=0 } | # No smoothing |
+| @{ ofm://asturias view=mountains smooth=1 } | # Curve every point |
+| @{ ofm://asturias view=mountains smooth=4 } | # Roughly 4 points -> 1 curve |
+| @{ ofm://asturias view=mountains s=3/2 } | # Roughly 3 points -> 2 curves |
+
+</div>
 
 `view` expressions start from a preset (`all`, `nude`, `water`, `transport`, `places`, etc.) and then apply `+` or `-` modifiers. Feature lists use brackets with spaces, not commas.
 
@@ -84,9 +90,13 @@ As a simple rule:
 
 Bounding boxes use this order:
 
-```txt
-[lat1 lon1 lat2 lon2]
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| [lat1 lon1 lat2 lon2] |
+
+</div>
 
 The two points are opposite corners of the rectangle.
 
@@ -120,17 +130,19 @@ This makes it practical to style or edit parts of the map later inside Inkscape.
 
 The built-in vector map style lives in:
 
-```txt
-src/map_style.jsonc
-```
+`src/map_style.jsonc`
 
 It controls layer order, label language priority, zoom bands, feature filters, SVG styles, label styles, and label offsets. JSONC comments (`// ...`) are allowed.
 
 Template objects can override generated map styles by Inkscape label:
 
-```txt
-paste-style: water_group*
-paste-filter: water_*_u4
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+| Inkscape label |
+| --- |
+| paste-style: water_group* |
+| paste-filter: water_*_u4 |
+
+</div>
 
 `paste-style:` copies visual style attributes, including filters, to generated IDs matching the glob pattern. When the target is a group, paint attributes are also applied to descendant geometry. `paste-filter:` copies only the filter. Hyphens and underscores are treated as equivalent in paste patterns.

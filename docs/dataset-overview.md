@@ -23,20 +23,28 @@ The SVG must be saved before DeckMaker runs. An unnamed document has no folder o
 
 A minimal dataset looks like this:
 
-```csv
-card_bbox,title,cost,art
-,Fireball,3,images/fireball.png
-,Shield,2,images/shield.png
-```
+<div class="csv-dataset" markdown>
+
+| card_bbox | title | cost | art |
+| --- | --- | --- | --- |
+|  | Fireball | 3 | images/fireball.png |
+|  | Shield | 2 | images/shield.png |
+
+</div>
 
 `card_bbox` identifies the rectangle that encloses the main template. The headers `title`, `cost`, and `art` match object IDs in the SVG. Every following row creates one instance and supplies the values for those objects. A text value replaces text, while a file or source expression placed under a rectangular ID is fitted into that rectangle.
 
-Normal CSV quoting rules apply. A value containing a comma must be enclosed in quotes, and a literal quote inside that value must be doubled:
+!!! pnpink "PnPInk dataset tip: commas and quotes"
+    Spreadsheet applications normally handle CSV quoting automatically. When editing by hand, enclose a value containing commas in double quotes and double any literal double quote inside it.
 
-```csv
-,"Draw two cards, then discard one",2,images/example.png
-,"The card says ""Ready""",1,images/other.png
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |  |  |  |
+| --- | --- | --- | --- |
+|  | "Draw two cards, then discard one" | 2 | images/example.png |
+|  | "The card says ""Ready""" | 1 | images/other.png |
+
+</div>
 
 Relative paths are resolved from the project location. Keeping images, fonts, and supporting files below the project folder makes the project easier to copy, archive, or share.
 
@@ -67,19 +75,25 @@ The first column has a special structural role. In the compact single-dataset fo
 
 The compact format is ideal for a first project and supports one dataset section. Its first header cell is the main template bbox:
 
-```csv
-card_bbox,title,cost
-,Fireball,3
-,Shield,2
-```
+<div class="csv-dataset" markdown>
+
+| card_bbox | title | cost |
+| --- | --- | --- |
+|  | Fireball | 3 |
+|  | Shield | 2 |
+
+</div>
 
 Marker format is more explicit and supports several independent sections in one CSV or sheet. A marker appears only in column A and uses `{{...}}`; the same row contains the headers for that section:
 
-```csv
-{{t=card_bbox}},title,cost
-,Fireball,3
-,Shield,2
-```
+<div class="csv-dataset" markdown>
+
+| {{t=card_bbox}} | title | cost |
+| --- | --- | --- |
+|  | Fireball | 3 |
+|  | Shield | 2 |
+
+</div>
 
 The declarations `{{t=card_bbox}}`, `{{template_bbox=card_bbox}}`, and `{{card_bbox}}` identify the same main bbox. Marker format becomes preferable when a project contains fronts and backs, page-level artwork, several template families, or unrelated datasets in one workbook.
 
@@ -87,12 +101,15 @@ The declarations `{{t=card_bbox}}`, `{{template_bbox=card_bbox}}`, and `{{card_b
 
 Column A can also change pagination without generating an instance. In this example, the first data row selects an A4 page and a 3-by-3 layout; because the remaining cells are empty, it acts only as a control row:
 
-```csv
-card_bbox,title,cost
-{A4 b=[-5]} L{p=3x3 g=2},,
-,Fireball,3
-,Shield,2
-```
+<div class="csv-dataset" markdown>
+
+| card_bbox | title | cost |
+| --- | --- | --- |
+| {A4 b=[-5]} L{p=3x3 g=2} |  |  |
+|  | Fireball | 3 |
+|  | Shield | 2 |
+
+</div>
 
 The main template bbox is important beyond measuring the card. It drives slot planning, pagination, cutting marks, duplex front/back pairing, and membership of page-level templates. For that reason, each dataset section supports one main bbox; projects that need another main template should begin another marker section.
 
@@ -100,13 +117,12 @@ The main template bbox is important beyond measuring the card. It drives slot pl
 
 Dataset headers are parsed as PnPInk expressions. A plain header such as `title` replaces content in the SVG object with that ID. Modifiers can keep placeholders visible, set style properties, establish defaults, address several IDs, or declare extra templates:
 
-```txt
-title
-art+
-card_bg[fill]
-line[stroke-width]
-bg=default_background
-```
+<div class="csv-dataset dataset-header-only" markdown>
+
+| title | art+ | card_bg[fill] | line[stroke-width] | bg=default_background |
+| --- | --- | --- | --- | --- |
+
+</div>
 
 This power also means that spelling matters. If a value does not reach the expected object, compare the header with the SVG ID exactly and check for accidental spaces. Use `Object > Layers and Objects` in Inkscape to inspect the actual IDs instead of relying on visible labels.
 

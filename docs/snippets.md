@@ -1,12 +1,17 @@
 ﻿# Snippets
-Snippets are reusable text templates expanded before normal `${var}` replacement.
-This feature is designed to keep datasets readable when text patterns repeat.
+Snippets are short calls that PnPInk expands into reusable text or DSL fragments before it renders a dataset cell. They keep repeated patterns readable and let a project build its own compact vocabulary.
 
-## What snippets are
-Snippets are a compact mini-language inside PnPInk.
-They let you define short aliases that expand into longer fragments (text, SVG-rich text, paths, URL fragments, style fragments, and reusable token patterns).
+!!! prerequisite "Before defining snippets"
+    This reference assumes you know how [dataset headers and cells](dataset-overview.md) *(connect data to SVG)* work. For the built-in rich-text helpers, first read [Text](text.md#rich-text-with-snippets) *(style text with helpers)*. You can use those helpers without learning how to define a snippet.
+
+## What Snippets Are
+
+Snippets are a compact mini-language inside PnPInk. A short alias can expand into plain text, SVG-rich text, a path, a source URL, a style fragment, or another reusable token pattern.
 
 Snippets are always processed first, immediately after DeckMaker reads dataset values and before normal variable substitution.
+
+!!! pnpink "PnPInk tip: start with a real repetition"
+    Do not create snippets for every short expression. Start with a pattern repeated across several rows, give it a clear name, and keep its call easier to read than the fragment it replaces.
 
 ## Syntax
 This section defines the only supported definition format in the current engine.

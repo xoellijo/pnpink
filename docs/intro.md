@@ -60,7 +60,8 @@ Typical usage:
 - rect IDs: image/icon anchors,
 - group IDs: visibility or variant control (advanced workflows).
 
-The most useful panel for normal template work is `Object > Layers and Objects` (`Shift+Ctrl+L`), where you can inspect hierarchy, groups, layers, IDs, and Z-order. Use `Object > XML Editor` (`Shift+Ctrl+X`) only when you need direct access to SVG attributes that are not exposed by the normal object controls.
+!!! inkscape "Inkscape tip: inspect the template"
+    The most useful panel for normal template work is `Object > Layers and Objects` (`Shift+Ctrl+L`), where you can inspect hierarchy, groups, layers, IDs, and Z-order. Open `Object > XML Editor` (`Shift+Ctrl+X`) only when you need direct access to SVG attributes that are not exposed by the normal object controls.
 
 ## Minimal working example
 
@@ -95,68 +96,35 @@ Key points:
 ### Dataset example
 Spreadsheet-like table view:
 
-<table class="csv-dataset">
-  <thead>
-    <tr>
-      <th>card_bbox</th>
-      <th>title</th>
-      <th>cost</th>
-      <th>art</th>
-      <th>text</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><strong><code>{A4 b=[-5]}.L{p=4x3 g=2}</code></strong></td>
-      <td>Tomatoes</td>
-      <td>3</td>
-      <td>tomato</td>
-      <td>You win 1 tomato</td>
-    </tr>
-    <tr>
-      <td></td>
-      <td>Mushrooms</td>
-      <td>5</td>
-      <td>brown-mushroom</td>
-      <td>You win 2 mushrooms</td>
-    </tr>
-    <tr>
-      <td></td>
-      <td>Lemons</td>
-      <td>2</td>
-      <td>lemon</td>
-      <td>Win 1 lemon for every tomato you own</td>
-    </tr>
-  </tbody>
-</table>
+<div class="csv-dataset" markdown>
 
-CSV text view (same data):
+| card_bbox | title | cost | art | text |
+| --- | --- | --- | --- | --- |
+| {A4 b=[-5]}.L{p=4x3 g=2} | Tomatoes | 3 | tomato | You win 1 tomato |
+|  | Mushrooms | 5 | brown-mushroom | You win 2 mushrooms |
+|  | Lemons | 2 | lemon | Win 1 lemon for every tomato you own |
 
-<pre class="csv-view"><span class="csv-header">card_bbox,title,cost,art,text</span>
-{A4 b=[-5]}.L{p=4x3 g=2},Tomatoes,3,tomato,You win 1 tomato
-,Mushrooms,5,brown-mushroom,You win 2 mushrooms
-,Lemons,2,lemon,Win 1 lemon for every tomato you own
-</pre>
+</div>
 
 Interpretation:
 
-- The <span class="ds-header">header</span> of the first column is `card_bbox`.
-- The <span class="ds-col1">first-column cell</span> `{A4 b=[-5]}.L{p=4x3 g=2}` sets page/layout context for this dataset block.
+- The <span class="ds-header">header</span> of the first column is <span class="ds-header">card_bbox</span>.
+- The <span class="ds-col1">first-column cell</span> <span class="ds-col1">{A4 b=[-5]}.L{p=4x3 g=2}</span> sets page/layout context for this dataset block.
 - Empty <span class="ds-col1">first-column cells</span> continue using the same template/page context.
 - Each row generates one component instance.
-- `title` and `cost` update text fields.
-- `art` provides the image source for the `art` anchor.
-- `text` updates the text object with `id="text"`.
+- <span class="ds-header">title</span> and <span class="ds-header">cost</span> update text fields.
+- <span class="ds-header">art</span> provides the image source for the `art` anchor.
+- <span class="ds-header">text</span> updates the text object with `id="text"`.
 
 With defaults only, PnPInk places instances sequentially, fills the page, and creates additional pages automatically when needed.
 
 ## A first taste of the DSL
 Once basics work, you can start controlling page and layout with a short expression:
-
-```txt
-{A4 b=[-5]}.L{p=4x3 g=2}
-```
-
+<div class="csv-dataset dataset-fragment dataset-body-only dataset-first-column" markdown>
+|  |  |
+| --- | --- |
+| {A4 b=[-5]}.L{p=4x3 g=2} | ... |
+</div>
 In this expression, `{A4 b=[-5]}` selects an A4 page with a 5 mm inner margin on every side, and `.L{p=4x3 g=2}` arranges the cards in a 4-by-3 grid with 2 mm gaps.
 
 This short notation is part of the PnPInk DSL (Domain Language). It lets you control placement, scaling, rotations, grids, gaps, bleeds, marks, and more.
@@ -169,9 +137,13 @@ Even if you do not understand every syntax detail yet, this gives you a practica
 ### From simple repetition...
 Build many components from one design and one dataset:
 
-```txt
-{A4}.L{3x4}
-```
+<div class="csv-dataset dataset-fragment dataset-body-only dataset-first-column" markdown>
+
+|  |  |
+| --- | --- |
+| {A4}.L{3x4} | ... |
+
+</div>
 
 One template can be placed 12 times on an A4 page.
 See [Layout](dsl/layout.md) and [Page](dsl/page.md).
@@ -184,18 +156,25 @@ See [Dataset Reference](dataset.md).
 ### Precise layout control
 Control spacing and sizing explicitly:
 
-```txt
-L{3x4 gaps=4 shape=poker}
-```
+<div class="csv-dataset dataset-fragment dataset-body-only dataset-first-column" markdown>
+
+|  |  |
+| --- | --- |
+| L{3x4 gaps=4 shape=poker} | ... |
+
+</div>
 
 See [Layout](dsl/layout.md).
 
 ### Fronts and backs, automatically
 Generate aligned duplex backs with `@back`:
 
-```txt
-{card_back @back}
-```
+<div class="csv-dataset dataset-fragment dataset-header-only" markdown>
+
+| ... | {card_back @back} | ... |
+| --- | --- | --- |
+
+</div>
 
 The `@back` control column starts the back-side fields, mirrors slots for duplex alignment, and can use iterators and marks.
 See [@back -- Back-Side Templates](dataset.md#back-side-templates).
@@ -203,9 +182,12 @@ See [@back -- Back-Side Templates](dataset.md#back-side-templates).
 ### Page-level elements
 Place objects once per page, not once per card:
 
-```txt
-{page_title @page}
-```
+<div class="csv-dataset dataset-fragment dataset-header-only" markdown>
+
+| ... | {page_title @page} | ... |
+| --- | --- | --- |
+
+</div>
 
 Useful for titles, page numbers, frames, or static page backgrounds.
 See [Page](dsl/page.md).
@@ -213,9 +195,13 @@ See [Page](dsl/page.md).
 ### Fit and Anchor (single concept)
 Position objects relative to target rectangles without manual coordinates:
 
-```txt
-icon.F{i a=9}
-```
+<div class="csv-dataset dataset-fragment dataset-body-only" markdown>
+
+|  |  |  |
+| --- | --- | --- |
+| ... | icon.F{i a=9} | ... |
+
+</div>
 
 The element is fitted and anchored by intent, not by absolute measurements.
 See [Fit and Anchor](dsl/fit-anchor.md).
@@ -223,9 +209,13 @@ See [Fit and Anchor](dsl/fit-anchor.md).
 ### Adaptive layouts
 Let layout adapt to available space:
 
-```txt
-L{1x? gaps=?}
-```
+<div class="csv-dataset dataset-fragment dataset-body-only dataset-first-column" markdown>
+
+|  |  |
+| --- | --- |
+| L{1x? gaps=?} | ... |
+
+</div>
 
 Items stack and spacing is computed automatically.
 See [Layout](dsl/layout.md).

@@ -7,9 +7,13 @@ Use it when output is intended for physical cutting and alignment consistency ma
 
 Front-side marks are defined in the **first header cell** (same place as `Page{}` and `Layout{}`), for example:
 
-```txt
-{A4}.L{p=3x3 g=2}.M{ mk_style len=[3 2] d=2 }
-```
+<div class="csv-dataset dataset-body-only dataset-first-column" markdown>
+
+|  |
+| --- |
+| {A4}.L{p=3x3 g=2}.M{ mk_style len=[3 2] d=2 } |
+
+</div>
 
 ## Slot-Based Behavior
 This behavior explains why marks remain correct even when pages, gaps, or offsets change.
@@ -42,15 +46,23 @@ It is resolved from existing SVG elements.
 
 The default parameter of `Marks{}` is the style id. This means `style=` can be omitted:
 
-```txt
-.M{ mk_style len=3 d=2 }
-```
+<div class="csv-dataset dataset-body-only dataset-first-column" markdown>
+
+|  |
+| --- |
+| .M{ mk_style len=3 d=2 } |
+
+</div>
 
 is equivalent to:
 
-```txt
-.M{ s=mk_style len=3 d=2 }
-```
+<div class="csv-dataset dataset-body-only dataset-first-column" markdown>
+
+|  |
+| --- |
+| .M{ s=mk_style len=3 d=2 } |
+
+</div>
 
 ### Style Sources
 A style id (s=) references an SVG element by ID:
@@ -84,9 +96,13 @@ Default: `d=2`.
 
 `d` follows the same list grammar as border in Fit/Page:
 
-```txt
-d=[2 3 4 5] -> top, right, bottom, left
-```
+<div class="csv-dataset dataset-body-only dataset-first-column dataset-comments" markdown>
+
+|  | Meaning |
+| --- | --- |
+| d=[2 3 4 5] | # Top, right, bottom, left |
+
+</div>
 
 ## Border Pattern (b=)
 Border offsets let you fine-tune mark placement against bleed/margin strategies.
@@ -106,9 +122,13 @@ If the layer does not exist, it is created.
 
 Example:
 
-```txt
-.M{ layer=cutmarks }
-```
+<div class="csv-dataset dataset-body-only dataset-first-column" markdown>
+
+|  |
+| --- |
+| .M{ layer=cutmarks } |
+
+</div>
 
 ## Scope
 This section documents current implementation limits to avoid false expectations.
@@ -121,18 +141,30 @@ See [@back -- Back-Side Templates](../dataset.md#back-side-templates).
 ## Examples
 **Basic cut marks with default style**
 
-```txt
-{A4}.L{p=3x3 g=2}.M{}
-```
+<div class="csv-dataset dataset-body-only dataset-first-column" markdown>
+
+|  |
+| --- |
+| {A4}.L{p=3x3 g=2}.M{} |
+
+</div>
 
 **Using a style element**
 
-```txt
-{A4}.L{p=3x3}.M{ mk_cut }
-```
+<div class="csv-dataset dataset-body-only dataset-first-column" markdown>
+
+|  |
+| --- |
+| {A4}.L{p=3x3}.M{ mk_cut } |
+
+</div>
 
 **Overlay style using a group**
 
-```txt
-{A4}.L{p=3x3}.M{ mk_cut_stack len=[3 2] }
-```
+<div class="csv-dataset dataset-body-only dataset-first-column" markdown>
+
+|  |
+| --- |
+| {A4}.L{p=3x3}.M{ mk_cut_stack len=[3 2] } |
+
+</div>

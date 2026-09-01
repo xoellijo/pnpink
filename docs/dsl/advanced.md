@@ -6,30 +6,42 @@ Aliases reduce repetition in large datasets and make rows easier to read.
 
 You can define aliases and reuse them later:
 
-```txt
-@hero = @{assets/hero.png}
-@icons = [icon_hp icon_atk icon_def]
-```
+<div class="csv-dataset dataset-first-column" markdown>
+
+| Comment/directive row |
+| --- |
+| @hero = @{assets/hero.png} |
+| @icons = [icon_hp icon_atk icon_def] |
+
+</div>
 
 Then reference by index:
 
-```txt
-@hero
-@icons[2]
-@icons[1..3]
-@icons[*]
-@icons[1 4 7]
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| @hero |
+| @icons[2] |
+| @icons[1..3] |
+| @icons[*] |
+| @icons[1 4 7] |
+
+</div>
 
 ## Source Suffixes
 Suffixes are useful when source resolution and fit behavior must be expressed in one token.
 
 Source expressions support long Fit and compact `~` ops:
 
-```txt
-@{assets/token.svg}.Fit{mode=i anchor=5}
-@{assets/token.svg}~i5^15|
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| @{assets/token.svg}.Fit{mode=i anchor=5} |
+| @{assets/token.svg}~i5^15\| |
+
+</div>
 
 The compact form can mix Fit and Transform: `i5` is Fit/Anchor, while `^15|` is Transform.
 
@@ -38,11 +50,15 @@ Use cursor control when output must start at a specific page position.
 
 `Page{}` supports page cursor movement with `at` / `a` / `@`:
 
-```txt
-{A4 @+3}
-Page{A4 at=-1}
-Page{A4^@5}
-```
+<div class="csv-dataset dataset-body-only dataset-first-column" markdown>
+
+|  |
+| --- |
+| {A4 @+3} |
+| Page{A4 at=-1} |
+| Page{A4^@5} |
+
+</div>
 
 This controls where the next generated content starts in the global page sequence.
 
@@ -51,20 +67,28 @@ These forms are useful for explicit pagination control between logical sections.
 
 Standalone page blocks are valid and useful:
 
-```txt
-{}      # break to next page
-{3}     # advance by 3 pages
-{3*A4}  # multiplier + size
-```
+<div class="csv-dataset dataset-body-only dataset-first-column dataset-comments" markdown>
+
+|  | Meaning |
+| --- | --- |
+| {} | # Break to next page |
+| {3} | # Advance by 3 pages |
+| {3*A4} | # Multiplier + size |
+
+</div>
 
 ## Leading Cell Composition
 Combining directives in column A allows row-level orchestration without extra columns.
 
 Column A data rows can combine multiple directives in one cell:
 
-```txt
-{A4 b=[-5]} .L{p=3x3 g=2} .M{mk_default d=2} [10 3- 5]
-```
+<div class="csv-dataset dataset-body-only dataset-first-column" markdown>
+
+|  |
+| --- |
+| {A4 b=[-5]} .L{p=3x3 g=2} .M{mk_default d=2} [10 3- 5] |
+
+</div>
 
 Supported order is flexible, but the parser expects:
 

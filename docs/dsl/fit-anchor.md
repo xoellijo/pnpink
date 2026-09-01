@@ -47,15 +47,18 @@ An object can be:
 
 Representative examples of dataset cells:
 
-```txt
-main_art-placeholder                  ## header cell: placeholder id
-heart_icon                            ## place object heart_icon inside main_art-placeholder
-@{assets/picture.png}~i5              ## place a local image file, scaled proportionally to fit inside and centered
-@sp1[A4]~m5                           ## place frame A4 from spritesheet sp1, scaled to cover the placeholder and centered
-@{wkmc://File:Example.svg/svg#nodeX}~i5 ## download this SVG from Wikimedia Commons, extract nodeX, and place it inside the placeholder
-id1~7 id2~9 id3~3                     ## place 3 objects using different anchors: top-left, top-right, and bottom-left
-[id_a id_b id_c].L{3x1 g=2}~i5        ## arrange 3 objects in a 3x1 local grid with 2mm gaps, then fit the whole block inside the placeholder
-```
+<div class="csv-dataset dataset-comments" markdown>
+
+| main_art-placeholder | Meaning |
+| --- | --- |
+| heart_icon | # Place object `heart_icon` inside `main_art-placeholder` |
+| @{assets/picture.png}~i5 | # Place a local image file, scaled proportionally to fit inside and centered |
+| @sp1[A4]~m5 | # Place frame A4 from spritesheet `sp1`, scaled to cover the placeholder and centered |
+| @{wkmc://File:Example.svg/svg#nodeX}~i5 | # Download this SVG from Wikimedia Commons, extract `nodeX`, and place it inside the placeholder |
+| id1~7 id2~9 id3~3 | # Place 3 objects using different anchors: top-left, top-right, and bottom-left |
+| [id_a id_b id_c].L{3x1 g=2}~i5 | # Arrange 3 objects in a 3x1 local grid with 2 mm gaps, then fit the whole block inside the placeholder |
+
+</div>
 
 ## Syntax and Style
 Fit-Anchor follows the same DSL conventions as other modules:
@@ -81,9 +84,13 @@ object_id~...
 ### Compact Example (Explained)
 Example:
 
-```txt
-id1~[10%]i7^^[-50% 0]!
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| id1~[10%]i7^^[-50% 0]! |
+
+</div>
 
 Read it left to right:
 
@@ -152,10 +159,14 @@ If omitted, `inside` is the practical default.
 
 Examples:
 
-```txt
-object_id.Fit{fitmode=inside}
-object_id~i
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| object_id.Fit{fitmode=inside} |
+| object_id~i |
+
+</div>
 
 ### Fit Mode Reference
 | **Code** | **Name** | **Description** |
@@ -186,10 +197,14 @@ This makes anchor behavior stable and predictable while `border` only affects sc
 
 Examples:
 
-```txt
-object_id.Fit{anchor=7}
-object_id~7
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| object_id.Fit{anchor=7} |
+| object_id~7 |
+
+</div>
 
 ![Anchor keypad](media/image1.png)
 
@@ -243,13 +258,13 @@ Later layers override earlier ones for conflicting properties.
 
 Example:
 
-```txt
-Header:
-main_art-8=~[10x10]
+<div class="csv-dataset" markdown>
 
-Cell:
-*[:fig(g918)~^^ :fig(g1720) :fig(g1264) :fig(g13590)]~[0%]5
-```
+| main_art-8=~[10x10] |
+| --- |
+| *[:fig(g918)~^^ :fig(g1720) :fig(g1264) :fig(g13590)]~[0%]5 |
+
+</div>
 
 Effective merge:
 
@@ -291,41 +306,61 @@ id~m7[0 5%]!
 
 ### Example 1: Simple inside-center
 
-```txt
-art_id~i5
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| art_id~i5 |
+
+</div>
 
 Places object inside placeholder, centered.
 
 ### Example 2: Cover and clip
 
-```txt
-art_id~m5!
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| art_id~m5! |
+
+</div>
 
 Covers placeholder area, then clips overflow to placeholder shape.
 
 ### Example 3: Corner icon with offset
 
-```txt
-icon_id~i7[2 -2]
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| icon_id~i7[2 -2] |
+
+</div>
 
 Inside fit, top-left anchor, then fine offset.
 
 ### Example 4: Multiple objects in one cell
 
-```txt
-id1~7 id2~9 id3~3
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| id1~7 id2~9 id3~3 |
+
+</div>
 
 Places three objects in one placeholder flow, each with its own anchor.
 
 ### Example 5: Array group with local layout
 
-```txt
-[id1 id2 id3].L{3x1 g=2}~i5
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| [id1 id2 id3].L{3x1 g=2}~i5 |
+
+</div>
 
 Builds an array object, lays it out locally, then applies Fit-Anchor as one grouped target.
 

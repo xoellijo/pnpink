@@ -141,27 +141,36 @@ If column A does not specify copies:
 
 Examples:
 
-```txt
-Column A: <empty>
-art = icon_fire
-```
+<div class="csv-dataset" markdown>
+
+| card_bbox | art |
+| --- | --- |
+|  | icon_fire |
+
+</div>
 
 Interpretation: one card.
 
-```txt
-Column A: <empty>
-art = *[A B C]
-```
+<div class="csv-dataset" markdown>
+
+| card_bbox | art |
+| --- | --- |
+|  | *[A B C] |
+
+</div>
 
 Interpretation: three cards -> `A`, `B`, `C`.
 
 ### `0` means "do not generate this row"
 If column A resolves to `0` copies, the row is skipped completely.
 
-```txt
-Column A: 0
-art = *[A B C]
-```
+<div class="csv-dataset" markdown>
+
+| card_bbox | art |
+| --- | --- |
+| 0 | *[A B C] |
+
+</div>
 
 Interpretation: no cards are generated from that row.
 
@@ -178,24 +187,33 @@ With iterators:
 
 Examples:
 
-```txt
-Column A: 5
-art = *[A B C]
-```
+<div class="csv-dataset" markdown>
+
+| card_bbox | art |
+| --- | --- |
+| 5 | *[A B C] |
+
+</div>
 
 Interpretation: `A, B, C, A, B`.
 
-```txt
-Column A: 2
-art = *[A B C]
-```
+<div class="csv-dataset" markdown>
+
+| card_bbox | art |
+| --- | --- |
+| 2 | *[A B C] |
+
+</div>
 
 Interpretation: `A, B`.
 
-```txt
-Column A: ?
-back = @{back.png}
-```
+<div class="csv-dataset" markdown>
+
+| card_bbox | back |
+| --- | --- |
+| ? | @{back.png} |
+
+</div>
 
 Interpretation: one full page of identical backs. If the current layout is `3x3`, this generates `9` cards.
 
@@ -204,18 +222,26 @@ The final bracket block in column A can select iterator positions explicitly.
 
 Examples:
 
-```txt
-[1..5 7..100]
-```
+<div class="csv-dataset dataset-first-column" markdown>
+
+| Column A |
+| --- |
+| [1..5 7..100] |
+
+</div>
 
 Interpretation:
 - keep `1,2,3,4,5`
 - skip `6`
 - then keep `7..100`
 
-```txt
-[3..1 4..5]
-```
+<div class="csv-dataset dataset-first-column" markdown>
+
+| Column A |
+| --- |
+| [3..1 4..5] |
+
+</div>
 
 Interpretation:
 - reorder the beginning as `3,2,1`
@@ -232,15 +258,23 @@ Use `?` to mean "the final iterator position calculated by PnPInk".
 
 Examples:
 
-```txt
-[13..?]
-```
+<div class="csv-dataset dataset-first-column" markdown>
+
+| Column A |
+| --- |
+| [13..?] |
+
+</div>
 
 Interpretation: keep from `13` to the last iterator item.
 
-```txt
-[?..12]
-```
+<div class="csv-dataset dataset-first-column" markdown>
+
+| Column A |
+| --- |
+| [?..12] |
+
+</div>
 
 Interpretation: keep from the last iterator item down to `12`, in reverse order.
 
@@ -254,18 +288,26 @@ Holes are inserted **after the accumulated generated run at that point**.
 
 Examples:
 
-```txt
-[3 - 2-]
-```
+<div class="csv-dataset dataset-first-column" markdown>
+
+| Column A |
+| --- |
+| [3 - 2-] |
+
+</div>
 
 Interpretation:
 - generate 3 cards
 - then insert 1 empty slot
 - then insert 2 more empty slots
 
-```txt
-[2 3- 5]
-```
+<div class="csv-dataset dataset-first-column" markdown>
+
+| Column A |
+| --- |
+| [2 3- 5] |
+
+</div>
 
 Interpretation:
 - generate 2 cards
@@ -277,18 +319,26 @@ Selection and holes can be mixed in the same final `[...]`.
 
 Examples:
 
-```txt
-[1..4 3- 7..9]
-```
+<div class="csv-dataset dataset-first-column" markdown>
+
+| Column A |
+| --- |
+| [1..4 3- 7..9] |
+
+</div>
 
 Interpretation:
 - keep iterator items `1,2,3,4`
 - insert 3 empty slots
 - keep iterator items `7,8,9`
 
-```txt
-[3..1 2- 4..5 7..9 ?..12]
-```
+<div class="csv-dataset dataset-first-column" markdown>
+
+| Column A |
+| --- |
+| [3..1 2- 4..5 7..9 ?..12] |
+
+</div>
 
 Interpretation:
 - reorder the first block as `3,2,1`
@@ -311,30 +361,44 @@ Column A can therefore be used to:
 
 ## Examples
 ### One card with grouped IDs
-```txt
-art = [icon_fire icon_air icon_earth]
-```
+<div class="csv-dataset" markdown>
+
+| card_bbox | art |
+| --- | --- |
+|  | [icon_fire icon_air icon_earth] |
+
+</div>
 
 Interpretation: one row instance, one generated card, grouped placement in that card.
 
 ### One card per ID
-```txt
-art = *[icon_fire icon_air icon_earth]
-```
+<div class="csv-dataset" markdown>
+
+| card_bbox | art |
+| --- | --- |
+|  | *[icon_fire icon_air icon_earth] |
+
+</div>
 
 Interpretation: three generated cards from that row (unless column A copies overrides).
 
 ### Iterator + explicit copies
-```txt
-Column A: 5
-art = *[A B C]
-```
+<div class="csv-dataset" markdown>
+
+| card_bbox | art |
+| --- | --- |
+| 5 | *[A B C] |
+
+</div>
 
 Interpretation: 5 cards -> `A, B, C, A, B` (wrap).
 
-```txt
-Column A: 2
-art = *[A B C]
-```
+<div class="csv-dataset" markdown>
+
+| card_bbox | art |
+| --- | --- |
+| 2 | *[A B C] |
+
+</div>
 
 Interpretation: 2 cards -> `A, B` (truncate).

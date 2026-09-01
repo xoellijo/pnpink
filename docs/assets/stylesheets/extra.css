@@ -1,5 +1,52 @@
 /* Minimal custom styles */
 
+/* Product-aware tips */
+:root {
+  --md-admonition-icon--inkscape: url("data:image/svg+xml;charset=utf-8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 2 3 16l3 1-2 3h16l-2-3 3-1L12 2Zm0 4.2 5.4 8.4-2.2.8.9 1.6H7.9l.9-1.6-2.2-.8L12 6.2ZM9 18h6v1H9v-1Z'/></svg>");
+  --md-admonition-icon--pnpink: url("data:image/svg+xml;charset=utf-8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M6 2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm1 3v14h10V5H7Zm5 2 1.2 2.4L16 10l-2 1.9.5 2.8-2.5-1.3-2.5 1.3.5-2.8L8 10l2.8-.6L12 7Z'/></svg>");
+  --md-admonition-icon--prerequisite: url("data:image/svg+xml;charset=utf-8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm1 17h-2v-2h2v2Zm2.1-7.8-.9.9c-.8.7-1.2 1.3-1.2 2.9h-2v-.5c0-1.1.4-2.1 1.2-2.8l1.2-1.2c.4-.3.6-.8.6-1.3a2 2 0 0 0-4 0H8a4 4 0 1 1 7.1 2Z'/></svg>");
+}
+
+.md-typeset .admonition.inkscape,
+.md-typeset .admonition.pnpink,
+.md-typeset .admonition.prerequisite {
+  border-width: 0 0 0 0.2rem;
+  box-shadow: 0 0.15rem 0.45rem rgba(0, 0, 0, 0.08);
+}
+
+.md-typeset .admonition.inkscape {
+  border-color: #4a91d2;
+  background-color: rgba(74, 145, 210, 0.045);
+}
+.md-typeset .inkscape > .admonition-title { background-color: rgba(74, 145, 210, 0.14); }
+.md-typeset .inkscape > .admonition-title::before {
+  background-color: #327ab8;
+  -webkit-mask-image: var(--md-admonition-icon--inkscape);
+  mask-image: var(--md-admonition-icon--inkscape);
+}
+
+.md-typeset .admonition.pnpink {
+  border-color: #d94f91;
+  background-color: rgba(217, 79, 145, 0.04);
+}
+.md-typeset .pnpink > .admonition-title { background-color: rgba(217, 79, 145, 0.13); }
+.md-typeset .pnpink > .admonition-title::before {
+  background-color: #bf2f78;
+  -webkit-mask-image: var(--md-admonition-icon--pnpink);
+  mask-image: var(--md-admonition-icon--pnpink);
+}
+
+.md-typeset .admonition.prerequisite {
+  border-color: #e09a31;
+  background-color: rgba(224, 154, 49, 0.05);
+}
+.md-typeset .prerequisite > .admonition-title { background-color: rgba(224, 154, 49, 0.15); }
+.md-typeset .prerequisite > .admonition-title::before {
+  background-color: #bd7414;
+  -webkit-mask-image: var(--md-admonition-icon--prerequisite);
+  mask-image: var(--md-admonition-icon--prerequisite);
+}
+
 /* Compact note blocks: ::: notes */
 .md-typeset .notes {
   font-size: 0.92rem;
@@ -17,26 +64,265 @@
   color: #1e3a8a;
 }
 
+/* Sidebar navigation */
+.md-sidebar--primary .md-nav__item--nested > .md-nav__link {
+  color: #1e3a5f;
+  font-weight: 700;
+}
+
+.md-sidebar--primary .md-nav__item--nested > .md-nav__link .md-nav__icon {
+  color: #64748b;
+  opacity: 1;
+}
+
+.md-sidebar--primary .md-nav__item--nested > .md-nav__link .md-nav__icon::after {
+  content: ">";
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  background: none;
+  -webkit-mask-image: none;
+  mask-image: none;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.md-sidebar--primary .md-nav__item--nested > .md-nav__toggle:checked ~ .md-nav__link .md-nav__icon::after {
+  content: "v";
+}
+
+.md-sidebar--primary .md-nav[data-md-level="1"] .md-nav__link,
+.md-sidebar--primary .md-nav[data-md-level="2"] .md-nav__link {
+  padding-left: 1.05rem;
+  font-size: 0.66rem;
+}
+
+.md-sidebar--primary .md-nav[data-md-level="1"] .md-nav__item--active > .md-nav__link,
+.md-sidebar--primary .md-nav[data-md-level="1"] .md-nav__link--active,
+.md-sidebar--primary .md-nav[data-md-level="2"] .md-nav__item--active > .md-nav__link,
+.md-sidebar--primary .md-nav[data-md-level="2"] .md-nav__link--active {
+  border-left: 2px solid #1e3a5f;
+  color: #1e3a5f;
+  font-weight: 700;
+}
+
+/* Compact example tables */
+.md-typeset .md-typeset__table {
+  margin: 0.15em 0 0.25em 0.9rem;
+}
+
+.md-typeset .md-typeset__table table {
+  margin: 0;
+}
+
+.md-typeset p + .md-typeset__table,
+.md-typeset p + .md-typeset__scrollwrap,
+.md-typeset p + .csv-dataset {
+  margin-top: -0.45em;
+}
+
+.md-typeset .md-typeset__table + *,
+.md-typeset .md-typeset__scrollwrap + *,
+.md-typeset .csv-dataset + * {
+  margin-top: 0.25em;
+}
+
+.md-typeset p:has(+ .md-typeset__table),
+.md-typeset p:has(+ .md-typeset__scrollwrap),
+.md-typeset p:has(+ .csv-dataset) {
+  margin-bottom: 0.25em;
+}
+
+.md-typeset .md-typeset__table + p,
+.md-typeset .md-typeset__scrollwrap + p,
+.md-typeset .csv-dataset + p {
+  margin-top: 0.25em;
+}
+
+.md-typeset .md-typeset__scrollwrap {
+  margin: 0.15em 0 0.25em 0.9rem;
+}
+
+.md-typeset .csv-dataset .md-typeset__table {
+  margin: 0;
+}
+
 /* CSV dataset tables */
 .md-typeset {
-  --pnpink-dataset-font-size: 0.72rem;
+  --pnpink-dataset-font-size: 0.68rem;
 }
 
-.md-typeset table.csv-dataset th {
-  background: #fde8e8;
-  color: #7f1d1d;
+.md-typeset .csv-dataset {
+  max-width: 100%;
+  margin: 0.15em 0 0.25em 0.9rem;
+  overflow-x: hidden;
+}
+
+.md-typeset table.csv-dataset,
+.md-typeset .csv-dataset table {
+  width: auto;
+  max-width: 100%;
+  table-layout: auto;
+  border-collapse: separate;
+  border-spacing: 2px;
+  padding: 1px;
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+  font-family: inherit;
+  font-size: var(--pnpink-dataset-font-size);
+  line-height: 1.2;
+}
+
+.md-typeset table.csv-dataset th,
+.md-typeset .csv-dataset table th {
+  padding: 0.25em 0.5em;
+  min-width: 0;
+  max-width: 18rem;
+  background: #1e3a5f;
+  color: #dbeafe;
+  border: 0;
+  border-radius: 0;
   font-weight: 700;
-  font-size: var(--pnpink-dataset-font-size);
+  font-family: inherit;
+  font-size: inherit;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
-.md-typeset table.csv-dataset tbody td {
+.md-typeset table.csv-dataset tbody td,
+.md-typeset .csv-dataset table tbody td {
+  padding: 0.22em 0.5em;
+  min-width: 0;
+  max-width: 18rem;
   background: #dbeafe;
-  color: #1e3a8a;
-  font-size: var(--pnpink-dataset-font-size);
+  color: #1e3a5f;
+  border: 0;
+  border-radius: 0;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 400;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
-.md-typeset table.csv-dataset tbody td:first-child {
-  font-weight: 600;
+.md-typeset table.csv-dataset th,
+.md-typeset table.csv-dataset td,
+.md-typeset .csv-dataset table th,
+.md-typeset .csv-dataset table td {
+  width: auto;
+}
+
+.md-typeset table.csv-dataset code,
+.md-typeset .csv-dataset table code {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.md-typeset .ds-header,
+.md-typeset .ds-col1,
+.md-typeset .ds-cell {
+  display: inline-block;
+  padding: 0.05em 0.3em;
+  color: #1e3a5f;
+  background: #dbeafe;
+  font-family: inherit;
+  line-height: 1.25;
+}
+
+.md-typeset .ds-header {
+  color: #dbeafe;
+  background: #1e3a5f;
+  font-weight: 700;
+}
+
+.md-typeset .ds-col1 {
+  font-weight: 700;
+}
+
+.md-typeset .ds-cell {
+  font-weight: 400;
+}
+
+.md-typeset .dataset-fragment {
+  width: min(32rem, 100%);
+  margin: 0.1em 0 0.25em 0.9rem;
+}
+
+.md-typeset .dataset-fragment table {
+  width: 100%;
+  table-layout: auto;
+  margin: 0;
+}
+
+.md-typeset .dataset-fragment table th:first-child,
+.md-typeset .dataset-fragment table th:last-child,
+.md-typeset .dataset-fragment table td:first-child,
+.md-typeset .dataset-fragment table td:last-child {
+  width: 1%;
+  padding-right: 0.35em;
+  padding-left: 0.35em;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.md-typeset .dataset-fragment table th:nth-child(2),
+.md-typeset .dataset-fragment table td:nth-child(2) {
+  width: 98%;
+  text-align: left;
+}
+
+.md-typeset .dataset-first-column table th:first-child,
+.md-typeset .dataset-first-column table td:first-child {
+  width: auto;
+  max-width: 24rem;
+  text-align: left;
+  white-space: normal;
+}
+
+.md-typeset .dataset-first-column table th:nth-child(2),
+.md-typeset .dataset-first-column table td:nth-child(2) {
+  width: 70%;
+  text-align: left;
+  white-space: normal;
+}
+
+.md-typeset .dataset-first-column table tbody td:first-child {
+  font-weight: 700;
+}
+
+.md-typeset .dataset-fragment.dataset-first-column table th:first-child,
+.md-typeset .dataset-fragment.dataset-first-column table td:first-child {
+  width: 99%;
+  max-width: none;
+  text-align: left;
+  white-space: normal;
+}
+
+.md-typeset .dataset-fragment.dataset-first-column table th:last-child,
+.md-typeset .dataset-fragment.dataset-first-column table td:last-child {
+  width: 1%;
+  max-width: 2.5rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.md-typeset .dataset-comments table th:nth-child(n+2),
+.md-typeset .dataset-comments table td:nth-child(n+2) {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.md-typeset .dataset-body-only thead {
+  display: none;
+}
+
+.md-typeset .dataset-header-only tbody {
+  display: none;
 }
 
 .md-typeset pre.csv-view,

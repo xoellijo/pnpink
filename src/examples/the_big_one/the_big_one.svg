@@ -1220,9 +1220,8 @@
          y="0"
          width="120"
          height="120"
-         xlink:href="C:\Users\t148888\Documents\ink\img\bola_rosa.png"
-         href="C:\Users\t148888\Documents\ink\img\bola_rosa.png"
-         sodipodi:absref="C:\Users\t148888\Documents\ink\img\bola_rosa.png"
+         xlink:href="assets/bola_rosa.png"
+         href="assets/bola_rosa.png"
          id="image3646" />
     </symbol>
     <clipPath

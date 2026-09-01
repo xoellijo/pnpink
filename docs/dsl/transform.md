@@ -32,14 +32,18 @@ Examples of `Transform` concerns:
 
 ## Syntax
 
-```txt
-object_id.T{rotate=15 mirror=h}
-object_id.T{opacity=50% scale=110%}
-object_id.T{o=50% s=110%}
-object_id.T{f=myFilter}
-object_id.T{f=image1-9-1 e=8%}
-@{source}.T{o=70%}
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| object_id.T{rotate=15 mirror=h} |
+| object_id.T{opacity=50% scale=110%} |
+| object_id.T{o=50% s=110%} |
+| object_id.T{f=myFilter} |
+| object_id.T{f=image1-9-1 e=8%} |
+| @{source}.T{o=70%} |
+
+</div>
 
 `Transform` can be written as:
 
@@ -61,41 +65,57 @@ Current parameters are:
 
 ## Rotate and Mirror
 
-```txt
-.T{rotate=15}
-.T{r=-42.4}
-.T{mirror=h}
-.T{mirror=v}
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| .T{rotate=15} |
+| .T{r=-42.4} |
+| .T{mirror=h} |
+| .T{mirror=v} |
+
+</div>
 
 Compact `~` can still carry the same operations:
 
-```txt
-object_id~^15
-object_id~^^
-object_id~|
-object_id~||
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| object_id~^15 |
+| object_id~^^ |
+| object_id~\| |
+| object_id~\|\| |
+
+</div>
 
 In compact form, `^` means rotate and `|` / `||` mean horizontal / vertical mirror.
 
 ## Opacity
 
-```txt
-.T{o=50%}
-.T{opacity=80%}
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| .T{o=50%} |
+| .T{opacity=80%} |
+
+</div>
 
 This changes the final opacity of the placed object.
 
 ## Scale
 
-```txt
-.T{s=1}
-.T{s=110%}
-.T{s=110%+2}
-.T{s=[1+120% -3+90%]}
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| .T{s=1} |
+| .T{s=110%} |
+| .T{s=110%+2} |
+| .T{s=[1+120% -3+90%]} |
+
+</div>
 
 `scale` resizes the already placed object around its current center.
 
@@ -115,11 +135,15 @@ Examples:
 
 ## Soft Edges
 
-```txt
-.T{e=12%}
-.T{edge=[12% 4%]}
-.T{e=[5% 10% 15% 20%]}
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| .T{e=12%} |
+| .T{edge=[12% 4%]} |
+| .T{e=[5% 10% 15% 20%]} |
+
+</div>
 
 `edge` creates a soft fade towards the edges of the object.
 
@@ -133,11 +157,15 @@ Values are percentages.
 
 ## Filter Copy
 
-```txt
-.T{f=myFilter}
-.T{filter=myFilter}
-.T{f=image1-9-1}
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| .T{f=myFilter} |
+| .T{filter=myFilter} |
+| .T{f=image1-9-1} |
+
+</div>
 
 `filter` applies an existing SVG filter to the final placed object.
 
@@ -151,11 +179,15 @@ This is useful for reusing Inkscape-made effects such as color shifts, brightnes
 
 ## Text Replacement
 
-```txt
-icon.T{text=+1}
-icon.T{t=-2}
-icon.T{t=[+1 -2 +5]}
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| icon.T{text=+1} |
+| icon.T{t=-2} |
+| icon.T{t=[+1 -2 +5]} |
+
+</div>
 
 `text` replaces plain text inside the placed object.
 With a list, values are applied to the first text node, second text node, and so on.
@@ -168,11 +200,15 @@ The original template object is not modified.
 
 `inside` trims a rectangular frame to the text linked to it through Inkscape's `shape-inside` property:
 
-```txt
-frame.T{i=x}
-frame.T{i=y}
-frame.T{i=a}
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| frame.T{i=x} |
+| frame.T{i=y} |
+| frame.T{i=a} |
+
+</div>
 
 - `i=x` trims horizontally. Left-aligned text keeps the left edge, right-aligned text keeps the right edge, and centered text trims both sides.
 - `i=y` keeps the top edge and trims the bottom.
@@ -182,28 +218,38 @@ PnPInk places the frame and linked text together, lets Inkscape flow the final c
 
 The hidden frame can be addressed through the visible text ID with the virtual `shape-inside` property. PnPInk resolves it automatically and creates a private frame only for instances that modify it:
 
-```txt
-placeholder, description
-description[shape-inside]~[90%]i.T{i=a}, Text for this instance
-```
+<div class="csv-dataset" markdown>
+
+| placeholder | description |
+| --- | --- |
+| description[shape-inside]~[90%]i.T{i=a} | Text for this instance |
+
+</div>
 
 Property-only headers inherit the previous target ID, so the same operation can be split into two columns:
 
-```txt
-description, [shape-inside]
-Text for this instance, .T{i=a}
-```
+<div class="csv-dataset" markdown>
+
+| description | [shape-inside] |
+| --- | --- |
+| Text for this instance | .T{i=a} |
+
+</div>
 
 ## Typical Use
 
-```txt
-photo.T{o=85%}
-photo.T{e=10%}
-photo.T{f=myWarmTint}
-photo.T{f=image1-9-1 e=7%}
-photo.T{o=75% e=[8% 3%]}
-counter_icon.T{t=+3}
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| photo.T{o=85%} |
+| photo.T{e=10%} |
+| photo.T{f=myWarmTint} |
+| photo.T{f=image1-9-1 e=7%} |
+| photo.T{o=75% e=[8% 3%]} |
+| counter_icon.T{t=+3} |
+
+</div>
 
 This is useful for:
 

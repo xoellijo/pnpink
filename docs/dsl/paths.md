@@ -21,19 +21,27 @@ This is especially useful for hex maps, hextiles, movement guides, borders, and 
 
 `Paths` is attached to the object token itself:
 
-```txt
-tile_id.P{path_style [a b]}
-tile_id.P{path_style [5a 79]}
-tile_id.P{path_style [ab cd]}
-.P{path_style [a b d]}
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| tile_id.P{path_style [a b]} |
+| tile_id.P{path_style [5a 79]} |
+| tile_id.P{path_style [ab cd]} |
+| .P{path_style [a b d]} |
+
+</div>
 
 You can define several styled groups in the same block:
 
-```txt
-tile_id.P{path_main [a c e] path_aux [5a 5c]}
-tile_id.P{t=path_main [ab] t=path_aux [5A5]}
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| tile_id.P{path_main [a c e] path_aux [5a 5c]} |
+| tile_id.P{t=path_main [ab] t=path_aux [5A5]} |
+
+</div>
 
 Each pair is:
 
@@ -51,15 +59,23 @@ The style id may reference:
 
 You can attach it explicitly to a target:
 
-```txt
-tile_id.P{path_style [ab]}
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| tile_id.P{path_style [ab]} |
+
+</div>
 
 or use it directly on the current placed target:
 
-```txt
-.P{path_style [ab]}
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| .P{path_style [ab]} |
+
+</div>
 
 So this is the right mental model:
 
@@ -80,11 +96,15 @@ The vertices follow the same keypad-style convention already used elsewhere in t
 
 Each lowercase letter refers to one hex side:
 
-```txt
-[a]
-[b]
-[c]
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| [a] |
+| [b] |
+| [c] |
+
+</div>
 
 These draw the corresponding edge itself.
 
@@ -94,10 +114,14 @@ These draw the corresponding edge itself.
 
 Examples:
 
-```txt
-[5a]
-[5c 5f]
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| [5a] |
+| [5c 5f] |
+
+</div>
 
 ## Vertex to Vertex
 
@@ -105,11 +129,15 @@ Two keypad numbers draw a straight segment between vertices.
 
 Examples:
 
-```txt
-[79]
-[93]
-[12]
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| [79] |
+| [93] |
+| [12] |
+
+</div>
 
 ## Side to Side
 
@@ -117,11 +145,15 @@ Two lowercase side letters draw a connection between side midpoints.
 
 Examples:
 
-```txt
-[ab]
-[ac]
-[ad]
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| [ab] |
+| [ac] |
+| [ad] |
+
+</div>
 
 Depending on the relative position, this becomes:
 
@@ -138,10 +170,14 @@ An uppercase side letter in the form `5A5`, `5B5`, ... means:
 
 Examples:
 
-```txt
-[5A5]
-[5C5 5F5]
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| [5A5] |
+| [5C5 5F5] |
+
+</div>
 
 This is useful for:
 
@@ -155,11 +191,15 @@ You can also build continuous routes through several neighboring hexes.
 
 Examples:
 
-```txt
-[5A9]
-[3C3]
-[5ABB3C2]
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| [5A9] |
+| [3C3] |
+| [5ABB3C2] |
+
+</div>
 
 This means:
 
@@ -174,9 +214,13 @@ Important: in chained references, each new step starts from the last resolved he
 
 So:
 
-```txt
-[5ABB3C2]
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| [5ABB3C2] |
+
+</div>
 
 continues from the hex reached by `ABB3`, and then applies `C2` from there.
 
@@ -186,9 +230,13 @@ The path geometry comes from the tokens, but the visual appearance comes from th
 
 So a common pattern is:
 
-```txt
-tile_id.P{path_thin [a b c] path_bold [5A5]}
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| tile_id.P{path_thin [a b c] path_bold [5A5]} |
+
+</div>
 
 This lets you draw different local guides with different strokes while keeping the syntax compact.
 

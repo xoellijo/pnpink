@@ -6,8 +6,8 @@ theme:
   logo: assets/images/pnpink_logo.png
   favicon: assets/images/pnpink_logo.png
   features:
-    - navigation.sections
     - navigation.top
+    - navigation.path
     - toc.follow
 
 nav:

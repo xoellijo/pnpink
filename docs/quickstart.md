@@ -24,9 +24,12 @@ my-first-deck/
 
 Open a new Inkscape document and draw a rectangle with the final dimensions of one card. This rectangle defines the template bounding box: PnPInk uses it to determine what one record looks like, how large it is, and how it must be placed on the output pages. Open `Object > Object Properties`, change its ID to `card_bbox`, and keep that name unique within the document.
 
+!!! inkscape "Inkscape tip: name and find objects"
+    Open Object Properties with `Object > Object Properties` (`Shift+Ctrl+O`) to change the selected object's ID. Keep `Object > Layers and Objects` (`Shift+Ctrl+L`) open to see the complete object tree, IDs and stacking order while building the template.
+
 Build a simple card around that rectangle. For example, add a text object for the title, another text object for the cost, and a rectangle that will receive the artwork. Give them the IDs `title`, `cost`, and `art`. These names are the connection between the drawing and the dataset: a CSV column named `title` changes the object whose SVG ID is also `title`.
 
-Select the card elements and group them with `Ctrl+G`. Grouping is not a substitute for IDs, but it keeps the template together and makes its stacking order easier to understand. Open `Object > Layers and Objects` (`Shift+Ctrl+L`) while you work; its object tree shows the group, the elements inside it, their order, and the IDs that PnPInk will use.
+Select the card elements and group them with `Ctrl+G`. Grouping is not a substitute for IDs, but it keeps the template together and makes its stacking order easier to understand. The Layers and Objects panel shows the group, the elements inside it, their order, and the IDs that PnPInk will use.
 
 Your template can be visually simple. A first version only needs:
 
@@ -51,11 +54,14 @@ cards.csv
 
 Create `cards.csv` with this content:
 
-```csv
-card_bbox,title,cost,art
-,Fireball,3,images/fireball.png
-,Shield,2,images/shield.png
-```
+<div class="csv-dataset" markdown>
+
+| card_bbox | title | cost | art |
+| --- | --- | --- | --- |
+|  | Fireball | 3 | images/fireball.png |
+|  | Shield | 2 | images/shield.png |
+
+</div>
 
 The first cell of the header row, `card_bbox`, tells PnPInk which rectangle defines the main template. The remaining headers match the SVG IDs created in Inkscape. Each data row generates one card: `Fireball` is written into the `title` text, `3` into `cost`, and the image is fitted into `art`. Column A is empty in the data rows because its main purpose in this simple format is to identify the template and carry optional row-level controls.
 
@@ -67,12 +73,15 @@ This example uses the compact single-dataset format. PnPInk also supports severa
 
 Without an explicit layout, DeckMaker can use its configured defaults. To make the first output predictable, add a control-only row immediately after the headers:
 
-```csv
-card_bbox,title,cost,art
-{A4 b=[-5]} L{p=3x3 g=2},,,
-,Fireball,3,images/fireball.png
-,Shield,2,images/shield.png
-```
+<div class="csv-dataset" markdown>
+
+| card_bbox | title | cost | art |
+| --- | --- | --- | --- |
+| {A4 b=[-5]} L{p=3x3 g=2} |  |  |  |
+|  | Fireball | 3 | images/fireball.png |
+|  | Shield | 2 | images/shield.png |
+
+</div>
 
 `{A4 b=[-5]}` selects an A4 page with a 5 mm internal border, while `L{p=3x3 g=2}` creates a 3-by-3 grid with 2 mm gaps. Because the other cells in that control row are empty, the row changes the page and layout but does not generate a card.
 

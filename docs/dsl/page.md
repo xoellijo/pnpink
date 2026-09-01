@@ -12,40 +12,56 @@ A bare `{}` means "continue using the previous page size".
 
 Multipliers are allowed:
 
-```txt
-{3*A4} -> three A4 pages
-{3}    -> shorthand for three pages
-```
+<div class="csv-dataset dataset-body-only dataset-first-column dataset-comments" markdown>
+
+|  | Meaning |
+| --- | --- |
+| {3*A4} | # Three A4 pages |
+| {3} | # Shorthand for three pages |
+
+</div>
 
 ## Size (default)
 Page size is usually set once and then reused by state.
 
 The default parameter is the page size:
 
-```txt
-Page{A4}
-Page{Letter}
-Page{23.3x34.45}
-```
+<div class="csv-dataset dataset-body-only dataset-first-column" markdown>
+
+|  |
+| --- |
+| Page{A4} |
+| Page{Letter} |
+| Page{23.3x34.45} |
+
+</div>
 
 ## Landscape / Portrait
 Orientation is part of page state and affects all following placements until changed.
 
-```txt
-Page{A4^}        -> landscape
-Page{landscape}
-Page{portrait}
-```
+<div class="csv-dataset dataset-body-only dataset-first-column dataset-comments" markdown>
+
+|  | Meaning |
+| --- | --- |
+| Page{A4^} | # Landscape |
+| Page{landscape} | # Landscape |
+| Page{portrait} | # Portrait |
+
+</div>
 
 ## Border (b=)
 `b` defines the usable inner area (or outward expansion) for layout planning.
 
 `b=` defines padding or margin around the page.
 
-```txt
-b=[-2]      -> 2 mm inward margin
-b=[2 3 4 5] -> top, right, bottom, left
-```
+<div class="csv-dataset dataset-body-only dataset-first-column dataset-comments" markdown>
+
+|  | Meaning |
+| --- | --- |
+| b=[-2] | # 2 mm inward margin |
+| b=[2 3 4 5] | # Top, right, bottom, left |
+
+</div>
 
 Percentages and absolute `WxH` values are allowed (same grammar as Fit).
 
@@ -63,13 +79,17 @@ Cursor control is for advanced pagination workflows, such as merging sections or
 
 Accepted forms:
 
-```txt
-at=+3
-a=-1
-@5
-A4@+2
-{ @-1 }
-```
+<div class="csv-dataset dataset-body-only dataset-first-column" markdown>
+
+|  |
+| --- |
+| at=+3 |
+| a=-1 |
+| @5 |
+| A4@+2 |
+| { @-1 } |
+
+</div>
 
 Rules:
 

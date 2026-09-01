@@ -1,7 +1,5 @@
 # Source
-```txt
-@{...} creates a source object from an external resource (file, icon, or URL), then uses it as a renderable object in the document.
-```
+`@{...}` creates a source object from an external resource (file, icon, or URL), then uses it as a renderable object in the document.
 Use Source when content comes from outside the template and must be resolved at generation time.
 
 ## Syntax
@@ -21,21 +19,29 @@ The `source_ref` can be:
 ## Local File Sources
 Use local files for stable, reproducible builds where assets are versioned with the project.
 
-```txt
-@{ relative/or/absolute/path.png }
-@{ C:\path\to\image.png }   # Windows
-@{ ~/images/token.png }     # Linux/macOS
-```
+<div class="csv-dataset dataset-body-only dataset-comments" markdown>
+
+|  | Meaning |
+| --- | --- |
+| @{ relative/or/absolute/path.png } | # Relative or absolute path |
+| @{ C:\path\to\image.png } | # Windows path |
+| @{ ~/images/token.png } | # Linux/macOS home path |
+
+</div>
 
 Equivalent local-source forms accepted in dataset cells:
 
-```txt
-Source{path/file.ext}
-@{path/file.ext}
-@{file.ext}
-@file.ext
-file.ext
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| Source{path/file.ext} |
+| @{path/file.ext} |
+| @{file.ext} |
+| @file.ext |
+| file.ext |
+
+</div>
 
 Notes:
 
@@ -59,9 +65,13 @@ Local sources support environment/home expansion:
 ### Inline text tokens
 Inline icons can also use local shorthand directly inside text:
 
-```txt
-:bola.png:
-```
+<div class="csv-dataset" markdown>
+
+| description |
+| --- |
+| :bola.png: |
+
+</div>
 
 Behavior:
 
@@ -73,10 +83,14 @@ For complete inline-icon syntax, shared holes, Fit-Anchor placement and text tra
 ## SVG Node Import (Optional)
 For SVG sources only, you can target a specific node with `#id`:
 
-```txt
-@{ assets/icons.svg#heart_group }
-@{ https://example.com/icons.svg#token_1 }
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| @{ assets/icons.svg#heart_group } |
+| @{ https://example.com/icons.svg#token_1 } |
+
+</div>
 
 Behavior:
 
@@ -86,17 +100,25 @@ Behavior:
 ## Iconify Sources
 Use icon sources for semantic symbols (costs, resources, status icons) without managing local files manually.
 
-```txt
-@{ icon://icon_set/icon_name }
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| @{ icon://icon_set/icon_name } |
+
+</div>
 
 Examples:
 
-```txt
-@{ icon://noto/heart-suit }
-@{ icon://mdi/account }
-@{ icon://cat }   # uses default set (noto)
-```
+<div class="csv-dataset dataset-body-only dataset-comments" markdown>
+
+|  | Meaning |
+| --- | --- |
+| @{ icon://noto/heart-suit } | # Icon from the `noto` set |
+| @{ icon://mdi/account } | # Icon from the `mdi` set |
+| @{ icon://cat } | # Uses default set, `noto` |
+
+</div>
 
 There is a default snippet definition mapping to the `noto` icon set:
 
@@ -113,10 +135,14 @@ Notes:
 ## Web Sources (HTTP/HTTPS)
 Use web sources when assets are remote and can be cached at generation time.
 
-```txt
-@{ https://... }
-@{ http://... }
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| @{ https://... } |
+| @{ http://... } |
+
+</div>
 
 Web sources are **downloaded and cached** into the `assets` folder next to the SVG (or project root).
 If the download fails, a placeholder symbol is created.
@@ -127,26 +153,34 @@ They are useful for exploratory workflows and rapid prototyping.
 
 PnPInk supports virtual sources that resolve to real URLs:
 
-```txt
-@{ wkmc://query/size }
-@{ pxby://query/size }
-@{ oclp://query/size }
-@{ pnp://asset_path }
-@{ gdrive://file/file_id }
-@{ gdrive://folder/folder_id/*.png }
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| @{ wkmc://query/size } |
+| @{ pxby://query/size } |
+| @{ oclp://query/size } |
+| @{ pnp://asset_path } |
+| @{ gdrive://file/file_id } |
+| @{ gdrive://folder/folder_id/*.png } |
+
+</div>
 
 PnPInk also supports dedicated map sources:
 
-```txt
-@{ osm://[...] }
-@{ ofm://[...] }
-@{ osm://madrid }
-@{ ofm://spain/z4 }
-@{ ofm://shikoku/t1 }
-@{ ofm://shikoku/z8/t1 view=all-labels+water_name[bay lake] }
-@{ ofm://asturias view=mountains smooth=3 }
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| @{ osm://[...] } |
+| @{ ofm://[...] } |
+| @{ osm://madrid } |
+| @{ ofm://spain/z4 } |
+| @{ ofm://shikoku/t1 } |
+| @{ ofm://shikoku/z8/t1 view=all-labels+water_name[bay lake] } |
+| @{ ofm://asturias view=mountains smooth=3 } |
+
+</div>
 
 These sources generate maps from simple URLs. Map sources support `/zN` to force zoom and `/tN` to limit the automatic tile grid per axis. Use `view=` to choose rendered layers/features and `smooth=`/`s=` to control configured line smoothing. See [Maps](./maps.md) for details.
 
@@ -183,27 +217,35 @@ Size accepts:
 
 Examples:
 
-```txt
-@{ wkmc://"The Ancestral Homes of Britain"/large }
-@{ wkmc://"File:Complete_Saxonian_deck.jpg"/1000 }
-@{ wkmc://"Category:Complete_decks_of_playing_cards_laid_out"/1000x1000 }
-@{ pxby://castle/1200 }
-@{ oclp://wolf/large }
-@{ oclp://id:24829/largest }
-@{ pnp://birds/egg }
-@{ pnp://IA/icons/crown1 }
-@{ gdrive://file/1AbCdEf... }
-@{ gdrive://folder/1AbCdEf.../*.png }
-@{ gdrive://folder/1AbCdEf.../Artworks/used/card.png }
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| @{ wkmc://"The Ancestral Homes of Britain"/large } |
+| @{ wkmc://"File:Complete_Saxonian_deck.jpg"/1000 } |
+| @{ wkmc://"Category:Complete_decks_of_playing_cards_laid_out"/1000x1000 } |
+| @{ pxby://castle/1200 } |
+| @{ oclp://wolf/large } |
+| @{ oclp://id:24829/largest } |
+| @{ pnp://birds/egg } |
+| @{ pnp://IA/icons/crown1 } |
+| @{ gdrive://file/1AbCdEf... } |
+| @{ gdrive://folder/1AbCdEf.../*.png } |
+| @{ gdrive://folder/1AbCdEf.../Artworks/used/card.png } |
+
+</div>
 
 Multiple-result virtual sources can be selected outside the source with a 1-based selector:
 
-```txt
-@{ wkmc://"The Ancestral Homes of Britain"/medium }[2 4..12 15..26]
-*@{ pxby://castle/large }[1..20]
-*@{ gdrive://folder/1AbCdEf.../*.png }[1..20]
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| @{ wkmc://"The Ancestral Homes of Britain"/medium }[2 4..12 15..26] |
+| *@{ pxby://castle/large }[1..20] |
+| *@{ gdrive://folder/1AbCdEf.../*.png }[1..20] |
+
+</div>
 
 Selector notes:
 
@@ -231,13 +273,17 @@ Wikimedia Commons category catalogs:
   - `url`
   - `thumburl`
 
-```txt
-${_wkmcc1[0].title}
-${_wkmcc1[0].url}
-${_wkmcc1[0].thumburl}
-@{ wkmc://${_wkmcc1[0].title}/1000 }
-@{ ${_wkmcc1[0].thumburl} }
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| ${_wkmcc1[0].title} |
+| ${_wkmcc1[0].url} |
+| ${_wkmcc1[0].thumburl} |
+| @{ wkmc://${_wkmcc1[0].title}/1000 } |
+| @{ ${_wkmcc1[0].thumburl} } |
+
+</div>
 
 ### `pnp://` PnPInk Assets
 
@@ -253,18 +299,26 @@ Resolution rules are intentionally simple:
 
 Examples:
 
-```txt
-@{ pnp://egg }            # may resolve to birds/egg1.png
-@{ pnp://birds/egg }      # resolves within the birds collection
-@{ pnp://IA/icons/crown1 }
-```
+<div class="csv-dataset dataset-body-only dataset-comments" markdown>
+
+|  | Meaning |
+| --- | --- |
+| @{ pnp://egg } | # May resolve to `birds/egg1.png` |
+| @{ pnp://birds/egg } | # Resolves within the birds collection |
+| @{ pnp://IA/icons/crown1 } | # Direct asset path |
+
+</div>
 
 The source behaves like any other image source, so it can be combined with Fit-Anchor and Transform:
 
-```txt
-@{ pnp://egg }~i7
-@{ pnp://birds/egg3 }.T{o=80%}~[110%]8!
-```
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| @{ pnp://egg }~i7 |
+| @{ pnp://birds/egg3 }.T{o=80%}~[110%]8! |
+
+</div>
 
 ## Fit and Placement Behavior
 After resolution, a source behaves like any other placeable target in Fit/Anchor terms.
@@ -285,21 +339,29 @@ The **Layout** module can also be applied to composite sources, such as spritesh
 
 Example definition inside a comment block (before the dataset):
 
-```txt
-# @sp1 = @{sheet.png}.Layout{p=3x2^ s=poker g=[4 3]}
-```
+<div class="csv-dataset dataset-first-column" markdown>
+
+| Comment/directive row |
+| --- |
+| # @sp1 = @{sheet.png}.Layout{p=3x2^ s=poker g=[4 3]} |
+
+</div>
 
 This creates a spritesheet from `sheet.png` with a 3x2 grid of poker-sized cards, spaced 4 mm horizontally and 3 mm vertically.
 
 Then, you can reference any frame in the dataset as:
 
-```txt
-@sp1[14] -> frame 14 (third page, second row)
-@sp1[B3] -> column B, row 3
-@sp1[B3:C5] -> rectangular range
-@sp1[B4..C6] -> linear walk following the spritesheet layout order
-@sp1[A4 B2 A1] -> explicit unordered list selector
-```
+<div class="csv-dataset dataset-body-only dataset-comments" markdown>
+
+|  | Meaning |
+| --- | --- |
+| @sp1[14] | # Frame 14, third page, second row |
+| @sp1[B3] | # Column B, row 3 |
+| @sp1[B3:C5] | # Rectangular range |
+| @sp1[B4..C6] | # Linear walk following the spritesheet layout order |
+| @sp1[A4 B2 A1] | # Explicit unordered list selector |
+
+</div>
 
 (`^` in the grid reverses numbering direction: first rows, then columns.)
 
