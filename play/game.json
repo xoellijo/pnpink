@@ -1,0 +1,15 @@
+{
+  "minPlayers": 2,
+  "maxPlayers": 4,
+  "defaultPlayers": 2,
+  "ui": {
+    "root": ".",
+    "outDir": "build/ui"
+  },
+  "game": {
+    "root": ".",
+    "out": "build/game/game-interface.js"
+  },
+  "name": "pnpink-play-demo",
+  "friendlyName": "PnPInk Play — Generic Table"
+}

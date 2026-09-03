@@ -1,0 +1,27 @@
+{
+  "name": "pnpink-play",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@boardzilla/core": "0.2.14",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.8.7",
+    "@types/react": "^18.2.25",
+    "@types/react-dom": "^18.2.14",
+    "esbuild": "^0.19.2",
+    "esbuild-sass-plugin": "^2.15.0",
+    "typescript": "^5.2.2",
+    "vitest": "^1.2.2"
+  },
+  "scripts": {
+    "build": "npm run typecheck && npm run build:game && npm run build:ui",
+    "build:game": "node esbuild.game.mjs",
+    "build:ui": "node esbuild.ui.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  }
+}

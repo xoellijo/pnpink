@@ -30,6 +30,7 @@ class ExportOptions:
     export_dpi: int
     jpeg_quality: int
     other_format: str
+    other_unit: str
     other_pages: str
     export_cut_template: bool = False
     cut_template_format: str = "svg"

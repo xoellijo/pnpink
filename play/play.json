@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "name": "PnPInk Generic Table",
+  "description": "A compact demonstration of reusable tabletop zones and operations.",
+  "board": {
+    "aspectRatio": 1.6,
+    "background": "#173f35"
+  },
+  "zones": [
+    {
+      "id": "deck",
+      "label": "Deck",
+      "kind": "deck",
+      "scope": "shared",
+      "visibility": "hidden",
+      "actions": ["draw", "shuffle"],
+      "layout": { "shared": { "left": 8, "top": 37, "width": 10, "height": 26 }, "rows": 1, "columns": 1 }
+    },
+    {
+      "id": "table",
+      "label": "Table",
+      "kind": "table",
+      "scope": "shared",
+      "visibility": "public",
+      "actions": ["move-from", "move-to"],
+      "layout": { "shared": { "left": 24, "top": 25, "width": 52, "height": 50 }, "rows": 2, "columns": 5 }
+    },
+    {
+      "id": "discard",
+      "label": "Discard",
+      "kind": "discard",
+      "scope": "shared",
+      "visibility": "public",
+      "actions": ["move-from", "move-to", "discard-to"],
+      "layout": { "shared": { "left": 82, "top": 37, "width": 10, "height": 26 }, "rows": 1, "columns": 1 }
+    },
+    {
+      "id": "hand",
+      "label": "Hand",
+      "kind": "hand",
+      "scope": "player",
+      "visibility": "owner",
+      "actions": ["move-from", "move-to"],
+      "layout": {
+        "owner": { "left": 24, "top": 78, "width": 52, "height": 19 },
+        "opponent": { "left": 31, "top": 2, "width": 38, "height": 16 },
+        "rows": 1,
+        "columns": 8
+      }
+    },
+    {
+      "id": "player-area",
+      "label": "Player area",
+      "kind": "area",
+      "scope": "player",
+      "visibility": "public",
+      "actions": ["move-from", "move-to"],
+      "layout": {
+        "owner": { "left": 2, "top": 72, "width": 18, "height": 25 },
+        "opponent": { "left": 80, "top": 3, "width": 18, "height": 22 },
+        "rows": 1,
+        "columns": 3
+      }
+    }
+  ],
+  "components": [
+    { "id": "sun", "label": "Sun card", "copies": 3, "front": "assets/card-sun.svg", "back": "assets/card-back.svg", "initial": { "zone": "deck" } },
+    { "id": "moon", "label": "Moon card", "copies": 3, "front": "assets/card-moon.svg", "back": "assets/card-back.svg", "initial": { "zone": "deck" } },
+    { "id": "forest", "label": "Forest card", "copies": 3, "front": "assets/card-forest.svg", "back": "assets/card-back.svg", "initial": { "zone": "deck" } },
+    { "id": "reference", "label": "Player reference", "front": "assets/card-reference.svg", "initial": { "zone": "player-area", "forEachPlayer": true, "faceUp": true } }
+  ],
+  "setup": { "shuffle": ["deck"] }
+}

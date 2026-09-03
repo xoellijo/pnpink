@@ -46,6 +46,7 @@ _DEFAULTS = {
     "export_png":         "0",
     "export_other_format": "png",
     "export_other_pages": "",
+    "export_other_unit": "pages",
     "export_other_ids": "",
     "export_cut_template": "0",
     "export_cut_template_format": "svg",
@@ -101,7 +102,8 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     )),
     ("export_png", ("Enable additional non-PDF export. Values: 0 | 1",)),
     ("export_other_format", ("Additional output format. Values: png | jpeg | jpeg2000 | pdf | svg | tiff | webp | avif | ps | eps | emf | wmf",)),
-    ("export_other_pages", ("Optional pages for additional output. Examples: 1,3-5,8. Empty = all pages",)),
+    ("export_other_unit", ("Additional export unit. Values: pages | items | ids",)),
+    ("export_other_pages", ("Page range, item selector, or object IDs according to export_other_unit",)),
     ("export_other_ids", ("Optional object IDs for additional output. Comma-separated ids. If set, page selection is ignored and one file per ID is exported.",)),
     ("export_cut_template", ("Export plotter cut templates from generated instance bboxes. Values: 0 | 1",)),
     ("export_cut_template_format", ("Cut template output format. Values: svg | png | dxf",)),
@@ -371,6 +373,16 @@ def get_export_other_pages(default: str = "") -> str:
 
 def set_export_other_pages(value: str) -> None:
     set("export_other_pages", str(value or "").strip(), save=True)
+
+
+def get_export_other_unit(default: str = "pages") -> str:
+    value = str(get("export_other_unit", default) or default).strip().lower()
+    return value if value in {"pages", "items", "ids"} else "pages"
+
+
+def set_export_other_unit(value: str) -> None:
+    item = str(value or "pages").strip().lower()
+    set("export_other_unit", item if item in {"pages", "items", "ids"} else "pages", save=True)
 
 
 def get_export_other_ids(default: str = "") -> str:

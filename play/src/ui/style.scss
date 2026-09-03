@@ -1,0 +1,18 @@
+* { box-sizing: border-box; }
+.pnpink-play-root { color: #f7f2df; font-family: Inter, system-ui, sans-serif; }
+.play-table { position: absolute; inset: 0; overflow: hidden; background-image: radial-gradient(circle at center, #286657, #102f29 72%); }
+.play-table::before { content: ''; position: absolute; inset: 2%; border: .28vmin solid #c5a458; border-radius: 2vmin; box-shadow: inset 0 0 3vmin #071b17, 0 0 1vmin #071b17; pointer-events: none; }
+.play-table header { position: absolute; left: 3.5%; right: 3.5%; top: 2.8%; display: flex; justify-content: space-between; align-items: flex-start; pointer-events: none; }
+.play-table h1 { margin: 0; color: #f0cf77; font: 700 2.8vmin Georgia, serif; letter-spacing: .06em; }
+.play-table p { margin: .2vmin 0 0; max-width: 50vw; font-size: 1.25vmin; opacity: .82; }
+.play-table footer { position: absolute; left: 25%; right: 25%; bottom: 1.2%; text-align: center; font-size: 1.05vmin; opacity: .68; }
+.play-zone { width: 100%; height: 100%; border: .18vmin solid rgba(240,207,119,.62); border-radius: 1.1vmin; background: rgba(4,22,19,.24); box-shadow: inset 0 0 1.4vmin rgba(0,0,0,.45); }
+.play-zone > span { position: absolute; left: .7vmin; top: .45vmin; z-index: 2; color: #f0cf77; font-size: 1.05vmin; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.play-zone .profile-badge { position: absolute; right: .4vmin; top: .25vmin; transform: scale(.72); transform-origin: top right; }
+.zone-hand { border-style: dashed; background: rgba(63,95,128,.22); }
+.zone-deck, .zone-discard { background: rgba(61,35,22,.3); }
+.play-piece { width: 100%; height: 100%; border-radius: .7vmin; overflow: hidden; background: #eadfbf; box-shadow: 0 .35vmin .8vmin rgba(0,0,0,.55); transition: transform .16s ease; }
+.play-piece:hover { transform: translateY(-.7vmin) scale(1.04); }
+.play-piece img { width: 100%; height: 100%; display: block; object-fit: contain; }
+.play-piece strong { display: grid; place-items: center; width: 100%; height: 100%; color: #173f35; font-size: 1.4vmin; text-align: center; }
+.face-down { outline: .2vmin solid #d2b465; }

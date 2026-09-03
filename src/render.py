@@ -4,6 +4,7 @@ _l = LOG
 import re
 import math
 import time
+import hashlib
 
 
 # ---------------- spritesheet alias token parsing ----------------
@@ -1137,6 +1138,9 @@ def render_phase(ctx):
                             r['cells'] = list(r.get('cells') or [])
                         r['_i'] = _i
                         r['__dm_iter_group__'] = int(_group_no)
+                        r['__dm_source_row__'] = int(_group_no)
+                        r['__dm_variant_index__'] = int(_i % max(n_iter, 1)) + 1
+                        r['__dm_copy_index__'] = int(_i // max(n_iter, 1)) + 1
                         r['__dm_target_slot__'] = int(tgt)
                         if _i > 0:
                             _clear_copy_once_meta(r)
@@ -1154,6 +1158,9 @@ def render_phase(ctx):
                             r['cells'] = list(r.get('cells') or [])
                         r['_i'] = _i
                         r['__dm_iter_group__'] = int(_group_no)
+                        r['__dm_source_row__'] = int(_group_no)
+                        r['__dm_variant_index__'] = int(_i % max(n_iter, 1)) + 1
+                        r['__dm_copy_index__'] = int(_i // max(n_iter, 1)) + 1
                         r['__dm_target_slot__'] = int(tgt)
                         if _i == (len(targets) - 1):
                             r['__dm_target_cursor_after__'] = int(cursor_after)
@@ -1172,6 +1179,9 @@ def render_phase(ctx):
                     r['cells'] = list(r.get('cells') or [])
                 r['_i'] = _i
                 r['__dm_iter_group__'] = int(_group_no)
+                r['__dm_source_row__'] = int(_group_no)
+                r['__dm_variant_index__'] = int(_i % max(n_iter, 1)) + 1
+                r['__dm_copy_index__'] = int(_i // max(n_iter, 1)) + 1
                 if _i == 0 and holes_list:
                     r['__dm_holes_before__'] = int(holes_list.count(0))
                 if holes_list:
@@ -3010,6 +3020,10 @@ def render_phase(ctx):
             unique_name = new_name
         placed_node.set('id', unique_name)
         placed_node.set(inkex.addNS('label','inkscape'), new_name)
+        card_group.set('data-pnpink-item-index', str(int(slot_no)))
+        card_group.set('data-pnpink-source-row', str(int(row.get('__dm_source_row__', idx) or idx)))
+        card_group.set('data-pnpink-variant-index', str(int(row.get('__dm_variant_index__', 1) or 1)))
+        card_group.set('data-pnpink-copy-index', str(int(row.get('__dm_copy_index__', 1) or 1)))
         if text_geometry_possible and TXT.scope_needs_text_geometry(card_group):
             _text_prepare_t0 = time.perf_counter()
             TXT.process_text_geometry(
@@ -3249,6 +3263,7 @@ def render_phase(ctx):
                     back_start_col = _template_col_index(bt)
                     back_specs = back_field_specs_by_col.get(int(back_start_col)) if back_start_col is not None else []
                     cells_for_back = _row_cells(back_row)
+                    back_signature = [str(tmpl_root.get('id') or 'card')]
                     for back_spec in back_specs:
                         back_key = str(back_spec.get("key") or "")
                         if not back_key or back_key.startswith("__dm_") or back_key.startswith("_"):
@@ -3256,6 +3271,7 @@ def render_phase(ctx):
                         bi = int(back_spec.get("index") or 0)
                         back_val = cells_for_back[bi] if bi < len(cells_for_back) else ""
                         back_val = "" if back_val is None else str(back_val)
+                        back_signature.append(f"{back_key}={back_val}")
                         apply_field_in_clone(
                             inst, back_key, back_val, back_row_map,
                             root_doc=root, use_jobs=use_jobs, fa_jobs=fa_jobs, path_jobs=path_jobs,
@@ -3302,6 +3318,11 @@ def render_phase(ctx):
                         back_unique_name = back_name
                     card_group.set('id', back_unique_name)
                     card_group.set(inkex.addNS('label', 'inkscape'), back_name)
+                    card_group.set('data-pnpink-item-index', str(int(slot_no)))
+                    card_group.set('data-pnpink-source-row', str(int(back_row.get('__dm_source_row__', idx) or idx)))
+                    card_group.set('data-pnpink-variant-index', str(int(back_row.get('__dm_variant_index__', 1) or 1)))
+                    card_group.set('data-pnpink-copy-index', str(int(back_row.get('__dm_copy_index__', 1) or 1)))
+                    card_group.set('data-pnpink-content-key', hashlib.sha1('\n'.join(back_signature).encode('utf-8')).hexdigest()[:16])
                     back_final_scale = _fit_group_to_slot(card_group, (bx, by, bw, bh), (slot_x, slot_y, slot_w, slot_h), bbid)
 
                     _fa_remove_later = _exec_use_fa_paths(

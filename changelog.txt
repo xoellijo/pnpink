@@ -1,3 +1,7 @@
+[Unreleased]
+- Add the first manifest-driven PnPInk Play runtime, with shared and per-player zones, private hands, decks, discards, table areas, reusable component assets, and generic draw, move, discard, flip, shuffle, and end-turn actions on Boardzilla Core.
+- Add `Pages`, `Items`, and `IDs` units to additional-format export, including compact item selectors, exact card-bbox crops without page marks, copy deduplication, shared or per-card backs, and an `items.json` manifest for playable packages.
+
 [0.57]
 - Fix rectangle text decorators with user-space fill gradients by normalizing the copied gradient from the style rect's original bbox before fitting it to the measured text.
 - Give text decorators 1 pt of default padding on all four sides while preserving explicit border values, including zero.

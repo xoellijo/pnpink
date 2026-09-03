@@ -26,6 +26,7 @@ import image_preflight as PREFLIGHT
 import deckmaker_paths as DMPATHS
 import deckmaker_ipc as IPC
 import export as EXPORT
+import export_items as EXPORTITEMS
 import export_cut as EXPORTCUT
 import export_pdf as EXPORTPDF
 import inkscape_cli as INKSCAPE
@@ -129,6 +130,7 @@ class DeckMakerApp:
         self.export_pdfx_var = tk.BooleanVar(value=prefs.get_export_pdfx())
         self.export_png_var = tk.BooleanVar(value=prefs.get_export_png())
         self.other_export_format_var = tk.StringVar(value=prefs.get_export_other_format())
+        self.other_export_unit_var = tk.StringVar(value=prefs.get_export_other_unit().title())
         self.other_export_pages_var = tk.StringVar(value=prefs.get_export_other_pages())
         self.export_cut_template_var = tk.BooleanVar(value=prefs.get_export_cut_template())
         self.cut_template_format_var = tk.StringVar(value=self._cut_format_label_from_value(prefs.get_export_cut_template_format()))
@@ -383,22 +385,32 @@ class DeckMakerApp:
         )
         format_box = ttk.LabelFrame(formats_row, labelwidget=other_toggle, padding=8)
         format_box.grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        format_box.columnconfigure(3, weight=1)
+        format_box.columnconfigure(5, weight=1)
         ttk.Label(format_box, text="Format").grid(row=0, column=0, sticky="w", padx=(0, 8))
         other_format_combo = ttk.Combobox(
             format_box,
             textvariable=self.other_export_format_var,
             values=list(EXPORT.available_other_export_formats(OTHER_EXPORT_FORMATS)),
             state="readonly",
-            width=12,
+            width=9,
         )
         other_format_combo.grid(row=0, column=1, sticky="w")
         other_format_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_export_format_prefs_changed())
-        pages_label = ttk.Label(format_box, text="#Pages/IDs")
-        pages_label.grid(row=0, column=2, sticky="w", padx=(12, 8))
-        GUI.attach_tooltip(pages_label, "e.g. 1,5,group2,card6,8-9 (empty = all pages)")
-        pages_entry = ttk.Entry(format_box, textvariable=self.other_export_pages_var, width=42)
-        pages_entry.grid(row=0, column=3, sticky="ew")
+        unit_combo = ttk.Combobox(
+            format_box,
+            textvariable=self.other_export_unit_var,
+            values=("Pages", "Items", "IDs"),
+            state="readonly",
+            width=7,
+        )
+        unit_combo.grid(row=0, column=2, sticky="w", padx=(8, 0))
+        unit_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_export_format_prefs_changed())
+        GUI.attach_tooltip(unit_combo, "Pages: page numbers or ranges, e.g. 1,3-5.\nItems: output prefix plus selection, e.g. card_[1-3] or mydeck*.\nIDs: exact SVG object IDs separated by commas.")
+        pages_label = ttk.Label(format_box, text="#")
+        pages_label.grid(row=0, column=3, sticky="w", padx=(8, 4))
+        GUI.attach_tooltip(pages_label, "Pages: page numbers or ranges, e.g. 1,3-5.\nItems: output prefix plus selection, e.g. card_[1-3] or mydeck*.\nIDs: exact SVG object IDs separated by commas.")
+        pages_entry = ttk.Entry(format_box, textvariable=self.other_export_pages_var, width=28)
+        pages_entry.grid(row=0, column=4, columnspan=2, sticky="ew")
         pages_entry.bind("<FocusOut>", lambda _e: self._on_export_format_prefs_changed())
         pages_entry.bind("<Return>", lambda _e: self._on_export_format_prefs_changed())
 
@@ -1681,6 +1693,7 @@ class DeckMakerApp:
             export_dpi=self._export_dpi_value(),
             jpeg_quality=self._export_jpeg_quality_value(),
             other_format=str(self.other_export_format_var.get() or "png").strip().lower(),
+            other_unit=str(self.other_export_unit_var.get() or "Pages").strip().lower(),
             other_pages=str(self.other_export_pages_var.get() or "").strip(),
             export_cut_template=bool(self.export_cut_template_var.get()),
             cut_template_format=self._cut_format_value_from_label(self.cut_template_format_var.get()),
@@ -1692,6 +1705,7 @@ class DeckMakerApp:
         prefs.set_export_png(bool(self.export_png_var.get()))
         prefs.set_pdfx_version(self._pdfx_value_from_label(self.pdfx_version_var.get()))
         prefs.set_export_other_format(self.other_export_format_var.get())
+        prefs.set_export_other_unit(self.other_export_unit_var.get())
         prefs.set_export_other_pages(self.other_export_pages_var.get())
         prefs.set_export_cut_template(bool(self.export_cut_template_var.get()))
         prefs.set_export_cut_template_format(self._cut_format_value_from_label(self.cut_template_format_var.get()))
@@ -2132,7 +2146,7 @@ class DeckMakerApp:
             f"pdf_raster_mode={options.pdf_raster_mode}, "
             f"dpi={int(options.export_dpi)}, "
             f"jpeg_quality={int(options.jpeg_quality)}, "
-            f"other_format={options.other_format}, pages_or_ids={options.other_pages or 'all pages'}, "
+            f"other_format={options.other_format}, unit={options.other_unit}, selection={options.other_pages or 'all'}, "
             f"cut_template={'on' if options.export_cut_template else 'off'}:{options.cut_template_format}"
         )
 
@@ -2270,20 +2284,45 @@ class DeckMakerApp:
                         f"Created ID {label}: {node_id} -> {os.path.basename(path)}"
                     ))
 
-                ok, info = EXPORT.export_other_pages_via_inkscape(
-                    svg_path,
-                    out_path,
-                    export_type=export_type,
-                    page_spec=options.other_pages,
-                    export_dpi=int(options.export_dpi or 300),
-                    jpeg_quality=int(options.jpeg_quality or 90),
-                    on_page_created=_page_other_created,
-                    on_id_created=_id_other_created,
-                )
+                if options.other_unit == "items":
+                    ok, info = EXPORTITEMS.export_items_via_inkscape(
+                        svg_path,
+                        out_path,
+                        export_type=export_type,
+                        item_spec=options.other_pages,
+                        export_dpi=int(options.export_dpi or 300),
+                        on_item_created=_id_other_created,
+                    )
+                elif options.other_unit == "ids":
+                    ok, info = EXPORT.export_other_ids_via_inkscape(
+                        svg_path,
+                        out_path,
+                        export_type=export_type,
+                        id_spec=options.other_pages,
+                        export_dpi=int(options.export_dpi or 300),
+                        jpeg_quality=int(options.jpeg_quality or 90),
+                        on_id_created=_id_other_created,
+                    )
+                else:
+                    ok, info = EXPORT.export_other_pages_via_inkscape(
+                        svg_path,
+                        out_path,
+                        export_type=export_type,
+                        page_spec=options.other_pages,
+                        export_dpi=int(options.export_dpi or 300),
+                        jpeg_quality=int(options.jpeg_quality or 90),
+                        on_page_created=_page_other_created,
+                    )
                 if ok:
                     elapsed = float((info or {}).get("elapsed_s") or 0.0)
                     used_chunks = int((info or {}).get("chunk_count") or 1)
-                    if int((info or {}).get("id_count") or 0) > 0:
+                    if int((info or {}).get("item_count") or 0) > 0:
+                        item_count = int((info or {}).get("item_count") or 0)
+                        physical_count = int((info or {}).get("physical_count") or item_count)
+                        self.root.after(0, lambda elapsed=elapsed, item_count=item_count, physical_count=physical_count, export_type=export_type: self._log(
+                            f"{export_type.upper()} item export done in {elapsed:.2f}s: {item_count} file(s), {physical_count} physical item(s)"
+                        ))
+                    elif int((info or {}).get("id_count") or 0) > 0:
                         id_count = int((info or {}).get("id_count") or 0)
                         self.root.after(0, lambda elapsed=elapsed, id_count=id_count, used_chunks=used_chunks, export_type=export_type: self._log(
                             f"{export_type.upper()} export done in {elapsed:.2f}s across {id_count} id(s) using {used_chunks} SVG part(s)"
