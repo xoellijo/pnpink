@@ -1,7 +1,7 @@
 {
-  "minPlayers": 2,
+  "minPlayers": 4,
   "maxPlayers": 4,
-  "defaultPlayers": 2,
+  "defaultPlayers": 4,
   "ui": {
     "root": ".",
     "outDir": "build/ui"

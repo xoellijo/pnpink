@@ -1,0 +1,629 @@
+{
+  "schema": 1,
+  "items": [
+    {
+      "name": "test1",
+      "front": "test1.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        1
+      ],
+      "dataset": 1,
+      "row": 1,
+      "variant": 1
+    },
+    {
+      "name": "test2",
+      "front": "test2.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        2
+      ],
+      "dataset": 1,
+      "row": 1,
+      "variant": 2
+    },
+    {
+      "name": "test3",
+      "front": "test3.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        3
+      ],
+      "dataset": 1,
+      "row": 1,
+      "variant": 3
+    },
+    {
+      "name": "test4",
+      "front": "test4.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        4
+      ],
+      "dataset": 1,
+      "row": 1,
+      "variant": 4
+    },
+    {
+      "name": "test5",
+      "front": "test5.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        5
+      ],
+      "dataset": 1,
+      "row": 2,
+      "variant": 1
+    },
+    {
+      "name": "test6",
+      "front": "test6.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        6
+      ],
+      "dataset": 1,
+      "row": 2,
+      "variant": 2
+    },
+    {
+      "name": "test7",
+      "front": "test7.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        7
+      ],
+      "dataset": 1,
+      "row": 2,
+      "variant": 3
+    },
+    {
+      "name": "test8",
+      "front": "test8.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        8
+      ],
+      "dataset": 1,
+      "row": 2,
+      "variant": 4
+    },
+    {
+      "name": "test9",
+      "front": "test9.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        9
+      ],
+      "dataset": 1,
+      "row": 3,
+      "variant": 1
+    },
+    {
+      "name": "test10",
+      "front": "test10.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        10
+      ],
+      "dataset": 1,
+      "row": 3,
+      "variant": 2
+    },
+    {
+      "name": "test11",
+      "front": "test11.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        11
+      ],
+      "dataset": 1,
+      "row": 3,
+      "variant": 3
+    },
+    {
+      "name": "test12",
+      "front": "test12.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        12
+      ],
+      "dataset": 1,
+      "row": 3,
+      "variant": 4
+    },
+    {
+      "name": "test13",
+      "front": "test13.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        13
+      ],
+      "dataset": 1,
+      "row": 4,
+      "variant": 1
+    },
+    {
+      "name": "test14",
+      "front": "test14.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        14
+      ],
+      "dataset": 1,
+      "row": 4,
+      "variant": 2
+    },
+    {
+      "name": "test15",
+      "front": "test15.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        15
+      ],
+      "dataset": 1,
+      "row": 4,
+      "variant": 3
+    },
+    {
+      "name": "test16",
+      "front": "test16.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        16
+      ],
+      "dataset": 1,
+      "row": 4,
+      "variant": 4
+    },
+    {
+      "name": "test17",
+      "front": "test17.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        17
+      ],
+      "dataset": 1,
+      "row": 5,
+      "variant": 1
+    },
+    {
+      "name": "test18",
+      "front": "test18.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        18
+      ],
+      "dataset": 1,
+      "row": 5,
+      "variant": 2
+    },
+    {
+      "name": "test19",
+      "front": "test19.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        19
+      ],
+      "dataset": 1,
+      "row": 5,
+      "variant": 3
+    },
+    {
+      "name": "test20",
+      "front": "test20.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        20
+      ],
+      "dataset": 1,
+      "row": 5,
+      "variant": 4
+    },
+    {
+      "name": "test21",
+      "front": "test21.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        21
+      ],
+      "dataset": 1,
+      "row": 6,
+      "variant": 1
+    },
+    {
+      "name": "test22",
+      "front": "test22.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        22
+      ],
+      "dataset": 1,
+      "row": 6,
+      "variant": 2
+    },
+    {
+      "name": "test23",
+      "front": "test23.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        23
+      ],
+      "dataset": 1,
+      "row": 6,
+      "variant": 3
+    },
+    {
+      "name": "test24",
+      "front": "test24.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        24
+      ],
+      "dataset": 1,
+      "row": 6,
+      "variant": 4
+    },
+    {
+      "name": "test25",
+      "front": "test25.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        25
+      ],
+      "dataset": 1,
+      "row": 7,
+      "variant": 1
+    },
+    {
+      "name": "test26",
+      "front": "test26.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        26
+      ],
+      "dataset": 1,
+      "row": 7,
+      "variant": 2
+    },
+    {
+      "name": "test27",
+      "front": "test27.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        27
+      ],
+      "dataset": 1,
+      "row": 7,
+      "variant": 3
+    },
+    {
+      "name": "test28",
+      "front": "test28.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        28
+      ],
+      "dataset": 1,
+      "row": 7,
+      "variant": 4
+    },
+    {
+      "name": "test29",
+      "front": "test29.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        29
+      ],
+      "dataset": 1,
+      "row": 8,
+      "variant": 1
+    },
+    {
+      "name": "test30",
+      "front": "test30.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        30
+      ],
+      "dataset": 1,
+      "row": 8,
+      "variant": 2
+    },
+    {
+      "name": "test31",
+      "front": "test31.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        31
+      ],
+      "dataset": 1,
+      "row": 8,
+      "variant": 3
+    },
+    {
+      "name": "test32",
+      "front": "test32.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        32
+      ],
+      "dataset": 1,
+      "row": 8,
+      "variant": 4
+    },
+    {
+      "name": "test33",
+      "front": "test33.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        33
+      ],
+      "dataset": 1,
+      "row": 9,
+      "variant": 1
+    },
+    {
+      "name": "test34",
+      "front": "test34.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        34
+      ],
+      "dataset": 1,
+      "row": 9,
+      "variant": 2
+    },
+    {
+      "name": "test35",
+      "front": "test35.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        35
+      ],
+      "dataset": 1,
+      "row": 9,
+      "variant": 3
+    },
+    {
+      "name": "test36",
+      "front": "test36.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        36
+      ],
+      "dataset": 1,
+      "row": 9,
+      "variant": 4
+    },
+    {
+      "name": "test37",
+      "front": "test37.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        37
+      ],
+      "dataset": 1,
+      "row": 10,
+      "variant": 1
+    },
+    {
+      "name": "test38",
+      "front": "test38.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        38
+      ],
+      "dataset": 1,
+      "row": 10,
+      "variant": 2
+    },
+    {
+      "name": "test39",
+      "front": "test39.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        39
+      ],
+      "dataset": 1,
+      "row": 10,
+      "variant": 3
+    },
+    {
+      "name": "test40",
+      "front": "test40.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        40
+      ],
+      "dataset": 1,
+      "row": 10,
+      "variant": 4
+    },
+    {
+      "name": "test41",
+      "front": "test41.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        41
+      ],
+      "dataset": 1,
+      "row": 11,
+      "variant": 1
+    },
+    {
+      "name": "test42",
+      "front": "test42.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        42
+      ],
+      "dataset": 1,
+      "row": 11,
+      "variant": 2
+    },
+    {
+      "name": "test43",
+      "front": "test43.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        43
+      ],
+      "dataset": 1,
+      "row": 11,
+      "variant": 3
+    },
+    {
+      "name": "test44",
+      "front": "test44.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        44
+      ],
+      "dataset": 1,
+      "row": 11,
+      "variant": 4
+    },
+    {
+      "name": "test45",
+      "front": "test45.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        45
+      ],
+      "dataset": 1,
+      "row": 12,
+      "variant": 1
+    },
+    {
+      "name": "test46",
+      "front": "test46.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        46
+      ],
+      "dataset": 1,
+      "row": 12,
+      "variant": 2
+    },
+    {
+      "name": "test47",
+      "front": "test47.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        47
+      ],
+      "dataset": 1,
+      "row": 12,
+      "variant": 3
+    },
+    {
+      "name": "test48",
+      "front": "test48.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        48
+      ],
+      "dataset": 1,
+      "row": 12,
+      "variant": 4
+    },
+    {
+      "name": "test49",
+      "front": "test49.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        49
+      ],
+      "dataset": 1,
+      "row": 13,
+      "variant": 1
+    },
+    {
+      "name": "test50",
+      "front": "test50.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        50
+      ],
+      "dataset": 1,
+      "row": 13,
+      "variant": 2
+    },
+    {
+      "name": "test51",
+      "front": "test51.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        51
+      ],
+      "dataset": 1,
+      "row": 13,
+      "variant": 3
+    },
+    {
+      "name": "test52",
+      "front": "test52.png",
+      "back": "test_back.png",
+      "copies": 1,
+      "sourceItems": [
+        52
+      ],
+      "dataset": 1,
+      "row": 13,
+      "variant": 4
+    }
+  ]
+}

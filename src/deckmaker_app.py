@@ -33,6 +33,7 @@ import inkscape_cli as INKSCAPE
 import prefs
 import gui as GUI
 import deckmaker_runner as RUNNER
+import deckmaker_play as PLAY
 from deckmaker_types import AppRequest, ExportOptions
 import temp_paths as TEMPPATHS
 import text_measure as TM
@@ -107,6 +108,7 @@ class DeckMakerApp:
         self._server_stop = threading.Event()
         self._render_thread: Optional[threading.Thread] = None
         self._text_query_service = TM.TextQueryService()
+        self._play_server = PLAY.PlayServer()
         self._activity_listener = None
         self._progress_listener = None
         self._live_activity_text = ""
@@ -271,7 +273,7 @@ class DeckMakerApp:
 
         buttons = ttk.LabelFrame(frame, text="Actions:", padding=8)
         buttons.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-        buttons.columnconfigure(6, weight=1)
+        buttons.columnconfigure(7, weight=1)
         auto_create_cb = ttk.Checkbutton(buttons, text="", variable=self.auto_create_var, command=self._on_auto_prefs_changed)
         auto_create_cb.grid(row=0, column=0, sticky="w", padx=(0, 2))
         self.run_btn = ttk.Button(buttons, text="Generate", command=self._run_clicked)
@@ -284,10 +286,13 @@ class DeckMakerApp:
         auto_export_cb = ttk.Checkbutton(buttons, text="", variable=self.auto_export_var, command=self._on_auto_prefs_changed)
         auto_export_cb.grid(row=0, column=4, sticky="w", padx=(0, 2))
         self.pdf_btn = ttk.Button(buttons, text="Export", command=self._export_clicked)
-        self.pdf_btn.grid(row=0, column=5, sticky="w")
+        self.pdf_btn.grid(row=0, column=5, sticky="w", padx=(0, 12))
+        self.play_btn = ttk.Button(buttons, text="Play", command=self._play_clicked)
+        self.play_btn.grid(row=0, column=6, sticky="w")
         GUI.attach_tooltip(auto_create_cb, "Auto-start generate")
         GUI.attach_tooltip(auto_open_cb, "Auto-start Open SVG")
         GUI.attach_tooltip(auto_export_cb, "Auto-start export")
+        GUI.attach_tooltip(self.play_btn, "Export all generated items for immediate play\nStart the local PnPInk Play server\nOpen a new persistent room in your browser")
         self.log_text = scrolledtext.ScrolledText(deck_tab, height=13, wrap="word", state="disabled", font=log_font)
         self.log_text.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
         try:
@@ -1485,10 +1490,12 @@ class DeckMakerApp:
         can_generate = (not busy) and self._can_generate(template)
         can_open = (not busy) and self._can_open_output(template)
         can_export = (not busy) and self._template_exists(template) and bool(self._selected_export_outputs())
+        can_play = (not busy) and self._template_exists(template) and os.path.isfile(DMPATHS.output_svg(template))
         try:
             self.run_btn.configure(state="normal" if can_generate else "disabled")
             self.open_btn.configure(state="normal" if can_open else "disabled")
             self.pdf_btn.configure(state="normal" if can_export else "disabled")
+            self.play_btn.configure(state="normal" if can_play else "disabled")
         except Exception:
             pass
 
@@ -2124,6 +2131,7 @@ class DeckMakerApp:
         self.run_btn.configure(state="disabled")
         self.open_btn.configure(state="disabled")
         self.pdf_btn.configure(state="disabled")
+        self.play_btn.configure(state="disabled")
         self.progress.start(10)
         formats = list(options.formats)
         output_labels = list(formats)
@@ -2167,6 +2175,41 @@ class DeckMakerApp:
         options = self._export_options_snapshot()
         self._begin_export_ui(options)
         threading.Thread(target=self._export_worker, args=(template, options), daemon=True).start()
+
+    def _play_clicked(self):
+        if self._render_thread and self._render_thread.is_alive():
+            self._log("Wait for render to finish before starting Play")
+            return
+        template = _normalize_path(self.template_var.get())
+        svg_path = DMPATHS.output_svg(template) if template else ""
+        if not template or not os.path.isfile(svg_path):
+            self._set_base_status("Generate the deck before starting Play")
+            self._log("Play requires a generated output SVG")
+            self._refresh_action_button_state()
+            return
+        self._post_create_busy = True
+        self._refresh_action_button_state()
+        self.progress.start(10)
+        self._set_base_status("Preparing Play...")
+        self._set_activity("Exporting playable assets at 150 dpi...")
+        self._log("Play started: exporting all generated items")
+
+        def worker():
+            try:
+                runtime = PLAY.find_runtime()
+                game_dir, game_id = PLAY.prepare_game(template, svg_path, runtime)
+                self._queue_ui_activity("Starting local Play server...")
+                url = self._play_server.open_game(game_dir, game_id, runtime)
+                self.root.after(0, lambda: self._open_url_in_system(url))
+                self.root.after(0, lambda: self._render_done(f"Play ready: {game_dir}"))
+            except Exception as ex:
+                _l.w("[play] failed %s\n%s", str(ex), traceback.format_exc())
+                self.root.after(0, lambda ex=ex: self._render_done(f"Play failed: {ex}"))
+            finally:
+                self._post_create_busy = False
+                self.root.after(0, self._refresh_action_button_state)
+
+        threading.Thread(target=worker, name="pnpink-play", daemon=True).start()
 
     def _export_worker(self, template: str, options: ExportOptions):
         try:
@@ -2392,6 +2435,7 @@ class DeckMakerApp:
         self._server_stop.set()
         self._stop_web_activity_monitor()
         self._text_query_service.close()
+        self._play_server.close()
         try:
             import gsheets_client_pkce as GS
             GS.close_session()

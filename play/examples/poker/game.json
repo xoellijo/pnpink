@@ -1,0 +1,15 @@
+{
+  "minPlayers": 4,
+  "maxPlayers": 4,
+  "defaultPlayers": 4,
+  "ui": {
+    "root": ".",
+    "outDir": "build/ui"
+  },
+  "game": {
+    "root": ".",
+    "out": "build/game/game-interface.js"
+  },
+  "name": "pnpink-poker-table",
+  "friendlyName": "PnPInk Play — Poker Table"
+}

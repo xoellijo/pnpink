@@ -1,18 +1,17 @@
 import { createGame, Game, Piece, Player, Space } from '@boardzilla/core';
-import rawManifest from '../../play.json';
-import { PlayManifest, ZoneAction, ZoneDefinition, ZoneVisibility, validateManifest } from '../manifest.js';
+import { AreaAction, AreaDefinition, AreaVisibility, currentManifest, setupOperations } from '../manifest.js';
 
-export const manifest = validateManifest(rawManifest as PlayManifest);
+export const manifest = currentManifest();
 
 export class PlayPlayer extends Player<PlayGame, PlayPlayer> {}
 
 export class PlayZone extends Space<PlayGame, PlayPlayer> {
   definitionId = '';
   label = '';
-  kind: ZoneDefinition['kind'] = 'table';
+  kind: AreaDefinition['kind'] = 'table';
   ownerPosition = -1;
-  visibility: ZoneVisibility = 'public';
-  actions: ZoneAction[] = [];
+  visibility: AreaVisibility = 'public';
+  actions: AreaAction[] = [];
 }
 
 export class PlayPiece extends Piece<PlayGame, PlayPlayer> {
@@ -21,16 +20,37 @@ export class PlayPiece extends Piece<PlayGame, PlayPlayer> {
   front = '';
   back = '';
   faceUp = true;
+  playedByPosition = -1;
 }
 
 PlayPiece.revealWhenHidden('back');
 
+export function reorderActionName(zone: PlayZone): string {
+  return `reorder-${zone.definitionId}`;
+}
+
 export class PlayGame extends Game<PlayGame, PlayPlayer> {
   repeatAction = false;
+  trickLeaderPosition = 1;
+  trickComplete = false;
 
   initialize(): void {
-    for (const zoneId of manifest.setup?.shuffle ?? []) {
-      this.sharedZone(zoneId)?.shuffle();
+    for (const operation of setupOperations(manifest)) {
+      if ('shuffle' in operation) {
+        this.sharedZone(operation.shuffle)?.shuffle();
+      } else {
+        const source = this.sharedZone(operation.deal.from);
+        if (!source) continue;
+        for (let card = 0; card < operation.deal.count; card += 1) {
+          for (const player of this.players) {
+            const target = this.playerZone(player, operation.deal.to);
+            const piece = source.top(PlayPiece);
+            if (!piece || !target) return;
+            piece.faceUp = true;
+            this.movePiece(piece, target);
+          }
+        }
+      }
     }
     for (const zone of this.all(PlayZone)) {
       for (const piece of zone.all(PlayPiece)) this.applyVisibility(piece, zone);
@@ -59,7 +79,7 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
     return zone.ownerPosition < 0 || zone.ownerPosition === player.position;
   }
 
-  zonesWith(actionName: ZoneAction, player?: PlayPlayer): PlayZone[] {
+  zonesWith(actionName: AreaAction, player?: PlayPlayer): PlayZone[] {
     return this.all(PlayZone).filter(zone => (
       zone.actions.includes(actionName) && (!player || this.canControl(player, zone))
     ));
@@ -82,12 +102,63 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
     return this.zonesWith('move-to', player).filter(zone => zone !== current);
   }
 
+  moveTargetsForPieces(player: PlayPlayer, pieces: PlayPiece[]): PlayZone[] {
+    return this.zonesWith('move-to', player).filter(zone => {
+      const definition = manifest.areas.find(candidate => candidate.id === zone.definitionId);
+      return pieces.every(piece => this.zoneOf(piece) !== zone)
+        && (definition?.maxDrop === undefined || pieces.length <= definition.maxDrop);
+    });
+  }
+
+  selectedPieces(player: PlayPlayer, anchor: PlayPiece, selected?: PlayPiece[]): PlayPiece[] {
+    const movable = new Set(this.movablePieces(player));
+    if (!selected) return movable.has(anchor) ? [anchor] : [];
+    if (!selected.includes(anchor) || selected.some(piece => !(piece instanceof PlayPiece) || !movable.has(piece))) return [];
+    const unique = [...new Set(selected)];
+    if (unique.every(piece => piece.container() === unique[0].container())) {
+      unique.sort((left, right) => left.position() - right.position());
+    }
+    return unique;
+  }
+
   discardablePieces(player: PlayPlayer): PlayPiece[] {
     return this.movablePieces(player).filter(piece => this.zoneOf(piece)?.kind !== 'discard');
   }
 
   discardTargets(): PlayZone[] {
     return this.zonesWith('discard-to');
+  }
+
+  hand(player: PlayPlayer): PlayZone | undefined {
+    return this.all(PlayZone).find(zone => zone.kind === 'hand' && zone.ownerPosition === player.position);
+  }
+
+  center(): PlayZone | undefined {
+    return this.all(PlayZone).find(zone => zone.kind === 'center' || zone.kind === 'table');
+  }
+
+  trickPile(player: PlayPlayer): PlayZone | undefined {
+    return this.all(PlayZone).find(zone => zone.definitionId === 'tricks' && zone.ownerPosition === player.position);
+  }
+
+  playerAt(position: number): PlayPlayer {
+    return this.players.find(player => player.position === position)!;
+  }
+
+  nextPlayer(player: PlayPlayer): PlayPlayer {
+    const players = [...this.players];
+    const index = players.findIndex(candidate => candidate.position === player.position);
+    const offset = manifest.turns?.order === 'counterclockwise' ? players.length - 1 : 1;
+    return players[(index + offset) % players.length];
+  }
+
+  isTrickPlay(player: PlayPlayer, piece: PlayPiece, target: PlayZone): boolean {
+    const source = this.zoneOf(piece);
+    return manifest.turns?.mode === 'trick-assisted'
+      && !this.trickComplete
+      && source?.kind === 'hand'
+      && source.ownerPosition === player.position
+      && target === this.center();
   }
 
   flippablePieces(player: PlayPlayer): PlayPiece[] {
@@ -130,14 +201,20 @@ export default createGame(PlayPlayer, PlayGame, game => {
   const { eachPlayer, forLoop, loop, playerActions } = game.flowCommands;
   game.registerClasses(PlayZone, PlayPiece);
 
-  for (const definition of manifest.zones) {
+  for (const definition of manifest.areas) {
+    const properties = {
+      definitionId: definition.id,
+      label: definition.label,
+      kind: definition.kind,
+      visibility: definition.visibility,
+      actions: definition.actions ?? [],
+    };
     if (definition.scope === 'shared') {
-      game.create(PlayZone, definition.id, { ...definition, definitionId: definition.id, ownerPosition: -1 });
+      game.create(PlayZone, definition.id, { ...properties, ownerPosition: -1 });
     } else {
       for (const player of game.players) {
         game.create(PlayZone, definition.id, {
-          ...definition,
-          definitionId: definition.id,
+          ...properties,
           ownerPosition: player.position,
           player,
         });
@@ -145,14 +222,19 @@ export default createGame(PlayPlayer, PlayGame, game => {
     }
   }
 
-  for (const definition of manifest.components) {
+  for (const zone of game.all(PlayZone)) {
+    if (zone.kind === 'hand') zone.setOrder('stacking');
+    zone.onEnter(PlayPiece, piece => game.applyVisibility(piece, zone));
+  }
+
+  for (const definition of manifest.pieces) {
     const copies = definition.copies ?? 1;
     const owners = definition.initial.forEachPlayer ? game.players : [undefined];
     for (const owner of owners) {
       const target = owner
-        ? game.playerZone(owner, definition.initial.zone)
-        : game.sharedZone(definition.initial.zone);
-      if (!target) throw new Error(`Initial zone not found: ${definition.initial.zone}`);
+        ? game.playerZone(owner, definition.initial.area)
+        : game.sharedZone(definition.initial.area);
+      if (!target) throw new Error(`Initial area not found: ${definition.initial.area}`);
       for (let copy = 0; copy < copies; copy += 1) {
         target.create(PlayPiece, `${definition.id}-${owner?.position ?? 'shared'}-${copy}`, {
           componentId: definition.id,
@@ -165,6 +247,100 @@ export default createGame(PlayPlayer, PlayGame, game => {
     }
   }
 
+  const reorderDefinitions = manifest.areas.filter(definition => definition.actions?.includes('move-from'));
+  const reorderActions = Object.fromEntries(reorderDefinitions.map(definition => [
+    `reorder-${definition.id}`,
+    (player: PlayPlayer) => {
+      const zone = definition.scope === 'shared'
+        ? game.sharedZone(definition.id)
+        : game.playerZone(player, definition.id);
+      const pieces: PlayPiece[] = zone ? [...zone.all(PlayPiece)] : [];
+      const reorder = action({ prompt: `Reorder ${definition.label}`, condition: pieces.length > 1 })
+        .chooseOnBoard('__reorder_from__', pieces, { prompt: `Choose a component in ${definition.label}` })
+        .chooseOnBoard('__reorder_to__', rawArgs => {
+          const { __reorder_from__, pieces: selected } = rawArgs as unknown as {
+            __reorder_from__: PlayPiece;
+            pieces?: PlayPiece[];
+          };
+          const group = game.selectedPieces(player, __reorder_from__ as PlayPiece, selected as PlayPiece[] | undefined);
+          if (group.some(piece => game.zoneOf(piece) !== zone)) return [];
+          return pieces.filter(piece => !group.includes(piece));
+        }, { prompt: `Drag onto another component in ${definition.label}` });
+      reorder.selections[0].clientContext = { dragInto: reorder.selections[1] };
+      reorder.selections[1].clientContext = { dragFrom: reorder.selections[0] };
+      return reorder
+        .do(rawArgs => {
+          const args = rawArgs as unknown as {
+            __reorder_from__: PlayPiece;
+            __reorder_to__: PlayPiece;
+            pieces?: PlayPiece[];
+          };
+          const group = game.selectedPieces(player, args.__reorder_from__, args.pieces)
+            .sort((left, right) => left.position() - right.position());
+          const target = args.__reorder_to__;
+          const parent = target.container() as PlayZone;
+          for (const piece of group) piece.putInto(parent);
+          const position = target.position();
+          for (const piece of [...group].reverse()) piece.putInto(parent, { position });
+          game.repeatAction = true;
+        })
+        .message(`{{player}} reorders ${definition.label}.`);
+    },
+  ]));
+
+  const moveAction = (player: PlayPlayer) => {
+    const result = action({ prompt: 'Move a component', condition: game.movablePieces(player).length > 0 })
+      .chooseOnBoard('piece', game.movablePieces(player), { prompt: 'Choose a component' })
+      .chooseOnBoard('target', rawArgs => {
+        const { piece, pieces } = rawArgs as unknown as { piece: PlayPiece; pieces?: PlayPiece[] };
+        return game.moveTargetsForPieces(player, game.selectedPieces(player, piece, pieces));
+      }, { prompt: 'Choose its destination' })
+      .do(rawArgs => {
+        const { piece, pieces, target } = rawArgs as unknown as { piece: PlayPiece; pieces?: PlayPiece[]; target: PlayZone };
+        const selected = game.selectedPieces(player, piece, pieces);
+        const trickPlay = game.isTrickPlay(player, piece, target);
+        for (const selectedPiece of selected) {
+          if (trickPlay) {
+            selectedPiece.faceUp = true;
+            selectedPiece.playedByPosition = player.position;
+          } else if (target !== game.center()) {
+            selectedPiece.playedByPosition = -1;
+          }
+          game.movePiece(selectedPiece, target);
+        }
+        game.repeatAction = !trickPlay;
+      }).message('{{player}} moves {{piece}}.');
+    result.selections[0].clientContext = { dragInto: result.selections[1] };
+    result.selections[1].clientContext = { dragFrom: result.selections[0] };
+    return result;
+  };
+
+  const discardAction = (player: PlayPlayer) => {
+    const result = action({ prompt: 'Discard a component', condition: game.discardablePieces(player).length > 0 && game.discardTargets().length > 0 })
+      .chooseOnBoard('piece', game.discardablePieces(player), { prompt: 'Choose a component to discard' })
+      .chooseOnBoard('target', rawArgs => {
+        const { piece, pieces } = rawArgs as unknown as { piece: PlayPiece; pieces?: PlayPiece[] };
+        const selected = game.selectedPieces(player, piece, pieces);
+        const discardable = new Set(game.discardablePieces(player));
+        if (!selected.length || selected.some(candidate => !discardable.has(candidate))) return [];
+        return game.discardTargets().filter(target => {
+          const definition = manifest.areas.find(candidate => candidate.id === target.definitionId);
+          return definition?.maxDrop === undefined || selected.length <= definition.maxDrop;
+        });
+      }, { prompt: 'Choose a discard pile' })
+      .do(rawArgs => {
+        const { piece, pieces, target } = rawArgs as unknown as { piece: PlayPiece; pieces?: PlayPiece[]; target: PlayZone };
+        for (const selectedPiece of game.selectedPieces(player, piece, pieces)) {
+          selectedPiece.faceUp = true;
+          game.movePiece(selectedPiece, target);
+        }
+        game.repeatAction = true;
+      }).message('{{player}} discards {{piece}}.');
+    result.selections[0].clientContext = { dragInto: result.selections[1] };
+    result.selections[1].clientContext = { dragFrom: result.selections[0] };
+    return result;
+  };
+
   game.defineActions({
     draw: player => action({ prompt: 'Draw a component', condition: game.drawSources().length > 0 && game.drawTargets(player).length > 0 })
       .chooseOnBoard('source', game.drawSources(), { prompt: 'Choose a deck or bag' })
@@ -176,27 +352,18 @@ export default createGame(PlayPlayer, PlayGame, game => {
         game.repeatAction = true;
       }).message('{{player}} draws a component.'),
 
-    move: player => action({ prompt: 'Move a component', condition: game.movablePieces(player).length > 0 })
-      .chooseOnBoard('piece', game.movablePieces(player), { prompt: 'Choose a component' })
-      .chooseOnBoard('target', ({ piece }) => game.moveTargets(player, piece), { prompt: 'Choose its destination' })
-      .do(({ piece, target }) => {
-        game.movePiece(piece, target);
-        game.repeatAction = true;
-      }).message('{{player}} moves {{piece}}.'),
+    move: moveAction,
 
-    discard: player => action({ prompt: 'Discard a component', condition: game.discardablePieces(player).length > 0 && game.discardTargets().length > 0 })
-      .chooseOnBoard('piece', game.discardablePieces(player), { prompt: 'Choose a component to discard' })
-      .chooseOnBoard('target', game.discardTargets(), { prompt: 'Choose a discard pile' })
-      .do(({ piece, target }) => {
-        piece.faceUp = true;
-        game.movePiece(piece, target);
-        game.repeatAction = true;
-      }).message('{{player}} discards {{piece}}.'),
+    discard: discardAction,
 
     flip: player => action({ prompt: 'Flip a component', condition: game.flippablePieces(player).length > 0 })
       .chooseOnBoard('piece', game.flippablePieces(player), { prompt: 'Choose a component to flip' })
-      .do(({ piece }) => {
-        game.flipPiece(piece);
+      .do(rawArgs => {
+        const { piece, pieces } = rawArgs as unknown as { piece: PlayPiece; pieces?: PlayPiece[] };
+        const flippable = new Set(game.flippablePieces(player));
+        const selected = pieces?.length ? [...new Set(pieces)] : [piece];
+        if (!selected.includes(piece) || selected.some(candidate => !flippable.has(candidate))) return;
+        for (const selectedPiece of selected) game.flipPiece(selectedPiece);
         game.repeatAction = true;
       }).message('{{player}} flips a component.'),
 
@@ -207,25 +374,92 @@ export default createGame(PlayPlayer, PlayGame, game => {
         game.repeatAction = true;
       }).message('{{player}} shuffles {{target}}.'),
 
+    takeTrick: () => action({ prompt: 'Take trick', condition: game.trickComplete })
+      .chooseFrom('winner', [...game.players].map(player => ({
+        choice: player.position,
+        label: player.name,
+      })), { prompt: 'Who won this trick?' })
+      .do(({ winner }) => {
+        const player = game.playerAt(winner);
+        const center = game.center();
+        const target = game.trickPile(player);
+        if (!center || !target) return;
+        for (const card of center.all(PlayPiece)) {
+          card.playedByPosition = -1;
+          game.movePiece(card, target);
+        }
+        game.trickLeaderPosition = winner;
+        game.trickComplete = false;
+      }).message('{{winner}} takes the trick.', ({ winner }) => ({
+        winner: game.playerAt(winner),
+      })),
+
     endTurn: () => action({ prompt: 'End turn' }).confirm('End your turn?'),
+    ...reorderActions,
   });
 
-  game.defineFlow(
-    () => game.initialize(),
-    loop(eachPlayer({
-      name: 'turnPlayer',
-      do: [forLoop({
-        name: 'tabletopAction',
-        initial: 1,
-        next: step => game.repeatAction ? (game.repeatAction = false, step) : step + 1,
-        while: step => step <= 1,
-        do: [playerActions({
-          name: 'genericAction',
-          prompt: 'Choose a tabletop action',
-          actions: ['draw', 'move', 'discard', 'flip', 'shuffle', 'endTurn'],
+  const reorderActionNames = reorderDefinitions.map(definition => `reorder-${definition.id}`);
+  const genericActions = ['draw', 'move', ...reorderActionNames, 'discard', 'flip', 'shuffle', 'endTurn'];
+  const turnMode = manifest.turns?.mode ?? 'guided';
+  if (turnMode === 'free') {
+    game.defineFlow(
+      () => game.initialize(),
+      loop(playerActions({
+        name: 'freeAction',
+        players: () => [...game.players],
+        prompt: 'Choose a tabletop action',
+        actions: genericActions,
+      })),
+    );
+  } else if (turnMode === 'trick-assisted') {
+    game.defineFlow(
+      () => game.initialize(),
+      loop(
+        eachPlayer({
+          name: 'trickPlayer',
+          startingPlayer: () => game.playerAt(game.trickLeaderPosition),
+          nextPlayer: player => game.nextPlayer(player),
+          do: [forLoop({
+            name: 'trickAction',
+            initial: 1,
+            next: step => game.repeatAction ? (game.repeatAction = false, step) : step + 1,
+            while: step => step <= 1,
+            do: [playerActions({
+              name: 'playTrickCard',
+              prompt: 'Play one card',
+              actions: ['move', ...reorderActionNames, 'flip', 'shuffle'],
+              skipIf: 'always',
+            })],
+          })],
+        }),
+        () => { game.trickComplete = true; },
+        playerActions({
+          name: 'resolveTrick',
+          player: () => game.playerAt(game.trickLeaderPosition),
+          prompt: 'Trick complete',
+          actions: ['takeTrick'],
           skipIf: 'always',
+        }),
+      ),
+    );
+  } else {
+    game.defineFlow(
+      () => game.initialize(),
+      loop(eachPlayer({
+        name: 'turnPlayer',
+        do: [forLoop({
+          name: 'tabletopAction',
+          initial: 1,
+          next: step => game.repeatAction ? (game.repeatAction = false, step) : step + 1,
+          while: step => step <= 1,
+          do: [playerActions({
+            name: 'genericAction',
+            prompt: 'Choose a tabletop action',
+            actions: genericActions,
+            skipIf: 'always',
+          })],
         })],
-      })],
-    })),
-  );
+      })),
+    );
+  }
 });

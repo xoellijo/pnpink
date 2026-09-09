@@ -1,0 +1,274 @@
+# -*- coding: utf-8 -*-
+"""Prepare and launch an immediate PnPInk Play table."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+import export_items as EXPORTITEMS
+
+
+PLAY_DPI = 150
+
+
+def _runtime_candidates() -> list[Path]:
+    source_dir = Path(__file__).resolve().parent
+    project_dir = source_dir.parent
+    configured = str(os.environ.get("PNPINK_PLAY_RUNTIME") or "").strip()
+    candidates = []
+    if configured:
+        candidates.append(Path(configured))
+    candidates.extend((source_dir / "play_runtime", project_dir / "play" / "runtime", project_dir / ".artifacts" / "play-runtime"))
+    return candidates
+
+
+def find_runtime() -> Path:
+    for candidate in _runtime_candidates():
+        root = candidate.expanduser().resolve()
+        if (root / "launch.py").is_file() and (root / "vendor" / "aiohttp").is_dir() and (root / "server" / "boardzilla_lite").is_dir():
+            return root
+    raise RuntimeError("PnPInk Play runtime is not installed")
+
+
+def _game_id(template: str) -> str:
+    stem = ''.join(character.lower() if character.isalnum() else '-' for character in Path(template).stem).strip('-') or 'pnpink-game'
+    digest = hashlib.sha1(os.path.normcase(os.path.abspath(template)).encode('utf-8')).hexdigest()[:8]
+    return f"{stem}-{digest}"
+
+
+def _write_json(path: Path, value: dict) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _yaml_scalar(value) -> str:
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def _yaml_lines(value, indent: int = 0) -> list[str]:
+    prefix = " " * indent
+    if isinstance(value, dict):
+        lines = []
+        for key, item in value.items():
+            if isinstance(item, (dict, list)):
+                lines.append(f"{prefix}{key}:")
+                lines.extend(_yaml_lines(item, indent + 2))
+            else:
+                lines.append(f"{prefix}{key}: {_yaml_scalar(item)}")
+        return lines
+    if isinstance(value, list):
+        lines = []
+        for item in value:
+            if isinstance(item, dict) and item:
+                first_key = next(iter(item))
+                first_value = item[first_key]
+                if isinstance(first_value, (dict, list)):
+                    lines.append(f"{prefix}- {first_key}:")
+                    lines.extend(_yaml_lines(first_value, indent + 4))
+                else:
+                    lines.append(f"{prefix}- {first_key}: {_yaml_scalar(first_value)}")
+                lines.extend(_yaml_lines({key: item[key] for key in list(item)[1:]}, indent + 2))
+            elif isinstance(item, list):
+                lines.append(f"{prefix}-")
+                lines.extend(_yaml_lines(item, indent + 2))
+            else:
+                lines.append(f"{prefix}- {_yaml_scalar(item)}")
+        return lines
+    return [f"{prefix}{_yaml_scalar(value)}"]
+
+
+def _write_yaml(path: Path, value: dict) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text("\n".join(_yaml_lines(value)) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def prepare_game(template: str, svg_path: str, runtime: Path) -> tuple[Path, str]:
+    template_path = Path(template).resolve()
+    game_id = _game_id(str(template_path))
+    game_dir = template_path.with_suffix(".play")
+    assets_dir = game_dir / "assets"
+    game_dir.mkdir(parents=True, exist_ok=True)
+    prefix = ''.join(character if character.isalnum() or character in "_-" else '_' for character in template_path.stem) or "card"
+    ok, result = EXPORTITEMS.export_items_via_inkscape(
+        svg_path,
+        str(game_dir / "items.png"),
+        export_type="png",
+        item_spec=f"{prefix}*",
+        export_dpi=PLAY_DPI,
+        output_dir=str(assets_dir),
+    )
+    if not ok:
+        raise RuntimeError(str(result.get("error") or "Unable to export Play assets"))
+
+    components = []
+    for item in result.get("results", []):
+        components.append({
+            "id": item["name"],
+            "label": item["name"],
+            "copies": int(item.get("copies") or 1),
+            "front": f"assets/{item['front']}",
+            "back": f"assets/{item['back']}" if item.get("back") else None,
+            "initial": {"zone": "deck", "faceUp": False},
+        })
+    if not components:
+        raise RuntimeError("The generated SVG contains no playable items")
+
+    play_manifest = {
+        "schema": 1,
+        "name": template_path.stem,
+        "description": "Immediate tabletop generated by PnPInk",
+        "players": {"count": 4},
+        "turns": {"mode": "trick-assisted", "order": "clockwise"},
+        "board": {"aspectRatio": 1.6, "background": "#173f35"},
+        "zones": [
+            {"id": "deck", "label": "Deck", "kind": "stack", "scope": "shared", "visibility": "hidden", "actions": ["draw", "shuffle"], "layout": {"shared": {"left": 7, "top": 36, "width": 11, "height": 28}, "rows": 1, "columns": 1}},
+            {"id": "table", "label": "Table", "kind": "center", "scope": "shared", "visibility": "public", "actions": ["move-from", "move-to"], "layout": {"shared": {"left": 22, "top": 23, "width": 56, "height": 52}, "rows": 3, "columns": 6}},
+            {"id": "discard", "label": "Discard", "kind": "stack", "scope": "shared", "visibility": "public", "actions": ["move-from", "move-to", "discard-to"], "layout": {"shared": {"left": 82, "top": 36, "width": 11, "height": 28}, "rows": 1, "columns": 1}},
+            {"id": "hand", "label": "Hand", "kind": "hand", "scope": "player", "visibility": "owner", "actions": ["move-from", "move-to"], "layout": {"owner": {"left": 22, "top": 78, "width": 56, "height": 19}, "opponent": {"left": 31, "top": 2, "width": 38, "height": 16}, "rows": 1, "columns": 8}},
+            {"id": "tricks", "label": "Tricks", "kind": "stack", "scope": "player", "visibility": "public", "actions": ["move-from", "move-to"], "layout": {"owner": {"left": 90, "top": 76, "width": 8, "height": 20}, "opponent": {"left": 72, "top": 3, "width": 8, "height": 15}, "rows": 1, "columns": 1}},
+        ],
+        "components": components,
+        "setup": [
+            {"shuffle": "deck"},
+            {"deal": {"from": "deck", "to": "hand", "count": 13}},
+        ],
+    }
+    runtime_game = runtime / "games" / "pnpink-play-demo"
+    game_manifest = {
+        "minPlayers": 4,
+        "maxPlayers": 4,
+        "defaultPlayers": 4,
+        "ui": {"root": str(runtime_game), "outDir": "build/ui"},
+        "game": {"root": str(runtime_game), "out": "build/game/game-interface.js"},
+        "name": game_id,
+        "friendlyName": f"{template_path.stem} — PnPInk Play",
+    }
+    _write_json(game_dir / "play.json", play_manifest)
+    _write_yaml(game_dir / "play.yaml", play_manifest)
+    _write_json(game_dir / "game.json", game_manifest)
+    return game_dir, game_id
+
+
+def _free_port(start: int = 8081, stop: int = 8089) -> int:
+    for port in range(start, stop + 1):
+        with socket.socket() as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+        return port
+    raise RuntimeError("No free local port available for PnPInk Play")
+
+
+def _request_json(url: str, body: dict | None = None) -> dict:
+    payload = json.dumps(body).encode("utf-8") if body is not None else None
+    request = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"} if payload else {})
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace").strip()
+        raise RuntimeError(detail or f"PnPInk Play server returned HTTP {error.code}") from error
+
+
+class PlayServer:
+    def __init__(self) -> None:
+        self.process: subprocess.Popen | None = None
+        self.game_dir: Path | None = None
+        self.port = 0
+        self.log_path: Path | None = None
+
+    def _startup_error(self, message: str) -> RuntimeError:
+        detail = ""
+        if self.log_path is not None:
+            try:
+                lines = self.log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                detail = "\n".join(lines[-12:]).strip()
+            except Exception:
+                pass
+        return RuntimeError(f"{message}\n{detail}".rstrip())
+
+    def close(self) -> None:
+        process = self.process
+        self.process = None
+        self.game_dir = None
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+
+    def open_game(self, game_dir: Path, game_id: str, runtime: Path) -> str:
+        if self.process is None or self.process.poll() is not None or self.game_dir != game_dir:
+            self.close()
+            self.port = _free_port()
+            database = game_dir / "play.db"
+            database.parent.mkdir(parents=True, exist_ok=True)
+            self.log_path = runtime / "data" / "server.log"
+            command = [
+                sys.executable,
+                "-I",
+                "-S",
+                str(runtime / "launch.py"),
+                "--games",
+                str(game_dir),
+                "--database",
+                str(database),
+                "--host",
+                "0.0.0.0",
+                "--port",
+                str(self.port),
+            ]
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            with self.log_path.open("a", encoding="utf-8") as server_log:
+                server_log.write(f"\n--- Starting PnPInk Play on port {self.port} ---\n")
+                server_log.flush()
+                self.process = subprocess.Popen(
+                    command,
+                    stdin=subprocess.DEVNULL,
+                    stdout=server_log,
+                    stderr=subprocess.STDOUT,
+                    creationflags=creationflags,
+                )
+            self.game_dir = game_dir
+            endpoint = f"http://127.0.0.1:{self.port}/games"
+            for _attempt in range(40):
+                if self.process.poll() is not None:
+                    raise self._startup_error("PnPInk Play server stopped during startup")
+                try:
+                    _request_json(endpoint)
+                    break
+                except Exception:
+                    time.sleep(0.15)
+            else:
+                raise self._startup_error("PnPInk Play server did not start")
+
+        try:
+            session = _request_json(
+                f"http://127.0.0.1:{self.port}/sessions",
+                {"gameName": game_id, "name": "Host", "seatCount": 2, "adminMode": True},
+            )
+        except Exception:
+            self.close()
+            raise
+        return f"http://127.0.0.1:{self.port}/s/{session['playerAccessToken']}"
