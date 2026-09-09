@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#080c13">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="PnPInk Play">
+  <title>PnPInk Play - Game Lobby</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/app-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/app-icon.svg">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="PnPInk Play lobby"><span class="brand-mark">P</span><span>PnPInk <b>Play</b></span></a>
+    <span class="topbar-note">Local playtesting workspace</span>
+  </header>
+  <main class="lobby">
+    <section class="create-panel">
+      <div class="eyebrow">New session</div>
+      <h1>Bring a prototype to the table.</h1>
+      <p>Create a persistent room, invite players, and continue on any device.</p>
+      <form id="create-form">
+        <label>Game<select id="game" required></select></label>
+        <label>Your name<input id="name" value="Player 1" maxlength="40" required></label>
+        <label class="switch-row">
+          <span><strong>Admin mode</strong><small>Perspective and history controls for the creator</small></span>
+          <input id="admin-mode" type="checkbox" checked role="switch">
+        </label>
+        <button class="primary-action">Create room <span data-icon="plus"></span></button>
+      </form>
+    </section>
+    <section class="rooms-panel">
+      <div class="rooms-heading">
+        <div><div class="eyebrow">Persistent rooms</div><h2>Your playtests</h2></div>
+        <button id="refresh" class="icon-button" title="Refresh rooms" aria-label="Refresh rooms"><span data-icon="refresh-cw"></span></button>
+      </div>
+      <div class="room-tools">
+        <label class="search-box"><span data-icon="search"></span><input id="room-search" type="search" placeholder="Search games or room codes"></label>
+        <label class="select-all"><input id="select-all" type="checkbox"> Select all mine</label>
+        <button id="delete-selected" class="danger-button compact-action" disabled title="Delete selected rooms" aria-label="Delete selected rooms"><span data-icon="trash"></span><span id="selected-count">0</span></button>
+      </div>
+      <div id="rooms" class="rooms" aria-live="polite"></div>
+    </section>
+  </main>
+  <script src="/static/common.js"></script>
+  <script src="/static/lobby.js"></script>
+</body>
+</html>
+

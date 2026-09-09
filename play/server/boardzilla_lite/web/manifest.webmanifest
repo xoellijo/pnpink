@@ -1,0 +1,21 @@
+{
+  "id": "/",
+  "name": "PnPInk Play",
+  "short_name": "PnPInk",
+  "description": "A lightweight local tabletop playtesting workspace.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#080c13",
+  "theme_color": "#080c13",
+  "icons": [
+    {
+      "src": "/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
+

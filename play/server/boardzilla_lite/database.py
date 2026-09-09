@@ -1,0 +1,484 @@
+from __future__ import annotations
+
+import json
+import secrets
+import sqlite3
+import string
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Iterator
+
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_name TEXT NOT NULL,
+    phase TEXT NOT NULL DEFAULT 'new',
+    next_seq INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL DEFAULT '{}',
+    initial_state TEXT NOT NULL DEFAULT '{}',
+    invite_code TEXT NOT NULL UNIQUE,
+    settings TEXT NOT NULL DEFAULT '{}',
+    random_seed TEXT NOT NULL,
+    allow_undo INTEGER NOT NULL DEFAULT 1,
+    admin_mode INTEGER NOT NULL DEFAULT 1,
+    seat_count INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS session_players (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    session_user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    color TEXT,
+    position INTEGER,
+    host INTEGER NOT NULL DEFAULT 0,
+    settings TEXT NOT NULL DEFAULT '{}',
+    access_token TEXT NOT NULL UNIQUE,
+    ready INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(session_id, session_user_id),
+    UNIQUE(session_id, position)
+);
+CREATE TABLE IF NOT EXISTS session_states (
+    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    move TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    processing_time_ms INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(session_id, seq)
+);
+CREATE TABLE IF NOT EXISTS history_nodes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    parent_id INTEGER REFERENCES history_nodes(id) ON DELETE CASCADE,
+    depth INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    move TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    processing_time_ms INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS sessions_updated_idx ON sessions(updated_at DESC);
+CREATE INDEX IF NOT EXISTS session_players_session_idx ON session_players(session_id);
+CREATE INDEX IF NOT EXISTS history_nodes_parent_idx ON history_nodes(session_id, parent_id, id DESC);
+"""
+
+
+class Database:
+    def __init__(self, path: Path):
+        self.path = path.expanduser().resolve()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.connect() as connection:
+            connection.executescript(SCHEMA)
+            self._migrate(connection)
+
+    @staticmethod
+    def _columns(connection: sqlite3.Connection, table: str) -> set[str]:
+        return {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})")}
+
+    def _migrate(self, connection: sqlite3.Connection) -> None:
+        session_columns = self._columns(connection, "sessions")
+        if "current_node_id" not in session_columns:
+            connection.execute("ALTER TABLE sessions ADD COLUMN current_node_id INTEGER")
+        if "admin_mode" not in session_columns:
+            connection.execute("ALTER TABLE sessions ADD COLUMN admin_mode INTEGER NOT NULL DEFAULT 1")
+        player_columns = self._columns(connection, "session_players")
+        if "view_position" not in player_columns:
+            connection.execute("ALTER TABLE session_players ADD COLUMN view_position INTEGER")
+        if "spectator" not in player_columns:
+            connection.execute("ALTER TABLE session_players ADD COLUMN spectator INTEGER NOT NULL DEFAULT 0")
+        sessions = connection.execute("SELECT id FROM sessions WHERE current_node_id IS NULL").fetchall()
+        for session in sessions:
+            existing = connection.execute("SELECT 1 FROM history_nodes WHERE session_id = ? LIMIT 1", (session["id"],)).fetchone()
+            if existing:
+                continue
+            parent_id = None
+            depth = 0
+            for state in connection.execute("SELECT * FROM session_states WHERE session_id = ? ORDER BY seq", (session["id"],)):
+                depth += 1
+                cursor = connection.execute(
+                    "INSERT INTO history_nodes(session_id, parent_id, depth, state, move, position, processing_time_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (session["id"], parent_id, depth, state["state"], state["move"], state["position"], state["processing_time_ms"], state["created_at"]),
+                )
+                parent_id = int(cursor.lastrowid)
+            if parent_id is not None:
+                connection.execute("UPDATE sessions SET current_node_id = ?, next_seq = ? WHERE id = ?", (parent_id, depth, session["id"]))
+
+    @contextmanager
+    def connect(self) -> Iterator[sqlite3.Connection]:
+        connection = sqlite3.connect(self.path, timeout=5)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute("PRAGMA busy_timeout = 5000")
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    @staticmethod
+    def token(length: int = 12) -> str:
+        alphabet = string.ascii_letters + string.digits
+        return "".join(secrets.choice(alphabet) for _ in range(length))
+
+    @staticmethod
+    def invite_code(length: int = 6) -> str:
+        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        return "".join(secrets.choice(alphabet) for _ in range(length))
+
+    def create_session(self, game_name: str, name: str, seat_count: int, admin_mode: bool, seat: dict[str, Any] | None) -> dict[str, Any]:
+        with self.connect() as connection:
+            invite_code = self.invite_code()
+            access_token = self.token(20)
+            user_id = self.token()
+            random_seed = self.token(24)
+            cursor = connection.execute(
+                "INSERT INTO sessions(game_name, invite_code, random_seed, allow_undo, admin_mode, seat_count) VALUES (?, ?, ?, 1, ?, ?)",
+                (game_name, invite_code, random_seed, int(admin_mode), seat_count),
+            )
+            session_id = int(cursor.lastrowid)
+            connection.execute(
+                """INSERT INTO session_players(
+                    session_id, session_user_id, name, color, position, host, settings, access_token
+                ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)""",
+                (
+                    session_id,
+                    user_id,
+                    name,
+                    seat.get("color") if seat else None,
+                    seat.get("position") if seat else None,
+                    json.dumps(seat.get("settings", {}) if seat else {}),
+                    access_token,
+                ),
+            )
+        return {"sessionID": session_id, "inviteCode": invite_code, "playerAccessToken": access_token, "userID": user_id}
+
+    def join_session(self, invite_code: str, name: str, seat: dict[str, Any] | None) -> dict[str, Any]:
+        with self.connect() as connection:
+            session = connection.execute("SELECT * FROM sessions WHERE invite_code = ?", (invite_code.upper(),)).fetchone()
+            if session is None:
+                raise LookupError("Room not found")
+            if session["phase"] != "new":
+                raise ValueError("The game has already started")
+            access_token = self.token(20)
+            user_id = self.token()
+            connection.execute(
+                """INSERT INTO session_players(
+                    session_id, session_user_id, name, color, position, settings, access_token
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    session["id"],
+                    user_id,
+                    name,
+                    seat.get("color") if seat else None,
+                    seat.get("position") if seat else None,
+                    json.dumps(seat.get("settings", {}) if seat else {}),
+                    access_token,
+                ),
+            )
+        return {"sessionID": session["id"], "token": access_token, "userID": user_id}
+
+    def spectate_session(self, invite_code: str, name: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            session = connection.execute("SELECT * FROM sessions WHERE invite_code = ?", (invite_code.upper(),)).fetchone()
+            if session is None:
+                raise LookupError("Room not found")
+            access_token = self.token(20)
+            user_id = self.token()
+            connection.execute(
+                "INSERT INTO session_players(session_id, session_user_id, name, host, settings, access_token, ready, spectator) VALUES (?, ?, ?, 0, '{}', ?, 1, 1)",
+                (session["id"], user_id, name, access_token),
+            )
+        return {"sessionID": session["id"], "token": access_token, "userID": user_id}
+
+    def session_by_token(self, token: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT s.*, p.session_user_id, p.name AS player_name, p.color, p.position,
+                          p.host, p.settings AS player_settings, p.ready, p.access_token,
+                          p.view_position, p.spectator
+                   FROM session_players p JOIN sessions s ON s.id = p.session_id
+                   WHERE p.access_token = ?""",
+                (token,),
+            ).fetchone()
+        if row is None:
+            raise LookupError("Session token not found")
+        return dict(row)
+
+    def session_by_invite(self, code: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM sessions WHERE invite_code = ?", (code.upper(),)).fetchone()
+        if row is None:
+            raise LookupError("Room not found")
+        return dict(row)
+
+    def players(self, session_id: int) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM session_players WHERE session_id = ? ORDER BY position IS NULL, position, id",
+                (session_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def rooms(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT s.*,
+                          COUNT(CASE WHEN p.position IS NOT NULL THEN 1 END) AS player_count,
+                          COUNT(CASE WHEN p.spectator = 1 THEN 1 END) AS spectator_count
+                   FROM sessions s LEFT JOIN session_players p ON p.session_id = s.id
+                   GROUP BY s.id ORDER BY s.updated_at DESC"""
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def update_settings(self, session_id: int, settings: Any, seat_count: int) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE sessions SET settings = ?, seat_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND phase = 'new'",
+                (json.dumps(settings), seat_count, session_id),
+            )
+
+    def apply_operations(self, session_id: int, actor: dict[str, Any], operations: list[dict[str, Any]]) -> None:
+        with self.connect() as connection:
+            for operation in operations:
+                user_id = str(operation.get("userID", ""))
+                if not actor["host"] and user_id != actor["session_user_id"]:
+                    raise PermissionError("Only the host can update another player")
+                kind = operation.get("type")
+                if kind == "seat":
+                    connection.execute(
+                        """UPDATE session_players SET position = ?, color = ?, name = ?, settings = ?, updated_at = CURRENT_TIMESTAMP
+                           WHERE session_id = ? AND session_user_id = ?""",
+                        (operation["position"], operation["color"], operation["name"], json.dumps(operation.get("settings", {})), session_id, user_id),
+                    )
+                elif kind == "unseat":
+                    connection.execute(
+                        "UPDATE session_players SET position = NULL, color = NULL, ready = 0, updated_at = CURRENT_TIMESTAMP WHERE session_id = ? AND session_user_id = ?",
+                        (session_id, user_id),
+                    )
+                elif kind == "update":
+                    fields: list[str] = []
+                    values: list[Any] = []
+                    for source, column in (("name", "name"), ("color", "color"), ("ready", "ready")):
+                        if source in operation:
+                            fields.append(f"{column} = ?")
+                            values.append(int(operation[source]) if source == "ready" else operation[source])
+                    if "settings" in operation:
+                        fields.append("settings = ?")
+                        values.append(json.dumps(operation["settings"]))
+                    if fields:
+                        values.extend((session_id, user_id))
+                        connection.execute(
+                            f"UPDATE session_players SET {', '.join(fields)}, updated_at = CURRENT_TIMESTAMP WHERE session_id = ? AND session_user_id = ?",
+                            values,
+                        )
+                else:
+                    raise ValueError(f"Unknown player operation: {kind}")
+
+    def start_session(self, session_id: int, update: dict[str, Any]) -> None:
+        encoded = json.dumps(update, separators=(",", ":"))
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE sessions SET phase = 'started', state = ?, initial_state = ?, current_node_id = NULL, next_seq = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND phase = 'new'",
+                (encoded, encoded, session_id),
+            )
+
+    def save_move(self, session_id: int, position: int, move: Any, update: dict[str, Any], processing_time_ms: int) -> None:
+        encoded = json.dumps(update, separators=(",", ":"))
+        phase = update["game"]["phase"]
+        with self.connect() as connection:
+            session = connection.execute("SELECT current_node_id FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            if session is None:
+                raise LookupError("Session not found")
+            parent_id = session["current_node_id"]
+            parent = connection.execute("SELECT depth FROM history_nodes WHERE id = ?", (parent_id,)).fetchone() if parent_id else None
+            depth = int(parent["depth"]) + 1 if parent else 1
+            cursor = connection.execute(
+                "INSERT INTO history_nodes(session_id, parent_id, depth, state, move, position, processing_time_ms) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (session_id, parent_id, depth, encoded, json.dumps(move), position, processing_time_ms),
+            )
+            node_id = int(cursor.lastrowid)
+            connection.execute(
+                "UPDATE sessions SET state = ?, phase = ?, next_seq = ?, current_node_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (encoded, phase, depth, node_id, session_id),
+            )
+
+    def can_undo(self, session_id: int, position: int | None, administrator: bool = False) -> bool:
+        if position is None:
+            return False
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT s.allow_undo, n.position
+                   FROM sessions s LEFT JOIN history_nodes n ON n.id = s.current_node_id
+                   WHERE s.id = ?""",
+                (session_id,),
+            ).fetchone()
+        return bool(
+            row
+            and row["allow_undo"]
+            and row["position"] is not None
+            and (administrator or row["position"] == position)
+        )
+
+    def undo(self, session_id: int, position: int | None, administrator: bool = False) -> bool:
+        with self.connect() as connection:
+            session = connection.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            if session is None or not session["allow_undo"] or session["current_node_id"] is None or position is None:
+                return False
+            latest = connection.execute("SELECT * FROM history_nodes WHERE id = ?", (session["current_node_id"],)).fetchone()
+            if latest is None or (not administrator and latest["position"] != position):
+                return False
+            previous = connection.execute("SELECT * FROM history_nodes WHERE id = ?", (latest["parent_id"],)).fetchone() if latest["parent_id"] else None
+            state = previous["state"] if previous else session["initial_state"]
+            depth = int(previous["depth"]) if previous else 0
+            phase = json.loads(state)["game"]["phase"]
+            connection.execute(
+                "UPDATE sessions SET state = ?, phase = ?, next_seq = ?, current_node_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (state, phase, depth, latest["parent_id"], session_id),
+            )
+            return True
+
+    def set_view_position(self, access_token: str, position: int | None) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE session_players SET view_position = ?, updated_at = CURRENT_TIMESTAMP WHERE access_token = ? AND host = 1",
+                (position, access_token),
+            )
+
+    @staticmethod
+    def _child(connection: sqlite3.Connection, session_id: int, parent_id: int | None) -> sqlite3.Row | None:
+        if parent_id is None:
+            return connection.execute(
+                "SELECT * FROM history_nodes WHERE session_id = ? AND parent_id IS NULL ORDER BY id DESC LIMIT 1", (session_id,)
+            ).fetchone()
+        return connection.execute(
+            "SELECT * FROM history_nodes WHERE session_id = ? AND parent_id = ? ORDER BY id DESC LIMIT 1", (session_id, parent_id)
+        ).fetchone()
+
+    @staticmethod
+    def _children(connection: sqlite3.Connection, session_id: int, parent_id: int | None) -> list[sqlite3.Row]:
+        if parent_id is None:
+            return connection.execute(
+                "SELECT * FROM history_nodes WHERE session_id = ? AND parent_id IS NULL ORDER BY id DESC", (session_id,)
+            ).fetchall()
+        return connection.execute(
+            "SELECT * FROM history_nodes WHERE session_id = ? AND parent_id = ? ORDER BY id DESC", (session_id, parent_id)
+        ).fetchall()
+
+    def history_status(self, session_id: int) -> dict[str, Any]:
+        with self.connect() as connection:
+            session = connection.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            if session is None:
+                raise LookupError("Session not found")
+            current_id = session["current_node_id"]
+            children = self._children(connection, session_id, current_id)
+            forward = children[0] if children else None
+            forks = connection.execute(
+                "SELECT COUNT(*) AS total FROM (SELECT parent_id FROM history_nodes WHERE session_id = ? GROUP BY parent_id HAVING COUNT(*) > 1)",
+                (session_id,),
+            ).fetchone()["total"]
+            tip = forward
+            while tip is not None:
+                child = self._child(connection, session_id, tip["id"])
+                if child is None:
+                    break
+                tip = child
+            return {
+                "index": int(session["next_seq"]),
+                "tip": int(tip["depth"]) if tip is not None else int(session["next_seq"]),
+                "canBack": current_id is not None,
+                "canForward": forward is not None,
+                "forks": int(forks),
+                "branches": [
+                    {
+                        "nodeID": int(child["id"]),
+                        "depth": int(child["depth"]),
+                        "position": int(child["position"]),
+                        "move": json.loads(child["move"]),
+                        "createdAt": child["created_at"],
+                    }
+                    for child in children
+                ],
+            }
+
+    def navigate_history(self, session_id: int, command: str, branch_id: int | None = None) -> bool:
+        with self.connect() as connection:
+            session = connection.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            if session is None:
+                raise LookupError("Session not found")
+            current = connection.execute("SELECT * FROM history_nodes WHERE id = ?", (session["current_node_id"],)).fetchone() if session["current_node_id"] else None
+            original_id = int(current["id"]) if current is not None else None
+            target = current
+            if command == "start":
+                target = None
+            elif command == "back-action":
+                target = connection.execute("SELECT * FROM history_nodes WHERE id = ?", (current["parent_id"],)).fetchone() if current and current["parent_id"] else None
+            elif command == "forward-action":
+                if branch_id is None:
+                    target = self._child(connection, session_id, current["id"] if current else None)
+                else:
+                    parent_id = current["id"] if current else None
+                    if parent_id is None:
+                        target = connection.execute(
+                            "SELECT * FROM history_nodes WHERE id = ? AND session_id = ? AND parent_id IS NULL",
+                            (branch_id, session_id),
+                        ).fetchone()
+                    else:
+                        target = connection.execute(
+                            "SELECT * FROM history_nodes WHERE id = ? AND session_id = ? AND parent_id = ?",
+                            (branch_id, session_id, parent_id),
+                        ).fetchone()
+                    if target is None:
+                        raise ValueError("The selected branch does not start here")
+            elif command == "back-turn":
+                if current is None:
+                    return False
+                position = current["position"]
+                while current is not None and current["position"] == position:
+                    current = connection.execute("SELECT * FROM history_nodes WHERE id = ?", (current["parent_id"],)).fetchone() if current["parent_id"] else None
+                target = current
+            elif command in {"forward-turn", "end"}:
+                target = self._child(connection, session_id, current["id"] if current else None)
+                if target is None:
+                    return False
+                if command == "forward-turn":
+                    position = target["position"]
+                    while True:
+                        child = self._child(connection, session_id, target["id"])
+                        if child is None or child["position"] != position:
+                            break
+                        target = child
+                else:
+                    while True:
+                        child = self._child(connection, session_id, target["id"])
+                        if child is None:
+                            break
+                        target = child
+            else:
+                raise ValueError(f"Unknown history command: {command}")
+            target_id = int(target["id"]) if target is not None else None
+            if target_id == original_id:
+                return False
+            state = target["state"] if target is not None else session["initial_state"]
+            if not state or state == "{}":
+                return False
+            phase = json.loads(state)["game"]["phase"]
+            connection.execute(
+                "UPDATE sessions SET state = ?, phase = ?, next_seq = ?, current_node_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (state, phase, int(target["depth"]) if target else 0, target["id"] if target else None, session_id),
+            )
+            return True
+
+    def delete_session(self, session_id: int) -> None:
+        with self.connect() as connection:
+            connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+

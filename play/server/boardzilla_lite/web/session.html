@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="theme-color" content="#080c13">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="PnPInk Play">
+  <title>PnPInk Play - Loading game</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/app-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/app-icon.svg">
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="importmap">{"imports":{"lil-gui":"/static/lil-gui.esm.min.js"}}</script>
+</head>
+<body class="session-body">
+  <main class="game-frame"><iframe id="ui" title="PnPInk Play game"></iframe></main>
+  <div id="toast" class="toast"></div>
+  <script src="/static/common.js"></script>
+  <script type="module" src="/static/session.js"></script>
+</body>
+</html>
+

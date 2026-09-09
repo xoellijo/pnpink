@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#080c13">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="PnPInk Play">
+  <title>PnPInk Play - Join Game</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/app-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/app-icon.svg">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/"><span class="brand-mark">P</span><span>PnPInk <b>Play</b></span></a></header>
+  <main class="centered">
+    <section class="join-panel">
+      <a href="/" class="back-link"><span data-icon="arrow-left"></span> Back to lobby</a>
+      <div class="eyebrow" id="room-code"></div>
+      <h1 id="game-title">Join game</h1>
+      <p>Choose how you want to enter this playtest.</p>
+      <form id="join-form">
+        <label>Your name<input id="name" value="Player 2" maxlength="40" required autofocus></label>
+        <button id="join-button" class="primary-action"><span>Join as player</span><span data-icon="user-plus"></span></button>
+        <button id="spectate-button" type="button" class="secondary"><span data-icon="eye"></span> Watch as spectator</button>
+      </form>
+      <p id="error" class="error"></p>
+    </section>
+  </main>
+  <script src="/static/common.js"></script>
+  <script src="/static/join.js"></script>
+</body>
+</html>
+
