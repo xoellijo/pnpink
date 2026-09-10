@@ -70,6 +70,11 @@ host_event = snapshot(host["playerAccessToken"])
 assert host_event["currentPlayers"] == [1]
 hands = [node for node in walk(host_event["state"]) if node.get("definitionId") == "hand"]
 assert sorted(len(hand.get("children", [])) for hand in hands) == [13, 13, 13, 13]
+native_stacks = [
+    node for node in walk(host_event["state"])
+    if node.get("definitionId") in {"deck", "discard", "tricks"}
+]
+assert native_stacks and all(stack.get("className") == "PlayStack" for stack in native_stacks)
 
 spectator = request(f"/invites/{host['inviteCode']}/spectate", "POST", {"name": "Observer"})
 spectator_details = request(f"/sessions/{spectator['token']}")
@@ -233,7 +238,9 @@ request(
 )
 after_deck_flip = snapshot(players[2]["token"])
 tricks = next(node for node in walk(after_deck_flip["state"]) if node.get("definitionId") == "tricks" and node.get("ownerPosition") == 3)
-assert [card["_ref"] for card in tricks["children"]] == list(reversed(trick_order))
+assert len(tricks["children"]) == len(trick_order)
+assert sum(card.get("faceUp") is True for card in tricks["children"]) == 1
+shuffle_version = tricks.get("shuffleVersion", 0)
 
 request(
     f"/sessions/{players[2]['token']}/moves",
@@ -242,7 +249,8 @@ request(
 )
 after_shuffle = snapshot(players[2]["token"])
 tricks = next(node for node in walk(after_shuffle["state"]) if node.get("definitionId") == "tricks" and node.get("ownerPosition") == 3)
-assert sorted(card["_ref"] for card in tricks["children"]) == sorted(trick_order)
+assert len(tricks["children"]) == len(trick_order)
+assert tricks.get("shuffleVersion") == shuffle_version + 1
 
 dealer_hand = next(node for node in walk(after_shuffle["state"]) if node.get("definitionId") == "hand" and node.get("ownerPosition") == 3)
 cards_to_stack = dealer_hand["children"][:10]

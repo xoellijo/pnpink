@@ -8,8 +8,9 @@
 .turn-status { padding: .55vmin 1.1vmin; border: .12vmin solid rgba(240,207,119,.48); border-radius: 999px; background: rgba(3,18,15,.68); color: #f0cf77; font-size: 1.15vmin; font-weight: 800; }
 .play-table footer { position: absolute; left: 22%; right: 22%; bottom: .55%; display: flex; justify-content: center; align-items: center; gap: .7vmin; text-align: center; font-size: 1.05vmin; opacity: .8; }
 .play-table footer .profile-badge { transform: scale(.7); }
-.play-zone { width: 100%; height: 100%; border: .18vmin solid rgba(240,207,119,.62); border-radius: 1.1vmin; background: rgba(4,22,19,.24); box-shadow: inset 0 0 1.4vmin rgba(0,0,0,.45); }
-.play-zone > .zone-label { position: absolute; left: .7vmin; top: .45vmin; z-index: 2; color: #f0cf77; font-size: 1.05vmin; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.play-zone { width: 100%; height: 100%; border: .18vmin solid var(--player-color, rgba(240,207,119,.62)); border-radius: 1.1vmin; background: rgba(4,22,19,.24); box-shadow: inset 0 0 1.4vmin rgba(0,0,0,.45); }
+.play-zone > .zone-title-icon { position: absolute; right: .55vmin; top: .42vmin; z-index: 2; width: 1.55vmin; height: 1.55vmin; color: #f0cf77; filter: drop-shadow(0 .08vmin .16vmin #071b17); pointer-events: none; }
+.play-zone > .zone-label { position: absolute; left: .65vmin; top: .35vmin; z-index: 2; max-width: calc(100% - 2.8vmin); padding: .08vmin 0; overflow: hidden; color: #f0cf77; font-size: 1.28vmin; font-weight: 800; line-height: 1.25; letter-spacing: .05em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; pointer-events: none; }
 .zone-watermark { position: absolute; left: 50%; top: 50%; width: min(58%, 8vmin); height: min(58%, 8vmin); translate: -50% -50%; color: #f7e7ad; opacity: .075; pointer-events: none; }
 .zone-hand { border-style: dashed; background: rgba(63,95,128,.22); }
 .zone-hand:not(.opponent-hand) { border-width: .25vmin; background: linear-gradient(180deg, rgba(44,77,91,.62), rgba(15,41,45,.84)); box-shadow: 0 -1vmin 3vmin rgba(0,0,0,.3), inset 0 0 1.4vmin rgba(0,0,0,.45); }
@@ -17,6 +18,15 @@
 .opponent-hand > strong { position: absolute; right: .6vmin; top: .4vmin; color: #dbe9e4; font-size: .95vmin; }
 .zone-deck, .zone-discard { background: rgba(61,35,22,.3); }
 .play-piece { position: relative; width: 100%; height: 100%; border-radius: .7vmin; overflow: hidden; background: #eadfbf; box-shadow: 0 .35vmin .8vmin rgba(0,0,0,.55); transition: transform .16s ease; touch-action: none; user-select: none; -webkit-touch-callout: none; }
+.play-piece.face-up .bz-flippable { transform: rotateY(0deg); }
+.play-piece.face-down .bz-flippable { transform: rotateY(180deg); }
+.play-zone[data-bz-effect="shuffle"] { animation: pnpink-shuffle .42s ease-in-out; }
+@keyframes pnpink-shuffle {
+  0%, 100% { transform: translateX(0) rotate(0); }
+  25% { transform: translateX(-4%) rotate(-1.2deg); }
+  52% { transform: translateX(4%) rotate(1.2deg); }
+  76% { transform: translateX(-2%) rotate(-.5deg); }
+}
 .zone-hand:not(.opponent-hand) .play-piece:hover { transform: translateY(-1.1vmin) scale(1.04); z-index: 30; }
 .selected > .play-piece, .selectable > .play-piece:hover { outline: .35vmin solid #ffcc3d; outline-offset: .18vmin; transform: translateY(-.9vmin); }
 .selected:has(> .play-piece[data-pnpink-stack-selection="true"]) { z-index: 100 !important; }

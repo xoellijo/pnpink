@@ -1,4 +1,4 @@
-import { createGame, Game, Piece, Player, Space } from '@boardzilla/core';
+import { createGame, Game, Piece, Player, Space, Stack } from '@boardzilla/core';
 import { AreaAction, AreaDefinition, AreaVisibility, currentManifest, setupOperations } from '../manifest.js';
 
 export const manifest = currentManifest();
@@ -19,6 +19,21 @@ export class PlayZone extends Space<PlayGame, PlayPlayer> {
   allowDeal = false;
 }
 
+export class PlayStack extends Stack<PlayGame> {
+  definitionId = '';
+  label = '';
+  kind: AreaDefinition['kind'] = 'stack';
+  ownerPosition = -1;
+  visibility: AreaVisibility = 'public';
+  actions: AreaAction[] = [];
+  insert: 'top' | 'bottom' = 'top';
+  allowShuffle = true;
+  allowDeal = true;
+  shuffleVersion = 0;
+}
+
+export type PlayArea = PlayZone | PlayStack;
+
 export class PlayPiece extends Piece<PlayGame, PlayPlayer> {
   componentId = '';
   label = '';
@@ -30,7 +45,7 @@ export class PlayPiece extends Piece<PlayGame, PlayPlayer> {
 
 PlayPiece.revealWhenHidden('back', 'faceUp');
 
-export function reorderActionName(zone: PlayZone): string {
+export function reorderActionName(zone: PlayArea): string {
   return `reorder-${zone.definitionId}`;
 }
 
@@ -39,10 +54,15 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
   trickLeaderPosition = 1;
   trickComplete = false;
 
+  areas(): PlayArea[] {
+    return [...this.all(PlayZone), ...this.all(PlayStack)];
+  }
+
   initialize(): void {
     for (const operation of setupOperations(manifest)) {
       if ('shuffle' in operation) {
-        this.sharedZone(operation.shuffle)?.shuffle();
+        const target = this.sharedZone(operation.shuffle);
+        if (target) this.shuffleArea(target);
       } else {
         const source = this.sharedZone(operation.deal.from);
         if (!source) continue;
@@ -57,44 +77,45 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
         }
       }
     }
-    for (const zone of this.all(PlayZone)) {
+    for (const zone of this.areas()) {
       for (const piece of zone.all(PlayPiece)) this.applyVisibility(piece, zone);
     }
   }
 
-  sharedZone(id: string): PlayZone | undefined {
-    return this.all(PlayZone).find(zone => zone.definitionId === id && zone.ownerPosition < 0);
+  sharedZone(id: string): PlayArea | undefined {
+    return this.areas().find(zone => zone.definitionId === id && zone.ownerPosition < 0);
   }
 
-  playerZone(player: PlayPlayer, id: string): PlayZone | undefined {
-    return this.all(PlayZone).find(zone => zone.definitionId === id && zone.ownerPosition === player.position);
+  playerZone(player: PlayPlayer, id: string): PlayArea | undefined {
+    return this.areas().find(zone => zone.definitionId === id && zone.ownerPosition === player.position);
   }
 
-  zoneOf(piece: PlayPiece): PlayZone | undefined {
-    return piece.container() instanceof PlayZone ? piece.container() as PlayZone : undefined;
+  zoneOf(piece: PlayPiece): PlayArea | undefined {
+    const container = piece.container();
+    return container instanceof PlayZone || container instanceof PlayStack ? container : undefined;
   }
 
-  ownerOf(zone: PlayZone): PlayPlayer | undefined {
+  ownerOf(zone: PlayArea): PlayPlayer | undefined {
     return zone.ownerPosition < 0
       ? undefined
       : this.players.find(player => player.position === zone.ownerPosition);
   }
 
-  canControl(player: PlayPlayer, zone: PlayZone): boolean {
+  canControl(player: PlayPlayer, zone: PlayArea): boolean {
     return zone.ownerPosition < 0 || zone.ownerPosition === player.position;
   }
 
-  zonesWith(actionName: AreaAction, player?: PlayPlayer): PlayZone[] {
-    return this.all(PlayZone).filter(zone => (
+  zonesWith(actionName: AreaAction, player?: PlayPlayer): PlayArea[] {
+    return this.areas().filter(zone => (
       zone.actions.includes(actionName) && (!player || this.canControl(player, zone))
     ));
   }
 
-  drawSources(): PlayZone[] {
+  drawSources(): PlayArea[] {
     return this.zonesWith('draw').filter(zone => zone.all(PlayPiece).length > 0);
   }
 
-  drawTargets(player: PlayPlayer): PlayZone[] {
+  drawTargets(player: PlayPlayer): PlayArea[] {
     return this.zonesWith('move-to', player).filter(zone => zone.ownerPosition === player.position);
   }
 
@@ -102,12 +123,12 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
     return this.zonesWith('move-from', player).flatMap(zone => zone.all(PlayPiece));
   }
 
-  moveTargets(player: PlayPlayer, piece: PlayPiece): PlayZone[] {
+  moveTargets(player: PlayPlayer, piece: PlayPiece): PlayArea[] {
     const current = this.zoneOf(piece);
     return this.zonesWith('move-to', player).filter(zone => zone !== current);
   }
 
-  moveTargetsForPieces(player: PlayPlayer, pieces: PlayPiece[]): PlayZone[] {
+  moveTargetsForPieces(player: PlayPlayer, pieces: PlayPiece[]): PlayArea[] {
     return this.zonesWith('move-to', player).filter(zone => {
       const definition = manifest.areas.find(candidate => candidate.id === zone.definitionId);
       return pieces.every(piece => this.zoneOf(piece) !== zone)
@@ -131,20 +152,20 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
     return this.movablePieces(player).filter(piece => this.zoneOf(piece)?.kind !== 'discard');
   }
 
-  discardTargets(): PlayZone[] {
+  discardTargets(): PlayArea[] {
     return this.zonesWith('discard-to');
   }
 
-  hand(player: PlayPlayer): PlayZone | undefined {
-    return this.all(PlayZone).find(zone => zone.kind === 'hand' && zone.ownerPosition === player.position);
+  hand(player: PlayPlayer): PlayArea | undefined {
+    return this.areas().find(zone => zone.kind === 'hand' && zone.ownerPosition === player.position);
   }
 
-  center(): PlayZone | undefined {
-    return this.all(PlayZone).find(zone => zone.kind === 'center' || zone.kind === 'table');
+  center(): PlayArea | undefined {
+    return this.areas().find(zone => zone.kind === 'center' || zone.kind === 'table');
   }
 
-  trickPile(player: PlayPlayer): PlayZone | undefined {
-    return this.all(PlayZone).find(zone => zone.definitionId === 'tricks' && zone.ownerPosition === player.position);
+  trickPile(player: PlayPlayer): PlayArea | undefined {
+    return this.areas().find(zone => zone.definitionId === 'tricks' && zone.ownerPosition === player.position);
   }
 
   playerAt(position: number): PlayPlayer {
@@ -167,7 +188,7 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
     return players[(index + offset) % players.length];
   }
 
-  canPlayTrickPieces(player: PlayPlayer, pieces: PlayPiece[], target: PlayZone): boolean {
+  canPlayTrickPieces(player: PlayPlayer, pieces: PlayPiece[], target: PlayArea): boolean {
     if (manifest.turns?.mode !== 'trick-assisted' || target !== this.center()) return true;
     const maximum = manifest.turns.maxCardsPerPlay ?? 1;
     return !this.trickComplete
@@ -179,7 +200,7 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
       });
   }
 
-  isTrickPlay(player: PlayPlayer, pieces: PlayPiece[], target: PlayZone): boolean {
+  isTrickPlay(player: PlayPlayer, pieces: PlayPiece[], target: PlayArea): boolean {
     return manifest.turns?.mode === 'trick-assisted'
       && target === this.center()
       && this.canPlayTrickPieces(player, pieces, target);
@@ -202,36 +223,42 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
     return this.movablePieces(player).filter(piece => Boolean(piece.back));
   }
 
-  flippableStacks(player: PlayPlayer): PlayZone[] {
-    return this.all(PlayZone).filter(zone => (
+  flippableStacks(player: PlayPlayer): PlayArea[] {
+    return this.areas().filter(zone => (
       this.canControl(player, zone)
       && zone.all(PlayPiece).length > 1
       && zone.all(PlayPiece).every(piece => Boolean(piece.back))
     ));
   }
 
-  shuffleTargets(player: PlayPlayer): PlayZone[] {
-    return this.all(PlayZone).filter(zone => (
+  shuffleTargets(player: PlayPlayer): PlayArea[] {
+    return this.areas().filter(zone => (
       this.canControl(player, zone)
       && zone.all(PlayPiece).length > 1
       && zone.allowShuffle
     ));
   }
 
-  dealSources(player: PlayPlayer): PlayZone[] {
-    return this.all(PlayZone).filter(zone => (
+  dealSources(player: PlayPlayer): PlayArea[] {
+    return this.areas().filter(zone => (
       this.canControl(player, zone)
       && zone.allowDeal
       && this.maximumDealCount(zone) > 0
     ));
   }
 
-  maximumDealCount(source: PlayZone): number {
+  maximumDealCount(source: PlayArea): number {
     return Math.min(8, Math.floor(source.all(PlayPiece).length / this.players.length));
   }
 
-  movePiece(piece: PlayPiece, target: PlayZone): void {
-    piece.putInto(target, { position: target.insert === 'top' ? 0 : target.all(PlayPiece).length });
+  shuffleArea(target: PlayArea): void {
+    target.shuffle();
+    if (target instanceof PlayStack) target.shuffleVersion += 1;
+  }
+
+  movePiece(piece: PlayPiece, target: PlayArea): void {
+    if (target instanceof PlayStack && target.insert === 'top') piece.putInto(target);
+    else piece.putInto(target, { position: target.insert === 'top' ? 0 : target.all(PlayPiece).length });
     this.applyVisibility(piece, target);
   }
 
@@ -241,7 +268,7 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
     if (zone) this.applyVisibility(piece, zone);
   }
 
-  applyVisibility(piece: PlayPiece, zone: PlayZone): void {
+  applyVisibility(piece: PlayPiece, zone: PlayArea): void {
     if (zone.visibility === 'hidden') {
       piece.hideFromAll();
       return;
@@ -260,7 +287,7 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
 export default createGame(PlayPlayer, PlayGame, game => {
   const { action } = game;
   const { eachPlayer, forLoop, loop, playerActions } = game.flowCommands;
-  game.registerClasses(PlayZone, PlayPiece);
+  game.registerClasses(PlayZone, PlayStack, PlayPiece);
 
   for (const definition of manifest.areas) {
     const pileByDefault = ['stack', 'deck', 'discard'].includes(definition.kind);
@@ -275,19 +302,21 @@ export default createGame(PlayPlayer, PlayGame, game => {
       allowDeal: definition.allowDeal ?? (definition.actions?.includes('deal') || pileByDefault),
     };
     if (definition.scope === 'shared') {
-      game.create(PlayZone, definition.id, { ...properties, ownerPosition: -1 });
+      if (pileByDefault) game.create(PlayStack, definition.id, { ...properties, ownerPosition: -1 });
+      else game.create(PlayZone, definition.id, { ...properties, ownerPosition: -1 });
     } else {
       for (const player of game.players) {
-        game.create(PlayZone, definition.id, {
-          ...properties,
-          ownerPosition: player.position,
-          player,
-        });
+        const playerProperties = { ...properties, ownerPosition: player.position, player };
+        if (pileByDefault) game.create(PlayStack, definition.id, playerProperties);
+        else game.create(PlayZone, definition.id, playerProperties);
       }
     }
   }
 
-  for (const zone of game.all(PlayZone)) {
+  for (const zone of game.areas()) {
+    if (zone.visibility === 'public') zone.contentsWillBeShown();
+    else if (zone.visibility === 'owner') zone.contentsWillBeShownToOwner();
+    else zone.contentsWillBeHidden();
     zone.onEnter(PlayPiece, piece => game.applyVisibility(piece, zone));
   }
 
@@ -342,7 +371,7 @@ export default createGame(PlayPlayer, PlayGame, game => {
           const group = game.selectedPieces(player, args.__reorder_from__, args.pieces)
             .sort((left, right) => left.position() - right.position());
           const target = args.__reorder_to__;
-          const parent = target.container() as PlayZone;
+          const parent = target.container() as PlayArea;
           for (const piece of group) piece.putInto(parent);
           const position = target.position();
           for (const piece of [...group].reverse()) piece.putInto(parent, { position });
@@ -360,7 +389,7 @@ export default createGame(PlayPlayer, PlayGame, game => {
         return game.moveTargetsForPieces(player, game.selectedPieces(player, piece, pieces));
       }, { prompt: 'Choose its destination' })
       .do(rawArgs => {
-        const { piece, pieces, target } = rawArgs as unknown as { piece: PlayPiece; pieces?: PlayPiece[]; target: PlayZone };
+        const { piece, pieces, target } = rawArgs as unknown as { piece: PlayPiece; pieces?: PlayPiece[]; target: PlayArea };
         const selected = game.selectedPieces(player, piece, pieces);
         const trickPlay = game.isTrickPlay(player, selected, target);
         for (const selectedPiece of selected) {
@@ -393,7 +422,7 @@ export default createGame(PlayPlayer, PlayGame, game => {
         });
       }, { prompt: 'Choose a discard pile' })
       .do(rawArgs => {
-        const { piece, pieces, target } = rawArgs as unknown as { piece: PlayPiece; pieces?: PlayPiece[]; target: PlayZone };
+        const { piece, pieces, target } = rawArgs as unknown as { piece: PlayPiece; pieces?: PlayPiece[]; target: PlayArea };
         for (const selectedPiece of game.selectedPieces(player, piece, pieces)) {
           selectedPiece.faceUp = true;
           game.movePiece(selectedPiece, target);
@@ -461,21 +490,21 @@ export default createGame(PlayPlayer, PlayGame, game => {
     shuffle: player => action({ prompt: 'Shuffle', condition: game.shuffleTargets(player).length > 0 })
       .chooseOnBoard('target', game.shuffleTargets(player), { prompt: 'Choose a deck, bag, or pile' })
       .do(({ target }) => {
-        target.shuffle();
+        game.shuffleArea(target);
         game.repeatAction = true;
       }).message('{{player}} shuffles {{target}}.'),
 
     deal: player => action({ prompt: 'Deal', condition: game.dealSources(player).length > 0 })
       .chooseOnBoard('source', game.dealSources(player), { prompt: 'Choose a deck or pile' })
       .chooseFrom('count', rawArgs => {
-        const { source } = rawArgs as unknown as { source: PlayZone };
+        const { source } = rawArgs as unknown as { source: PlayArea };
         return Array.from({ length: game.maximumDealCount(source) }, (_, index) => ({
           choice: index + 1,
           label: String(index + 1),
         }));
       }, { prompt: 'Cards per player' })
       .do(rawArgs => {
-        const { source, count } = rawArgs as unknown as { source: PlayZone; count: number };
+        const { source, count } = rawArgs as unknown as { source: PlayArea; count: number };
         for (let round = 0; round < count; round += 1) {
           for (const targetPlayer of game.players) {
             const target = game.hand(targetPlayer);

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { GameElement, ProfileBadge, render } from '@boardzilla/core';
-import setup, { manifest, PlayGame, PlayPiece, PlayPlayer, PlayZone, reorderActionName } from '../game/index.js';
+import { Flippable } from '@boardzilla/core/components';
+import setup, { manifest, PlayArea, PlayGame, PlayPiece, PlayPlayer, PlayStack, PlayZone, reorderActionName } from '../game/index.js';
 import type { AreaDefinition, Box } from '../manifest.js';
 import { canChoose, chooseElement, chooseSequence, contextMenu, ContextAction, hasPendingAction, submitChoice } from './context-menu.js';
 import { clearSelected, elementAtBranch, selectedElements, setSelected, toggleSelected, useSelectedElements } from './multiselect.js';
@@ -70,7 +71,7 @@ function useContextTrigger(open: (x: number, y: number) => void, tap?: () => voi
   };
 }
 
-function ZoneView({ zone, viewer }: { zone: PlayZone; viewer: PlayPlayer }) {
+function ZoneView({ zone, viewer }: { zone: PlayArea; viewer: PlayPlayer }) {
   const owner = zone.ownerPosition >= 0
     ? zone.game.players.find(player => player.position === zone.ownerPosition)
     : undefined;
@@ -118,7 +119,6 @@ function ZoneView({ zone, viewer }: { zone: PlayZone; viewer: PlayPlayer }) {
     }
     if (actions.length) contextMenu.show({ title: zone.label, x, y, actions });
   });
-  void consumeZoneClick;
   const hoverShortcuts = shortcutsForZone(zone);
   useHoverShortcuts(zone.branch(), hoverShortcuts);
   return <div
@@ -130,15 +130,21 @@ function ZoneView({ zone, viewer }: { zone: PlayZone; viewer: PlayPlayer }) {
       node: event.currentTarget.closest<HTMLElement>('.transform-wrapper') ?? event.currentTarget,
     })}
     onPointerLeave={() => setPreviewCandidate()}
+    onClickCapture={event => {
+      consumeZoneClick();
+      event.preventDefault();
+      event.stopPropagation();
+    }}
     {...contextHandlers}
   >
-    <span className="zone-label">{owner ? owner.name : zone.label}</span>
+    <span className="zone-title-icon iconify" data-icon={zoneIcon(zone)} aria-hidden="true" />
+    <span className="zone-label">{owner ? `${owner.name} · ${zone.label}` : zone.label}</span>
     <span className="zone-watermark iconify" data-icon={zoneIcon(zone)} aria-hidden="true" />
     {isOpponentHand && <strong>{zone.all(PlayPiece).length} cards</strong>}
   </div>;
 }
 
-function zoneSummary(zone: PlayZone): string {
+function zoneSummary(zone: PlayArea): string {
   const owner = zone.ownerPosition >= 0
     ? zone.game.players.find(player => player.position === zone.ownerPosition)
     : undefined;
@@ -156,7 +162,7 @@ function assetUrl(path: string): string {
   return path ? new URL(path, window.location.href.replace(/ui\.html$/, '')).href : '';
 }
 
-function zoneIcon(zone: PlayZone): string {
+function zoneIcon(zone: PlayArea): string {
   if (zone.kind === 'discard' || zone.definitionId === 'discard') return 'griddy-icons:trash';
   if (zone.definitionId === 'tricks') return 'griddy-icons:trophy';
   if (zone.kind === 'center' || zone.kind === 'table') return 'griddy-icons:grid-alt';
@@ -166,14 +172,14 @@ function zoneIcon(zone: PlayZone): string {
   return 'griddy-icons:component-card';
 }
 
-function isStackedZone(zone: PlayZone): boolean {
+function isStackedZone(zone: PlayArea): boolean {
   const definition = manifest.areas.find(candidate => candidate.id === zone.definitionId);
   const rows = definition?.layout.rows ?? 1;
   const columns = definition?.layout.columns ?? 1;
   return zone.all(PlayPiece).length > 1 && rows * columns === 1;
 }
 
-function shortcutsForZone(zone: PlayZone): HoverShortcuts {
+function shortcutsForZone(zone: PlayArea): HoverShortcuts {
   return {
     shuffle: canChoose(zone, 'shuffle') ? () => chooseElement(zone, 'shuffle') : undefined,
     selectTop: isStackedZone(zone)
@@ -193,7 +199,7 @@ function pieceInfoAction(piece: PlayPiece, viewer: PlayPlayer): ContextAction | 
   } : undefined;
 }
 
-function topSelectionActions(zone: PlayZone, info?: ContextAction, refresh?: () => void): ContextAction | undefined {
+function topSelectionActions(zone: PlayArea, info?: ContextAction, refresh?: () => void): ContextAction | undefined {
   if (!isStackedZone(zone)) return undefined;
   const size = zone.all(PlayPiece).length;
   const counts: Array<number | 'all'> = Array.from(
@@ -216,7 +222,7 @@ function topSelectionActions(zone: PlayZone, info?: ContextAction, refresh?: () 
   };
 }
 
-function stackOperationActions(zone: PlayZone, viewer: PlayPlayer): ContextAction[] {
+function stackOperationActions(zone: PlayArea, viewer: PlayPlayer): ContextAction[] {
   if (!isStackedZone(zone)) return [];
   const pieces = [...zone.all(PlayPiece)];
   const top = zone.top(PlayPiece);
@@ -264,7 +270,7 @@ function stackOperationActions(zone: PlayZone, viewer: PlayPlayer): ContextActio
     const maximum = zone.game.maximumDealCount(zone);
     for (let count = 1; count <= maximum; count += 1) {
       pileActions.push({
-        label: count === 1 ? 'Deal' : String(count),
+        label: count === 1 ? 'Deal 1' : String(count),
         run: () => submitChoice('deal', { source: zone, count }),
       });
     }
@@ -303,6 +309,8 @@ function PieceView({ piece, viewer }: { piece: PlayPiece; viewer: PlayPlayer }) 
   } as React.CSSProperties : undefined;
   const visible = piece.isVisibleTo(viewer);
   const source = visible && piece.faceUp || !piece.back ? piece.front : piece.back;
+  const front = piece.front ? assetUrl(piece.front) : '';
+  const back = piece.back ? assetUrl(piece.back) : '';
   const showActions = (x: number, y: number) => {
     const group = selectedPieceGroup(piece);
     const actions: ContextAction[] = [];
@@ -399,7 +407,14 @@ function PieceView({ piece, viewer }: { piece: PlayPiece; viewer: PlayPlayer }) 
     }}
     {...contextHandlers}
   >
-    {source ? <img draggable={false} src={assetUrl(source)} alt={visible ? piece.label : 'Hidden component'} /> : <strong>{visible ? piece.label : '?'}</strong>}
+    <Flippable>
+      <Flippable.Front>
+        {front ? <img draggable={false} src={front} alt={piece.label} /> : <strong>{visible ? piece.label : '?'}</strong>}
+      </Flippable.Front>
+      <Flippable.Back>
+        {back ? <img draggable={false} src={back} alt="Hidden component" /> : <strong>?</strong>}
+      </Flippable.Back>
+    </Flippable>
     {stackedSelection && selectedIndex === 0 && <span className="selection-count">{selectedPieces.length} selected</span>}
   </div>;
 }
@@ -475,31 +490,63 @@ function useLassoSelection(): SelectionRect | undefined {
   return rectangle;
 }
 
-function relativePosition(zone: PlayZone, viewer: PlayPlayer): number {
+function relativePosition(zone: PlayArea, viewer: PlayPlayer): number {
   const count = zone.game.players.length;
   return (zone.ownerPosition - viewer.position + count) % count;
 }
 
 function opponentBox(relative: number, count: number, portrait: boolean): Box {
-  if (count === 2) return portrait
-    ? { left: 27, top: 2, width: 46, height: 12 }
-    : { left: 34, top: 2, width: 32, height: 14 };
-  if (relative === 1) return portrait
-    ? { left: 2, top: 17, width: 24, height: 15 }
-    : { left: 2, top: 8, width: 19, height: 18 };
-  if (relative === count - 1) return portrait
-    ? { left: 74, top: 17, width: 24, height: 15 }
-    : { left: 79, top: 8, width: 19, height: 18 };
-  return portrait
-    ? { left: 27, top: 2, width: 46, height: 12 }
-    : { left: 34, top: 2, width: 32, height: 14 };
+  if (portrait) {
+    const left = count >= 4 ? (relative === 1 ? 2 : relative === count - 1 ? 72 : 37) : relative === 1 ? 18 : 57;
+    return { left, top: 3, width: 20, height: 10 };
+  }
+  if (count === 2) return { left: 25, top: 2, width: 18, height: 10 };
+  if (relative === 1) return { left: -1, top: 35, width: 18, height: 12 };
+  if (relative === count - 1) return { left: 83, top: 35, width: 18, height: 12 };
+  return { left: 25, top: 2, width: 18, height: 10 };
 }
 
-function zoneBox(zone: PlayZone, viewer: PlayPlayer, boardSize: string): Box {
+function opponentTricksBox(relative: number, count: number, portrait: boolean): Box {
+  if (portrait) {
+    const hand = opponentBox(relative, count, portrait);
+    return { left: hand.left + hand.width + 1, top: hand.top, width: 5, height: hand.height };
+  }
+  if (count === 2) return { left: 44, top: 2, width: 6, height: 10 };
+  if (relative === 1) return { left: 2, top: 52, width: 12, height: 12 };
+  if (relative === count - 1) return { left: 86, top: 52, width: 12, height: 12 };
+  return { left: 44, top: 2, width: 6, height: 10 };
+}
+
+function opponentPlayerAreaBox(relative: number, count: number, portrait: boolean): Box {
+  if (portrait) {
+    const hand = opponentBox(relative, count, portrait);
+    return { left: hand.left, top: 14, width: 12, height: 10 };
+  }
+  if (count === 2) return { left: 52, top: 2, width: 20, height: 20 };
+  if (relative === 1) return { left: 2, top: 2, width: 20, height: 20 };
+  if (relative === count - 1) return { left: 78, top: 2, width: 20, height: 20 };
+  return { left: 52, top: 2, width: 20, height: 20 };
+}
+
+function zoneRotation(zone: PlayArea, viewer: PlayPlayer): number {
+  if (zone.ownerPosition < 0 || zone.ownerPosition === viewer.position || zone.definitionId === 'player-area') return 0;
+  if (zone.game.players.length === 2) return 180;
+  const relative = relativePosition(zone, viewer);
+  if (relative === 1) return 90;
+  if (relative === zone.game.players.length - 1) return 270;
+  return 180;
+}
+
+function zoneBox(zone: PlayArea, viewer: PlayPlayer, boardSize: string): Box {
   const definition = manifest.areas.find(candidate => candidate.id === zone.definitionId)!;
   const portrait = boardSize === 'portrait';
   if (definition.scope === 'shared') {
-    if (!portrait) return definition.layout.shared!;
+    if (!portrait) {
+      if (zone.kind === 'center' || zone.kind === 'table') return { left: 24, top: 24, width: 52, height: 50 };
+      if (zone.kind === 'deck' || zone.definitionId === 'deck') return { left: 15, top: 35, width: 8, height: 29 };
+      if (zone.kind === 'discard' || zone.definitionId === 'discard') return { left: 77, top: 35, width: 8, height: 29 };
+      return definition.layout.shared!;
+    }
     if (zone.kind === 'center' || zone.kind === 'table') return { left: 17, top: 27, width: 66, height: 44 };
     if (zone.kind === 'deck' || zone.definitionId === 'deck') return { left: 2, top: 37, width: 14, height: 22 };
     if (zone.kind === 'discard' || zone.definitionId === 'discard') return { left: 84, top: 37, width: 14, height: 22 };
@@ -508,30 +555,37 @@ function zoneBox(zone: PlayZone, viewer: PlayPlayer, boardSize: string): Box {
   if (zone.kind === 'hand') {
     if (zone.ownerPosition === viewer.position) return portrait
       ? { left: 2, top: 77, width: 96, height: 21 }
-      : { left: 12, top: 76, width: 76, height: 22 };
+      : { left: 27, top: 76, width: 61, height: 22 };
     return opponentBox(relativePosition(zone, viewer), zone.game.players.length, portrait);
   }
   if (zone.definitionId === 'tricks') {
     if (zone.ownerPosition === viewer.position) return portrait
       ? { left: 84, top: 78, width: 13, height: 18 }
       : { left: 90, top: 76, width: 8, height: 20 };
-    const opponent = opponentBox(relativePosition(zone, viewer), zone.game.players.length, portrait);
-    return { left: opponent.left + opponent.width - 5, top: opponent.top + 2, width: 5, height: Math.max(8, opponent.height - 4) };
+    return opponentTricksBox(relativePosition(zone, viewer), zone.game.players.length, portrait);
+  }
+  if (zone.definitionId === 'player-area' && zone.ownerPosition !== viewer.position) {
+    return opponentPlayerAreaBox(relativePosition(zone, viewer), zone.game.players.length, portrait);
+  }
+  if (zone.definitionId === 'player-area' && zone.ownerPosition === viewer.position) {
+    return portrait ? definition.layout.owner! : { left: 2, top: 72, width: 21, height: 26 };
   }
   return zone.ownerPosition === viewer.position ? definition.layout.owner! : definition.layout.opponent!;
 }
 
-function pieceLayout(definition: AreaDefinition) {
+function pieceLayout(definition: AreaDefinition, opponent = false) {
   if (definition.kind === 'hand') return {
+    area: { left: 1, top: 16, width: 98, height: 82 },
     rows: 1,
     columns: { min: 1 },
     direction: 'ltr' as const,
     alignment: 'center' as const,
     scaling: 'fill' as const,
-    maxOverlap: 72,
-    gap: 0.25,
+    maxOverlap: opponent ? 48 : 72,
+    gap: opponent ? 0.08 : 0.25,
   };
   return {
+    area: { left: 3, top: 16, width: 94, height: 81 },
     rows: definition.layout.rows ?? { min: 1 },
     columns: definition.layout.columns ?? { min: 1 },
     margin: definition.layout.gap ?? 0.45,
@@ -576,15 +630,24 @@ render(setup, {
   layout: (game, viewer, boardSize) => {
     game.appearance({ className: 'pnpink-play-root', render: current => <Table game={current} viewer={viewer} /> });
     game.all(PlayZone).appearance({ render: zone => <ZoneView zone={zone} viewer={viewer} /> });
+    game.all(PlayStack).appearance({
+      render: zone => <ZoneView zone={zone} viewer={viewer} />,
+      effects: [{
+        name: 'shuffle',
+        trigger: (zone, previous) => zone.shuffleVersion !== previous.shuffleVersion,
+      }],
+    });
     game.all(PlayPiece).appearance({ aspectRatio: 0.7, render: piece => <PieceView piece={piece} viewer={viewer} /> });
-    for (const zone of game.all(PlayZone)) {
+    for (const zone of game.areas()) {
       const definition = manifest.areas.find(candidate => candidate.id === zone.definitionId)!;
+      zone.rotation = zoneRotation(zone, viewer);
       game.layout(zone, { slots: [zoneBox(zone, viewer, boardSize)] });
-      delete (zone as unknown as { layout?: unknown }).layout;
       if (zone.kind === 'center' || zone.kind === 'table') {
         for (const piece of zone.all(PlayPiece)) zone.layout(piece, { slots: [trickSlot(piece, viewer)] });
+      } else if (zone instanceof PlayStack) {
+        zone.configureLayout({ area: { left: 3, top: 16, width: 94, height: 81 } });
       } else {
-        zone.layout(PlayPiece, pieceLayout(definition));
+        zone.layout(PlayPiece, pieceLayout(definition, zone.kind === 'hand' && zone.ownerPosition !== viewer.position));
       }
     }
     game.layoutControls({ element: game, position: 'inset', left: 30, top: 44, width: 40, height: 12 });
