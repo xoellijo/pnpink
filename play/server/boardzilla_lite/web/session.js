@@ -32,12 +32,11 @@ function controllerIcon(controller, icon, title) {
 
 function buttonRow(actions, className) {
   let first;
-  let previous;
   for (const action of actions) {
     menuState[action.key] = action.run;
     if (action.options) menuState[action.key] = action.value;
-    const controller = previous
-      ? previous.append(menuState, action.key, ...(action.options ? [action.options] : []))
+    const controller = first
+      ? first.append(menuState, action.key, ...(action.options ? [action.options] : []))
       : serverMenu.add(menuState, action.key, ...(action.options ? [action.options] : []));
     if (action.options) {
       controller.name('').onChange(action.onChange);
@@ -49,7 +48,6 @@ function buttonRow(actions, className) {
     }
     menuControllers[action.key] = controller;
     first ??= controller;
-    previous = controller;
   }
   const row = first.$multi ?? first.domElement;
   row.classList.add('server-menu-row', className);
@@ -141,6 +139,15 @@ async function copyText(value, success) {
   notify(success);
 }
 
+function privatePlayerLink() {
+  if (!details.administrator || details.viewPosition == null) return location.href;
+  const position = details.viewPosition === -1
+    ? viewedPosition ?? details.currentPlayers?.[0]
+    : details.viewPosition;
+  const player = details.players.find(candidate => candidate.position === position);
+  return player?.sessionURL ? new URL(player.sessionURL, location.origin).href : location.href;
+}
+
 async function setPerspective(value) {
   const response = await fetch(`/sessions/${token}/perspective`, {
     method: 'POST',
@@ -196,9 +203,9 @@ function buildServerMenu() {
   const primaryActions = [
     {key: 'lobby', icon: 'home', title: 'Go to lobby', run: menuState.lobby},
   ];
-  if (details.administrator) {
+  if (details.administrator || details.spectator) {
     const perspectives = Object.fromEntries([
-      ['My perspective', ''],
+      ...(details.spectator ? [] : [['My perspective', '']]),
       ['Current player', '-1'],
       ...details.players.map(player => [`${player.position}: ${player.name}`, String(player.position)]),
     ]);
@@ -211,7 +218,7 @@ function buildServerMenu() {
     });
   }
   primaryActions.push(
-    {key: 'playerLink', icon: 'link-alt-02', title: 'Copy private player link', run: () => copyText(location.href, 'Private player link copied')},
+    {key: 'playerLink', icon: 'link-alt-02', title: 'Copy private player link', run: () => copyText(privatePlayerLink(), 'Private player link copied')},
     {key: 'invite', icon: 'share', title: 'Copy invitation link', run: () => copyText(`${location.origin}/join/${details.inviteCode}`, 'Invitation link copied')},
   );
   buttonRow(primaryActions, 'server-menu-actions');
@@ -244,6 +251,7 @@ function updateRoomState(message) {
   if (message.type === 'gameFinished') details.phase = 'finished';
   if (message.type !== 'gameUpdate' && message.type !== 'gameFinished') return false;
 
+  details.currentPlayers = message.currentPlayers;
   updateTurn(message.currentPlayers);
   updateUndo(message.canUndo);
   updateHistory(message.history);
@@ -299,7 +307,7 @@ window.addEventListener('message', event => {
   } else if (message.type === 'updatePlayers') {
     command('/players/operations', {operations: message.operations}, message.id);
   } else if (message.type === 'move') {
-    command('/moves', message.data, message.id);
+    if (!details.spectator) command('/moves', message.data, message.id);
   } else if (message.type === 'sendDark') {
     send({type: 'darkSetting', dark: false});
   }
@@ -339,6 +347,7 @@ async function start() {
   const response = await fetch(`/sessions/${token}`);
   if (!response.ok) { location.href = '/'; return; }
   details = await response.json();
+  document.body.classList.toggle('spectator-view', details.spectator);
   PnPInkPlay.saveToken(details.sessionID, token);
   document.title = `PnPInk Play: ${details.game.friendlyName} - ${details.playerName}`;
   viewedPosition = details.effectivePosition;
@@ -355,4 +364,3 @@ document.addEventListener('visibilitychange', () => {
 });
 
 start().catch(error => notify(String(error)));
-

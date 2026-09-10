@@ -28,13 +28,22 @@ declare module 'pnpink-boardzilla-store' {
     move?: BoardMove;
     pendingMoves?: BoardMove[];
     selected?: BoardElement[];
+    dragOffset: {
+      ref?: number;
+      x?: number;
+      y?: number;
+    };
     uncommittedArgs: Record<string, unknown>;
-    boardSelections: Record<string, { clickMoves: BoardMove[] }>;
+    boardSelections: Record<string, {
+      clickMoves: BoardMove[];
+      dragMoves: Array<{ move: BoardMove }>;
+    }>;
     gameManager: {
       game: { atBranch(branch: string): BoardElement | undefined };
     };
     selectElement(moves: BoardMove[], element: BoardElement): void;
     selectMove(move?: BoardMove, args?: Record<string, unknown>): void;
+    clearMove(): void;
   }
 
   export const gameStore: {

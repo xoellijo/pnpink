@@ -10,6 +10,7 @@ export interface ContextAction {
   run?: () => void;
   children?: ContextAction[];
   row?: ContextAction[];
+  compactRow?: boolean;
 }
 
 export interface ContextMenuRequest {
@@ -24,8 +25,13 @@ class ContextMenu {
 
   constructor() {
     window.addEventListener('pointerdown', event => {
-      if (this.gui && !this.gui.domElement.contains(event.target as Node)) this.hide();
-    });
+      if (!this.gui || this.gui.domElement.contains(event.target as Node)) return;
+      if (event.button === 0) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+      this.hide();
+    }, true);
     window.addEventListener('keydown', event => {
       if (event.key === 'Escape') this.hide();
     });
@@ -33,12 +39,10 @@ class ContextMenu {
 
   show(request: ContextMenuRequest): void {
     this.hide();
-    const needsSelectionWidth = request.actions.some(action => (action.row?.length ?? 0) >= 10);
-    const width = window.matchMedia('(pointer: coarse)').matches || needsSelectionWidth
-      ? Math.min(288, window.innerWidth - 10)
-      : 184;
-    this.gui = new XGUI({ autoPlace: false, mode: 'contextmenu', title: request.title, touchStyles: true, width });
+    const width = Math.min(238, window.innerWidth - 10);
+    this.gui = new XGUI({ autoPlace: false, title: '', touchStyles: true, width });
     this.gui.domElement.classList.add('pnpink-context-menu');
+    this.gui.domElement.querySelector(':scope > .title')?.remove();
     this.addActions(this.gui, request.actions);
     this.gui.place(request.x, request.y);
     const box = this.gui.domElement.getBoundingClientRect();
@@ -66,10 +70,23 @@ class ContextMenu {
     }
   }
 
-  hide(): void {
-    if (this.gui?.domElement.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
-    this.gui?.destroy();
-    this.gui = undefined;
+  hide(gui = this.gui): void {
+    if (!gui) return;
+    if (this.gui === gui) this.gui = undefined;
+    if (gui?.domElement.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
+    try {
+      gui.destroy();
+    } catch {
+      gui.domElement.remove();
+    }
+  }
+
+  private run(action?: () => void): void {
+    const gui = this.gui;
+    action?.();
+    queueMicrotask(() => {
+      if (this.gui === gui) this.hide(gui);
+    });
   }
 
   private addActions(gui: XGUI, actions: ContextAction[]): void {
@@ -77,15 +94,13 @@ class ContextMenu {
       if (action.row?.length) {
         const state: Record<string, () => void> = {};
         let first: XGUI | undefined;
-        let previous: XGUI | undefined;
         for (const [rowIndex, rowAction] of action.row.entries()) {
           const key = `action${index}_${rowIndex}`;
           state[key] = () => {
             if (!rowAction.run) return;
-            rowAction.run?.();
-            this.hide();
+            this.run(rowAction.run);
           };
-          const controller = previous ? previous.append(state, key) : gui.add(state, key);
+          const controller = first ? first.append(state, key) : gui.add(state, key);
           controller.name(rowAction.iconOnly ? '' : rowAction.label);
           controller.domElement.title = rowAction.label;
           controller.domElement.setAttribute('aria-label', rowAction.label);
@@ -93,9 +108,10 @@ class ContextMenu {
           if (rowAction.icon) controller.icon(rowAction.icon);
           if (rowAction.active) controller.domElement.classList.add('pnpink-active');
           first ??= controller;
-          previous = controller;
         }
-        (first?.$multi ?? first?.domElement)?.classList.add('pnpink-context-inline');
+        const row = first?.$multi ?? first?.domElement;
+        row?.classList.add('pnpink-context-inline');
+        if (action.compactRow) row?.classList.add('pnpink-context-compact');
         continue;
       }
       if (action.children?.length) {
@@ -106,8 +122,7 @@ class ContextMenu {
       }
       const key = `action${index}`;
       const controller = gui.add({ [key]: () => {
-        action.run?.();
-        this.hide();
+        this.run(action.run);
       } }, key).name(action.label);
       if (action.icon) controller.icon(action.icon);
     }
@@ -116,6 +131,17 @@ class ContextMenu {
 
 export const contextMenu = new ContextMenu();
 
+function clearTransientDragVisuals(): void {
+  const { dragOffset } = gameStore.getState();
+  dragOffset.ref = undefined;
+  dragOffset.x = undefined;
+  dragOffset.y = undefined;
+  document.querySelectorAll<HTMLElement>('.group-dragging').forEach(node => {
+    node.classList.remove('group-dragging');
+    node.style.removeProperty('translate');
+  });
+}
+
 export function canChoose(element: GameElement, actionName: string): boolean {
   return choicesFor(element, actionName).length > 0;
 }
@@ -123,6 +149,7 @@ export function canChoose(element: GameElement, actionName: string): boolean {
 export function chooseElement(element: GameElement, actionName: string): boolean {
   const choices = choicesFor(element, actionName);
   if (!choices.length) return false;
+  clearTransientDragVisuals();
   gameStore.getState().selectElement(choices, element);
   return true;
 }
@@ -138,7 +165,9 @@ export function submitChoice(actionName: string, args: Record<string, unknown>):
   const state = gameStore.getState();
   const move = state.pendingMoves?.find(candidate => candidate.name === actionName);
   if (!move) return false;
-  state.selectMove(move, args);
+  clearTransientDragVisuals();
+  state.clearMove();
+  gameStore.getState().selectMove(move, args);
   return true;
 }
 
@@ -148,5 +177,10 @@ export function hasPendingAction(actionName: string): boolean {
 
 function choicesFor(element: GameElement, actionName: string) {
   const state = gameStore.getState();
-  return (state.boardSelections[element.branch()]?.clickMoves ?? []).filter(move => move.name === actionName);
+  const selections = state.boardSelections[element.branch()];
+  if (!selections) return [];
+  return [...new Set([
+    ...selections.clickMoves,
+    ...selections.dragMoves.map(selection => selection.move),
+  ])].filter(move => move.name === actionName);
 }

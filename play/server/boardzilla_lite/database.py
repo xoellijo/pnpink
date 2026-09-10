@@ -233,7 +233,7 @@ class Database:
         with self.connect() as connection:
             rows = connection.execute(
                 """SELECT s.*,
-                          COUNT(CASE WHEN p.position IS NOT NULL THEN 1 END) AS player_count,
+                          COUNT(CASE WHEN p.position IS NOT NULL AND p.spectator = 0 THEN 1 END) AS player_count,
                           COUNT(CASE WHEN p.spectator = 1 THEN 1 END) AS spectator_count
                    FROM sessions s LEFT JOIN session_players p ON p.session_id = s.id
                    GROUP BY s.id ORDER BY s.updated_at DESC"""
@@ -255,6 +255,12 @@ class Database:
                     raise PermissionError("Only the host can update another player")
                 kind = operation.get("type")
                 if kind == "seat":
+                    target = connection.execute(
+                        "SELECT spectator FROM session_players WHERE session_id = ? AND session_user_id = ?",
+                        (session_id, user_id),
+                    ).fetchone()
+                    if target is None or target["spectator"]:
+                        raise PermissionError("Spectators cannot occupy player seats")
                     connection.execute(
                         """UPDATE session_players SET position = ?, color = ?, name = ?, settings = ?, updated_at = CURRENT_TIMESTAMP
                            WHERE session_id = ? AND session_user_id = ?""",
@@ -350,7 +356,7 @@ class Database:
     def set_view_position(self, access_token: str, position: int | None) -> None:
         with self.connect() as connection:
             connection.execute(
-                "UPDATE session_players SET view_position = ?, updated_at = CURRENT_TIMESTAMP WHERE access_token = ? AND host = 1",
+                "UPDATE session_players SET view_position = ?, updated_at = CURRENT_TIMESTAMP WHERE access_token = ? AND (host = 1 OR spectator = 1)",
                 (position, access_token),
             )
 
@@ -481,4 +487,3 @@ class Database:
     def delete_session(self, session_id: int) -> None:
         with self.connect() as connection:
             connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-

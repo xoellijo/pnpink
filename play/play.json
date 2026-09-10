@@ -3,7 +3,12 @@
   "name": "PnPInk Generic Table",
   "description": "A lightweight four-player trick-taking prototype.",
   "players": { "count": 4 },
-  "turns": { "mode": "trick-assisted", "order": "clockwise" },
+  "turns": {
+    "mode": "trick-assisted",
+    "order": "right",
+    "maxCardsPerPlay": 1,
+    "winnerDecider": "last"
+  },
   "board": {
     "aspectRatio": 1.6,
     "background": "#173f35"
@@ -15,7 +20,7 @@
       "kind": "stack",
       "scope": "shared",
       "visibility": "hidden",
-      "actions": ["draw", "shuffle", "move-from"],
+      "actions": ["draw", "move-from"],
       "layout": { "shared": { "left": 8, "top": 37, "width": 10, "height": 26 }, "rows": 1, "columns": 1 }
     },
     {

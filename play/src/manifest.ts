@@ -1,8 +1,10 @@
 export type AreaScope = 'shared' | 'player';
 export type AreaVisibility = 'public' | 'owner' | 'hidden';
 export type AreaKind = 'hand' | 'stack' | 'center' | 'free' | 'table' | 'deck' | 'discard' | 'area' | 'supply';
-export type AreaAction = 'draw' | 'move-from' | 'move-to' | 'discard-to' | 'shuffle';
+export type AreaAction = 'draw' | 'move-from' | 'move-to' | 'discard-to' | 'shuffle' | 'deal';
 export type TurnMode = 'free' | 'guided' | 'trick-assisted';
+export type TurnOrder = 'right' | 'left' | 'clockwise' | 'counterclockwise';
+export type WinnerDecider = 'all' | 'last' | 'next-to-last' | 'host';
 
 export interface Box {
   left: number;
@@ -28,6 +30,9 @@ export interface AreaDefinition {
   visibility: AreaVisibility;
   actions?: AreaAction[];
   maxDrop?: number;
+  insert?: 'top' | 'bottom';
+  allowShuffle?: boolean;
+  allowDeal?: boolean;
   layout: AreaLayout;
 }
 
@@ -55,7 +60,9 @@ export interface PlayManifest {
   };
   turns?: {
     mode: TurnMode;
-    order?: 'clockwise' | 'counterclockwise';
+    order?: TurnOrder;
+    maxCardsPerPlay?: number;
+    winnerDecider?: WinnerDecider;
   };
   board: {
     aspectRatio: number;
@@ -94,6 +101,15 @@ export function validateManifest(value: PlayManifest): PlayManifest {
     if (area.maxDrop !== undefined && (!Number.isInteger(area.maxDrop) || area.maxDrop < 1)) {
       throw new Error(`Area ${area.id} has an invalid maxDrop`);
     }
+    if (area.insert !== undefined && !['top', 'bottom'].includes(area.insert)) {
+      throw new Error(`Area ${area.id} has an invalid insert mode`);
+    }
+    if (area.allowShuffle !== undefined && typeof area.allowShuffle !== 'boolean') {
+      throw new Error(`Area ${area.id} has an invalid allowShuffle value`);
+    }
+    if (area.allowDeal !== undefined && typeof area.allowDeal !== 'boolean') {
+      throw new Error(`Area ${area.id} has an invalid allowDeal value`);
+    }
   }
   for (const piece of value.pieces) {
     const area = value.areas.find(candidate => candidate.id === piece.initial.area);
@@ -108,6 +124,24 @@ export function validateManifest(value: PlayManifest): PlayManifest {
   const playerMin = value.players?.count ?? value.players?.min ?? 2;
   const playerMax = value.players?.count ?? value.players?.max ?? playerMin;
   if (playerMin < 1 || playerMax < playerMin) throw new Error('Invalid player count');
+  if (
+    value.turns?.order !== undefined
+    && !['right', 'left', 'clockwise', 'counterclockwise'].includes(value.turns.order)
+  ) {
+    throw new Error(`Invalid turn order: ${value.turns.order}`);
+  }
+  if (
+    value.turns?.maxCardsPerPlay !== undefined
+    && (!Number.isInteger(value.turns.maxCardsPerPlay) || value.turns.maxCardsPerPlay < 0)
+  ) {
+    throw new Error('turns.maxCardsPerPlay must be zero or a positive integer');
+  }
+  if (
+    value.turns?.winnerDecider !== undefined
+    && !['all', 'last', 'next-to-last', 'host'].includes(value.turns.winnerDecider)
+  ) {
+    throw new Error(`Invalid winner decider: ${value.turns.winnerDecider}`);
+  }
   for (const operation of setupOperations(value)) {
     if ('shuffle' in operation && !areaIds.has(operation.shuffle)) throw new Error(`Unknown shuffle area ${operation.shuffle}`);
     if ('deal' in operation) {

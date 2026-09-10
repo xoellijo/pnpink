@@ -71,6 +71,20 @@ assert host_event["currentPlayers"] == [1]
 hands = [node for node in walk(host_event["state"]) if node.get("definitionId") == "hand"]
 assert sorted(len(hand.get("children", [])) for hand in hands) == [13, 13, 13, 13]
 
+spectator = request(f"/invites/{host['inviteCode']}/spectate", "POST", {"name": "Observer"})
+spectator_details = request(f"/sessions/{spectator['token']}")
+assert spectator_details["spectator"] is True
+assert spectator_details["position"] is None
+assert len(spectator_details["players"]) == 4
+request(f"/sessions/{spectator['token']}/perspective", "POST", {"position": 2})
+assert request(f"/sessions/{spectator['token']}")["effectivePosition"] == 2
+try:
+    request(f"/sessions/{spectator['token']}/moves", "POST", {"name": "endTurn", "args": {}})
+except urllib.error.HTTPError as error:
+    assert error.code == 403
+else:
+    raise AssertionError("spectator was allowed to move")
+
 host_hand = next(node for node in hands if node.get("ownerPosition") == 1)
 player_area = next(node for node in walk(host_event["state"]) if node.get("definitionId") == "player-area" and node.get("ownerPosition") == 1)
 table = next(node for node in walk(host_event["state"]) if node.get("definitionId") == "table")
@@ -112,10 +126,36 @@ moved_cards = [card for card in player_area["children"] if card.get("componentId
 request(
     f"/sessions/{host['playerAccessToken']}/moves",
     "POST",
-    {"name": "move", "args": {
-        "piece": element_arg(after_group_move, moved_cards[0]),
+    {"name": "flip", "args": {
+        "piece": element_arg(after_group_move, moved_cards[-1]),
         "pieces": [element_arg(after_group_move, card) for card in moved_cards],
-        "target": element_arg(after_group_move, host_hand),
+    }},
+)
+after_flip_all = snapshot(host["playerAccessToken"])
+player_area = next(node for node in walk(after_flip_all["state"]) if node.get("definitionId") == "player-area" and node.get("ownerPosition") == 1)
+moved_cards = [card for card in player_area["children"] if card.get("back")]
+assert len(moved_cards) == 4 and all(not card.get("front") for card in moved_cards)
+request(
+    f"/sessions/{host['playerAccessToken']}/moves",
+    "POST",
+    {"name": "setFace", "args": {
+        "piece": element_arg(after_flip_all, moved_cards[-1]),
+        "pieces": [element_arg(after_flip_all, card) for card in moved_cards],
+        "faceUp": True,
+    }},
+)
+after_set_face = snapshot(host["playerAccessToken"])
+host_hand = next(node for node in walk(after_set_face["state"]) if node.get("definitionId") == "hand" and node.get("ownerPosition") == 1)
+player_area = next(node for node in walk(after_set_face["state"]) if node.get("definitionId") == "player-area" and node.get("ownerPosition") == 1)
+moved_cards = [card for card in player_area["children"] if card.get("componentId") != "reference"]
+assert all(card.get("faceUp") is True for card in moved_cards)
+request(
+    f"/sessions/{host['playerAccessToken']}/moves",
+    "POST",
+    {"name": "move", "args": {
+        "piece": element_arg(after_set_face, moved_cards[0]),
+        "pieces": [element_arg(after_set_face, card) for card in moved_cards],
+        "target": element_arg(after_set_face, host_hand),
     }},
 )
 
@@ -158,11 +198,12 @@ for position, player in enumerate(players, 1):
     )
 
 resolution = snapshot(host["playerAccessToken"])
-assert resolution["currentPlayers"] == [1]
+assert resolution["currentPlayers"] == [4]
 assert any(node.get("trickComplete") is True for node in walk(resolution["state"]))
 
+resolver_token = players[3].get("playerAccessToken") or players[3]["token"]
 request(
-    f"/sessions/{host['playerAccessToken']}/moves",
+    f"/sessions/{resolver_token}/moves",
     "POST",
     {"name": "takeTrick", "args": {"winner": 3}},
 )
@@ -172,4 +213,76 @@ tricks = next(node for node in walk(next_trick["state"]) if node.get("definition
 assert next_trick["currentPlayers"] == [3]
 assert len(center.get("children", [])) == 0
 assert len(tricks.get("children", [])) == 4
-print(json.dumps({"inviteCode": host["inviteCode"], "nextPlayer": 3, "trickCards": 4}))
+
+trick_order = [card["_ref"] for card in tricks["children"]]
+top_card = tricks["children"][0]
+request(
+    f"/sessions/{players[2]['token']}/moves",
+    "POST",
+    {"name": "flip", "args": {"piece": element_arg(next_trick, top_card)}},
+)
+after_top_flip = snapshot(players[2]["token"])
+tricks = next(node for node in walk(after_top_flip["state"]) if node.get("definitionId") == "tricks" and node.get("ownerPosition") == 3)
+assert tricks["children"][0]["_ref"] == top_card["_ref"]
+assert tricks["children"][0].get("faceUp") is False
+
+request(
+    f"/sessions/{players[2]['token']}/moves",
+    "POST",
+    {"name": "flipDeck", "args": {"target": element_arg(after_top_flip, tricks)}},
+)
+after_deck_flip = snapshot(players[2]["token"])
+tricks = next(node for node in walk(after_deck_flip["state"]) if node.get("definitionId") == "tricks" and node.get("ownerPosition") == 3)
+assert [card["_ref"] for card in tricks["children"]] == list(reversed(trick_order))
+
+request(
+    f"/sessions/{players[2]['token']}/moves",
+    "POST",
+    {"name": "shuffle", "args": {"target": element_arg(after_deck_flip, tricks)}},
+)
+after_shuffle = snapshot(players[2]["token"])
+tricks = next(node for node in walk(after_shuffle["state"]) if node.get("definitionId") == "tricks" and node.get("ownerPosition") == 3)
+assert sorted(card["_ref"] for card in tricks["children"]) == sorted(trick_order)
+
+dealer_hand = next(node for node in walk(after_shuffle["state"]) if node.get("definitionId") == "hand" and node.get("ownerPosition") == 3)
+cards_to_stack = dealer_hand["children"][:10]
+request(
+    f"/sessions/{players[2]['token']}/moves",
+    "POST",
+    {"name": "move", "args": {
+        "piece": element_arg(after_shuffle, cards_to_stack[0]),
+        "pieces": [element_arg(after_shuffle, card) for card in cards_to_stack],
+        "target": element_arg(after_shuffle, tricks),
+    }},
+)
+before_deal = snapshot(players[2]["token"])
+tricks = next(node for node in walk(before_deal["state"]) if node.get("definitionId") == "tricks" and node.get("ownerPosition") == 3)
+assert len(tricks["children"]) == 14
+hands_before_deal = {
+    hand["ownerPosition"]: len(hand.get("children", []))
+    for hand in walk(before_deal["state"])
+    if hand.get("definitionId") == "hand"
+}
+request(
+    f"/sessions/{players[2]['token']}/moves",
+    "POST",
+    {"name": "deal", "args": {"source": element_arg(before_deal, tricks), "count": 1}},
+)
+after_deal_one = snapshot(players[2]["token"])
+tricks = next(node for node in walk(after_deal_one["state"]) if node.get("definitionId") == "tricks" and node.get("ownerPosition") == 3)
+assert len(tricks.get("children", [])) == 10
+request(
+    f"/sessions/{players[2]['token']}/moves",
+    "POST",
+    {"name": "deal", "args": {"source": element_arg(after_deal_one, tricks), "count": 2}},
+)
+after_deal_two = snapshot(players[2]["token"])
+tricks = next(node for node in walk(after_deal_two["state"]) if node.get("definitionId") == "tricks" and node.get("ownerPosition") == 3)
+hands_after_deal = {
+    hand["ownerPosition"]: len(hand.get("children", []))
+    for hand in walk(after_deal_two["state"])
+    if hand.get("definitionId") == "hand"
+}
+assert len(tricks.get("children", [])) == 2
+assert all(hands_after_deal[position] == count + 3 for position, count in hands_before_deal.items())
+print(json.dumps({"inviteCode": host["inviteCode"], "nextPlayer": 3, "stackActions": "ok"}))

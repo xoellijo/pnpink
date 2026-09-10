@@ -24,8 +24,11 @@
 .selectable > .play-piece { cursor: grab; }
 .transform-wrapper.dragging .play-piece { cursor: grabbing; filter: brightness(1.08); transform: scale(1.04); }
 .transform-wrapper.dragging .play-piece, .group-dragging > .play-piece { transition: none; }
+.drag-pass-through { pointer-events: none; }
 .droppable > .play-zone { border-color: #ffcc3d; background: rgba(255,204,61,.16); box-shadow: inset 0 0 1.8vmin rgba(255,204,61,.55), 0 0 1.2vmin rgba(255,204,61,.42); }
 .droppable > .play-piece { outline: .38vmin solid #ffcc3d; outline-offset: .2vmin; filter: brightness(1.12); }
+.droppable.current-drop > .play-zone { border-color: #fff3a3; background: rgba(255,215,70,.38); box-shadow: inset 0 0 2.4vmin rgba(255,224,92,.8), 0 0 1.8vmin rgba(255,224,92,.8); }
+.droppable.current-drop > .play-piece { outline-color: #fff3a3; outline-width: .55vmin; filter: brightness(1.24); }
 .play-piece img { width: 100%; height: 100%; display: block; object-fit: contain; -webkit-user-drag: none; }
 .play-piece strong { display: grid; place-items: center; width: 100%; height: 100%; color: #173f35; font-size: 1.4vmin; text-align: center; }
 .play-piece .selection-count { position: absolute; left: 50%; bottom: .55vmin; z-index: 5; min-width: max-content; padding: .3vmin .65vmin; transform: translateX(-50%); border: .13vmin solid rgba(255,255,255,.72); border-radius: 999px; background: rgba(8,8,8,.88); color: #fff; font-size: clamp(10px, 1.05vmin, 14px); font-weight: 800; line-height: 1.1; letter-spacing: .02em; box-shadow: 0 .2vmin .7vmin rgba(0,0,0,.65); pointer-events: none; }
@@ -39,6 +42,7 @@
 .component-preview > * { transform-origin: center; }
 .card-preview figcaption { max-width: 80vw; overflow: hidden; color: #fff; font-size: clamp(12px, 1.7vmin, 18px); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .lil-gui.pnpink-context-menu { --background-color: rgba(5,5,5,.9); --text-color: #fff; --title-background-color: rgba(18,18,18,.96); --title-text-color: #fff; --widget-color: rgba(18,18,18,.96); --hover-color: rgba(48,48,48,.96); --focus-color: rgba(60,60,60,.98); --font-size: 14px; --input-font-size: 14px; --icon-size: 18px; --font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif; max-width: calc(100vw - 10px); border: 1px solid rgba(255,255,255,.14); border-radius: 7px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,.62); backdrop-filter: blur(7px); }
+.lil-gui.pnpink-context-menu > .title { display: none; }
 .lil-gui.pnpink-context-menu .lil-gui { --background-color: rgba(5,5,5,.9); --text-color: #fff; --title-background-color: rgba(18,18,18,.96); --title-text-color: #fff; --widget-color: rgba(18,18,18,.96); --hover-color: rgba(48,48,48,.96); --focus-color: rgba(60,60,60,.98); --font-size: 14px; --input-font-size: 14px; --icon-size: 18px; color: #fff; font-size: 14px; }
 .lil-gui.pnpink-context-menu .title, .lil-gui.pnpink-context-menu .controller, .lil-gui.pnpink-context-menu .controller .name { color: #fff; font-size: 14px; }
 .lil-gui.pnpink-context-menu .lil-gui > .title, .lil-gui.pnpink-context-menu .controller button { color: #fff; background: rgba(18,18,18,.96); }
@@ -46,6 +50,7 @@
 .lil-gui.pnpink-context-menu .iconify { color: #fff !important; }
 .pnpink-context-inline { align-items: stretch; gap: 2px !important; padding: 2px; }
 .pnpink-context-inline > .controller { width: 0 !important; min-width: 0; flex: 1 1 0 !important; margin: 0; padding: 0; }
+.pnpink-context-inline > .controller.pnpink-icon-only { width: 25px !important; flex: 0 0 25px !important; }
 .pnpink-context-inline > .controller .widget, .pnpink-context-inline > .controller button { width: 100%; min-width: 0; }
 .pnpink-context-inline > .controller .name { min-width: 0; padding: 0; text-align: center; }
 .pnpink-context-inline > .controller .iconify { margin-right: 0 !important; }
@@ -54,6 +59,10 @@
 .pnpink-context-inline > .controller:not(.pnpink-icon-only) .iconify { margin-right: 3px !important; }
 .pnpink-context-inline > .controller.pnpink-active { background: #f0cf77; }
 .pnpink-context-inline > .controller.pnpink-active .name { color: #111; font-weight: 900; }
+.pnpink-context-compact { gap: 1px !important; padding: 1px; }
+.pnpink-context-compact > .controller:not(.pnpink-icon-only) .name { padding-inline: 2px; font-size: 12px !important; }
+.pnpink-context-compact > .controller:not(.pnpink-icon-only) { width: 0 !important; flex: 1 1 0 !important; }
+.pnpink-context-compact > .controller.pnpink-icon-only { width: 23px !important; flex-basis: 23px !important; }
 #game .player-controls { color: #fff; border: .08rem solid rgba(255,255,255,.15); border-radius: .35rem; background: rgba(5,5,5,.88); box-shadow: 0 .45rem 1.4rem rgba(0,0,0,.55); backdrop-filter: blur(7px); font-size: .7rem; }
 html.dark #game .player-controls { background: rgba(5,5,5,.88); }
 #game .player-controls button { color: #fff; border: .06rem solid rgba(255,255,255,.13); border-radius: .25rem; background: rgba(24,24,24,.92); }
@@ -62,6 +71,19 @@ html.dark #game .player-controls { background: rgba(5,5,5,.88); }
 #game .player-controls button.invalid { color: #888; background: #181818; }
 #game .player-controls input, #game .player-controls select { color: #fff; border-color: rgba(255,255,255,.18); background: #151515; }
 #game .player-controls .action-divider { color: #aaa; }
+#game .player-controls.winner-controls { width: min(34rem, 76vw) !important; }
+#game .player-controls.winner-controls form.takeTrick > .prompt { display: none; }
+#game .player-controls.winner-controls .selection.winner { display: grid; grid-template-columns: repeat(auto-fit, minmax(4.2rem, 1fr)); gap: .25rem; }
+#game .player-controls.winner-controls .selection.winner > .prompt { grid-column: 1 / -1; text-align: center; }
+#game .player-controls.winner-controls .selection.winner button { color: #fff; font-weight: 800; text-shadow: 0 1px 2px #000; }
+#game .player-controls.winner-controls .selection.winner button:nth-of-type(1) { background: var(--player-1, #394759); }
+#game .player-controls.winner-controls .selection.winner button:nth-of-type(2) { background: var(--player-2, #394759); }
+#game .player-controls.winner-controls .selection.winner button:nth-of-type(3) { background: var(--player-3, #394759); }
+#game .player-controls.winner-controls .selection.winner button:nth-of-type(4) { background: var(--player-4, #394759); }
+#game .player-controls.winner-controls .selection.winner button:nth-of-type(5) { background: var(--player-5, #394759); }
+#game .player-controls.winner-controls .selection.winner button:nth-of-type(6) { background: var(--player-6, #394759); }
+#game .player-controls.winner-controls .selection.winner button:nth-of-type(7) { background: var(--player-7, #394759); }
+#game .player-controls.winner-controls .selection.winner button:nth-of-type(8) { background: var(--player-8, #394759); }
 #game.mobile .player-controls { padding: .2rem; font-size: .64rem; }
 #game.mobile .player-controls button, #game.mobile .player-controls input, #game.mobile .player-controls select { min-height: 1.45rem; padding: .12rem .3rem; font-size: inherit; line-height: 1.1; }
 

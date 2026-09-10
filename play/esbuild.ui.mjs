@@ -25,6 +25,16 @@ const boardzillaStorePlugin = {
                     ...(selectedPieces ? { pieces: selectedPieces } : {})
                 };`,
         ],
+        [
+          'get().selectMove(move, { [selection.name]: element });',
+          `const selectedPieces = move.name === 'move' && s.selected?.length > 1 && s.selected.includes(element)
+                ? s.selected
+                : undefined;
+            get().selectMove(move, {
+                [selection.name]: element,
+                ...(selectedPieces ? { pieces: selectedPieces } : {})
+            });`,
+        ],
       ];
       for (const [before, after] of replacements) {
         if (!source.includes(before)) throw new Error('Boardzilla multiselect store patch no longer matches store.js');
@@ -42,10 +52,30 @@ const boardzillaDragPlugin = {
       let source = await readFile(sourcePath, 'utf8');
       const replacements = [
         ['if (!isMobile && element instanceof Piece) {', 'if (element instanceof Piece) {'],
-        ['const domElement = useRef(null);', 'const domElement = useRef(null);\n    const touchDrop = useRef({ active: false, target: undefined });'],
+        ['const domElement = useRef(null);', `const domElement = useRef(null);
+    const touchDrop = useRef({ active: false, target: undefined });
+    const dragGroupOffsets = useRef(new Map());`],
         ['if (dragging && styles.transform) {', "if (dragging && styles.top !== undefined && styles.left !== undefined) {"],
         ['if (styles.transform && dragOffset.ref === element._t.ref) {', 'if (dragOffset.ref === element._t.ref) {'],
         ['` + styles.transform', "` + (styles.transform ?? '')"],
+        [
+          `wrapper.current.setAttribute('data-lasty', String(data.lastY));`,
+          `wrapper.current.setAttribute('data-lasty', String(data.lastY));
+            dragGroupOffsets.current.clear();
+            const selected = gameStore.getState().selected ?? [];
+            if (selected.length > 1 && selected.includes(element)) {
+                const anchorRect = wrapper.current.getBoundingClientRect();
+                selected.filter(candidate => candidate !== element).forEach((candidate, index) => {
+                    const peer = document.getElementById(candidate.name)?.parentElement;
+                    if (!peer?.classList.contains('transform-wrapper')) return;
+                    const peerRect = peer.getBoundingClientRect();
+                    dragGroupOffsets.current.set(candidate.name, {
+                        x: anchorRect.left - peerRect.left + (index + 1) * anchorRect.width * 0.15,
+                        y: anchorRect.top - peerRect.top + (index + 1) * anchorRect.height * 0.04
+                    });
+                });
+            }`,
+        ],
         [
           'setDragging({ deltaY, deltaX });',
           `setDragging({ deltaY, deltaX });
@@ -53,8 +83,9 @@ const boardzillaDragPlugin = {
                     if (selected === element) continue;
                     const peer = document.getElementById(selected.name)?.parentElement;
                     if (!peer?.classList.contains('transform-wrapper')) continue;
+                    const offset = dragGroupOffsets.current.get(selected.name) ?? { x: 0, y: 0 };
                     peer.classList.add('group-dragging');
-                    peer.style.translate = \`\${-deltaX}px \${-deltaY}px\`;
+                    peer.style.translate = \`\${offset.x - deltaX}px \${offset.y - deltaY}px\`;
                 }
                 const touch = e.touches?.[0] ?? e.changedTouches?.[0];
                 if (touch) {
@@ -78,6 +109,22 @@ const boardzillaDragPlugin = {
         ['c.choice === currentDrop', 'c.choice === resolvedDrop'],
         ['onSelectElement([move], currentDrop);', 'onSelectElement([move], resolvedDrop);'],
         [
+          'selectable,\n            droppable',
+          `selectable,
+            droppable,
+            'drag-pass-through': element instanceof Piece && !!dragElement && dragElement !== branch && !droppable,
+            'current-drop': droppable && currentDrop === element`,
+        ],
+        [
+          `className: classNames("transform-wrapper", { dragging, placing, 'has-info': !!info })`,
+          `className: classNames("transform-wrapper", {
+            dragging,
+            placing,
+            'has-info': !!info,
+            'drag-pass-through': element instanceof Piece && !!dragElement && dragElement !== branch && !droppable
+        })`,
+        ],
+        [
           'delete render.mutated;',
           `if (wrapper.current?.classList.contains('group-dragging')) {
             wrapper.current.classList.remove('group-dragging');
@@ -93,12 +140,45 @@ const boardzillaDragPlugin = {
                 peer?.style.removeProperty('translate');
             }
             touchDrop.current = { active: false, target: undefined };
+            dragGroupOffsets.current.clear();
             setDragging(undefined);
             setCurrentDrop(undefined);`,
         ],
       ];
       for (const [before, after] of replacements) {
         if (!source.includes(before)) throw new Error('Boardzilla drag compatibility patch no longer matches Element.js');
+        source = source.replace(before, after);
+      }
+      return { contents: source, loader: 'js' };
+    });
+  },
+};
+
+const boardzillaControlsPlugin = {
+  name: 'boardzilla-controls',
+  setup(buildContext) {
+    buildContext.onLoad({ filter: /@boardzilla\/core\/entry\/ui\/game\/components\/PlayerControls\.js$/ }, async ({ path: sourcePath }) => {
+      let source = await readFile(sourcePath, 'utf8');
+      const replacements = [
+        [
+          `if (!position || !controls)
+        return null;
+    if (!boardPrompt && controls.moves.length === 0)`,
+          `if (!position || !controls)
+        return null;
+    const visibleMoves = controls.moves.filter(move => ![
+        'draw', 'move', 'discard', 'flip', 'setFace', 'flipDeck', 'shuffle', 'deal'
+    ].includes(move.name) && !move.name.startsWith('reorder-'));
+    if (visibleMoves.length === 0)`,
+        ],
+        ['controls.moves.map((pendingMove, i) => {', 'visibleMoves.map((pendingMove, i) => {'],
+        [
+          'className: `player-controls ${controls.name.replace(":", "-")}`',
+          'className: `player-controls ${controls.name.replace(":", "-")} ${visibleMoves.some(move => move.name === "takeTrick") ? "winner-controls" : ""}`',
+        ],
+      ];
+      for (const [before, after] of replacements) {
+        if (!source.includes(before)) throw new Error('Boardzilla controls patch no longer matches PlayerControls.js');
         source = source.replace(before, after);
       }
       return { contents: source, loader: 'js' };
@@ -115,5 +195,5 @@ await build({
   keepNames: true,
   assetNames: 'assets/[name]-[hash]',
   loader: { '.svg': 'file', '.png': 'file', '.jpg': 'file', '.jpeg': 'file', '.webp': 'file', '.ttf': 'file', '.scss': 'css', '.ogg': 'dataurl' },
-  plugins: [boardzillaStorePlugin, boardzillaDragPlugin, sassPlugin()],
+  plugins: [boardzillaStorePlugin, boardzillaDragPlugin, boardzillaControlsPlugin, sassPlugin()],
 });

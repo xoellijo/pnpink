@@ -43,6 +43,10 @@ def player_for_game(player: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def is_seated_player(player: dict[str, Any]) -> bool:
+    return player["position"] is not None and not bool(player.get("spectator"))
+
+
 def game_for_session(request: web.Request, session: dict[str, Any]) -> GameDefinition:
     return request.app[GAMES_KEY].get(session["game_name"])
 
@@ -80,7 +84,7 @@ def users_event(db: Database, session: dict[str, Any]) -> dict[str, Any]:
     users = []
     for player in db.players(session["id"]):
         details = None
-        if player["position"] is not None:
+        if is_seated_player(player):
             details = {
                 "color": player["color"],
                 "position": player["position"],
@@ -101,11 +105,19 @@ def users_event(db: Database, session: dict[str, Any]) -> dict[str, Any]:
 
 
 def effective_position(db: Database, session: dict[str, Any], update: dict[str, Any] | None = None) -> int | None:
-    if bool(session.get("spectator")) or session.get("view_position") == -1:
+    if bool(session.get("spectator")):
+        if session.get("view_position") not in (None, -1):
+            return int(session["view_position"])
         current_players = (update or json_value(session.get("state"), {})).get("game", {}).get("currentPlayers", [])
         if current_players:
             return int(current_players[0])
-        seated = [player["position"] for player in db.players(session["id"]) if player["position"] is not None]
+        seated = [player["position"] for player in db.players(session["id"]) if is_seated_player(player)]
+        return int(seated[0]) if seated else None
+    if session.get("view_position") == -1:
+        current_players = (update or json_value(session.get("state"), {})).get("game", {}).get("currentPlayers", [])
+        if current_players:
+            return int(current_players[0])
+        seated = [player["position"] for player in db.players(session["id"]) if is_seated_player(player)]
         return int(seated[0]) if seated else None
     if bool(session.get("host")) and session.get("view_position") is not None:
         return int(session["view_position"])
@@ -230,8 +242,13 @@ async def join_session(request: web.Request) -> web.Response:
     db = request.app[DB_KEY]
     session = db.session_by_invite(request.match_info["code"])
     game = game_for_session(request, session)
-    players = [player_for_game(player) for player in db.players(session["id"]) if player["position"] is not None]
+    seated = [player for player in db.players(session["id"]) if is_seated_player(player)]
+    if len(seated) >= session["seat_count"]:
+        raise ValueError("All player seats are occupied; join as a spectator instead")
+    players = [player_for_game(player) for player in seated]
     seat = await asyncio.to_thread(request.app[RUNNER_KEY].seat_player, game.server_bundle, players, session["seat_count"], game.play_manifest)
+    if not seat or seat.get("position") is None:
+        raise ValueError("No player seat is available; join as a spectator instead")
     result = db.join_session(session["invite_code"], str(body.get("name", "Player")).strip() or "Player", seat)
     request.app[EVENTS_KEY].publish(session["id"])
     return web.json_response(result, status=201)
@@ -250,15 +267,19 @@ async def get_session(request: web.Request) -> web.Response:
     session, game = session_and_player(request)
     position = effective_position(request.app[DB_KEY], session)
     current_players = json_value(session.get("state"), {}).get("game", {}).get("currentPlayers", [])
-    players = [
-        {"position": player["position"], "name": player["name"], "color": player["color"]}
-        for player in request.app[DB_KEY].players(session["id"])
-        if player["position"] is not None
-    ]
+    administrator = is_administrator(session)
+    players = []
+    for player in request.app[DB_KEY].players(session["id"]):
+        if not is_seated_player(player):
+            continue
+        details = {"position": player["position"], "name": player["name"], "color": player["color"]}
+        if administrator:
+            details["sessionURL"] = f"/s/{player['access_token']}"
+        players.append(details)
     return web.json_response(
         {
             "host": bool(session["host"]),
-            "administrator": is_administrator(session),
+            "administrator": administrator,
             "adminMode": bool(session["admin_mode"]),
             "spectator": bool(session.get("spectator")),
             "position": session["position"],
@@ -300,17 +321,19 @@ async def update_settings(request: web.Request) -> web.Response:
 
 async def update_players(request: web.Request) -> web.Response:
     session, game = session_and_player(request)
+    if session.get("spectator"):
+        raise PermissionError("Spectators cannot change players")
     body = await request.json()
     db = request.app[DB_KEY]
     async with request.app[LOCKS_KEY][session["id"]]:
         db.apply_operations(session["id"], session, body.get("operations", []))
         refreshed = db.session_by_token(session["access_token"])
         players = db.players(session["id"])
-        ready = [player for player in players if player["position"] is not None and player["ready"]]
+        ready = [player for player in players if is_seated_player(player) and player["ready"]]
         if refreshed["phase"] == "new" and len(ready) == refreshed["seat_count"]:
             setup = {
                 "randomSeed": refreshed["random_seed"],
-                "players": [player_for_game(player) for player in players if player["position"] is not None],
+                "players": [player_for_game(player) for player in players if is_seated_player(player)],
                 "settings": json_value(refreshed["settings"], {}),
             }
             update = await asyncio.to_thread(request.app[RUNNER_KEY].initial_state, game.server_bundle, setup, game.play_manifest)
@@ -370,13 +393,13 @@ async def undo(request: web.Request) -> web.Response:
 
 async def set_perspective(request: web.Request) -> web.Response:
     session, _ = session_and_player(request)
-    if not is_administrator(session):
-        raise PermissionError("Only the administrator can change perspective")
+    if not is_administrator(session) and not session.get("spectator"):
+        raise PermissionError("Only administrators and spectators can change perspective")
     body = await request.json()
     value = body.get("position")
     position = None if value is None else int(value)
     valid = {-1}
-    valid.update(int(player["position"]) for player in request.app[DB_KEY].players(session["id"]) if player["position"] is not None)
+    valid.update(int(player["position"]) for player in request.app[DB_KEY].players(session["id"]) if is_seated_player(player))
     if position is not None and position not in valid:
         raise ValueError("Invalid player perspective")
     request.app[DB_KEY].set_view_position(session["access_token"], position)
@@ -499,7 +522,7 @@ async def session_socket(request: web.Request) -> web.WebSocketResponse:
 async def ui_html(request: web.Request) -> web.Response:
     session, game = session_and_player(request)
     position = effective_position(request.app[DB_KEY], session)
-    viewed_player = next((player for player in request.app[DB_KEY].players(session["id"]) if player["position"] == position), None)
+    viewed_player = next((player for player in request.app[DB_KEY].players(session["id"]) if is_seated_player(player) and player["position"] == position), None)
     bootstrap = {
         "host": bool(session["host"]),
         "userID": viewed_player["session_user_id"] if viewed_player else session["session_user_id"],
@@ -583,4 +606,3 @@ def create_app(game_roots: list[Path], database_path: Path) -> web.Application:
     app.router.add_get("/sessions/{token}/ui.html", ui_html)
     app.router.add_get("/sessions/{token}/{path:.*}", ui_asset)
     return app
-

@@ -42,7 +42,9 @@ players:
 
 turns:
   mode: trick-assisted
-  order: clockwise
+  order: right
+  maxCardsPerPlay: 1
+  winnerDecider: last
 
 setup:
   - shuffle: deck
@@ -64,6 +66,15 @@ Image paths inside `items.json` are relative to that file. See
 `trick-assisted` advances after each played card, pauses after every player has
 played, and asks who takes the trick. The selected winner receives the cards
 and leads next. It deliberately does not validate suits, trump or winners.
+
+`order` accepts `right` (the default/current order) or `left` and controls which
+seat plays next. `maxCardsPerPlay` is the maximum group played as one atomic
+move; it defaults to `1`, accepts any positive integer, and `0` removes the
+limit for games such as Tichu. The destination area's `maxDrop` still applies.
+
+`winnerDecider` controls who may choose the trick winner: `last` (default),
+`next-to-last`, `host`, or `all`. With `all`, any player may resolve the trick;
+it does not introduce voting or require every player to confirm the result.
 
 Coordinates are percentages of the game canvas. Player areas may define
 different rectangles for their owner and their opponents, so every player sees

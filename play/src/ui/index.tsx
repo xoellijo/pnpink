@@ -29,6 +29,7 @@ function useContextTrigger(open: (x: number, y: number) => void, tap?: () => voi
     onContextMenu: (event: React.MouseEvent) => {
       event.preventDefault();
       event.stopPropagation();
+      event.nativeEvent.stopImmediatePropagation();
       open(event.clientX, event.clientY);
     },
     onPointerDown: (event: React.PointerEvent) => {
@@ -77,14 +78,19 @@ function ZoneView({ zone, viewer }: { zone: PlayZone; viewer: PlayPlayer }) {
   const { consumeClick: consumeZoneClick, ...contextHandlers } = useContextTrigger(function showZoneActions(x, y) {
     const actions: ContextAction[] = [];
     const node = elementNode(zone);
-    if (node) actions.push({
+    const zoneInfo: ContextAction | undefined = node ? {
       label: 'Info',
       icon: 'griddy-icons:info-circle',
       run: () => openPreview({ label: zoneSummary(zone), node }),
-    });
-    const selectTop = topSelectionActions(zone, () => queueMicrotask(() => showZoneActions(x, y)));
+    } : undefined;
+    const top = zone.top(PlayPiece);
+    const stackInfo = top ? pieceInfoAction(top, viewer) : undefined;
+    const selectTop = topSelectionActions(zone, stackInfo, () => queueMicrotask(() => showZoneActions(x, y)));
     if (selectTop) actions.push(selectTop);
-    if (canChoose(zone, 'shuffle')) {
+    else if (zoneInfo) actions.push(zoneInfo);
+    const stackOperations = stackOperationActions(zone, viewer);
+    actions.push(...stackOperations);
+    if (!stackOperations.length && canChoose(zone, 'shuffle')) {
       actions.push({ label: 'Shuffle', icon: 'mdi:shuffle-variant', run: () => chooseElement(zone, 'shuffle') });
     }
     if (canChoose(zone, 'draw')) {
@@ -155,6 +161,7 @@ function zoneIcon(zone: PlayZone): string {
   if (zone.definitionId === 'tricks') return 'griddy-icons:trophy';
   if (zone.kind === 'center' || zone.kind === 'table') return 'griddy-icons:grid-alt';
   if (zone.kind === 'deck' || zone.definitionId === 'deck') return 'griddy-icons:layers';
+  if (zone.kind === 'hand') return 'mdi:hand-back-right-outline';
   if (zone.ownerPosition >= 0) return 'griddy-icons:user-circle';
   return 'griddy-icons:component-card';
 }
@@ -175,21 +182,97 @@ function shortcutsForZone(zone: PlayZone): HoverShortcuts {
   };
 }
 
-function topSelectionActions(zone: PlayZone, refresh?: () => void): ContextAction | undefined {
+function pieceInfoAction(piece: PlayPiece, viewer: PlayPlayer): ContextAction | undefined {
+  const visible = piece.isVisibleTo(viewer);
+  const source = visible && piece.faceUp || !piece.back ? piece.front : piece.back;
+  return source ? {
+    label: 'Info',
+    icon: 'griddy-icons:info-circle',
+    iconOnly: true,
+    run: () => openPreview({ label: visible ? piece.label : 'Hidden component', source: assetUrl(source) }),
+  } : undefined;
+}
+
+function topSelectionActions(zone: PlayZone, info?: ContextAction, refresh?: () => void): ContextAction | undefined {
   if (!isStackedZone(zone)) return undefined;
-  const counts: Array<number | 'all'> = [2, 3, 4, 5, 6, 7, 8, 9, 10, 'all'];
+  const size = zone.all(PlayPiece).length;
+  const counts: Array<number | 'all'> = Array.from(
+    { length: Math.max(0, Math.min(10, size) - 1) },
+    (_, index) => index + 2,
+  );
+  if (size > 10) counts.push('all');
   const selected = selectedElements().filter(candidate => candidate instanceof PlayPiece && candidate.container() === zone);
   return {
     label: 'Select top cards',
-    row: counts.map(count => ({
+    compactRow: true,
+    row: [...(info ? [info] : []), ...counts.map(count => ({
       label: count === 'all' ? 'All' : String(count),
       active: selected.length === (count === 'all' ? zone.all(PlayPiece).length : Math.min(count, zone.all(PlayPiece).length)),
       run: () => {
         setSelected(count === 'all' ? [...zone.all(PlayPiece)] : [...zone.topN(count, PlayPiece)]);
         refresh?.();
       },
-    })),
+    }))],
   };
+}
+
+function stackOperationActions(zone: PlayZone, viewer: PlayPlayer): ContextAction[] {
+  if (!isStackedZone(zone)) return [];
+  const pieces = [...zone.all(PlayPiece)];
+  const top = zone.top(PlayPiece);
+  if (!top) return [];
+  const flippable = new Set(zone.game.flippablePieces(viewer));
+  const canFlipTop = hasPendingAction('flip') && flippable.has(top);
+  const allHaveBacks = pieces.every(piece => Boolean(piece.back));
+  const canFlipAll = canFlipTop && allHaveBacks && pieces.every(piece => flippable.has(piece));
+  const canSetAll = hasPendingAction('setFace') && canFlipAll;
+  const flipActions: ContextAction[] = [];
+  if (canFlipTop) {
+    flipActions.push({
+      label: 'Flip',
+      icon: 'mdi:flip-horizontal',
+      run: () => chooseElement(top, 'flip'),
+    });
+  }
+  const topFaceUp = top.faceUp;
+  if (canSetAll) {
+    flipActions.push({
+      label: topFaceUp ? 'Back all' : 'Front all',
+      icon: topFaceUp ? 'mdi:eye-off-outline' : 'mdi:eye-outline',
+      run: () => submitChoice('setFace', { piece: top, pieces, faceUp: !topFaceUp }),
+    });
+  }
+  const canFlipDeck = hasPendingAction('flipDeck') && zone.game.flippableStacks(viewer).includes(zone);
+  if (canFlipDeck) {
+    flipActions.push({
+      label: 'Flip deck',
+      icon: 'mdi:cards-outline',
+      run: () => submitChoice('flipDeck', { target: zone }),
+    });
+  }
+  const pileActions: ContextAction[] = [];
+  const canShuffle = hasPendingAction('shuffle') && zone.game.shuffleTargets(viewer).includes(zone);
+  if (canShuffle) {
+    pileActions.push({
+      label: 'Shuffle',
+      icon: 'mdi:shuffle-variant',
+      run: () => submitChoice('shuffle', { target: zone }),
+    });
+  }
+  const canDeal = hasPendingAction('deal') && zone.game.dealSources(viewer).includes(zone);
+  if (canDeal) {
+    const maximum = zone.game.maximumDealCount(zone);
+    for (let count = 1; count <= maximum; count += 1) {
+      pileActions.push({
+        label: count === 1 ? 'Deal' : String(count),
+        run: () => submitChoice('deal', { source: zone, count }),
+      });
+    }
+  }
+  return [
+    ...(flipActions.length ? [{ label: 'Flip actions', row: flipActions }] : []),
+    ...(pileActions.length ? [{ label: 'Pile actions', row: pileActions }] : []),
+  ];
 }
 
 function selectedPieceGroup(piece: PlayPiece): PlayPiece[] {
@@ -223,16 +306,19 @@ function PieceView({ piece, viewer }: { piece: PlayPiece; viewer: PlayPlayer }) 
   const showActions = (x: number, y: number) => {
     const group = selectedPieceGroup(piece);
     const actions: ContextAction[] = [];
-    const selectTop = topSelectionActions(zone, () => queueMicrotask(() => showActions(x, y)));
+    const info = pieceInfoAction(piece, viewer);
+    const selectTop = topSelectionActions(zone, info, () => queueMicrotask(() => showActions(x, y)));
     if (selectTop) actions.push(selectTop);
-    if (source) {
+    const stackOperations = stackOperationActions(zone, viewer);
+    actions.push(...stackOperations);
+    if (!selectTop && info) {
       actions.push({
         label: 'Info',
         icon: 'griddy-icons:info-circle',
-        run: () => openPreview({ label: visible ? piece.label : 'Hidden component', source: assetUrl(source) }),
+        run: info.run,
       });
     }
-    if (group.every(candidate => canChoose(candidate, 'flip'))) {
+    if (!stackOperations.length && group.every(candidate => canChoose(candidate, 'flip'))) {
       actions.push({ label: group.length > 1 ? `Flip ${group.length}` : 'Flip', icon: 'mdi:flip-horizontal', run: () => flipSelection(piece) });
     }
     if (canChoose(piece, 'move')) {
@@ -242,6 +328,7 @@ function PieceView({ piece, viewer }: { piece: PlayPiece; viewer: PlayPlayer }) 
         row: [{
           label: group.length > 1 ? `Move ${group.length} to` : 'Move to',
           icon: 'griddy-icons:arrow-right',
+          run: () => chooseElement(piece, 'move'),
         }, ...targets.map(target => ({
           label: `Move to ${target.label}`,
           icon: zoneIcon(target),
@@ -250,14 +337,6 @@ function PieceView({ piece, viewer }: { piece: PlayPiece; viewer: PlayPlayer }) 
             ? submitChoice('move', { piece, pieces: group, target })
             : chooseSequence('move', piece, target),
         }))],
-      });
-    }
-    const reorderAction = reorderActionName(piece.game.zoneOf(piece)!);
-    if (group.length === 1 && canChoose(piece, reorderAction)) {
-      actions.push({
-        label: 'Reorder here',
-        icon: 'mdi:swap-horizontal',
-        run: () => chooseElement(piece, reorderAction),
       });
     }
     if (group.every(candidate => canChoose(candidate, 'discard'))) {
@@ -273,7 +352,7 @@ function PieceView({ piece, viewer }: { piece: PlayPiece; viewer: PlayPlayer }) 
         })),
       });
     }
-    if (actions.length) contextMenu.show({ title: visible ? piece.label : 'Card', x, y, actions });
+    if (actions.length) contextMenu.show({ title: '', x, y, actions });
   };
   const selectable = canChoose(piece, 'move') || canChoose(piece, reorderActionName(zone));
   const hoverShortcuts: HoverShortcuts = {
@@ -471,7 +550,16 @@ function trickSlot(piece: PlayPiece, viewer: PlayPlayer): Box {
 function Table({ game, viewer }: { game: PlayGame; viewer: PlayPlayer }) {
   const current = game.players.current();
   const selectionRectangle = useLassoSelection();
-  return <main className="play-table" style={{ background: manifest.board.background }}>
+  const playerColors = Object.fromEntries([...game.players].map((player, index) => [`--player-${index + 1}`, player.color]));
+  useEffect(() => {
+    const gameRoot = document.querySelector<HTMLElement>('#game');
+    if (!gameRoot) return;
+    for (const [property, color] of Object.entries(playerColors)) gameRoot.style.setProperty(property, String(color));
+    return () => {
+      for (const property of Object.keys(playerColors)) gameRoot.style.removeProperty(property);
+    };
+  }, [game]);
+  return <main className="play-table" style={{ background: manifest.board.background, ...playerColors } as React.CSSProperties}>
     <header><div><h1>{manifest.name}</h1><p>{manifest.description}</p></div><div className="turn-status">{game.trickComplete ? 'Trick complete' : current ? `${current.name}'s turn` : 'Free play'}</div></header>
     <footer><ProfileBadge player={viewer} /> Drag a highlighted card or tap it to play.</footer>
     <PreviewOverlay />
