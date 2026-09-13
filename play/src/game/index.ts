@@ -1,10 +1,19 @@
 import { createGame, Game, Piece, Player, Space, Stack } from '@boardzilla/core';
-import { AreaAction, AreaDefinition, AreaVisibility, currentManifest, setupOperations } from '../manifest.js';
+import { D6 } from '@boardzilla/core/components';
+import { AreaAction, AreaDefinition, AreaHideMode, AreaVisibility, currentManifest, PieceDefinition, setupOperations, ToolboxDefinition } from '../manifest.js';
 
 export const manifest = currentManifest();
 
 export class PlayPlayer extends Player<PlayGame, PlayPlayer> {
   host = false;
+}
+
+export class PlayToolbox extends Space<PlayGame, PlayPlayer> {
+  definitionId = '';
+  label = '';
+  scope: ToolboxDefinition['scope'] = 'shared';
+  side: ToolboxDefinition['side'] = 'left';
+  ownerPosition = -1;
 }
 
 export class PlayZone extends Space<PlayGame, PlayPlayer> {
@@ -17,6 +26,16 @@ export class PlayZone extends Space<PlayGame, PlayPlayer> {
   insert: 'top' | 'bottom' = 'top';
   allowShuffle = false;
   allowDeal = false;
+  canHide?: AreaHideMode;
+  concealedFor: number[] = [];
+  syncHidden = false;
+  toolboxId = '';
+  infinite = false;
+
+  toJSON(seenBy?: number) {
+    this.blockViewFor(seenBy !== undefined && areaIsConcealedFrom(this, seenBy) ? 'all' : 'none');
+    return super.toJSON(seenBy);
+  }
 }
 
 export class PlayStack extends Stack<PlayGame> {
@@ -30,9 +49,38 @@ export class PlayStack extends Stack<PlayGame> {
   allowShuffle = true;
   allowDeal = true;
   shuffleVersion = 0;
+  canHide?: AreaHideMode;
+  concealedFor: number[] = [];
+  syncHidden = false;
+  toolboxId = '';
+  infinite = false;
+
+  toJSON(seenBy?: number) {
+    this.blockViewFor(seenBy !== undefined && areaIsConcealedFrom(this, seenBy) ? 'all' : 'none');
+    return super.toJSON(seenBy);
+  }
 }
 
 export type PlayArea = PlayZone | PlayStack;
+
+export function areaIsConcealedFrom(zone: PlayArea, position: number): boolean {
+  if (!zone.canHide || zone.ownerPosition === position) return false;
+  if (zone.canHide === 'sync') {
+    return zone.game.areas().some(candidate => (
+      candidate.definitionId === zone.definitionId && candidate.syncHidden
+    ));
+  }
+  return zone.concealedFor.includes(position);
+}
+
+export function areaIsConcealed(zone: PlayArea): boolean {
+  if (zone.canHide === 'sync') {
+    return zone.game.areas().some(candidate => (
+      candidate.definitionId === zone.definitionId && candidate.syncHidden
+    ));
+  }
+  return zone.concealedFor.length > 0;
+}
 
 export class PlayPiece extends Piece<PlayGame, PlayPlayer> {
   componentId = '';
@@ -41,9 +89,36 @@ export class PlayPiece extends Piece<PlayGame, PlayPlayer> {
   back = '';
   faceUp = true;
   playedByPosition = -1;
+  pieceType: PieceDefinition['type'] = 'card';
+  color = '';
+  value = '';
+  homeAreaId = '';
+  infiniteSource = false;
 }
 
 PlayPiece.revealWhenHidden('back', 'faceUp');
+
+export class PlayResource extends PlayPiece {}
+
+export class PlayDie extends D6<PlayGame> {
+  componentId = '';
+  label = '';
+  color = '';
+  value = '';
+  homeAreaId = '';
+  infiniteSource = false;
+}
+
+export type PlayItem = PlayPiece | PlayDie;
+export type PlayDestination = PlayArea | PlayToolbox;
+
+export function isPlayItem(value: unknown): value is PlayItem {
+  return value instanceof PlayPiece || value instanceof PlayDie;
+}
+
+export function areaItems(zone: PlayArea): PlayItem[] {
+  return [...zone.all(Piece)].filter(isPlayItem);
+}
 
 export function reorderActionName(zone: PlayArea): string {
   return `reorder-${zone.definitionId}`;
@@ -53,9 +128,14 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
   repeatAction = false;
   trickLeaderPosition = 1;
   trickComplete = false;
+  resourceSequence = 0;
 
   areas(): PlayArea[] {
     return [...this.all(PlayZone), ...this.all(PlayStack)];
+  }
+
+  toolboxes(): PlayToolbox[] {
+    return this.all(PlayToolbox);
   }
 
   initialize(): void {
@@ -78,7 +158,7 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
       }
     }
     for (const zone of this.areas()) {
-      for (const piece of zone.all(PlayPiece)) this.applyVisibility(piece, zone);
+      for (const piece of areaItems(zone)) this.applyVisibility(piece, zone);
     }
   }
 
@@ -90,7 +170,7 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
     return this.areas().find(zone => zone.definitionId === id && zone.ownerPosition === player.position);
   }
 
-  zoneOf(piece: PlayPiece): PlayArea | undefined {
+  zoneOf(piece: PlayItem): PlayArea | undefined {
     const container = piece.container();
     return container instanceof PlayZone || container instanceof PlayStack ? container : undefined;
   }
@@ -119,28 +199,35 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
     return this.zonesWith('move-to', player).filter(zone => zone.ownerPosition === player.position);
   }
 
-  movablePieces(player: PlayPlayer): PlayPiece[] {
-    return this.zonesWith('move-from', player).flatMap(zone => zone.all(PlayPiece));
+  movablePieces(player: PlayPlayer): PlayItem[] {
+    return this.zonesWith('move-from', player).flatMap(areaItems);
   }
 
-  moveTargets(player: PlayPlayer, piece: PlayPiece): PlayArea[] {
-    const current = this.zoneOf(piece);
-    return this.zonesWith('move-to', player).filter(zone => zone !== current);
-  }
-
-  moveTargetsForPieces(player: PlayPlayer, pieces: PlayPiece[]): PlayArea[] {
-    return this.zonesWith('move-to', player).filter(zone => {
+  moveTargetsForPieces(player: PlayPlayer, pieces: PlayItem[]): PlayDestination[] {
+    const areas = this.zonesWith('move-to', player).filter(zone => {
       const definition = manifest.areas.find(candidate => candidate.id === zone.definitionId);
       return pieces.every(piece => this.zoneOf(piece) !== zone)
+        && (zone.kind !== 'supply' || pieces.every(piece => (
+          piece.homeAreaId === zone.definitionId
+          && (zone.ownerPosition < 0 || zone.ownerPosition === player.position)
+        )))
         && (definition?.maxDrop === undefined || pieces.length <= definition.maxDrop)
-        && this.canPlayTrickPieces(player, pieces, zone);
+        && this.canPlayTrickPieces(player, pieces.filter((piece): piece is PlayPiece => piece instanceof PlayPiece), zone);
     });
+    const toolboxes = this.toolboxes().filter(toolbox => (
+      (toolbox.ownerPosition < 0 || toolbox.ownerPosition === player.position)
+      && pieces.every(piece => {
+        const returnArea = this.returnAreaFor(piece, toolbox);
+        return Boolean(returnArea && returnArea !== this.zoneOf(piece));
+      })
+    ));
+    return [...areas, ...toolboxes];
   }
 
-  selectedPieces(player: PlayPlayer, anchor: PlayPiece, selected?: PlayPiece[]): PlayPiece[] {
+  selectedPieces(player: PlayPlayer, anchor: PlayItem, selected?: PlayItem[]): PlayItem[] {
     const movable = new Set(this.movablePieces(player));
     if (!selected) return movable.has(anchor) ? [anchor] : [];
-    if (!selected.includes(anchor) || selected.some(piece => !(piece instanceof PlayPiece) || !movable.has(piece))) return [];
+    if (!selected.includes(anchor) || selected.some(piece => !isPlayItem(piece) || !movable.has(piece))) return [];
     const unique = [...new Set(selected)];
     if (unique.every(piece => piece.container() === unique[0].container())) {
       unique.sort((left, right) => left.position() - right.position());
@@ -148,8 +235,17 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
     return unique;
   }
 
-  discardablePieces(player: PlayPlayer): PlayPiece[] {
+  discardablePieces(player: PlayPlayer): PlayItem[] {
     return this.movablePieces(player).filter(piece => this.zoneOf(piece)?.kind !== 'discard');
+  }
+
+  returnAreaFor(piece: PlayItem, toolbox: PlayToolbox): PlayArea | undefined {
+    if (!piece.homeAreaId) return undefined;
+    return this.areas().find(zone => (
+      zone.toolboxId === toolbox.definitionId
+      && zone.definitionId === piece.homeAreaId
+      && zone.ownerPosition === toolbox.ownerPosition
+    ));
   }
 
   discardTargets(): PlayArea[] {
@@ -220,13 +316,13 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
   }
 
   flippablePieces(player: PlayPlayer): PlayPiece[] {
-    return this.movablePieces(player).filter(piece => Boolean(piece.back));
+    return this.movablePieces(player).filter((piece): piece is PlayPiece => piece instanceof PlayPiece && Boolean(piece.back));
   }
 
   flippableStacks(player: PlayPlayer): PlayArea[] {
     return this.areas().filter(zone => (
       this.canControl(player, zone)
-      && zone.all(PlayPiece).length > 1
+      && areaItems(zone).length > 1
       && zone.all(PlayPiece).every(piece => Boolean(piece.back))
     ));
   }
@@ -234,7 +330,7 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
   shuffleTargets(player: PlayPlayer): PlayArea[] {
     return this.areas().filter(zone => (
       this.canControl(player, zone)
-      && zone.all(PlayPiece).length > 1
+      && areaItems(zone).length > 1
       && zone.allowShuffle
     ));
   }
@@ -247,6 +343,63 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
     ));
   }
 
+  rollableDice(player: PlayPlayer): PlayDie[] {
+    return this.movablePieces(player).filter((piece): piece is PlayDie => piece instanceof PlayDie);
+  }
+
+  hideableZones(player: PlayPlayer): PlayArea[] {
+    return this.areas().filter(zone => zone.ownerPosition === player.position && Boolean(zone.canHide));
+  }
+
+  concealChoices(player: PlayPlayer, zone: PlayArea): Array<{ choice: string; label: string }> {
+    if (zone.ownerPosition !== player.position || !zone.canHide) return [];
+    if (zone.canHide === 'toggle') {
+      const hidden = zone.concealedFor.length > 0;
+      return [{ choice: hidden ? 'show' : 'hide', label: hidden ? 'Show area' : 'Hide area' }];
+    }
+    if (zone.canHide === 'sync') {
+      return [{ choice: zone.syncHidden ? 'show' : 'hide', label: zone.syncHidden ? 'Show area' : 'Hide all matching areas' }];
+    }
+    const others = [...this.players].filter(candidate => candidate.position !== player.position);
+    const allHidden = others.every(candidate => zone.concealedFor.includes(candidate.position));
+    return [
+      { choice: 'all', label: allHidden ? 'Show to everyone' : 'Hide from everyone' },
+      ...others.map(candidate => ({
+        choice: `player:${candidate.position}`,
+        label: zone.concealedFor.includes(candidate.position) ? `Show to ${candidate.name}` : `Hide from ${candidate.name}`,
+      })),
+    ];
+  }
+
+  setAreaConcealment(player: PlayPlayer, zone: PlayArea, operation: string): void {
+    if (zone.ownerPosition !== player.position || !zone.canHide) return;
+    const others = [...this.players].filter(candidate => candidate.position !== player.position).map(candidate => candidate.position);
+    if (zone.canHide === 'toggle') {
+      zone.concealedFor = operation === 'hide' ? others : [];
+      return;
+    }
+    if (zone.canHide === 'sync') {
+      if (operation === 'hide') {
+        for (const candidate of this.areas()) {
+          if (candidate.definitionId === zone.definitionId) candidate.syncHidden = true;
+        }
+      } else if (operation === 'show') {
+        zone.syncHidden = false;
+      }
+      return;
+    }
+    if (operation === 'all') {
+      zone.concealedFor = others.every(position => zone.concealedFor.includes(position)) ? [] : others;
+      return;
+    }
+    if (!operation.startsWith('player:')) return;
+    const position = Number(operation.slice('player:'.length));
+    if (!others.includes(position)) return;
+    zone.concealedFor = zone.concealedFor.includes(position)
+      ? zone.concealedFor.filter(candidate => candidate !== position)
+      : [...zone.concealedFor, position];
+  }
+
   maximumDealCount(source: PlayArea): number {
     return Math.min(8, Math.floor(source.all(PlayPiece).length / this.players.length));
   }
@@ -256,9 +409,23 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
     if (target instanceof PlayStack) target.shuffleVersion += 1;
   }
 
-  movePiece(piece: PlayPiece, target: PlayArea): void {
+  movePiece(piece: PlayItem, destination: PlayDestination): void {
+    const source = this.zoneOf(piece);
+    const target = destination instanceof PlayToolbox ? this.returnAreaFor(piece, destination) : destination;
+    if (!target) return;
+    const comesFromInfiniteSupply = piece.infiniteSource || Boolean(
+      manifest.areas.find(candidate => candidate.id === piece.homeAreaId)?.infinite,
+    );
+    if (target.infinite && comesFromInfiniteSupply && piece.homeAreaId === target.definitionId) {
+      piece.remove();
+      return;
+    }
+    if (source?.infinite) {
+      const replacement = piece.cloneInto(source) as PlayItem;
+      this.applyVisibility(replacement, source);
+    }
     if (target instanceof PlayStack && target.insert === 'top') piece.putInto(target);
-    else piece.putInto(target, { position: target.insert === 'top' ? 0 : target.all(PlayPiece).length });
+    else piece.putInto(target, { position: target.insert === 'top' ? 0 : areaItems(target).length });
     this.applyVisibility(piece, target);
   }
 
@@ -268,7 +435,7 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
     if (zone) this.applyVisibility(piece, zone);
   }
 
-  applyVisibility(piece: PlayPiece, zone: PlayArea): void {
+  applyVisibility(piece: PlayItem, zone: PlayArea): void {
     if (zone.visibility === 'hidden') {
       piece.hideFromAll();
       return;
@@ -279,18 +446,56 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
       else piece.hideFromAll();
       return;
     }
-    if (piece.faceUp) piece.showToAll();
+    if (!(piece instanceof PlayPiece) || piece.faceUp) piece.showToAll();
     else piece.hideFromAll();
+  }
+
+  createItem(componentId: string, target: PlayArea, ownerPosition = -1): PlayItem {
+    const definition = manifest.pieces.find(candidate => candidate.id === componentId);
+    if (!definition) throw new Error(`Unknown component: ${componentId}`);
+    const name = `${definition.id}-${ownerPosition < 0 ? 'shared' : ownerPosition}-${this.resourceSequence++}`;
+    const common = {
+      componentId: definition.id,
+      label: definition.label,
+      color: definition.color ?? '',
+      value: String(definition.value ?? ''),
+      homeAreaId: definition.initial.area,
+      infiniteSource: target.infinite,
+    };
+    if (definition.type === 'd6') return target.create(PlayDie, name, common);
+    const PieceClass = definition.type === 'token' || definition.type === 'chip' ? PlayResource : PlayPiece;
+    return target.create(PieceClass, name, {
+      ...common,
+      pieceType: definition.type ?? 'card',
+      front: definition.front ?? '',
+      back: definition.back ?? '',
+      faceUp: definition.initial.faceUp ?? target.visibility === 'public',
+    });
   }
 }
 
 export default createGame(PlayPlayer, PlayGame, game => {
   const { action } = game;
   const { eachPlayer, forLoop, loop, playerActions } = game.flowCommands;
-  game.registerClasses(PlayZone, PlayStack, PlayPiece);
+  game.registerClasses(PlayToolbox, PlayZone, PlayStack, PlayPiece, PlayResource, PlayDie);
+
+  for (const definition of manifest.toolboxes ?? []) {
+    const owners = definition.scope === 'player' ? game.players : [undefined];
+    for (const owner of owners) {
+      game.create(PlayToolbox, definition.id, {
+        definitionId: definition.id,
+        label: definition.label,
+        scope: definition.scope,
+        side: definition.side ?? (definition.scope === 'shared' ? 'left' : 'right'),
+        ownerPosition: owner?.position ?? -1,
+        player: owner,
+      });
+    }
+  }
 
   for (const definition of manifest.areas) {
-    const pileByDefault = ['stack', 'deck', 'discard'].includes(definition.kind);
+    const pileByDefault = ['stack', 'deck', 'discard', 'supply'].includes(definition.kind);
+    const cardPileByDefault = ['stack', 'deck', 'discard'].includes(definition.kind);
     const properties = {
       definitionId: definition.id,
       label: definition.label,
@@ -298,17 +503,26 @@ export default createGame(PlayPlayer, PlayGame, game => {
       visibility: definition.visibility,
       actions: definition.actions ?? [],
       insert: definition.insert ?? 'top',
-      allowShuffle: definition.allowShuffle ?? (definition.actions?.includes('shuffle') || pileByDefault),
-      allowDeal: definition.allowDeal ?? (definition.actions?.includes('deal') || pileByDefault),
+      allowShuffle: definition.allowShuffle ?? (definition.actions?.includes('shuffle') || cardPileByDefault),
+      allowDeal: definition.allowDeal ?? (definition.actions?.includes('deal') || cardPileByDefault),
+      canHide: definition.canHide,
+      toolboxId: definition.toolbox ?? '',
+      infinite: definition.infinite ?? false,
     };
     if (definition.scope === 'shared') {
-      if (pileByDefault) game.create(PlayStack, definition.id, { ...properties, ownerPosition: -1 });
-      else game.create(PlayZone, definition.id, { ...properties, ownerPosition: -1 });
+      const parent = definition.toolbox
+        ? game.toolboxes().find(toolbox => toolbox.definitionId === definition.toolbox && toolbox.ownerPosition < 0) ?? game
+        : game;
+      if (pileByDefault) parent.create(PlayStack, definition.id, { ...properties, ownerPosition: -1 });
+      else parent.create(PlayZone, definition.id, { ...properties, ownerPosition: -1 });
     } else {
       for (const player of game.players) {
         const playerProperties = { ...properties, ownerPosition: player.position, player };
-        if (pileByDefault) game.create(PlayStack, definition.id, playerProperties);
-        else game.create(PlayZone, definition.id, playerProperties);
+        const parent = definition.toolbox
+          ? game.toolboxes().find(toolbox => toolbox.definitionId === definition.toolbox && toolbox.ownerPosition === player.position) ?? game
+          : game;
+        if (pileByDefault) parent.create(PlayStack, definition.id, playerProperties);
+        else parent.create(PlayZone, definition.id, playerProperties);
       }
     }
   }
@@ -318,6 +532,7 @@ export default createGame(PlayPlayer, PlayGame, game => {
     else if (zone.visibility === 'owner') zone.contentsWillBeShownToOwner();
     else zone.contentsWillBeHidden();
     zone.onEnter(PlayPiece, piece => game.applyVisibility(piece, zone));
+    zone.onEnter(PlayDie, piece => game.applyVisibility(piece, zone));
   }
 
   for (const definition of manifest.pieces) {
@@ -329,13 +544,7 @@ export default createGame(PlayPlayer, PlayGame, game => {
         : game.sharedZone(definition.initial.area);
       if (!target) throw new Error(`Initial area not found: ${definition.initial.area}`);
       for (let copy = 0; copy < copies; copy += 1) {
-        target.create(PlayPiece, `${definition.id}-${owner?.position ?? 'shared'}-${copy}`, {
-          componentId: definition.id,
-          label: definition.label,
-          front: definition.front,
-          back: definition.back ?? '',
-          faceUp: definition.initial.faceUp ?? target.visibility === 'public',
-        });
+        game.createItem(definition.id, target, owner?.position ?? -1);
       }
     }
   }
@@ -347,15 +556,15 @@ export default createGame(PlayPlayer, PlayGame, game => {
       const zone = definition.scope === 'shared'
         ? game.sharedZone(definition.id)
         : game.playerZone(player, definition.id);
-      const pieces: PlayPiece[] = zone ? [...zone.all(PlayPiece)] : [];
+      const pieces: PlayItem[] = zone ? areaItems(zone) : [];
       const reorder = action({ prompt: `Reorder ${definition.label}`, condition: pieces.length > 1 })
         .chooseOnBoard('__reorder_from__', pieces, { prompt: `Choose a component in ${definition.label}` })
         .chooseOnBoard('__reorder_to__', rawArgs => {
           const { __reorder_from__, pieces: selected } = rawArgs as unknown as {
-            __reorder_from__: PlayPiece;
-            pieces?: PlayPiece[];
+            __reorder_from__: PlayItem;
+            pieces?: PlayItem[];
           };
-          const group = game.selectedPieces(player, __reorder_from__ as PlayPiece, selected as PlayPiece[] | undefined);
+          const group = game.selectedPieces(player, __reorder_from__, selected);
           if (group.some(piece => game.zoneOf(piece) !== zone)) return [];
           return pieces.filter(piece => !group.includes(piece));
         }, { prompt: `Drag onto another component in ${definition.label}` });
@@ -364,9 +573,9 @@ export default createGame(PlayPlayer, PlayGame, game => {
       return reorder
         .do(rawArgs => {
           const args = rawArgs as unknown as {
-            __reorder_from__: PlayPiece;
-            __reorder_to__: PlayPiece;
-            pieces?: PlayPiece[];
+            __reorder_from__: PlayItem;
+            __reorder_to__: PlayItem;
+            pieces?: PlayItem[];
           };
           const group = game.selectedPieces(player, args.__reorder_from__, args.pieces)
             .sort((left, right) => left.position() - right.position());
@@ -385,18 +594,19 @@ export default createGame(PlayPlayer, PlayGame, game => {
     const result = action({ prompt: 'Move a component', condition: game.movablePieces(player).length > 0 })
       .chooseOnBoard('piece', game.movablePieces(player), { prompt: 'Choose a component' })
       .chooseOnBoard('target', rawArgs => {
-        const { piece, pieces } = rawArgs as unknown as { piece: PlayPiece; pieces?: PlayPiece[] };
+        const { piece, pieces } = rawArgs as unknown as { piece: PlayItem; pieces?: PlayItem[] };
         return game.moveTargetsForPieces(player, game.selectedPieces(player, piece, pieces));
       }, { prompt: 'Choose its destination' })
       .do(rawArgs => {
-        const { piece, pieces, target } = rawArgs as unknown as { piece: PlayPiece; pieces?: PlayPiece[]; target: PlayArea };
+        const { piece, pieces, target } = rawArgs as unknown as { piece: PlayItem; pieces?: PlayItem[]; target: PlayDestination };
         const selected = game.selectedPieces(player, piece, pieces);
-        const trickPlay = game.isTrickPlay(player, selected, target);
+        const selectedCards = selected.filter((candidate): candidate is PlayPiece => candidate instanceof PlayPiece);
+        const trickPlay = target instanceof PlayToolbox ? false : selectedCards.length === selected.length && game.isTrickPlay(player, selectedCards, target);
         for (const selectedPiece of selected) {
-          if (trickPlay) {
+          if (trickPlay && selectedPiece instanceof PlayPiece) {
             selectedPiece.faceUp = true;
             selectedPiece.playedByPosition = player.position;
-          } else if (target !== game.center()) {
+          } else if (selectedPiece instanceof PlayPiece && target !== game.center()) {
             selectedPiece.playedByPosition = -1;
           }
           game.movePiece(selectedPiece, target);
@@ -412,7 +622,7 @@ export default createGame(PlayPlayer, PlayGame, game => {
     const result = action({ prompt: 'Discard a component', condition: game.discardablePieces(player).length > 0 && game.discardTargets().length > 0 })
       .chooseOnBoard('piece', game.discardablePieces(player), { prompt: 'Choose a component to discard' })
       .chooseOnBoard('target', rawArgs => {
-        const { piece, pieces } = rawArgs as unknown as { piece: PlayPiece; pieces?: PlayPiece[] };
+        const { piece, pieces } = rawArgs as unknown as { piece: PlayItem; pieces?: PlayItem[] };
         const selected = game.selectedPieces(player, piece, pieces);
         const discardable = new Set(game.discardablePieces(player));
         if (!selected.length || selected.some(candidate => !discardable.has(candidate))) return [];
@@ -422,9 +632,9 @@ export default createGame(PlayPlayer, PlayGame, game => {
         });
       }, { prompt: 'Choose a discard pile' })
       .do(rawArgs => {
-        const { piece, pieces, target } = rawArgs as unknown as { piece: PlayPiece; pieces?: PlayPiece[]; target: PlayArea };
+        const { piece, pieces, target } = rawArgs as unknown as { piece: PlayItem; pieces?: PlayItem[]; target: PlayArea };
         for (const selectedPiece of game.selectedPieces(player, piece, pieces)) {
-          selectedPiece.faceUp = true;
+          if (selectedPiece instanceof PlayPiece) selectedPiece.faceUp = true;
           game.movePiece(selectedPiece, target);
         }
         game.repeatAction = true;
@@ -517,6 +727,21 @@ export default createGame(PlayPlayer, PlayGame, game => {
         game.repeatAction = true;
       }).message('{{player}} deals cards.'),
 
+    roll: player => action({ prompt: 'Roll a die', condition: game.rollableDice(player).length > 0 })
+      .chooseOnBoard('die', game.rollableDice(player), { prompt: 'Choose a die' })
+      .do(({ die }) => {
+        die.roll();
+        game.repeatAction = true;
+      }).message('{{player}} rolls {{die}}.'),
+
+    concealArea: player => action({ condition: game.hideableZones(player).length > 0 })
+      .chooseOnBoard('zone', game.hideableZones(player), { skipIf: 'never' })
+      .chooseFrom('operation', ({ zone }) => game.concealChoices(player, zone), { prompt: 'Choose visibility' })
+      .do(({ zone, operation }) => {
+        game.setAreaConcealment(player, zone, operation);
+        game.repeatAction = true;
+      }).message('{{player}} changes an area visibility.'),
+
     takeTrick: () => action({ prompt: 'Take trick', condition: game.trickComplete })
       .chooseFrom('winner', [...game.players].map(player => ({
         choice: player.position,
@@ -542,7 +767,7 @@ export default createGame(PlayPlayer, PlayGame, game => {
   });
 
   const reorderActionNames = reorderDefinitions.map(definition => `reorder-${definition.id}`);
-  const genericActions = ['draw', 'move', ...reorderActionNames, 'discard', 'flip', 'setFace', 'flipDeck', 'shuffle', 'deal', 'endTurn'];
+  const genericActions = ['draw', 'move', ...reorderActionNames, 'discard', 'flip', 'setFace', 'flipDeck', 'shuffle', 'deal', 'roll', 'concealArea', 'endTurn'];
   const turnMode = manifest.turns?.mode ?? 'guided';
   const maximumTrickCards = manifest.turns?.maxCardsPerPlay ?? 1;
   if (turnMode === 'free') {
@@ -573,7 +798,7 @@ export default createGame(PlayPlayer, PlayGame, game => {
               prompt: maximumTrickCards === 0
                 ? 'Play one or more cards'
                 : `Play up to ${maximumTrickCards} card${maximumTrickCards === 1 ? '' : 's'}`,
-              actions: ['move', ...reorderActionNames, 'flip', 'setFace', 'flipDeck', 'shuffle', 'deal'],
+              actions: ['move', ...reorderActionNames, 'flip', 'setFace', 'flipDeck', 'shuffle', 'deal', 'roll', 'concealArea'],
               skipIf: 'always',
             })],
           })],

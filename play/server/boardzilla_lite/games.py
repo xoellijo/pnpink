@@ -50,6 +50,18 @@ def _load_play_manifest(root: Path) -> dict[str, Any] | None:
         if item.get("back"):
             piece["back"] = _asset_path(root, source_path.parent, str(item["back"]))
         expanded.append(piece)
+    extras = pieces.get("extra", [])
+    if not isinstance(extras, list):
+        raise ValueError("pieces.extra must be a list")
+    for index, item in enumerate(extras, 1):
+        if not isinstance(item, dict) or not item.get("id") or not item.get("initial"):
+            raise ValueError(f"Invalid extra piece #{index}")
+        piece = dict(item)
+        if piece.get("front"):
+            piece["front"] = _asset_path(root, root, str(piece["front"]))
+        if piece.get("back"):
+            piece["back"] = _asset_path(root, root, str(piece["back"]))
+        expanded.append(piece)
     manifest["pieces"] = expanded
     return manifest
 
@@ -133,4 +145,3 @@ class GameRegistry:
 
     def all(self) -> list[GameDefinition]:
         return sorted(self._games.values(), key=lambda game: game.friendly_name.lower())
-

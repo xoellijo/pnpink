@@ -167,7 +167,7 @@ const boardzillaControlsPlugin = {
           `if (!position || !controls)
         return null;
     const visibleMoves = controls.moves.filter(move => ![
-        'draw', 'move', 'discard', 'flip', 'setFace', 'flipDeck', 'shuffle', 'deal'
+        'draw', 'move', 'discard', 'flip', 'setFace', 'flipDeck', 'shuffle', 'deal', 'roll', 'concealArea'
     ].includes(move.name) && !move.name.startsWith('reorder-'));
     if (visibleMoves.length === 0)`,
         ],

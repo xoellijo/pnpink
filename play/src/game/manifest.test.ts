@@ -4,7 +4,13 @@ import { PlayManifest, validateManifest } from '../manifest.js';
 
 describe('play manifest', () => {
   it('accepts the generic table example', () => {
-    expect(validateManifest(rawManifest as PlayManifest).areas).toHaveLength(6);
+    const manifest = validateManifest(rawManifest as PlayManifest);
+    expect(manifest.areas).toHaveLength(10);
+    expect(manifest.toolboxes).toHaveLength(2);
+    expect(manifest.areas.find(area => area.id === 'shared-tokens')).toMatchObject({
+      toolbox: 'general-tools',
+      infinite: true,
+    });
   });
 
   it('rejects unknown initial areas', () => {

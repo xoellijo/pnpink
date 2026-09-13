@@ -2,6 +2,10 @@ export type AreaScope = 'shared' | 'player';
 export type AreaVisibility = 'public' | 'owner' | 'hidden';
 export type AreaKind = 'hand' | 'stack' | 'center' | 'free' | 'table' | 'deck' | 'discard' | 'area' | 'supply';
 export type AreaAction = 'draw' | 'move-from' | 'move-to' | 'discard-to' | 'shuffle' | 'deal';
+export type AreaHideMode = 'toggle' | 'sync' | 'select';
+export type ToolboxScope = 'shared' | 'player';
+export type ToolboxSide = 'left' | 'right';
+export type PieceType = 'card' | 'token' | 'chip' | 'd6';
 export type TurnMode = 'free' | 'guided' | 'trick-assisted';
 export type TurnOrder = 'right' | 'left' | 'clockwise' | 'counterclockwise';
 export type WinnerDecider = 'all' | 'last' | 'next-to-last' | 'host';
@@ -33,15 +37,28 @@ export interface AreaDefinition {
   insert?: 'top' | 'bottom';
   allowShuffle?: boolean;
   allowDeal?: boolean;
+  canHide?: AreaHideMode;
+  toolbox?: string;
+  infinite?: boolean;
   layout: AreaLayout;
+}
+
+export interface ToolboxDefinition {
+  id: string;
+  label: string;
+  scope: ToolboxScope;
+  side?: ToolboxSide;
 }
 
 export interface PieceDefinition {
   id: string;
   label: string;
+  type?: PieceType;
   copies?: number;
-  front: string;
+  front?: string;
   back?: string;
+  color?: string;
+  value?: string | number;
   initial: {
     area: string;
     forEachPlayer?: boolean;
@@ -68,6 +85,7 @@ export interface PlayManifest {
     aspectRatio: number;
     background?: string;
   };
+  toolboxes?: ToolboxDefinition[];
   areas: AreaDefinition[];
   pieces: PieceDefinition[];
   setup?: Array<
@@ -91,12 +109,28 @@ export function currentManifest(): PlayManifest {
 export function validateManifest(value: PlayManifest): PlayManifest {
   if (value.schema !== 1) throw new Error(`Unsupported play manifest schema: ${value.schema}`);
   const areaIds = new Set<string>();
+  const toolboxIds = new Set<string>();
+  for (const toolbox of value.toolboxes ?? []) {
+    if (toolboxIds.has(toolbox.id)) throw new Error(`Duplicate toolbox: ${toolbox.id}`);
+    toolboxIds.add(toolbox.id);
+    if (toolbox.side !== undefined && !['left', 'right'].includes(toolbox.side)) {
+      throw new Error(`Toolbox ${toolbox.id} has an invalid side`);
+    }
+  }
   for (const area of value.areas) {
     if (areaIds.has(area.id)) throw new Error(`Duplicate area: ${area.id}`);
     areaIds.add(area.id);
-    if (area.scope === 'shared' && !area.layout.shared) throw new Error(`Shared area ${area.id} needs layout.shared`);
-    if (area.scope === 'player' && (!area.layout.owner || !area.layout.opponent)) {
+    if (!area.toolbox && area.scope === 'shared' && !area.layout.shared) throw new Error(`Shared area ${area.id} needs layout.shared`);
+    if (!area.toolbox && area.scope === 'player' && (!area.layout.owner || !area.layout.opponent)) {
       throw new Error(`Player area ${area.id} needs owner and opponent layouts`);
+    }
+    if (area.toolbox) {
+      const toolbox = value.toolboxes?.find(candidate => candidate.id === area.toolbox);
+      if (!toolbox) throw new Error(`Area ${area.id} uses unknown toolbox ${area.toolbox}`);
+      if (toolbox.scope !== area.scope) throw new Error(`Area ${area.id} and toolbox ${area.toolbox} need the same scope`);
+    }
+    if (area.infinite !== undefined && typeof area.infinite !== 'boolean') {
+      throw new Error(`Area ${area.id} has an invalid infinite value`);
     }
     if (area.maxDrop !== undefined && (!Number.isInteger(area.maxDrop) || area.maxDrop < 1)) {
       throw new Error(`Area ${area.id} has an invalid maxDrop`);
@@ -110,6 +144,12 @@ export function validateManifest(value: PlayManifest): PlayManifest {
     if (area.allowDeal !== undefined && typeof area.allowDeal !== 'boolean') {
       throw new Error(`Area ${area.id} has an invalid allowDeal value`);
     }
+    if (area.canHide !== undefined && !['toggle', 'sync', 'select'].includes(area.canHide)) {
+      throw new Error(`Area ${area.id} has an invalid canHide mode`);
+    }
+    if (area.canHide !== undefined && area.scope !== 'player') {
+      throw new Error(`Hideable area ${area.id} must have player scope`);
+    }
   }
   for (const piece of value.pieces) {
     const area = value.areas.find(candidate => candidate.id === piece.initial.area);
@@ -117,6 +157,9 @@ export function validateManifest(value: PlayManifest): PlayManifest {
     if (piece.initial.forEachPlayer && area.scope !== 'player') {
       throw new Error(`${piece.id} uses forEachPlayer with shared area ${area.id}`);
     }
+    const type = piece.type ?? 'card';
+    if (!['card', 'token', 'chip', 'd6'].includes(type)) throw new Error(`${piece.id} has an invalid piece type`);
+    if (type === 'card' && !piece.front) throw new Error(`Card ${piece.id} needs a front image`);
   }
   if (value.players?.count !== undefined && (value.players.min !== undefined || value.players.max !== undefined)) {
     throw new Error('players.count cannot be combined with players.min or players.max');

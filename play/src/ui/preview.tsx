@@ -4,6 +4,7 @@ export interface PreviewItem {
   label: string;
   source?: string;
   node?: HTMLElement;
+  content?: React.ReactNode;
 }
 
 const previewEvent = 'pnpink-play-preview';
@@ -86,7 +87,9 @@ export function PreviewOverlay() {
     <figure className="card-preview" onPointerDown={event => event.stopPropagation()}>
       {item.source
         ? <img src={item.source} alt={item.label} />
-        : <div ref={content} className="component-preview" />}
+        : item.content
+          ? <div className="component-preview">{item.content}</div>
+          : <div ref={content} className="component-preview" />}
       <figcaption>{item.label}</figcaption>
     </figure>
   </div>;

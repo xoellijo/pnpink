@@ -8,6 +8,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from .history_codec import DELTA, SNAPSHOT, apply_history, compress_state, decompress_state, encode_history, state_text
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -15,14 +17,15 @@ CREATE TABLE IF NOT EXISTS sessions (
     game_name TEXT NOT NULL,
     phase TEXT NOT NULL DEFAULT 'new',
     next_seq INTEGER NOT NULL DEFAULT 0,
-    state TEXT NOT NULL DEFAULT '{}',
-    initial_state TEXT NOT NULL DEFAULT '{}',
+    state BLOB,
+    initial_state BLOB,
     invite_code TEXT NOT NULL UNIQUE,
     settings TEXT NOT NULL DEFAULT '{}',
     random_seed TEXT NOT NULL,
     allow_undo INTEGER NOT NULL DEFAULT 1,
     admin_mode INTEGER NOT NULL DEFAULT 1,
     seat_count INTEGER NOT NULL,
+    current_node_id INTEGER,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -37,27 +40,20 @@ CREATE TABLE IF NOT EXISTS session_players (
     settings TEXT NOT NULL DEFAULT '{}',
     access_token TEXT NOT NULL UNIQUE,
     ready INTEGER NOT NULL DEFAULT 0,
+    view_position INTEGER,
+    spectator INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(session_id, session_user_id),
     UNIQUE(session_id, position)
-);
-CREATE TABLE IF NOT EXISTS session_states (
-    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    seq INTEGER NOT NULL,
-    state TEXT NOT NULL,
-    move TEXT NOT NULL,
-    position INTEGER NOT NULL,
-    processing_time_ms INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY(session_id, seq)
 );
 CREATE TABLE IF NOT EXISTS history_nodes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     parent_id INTEGER REFERENCES history_nodes(id) ON DELETE CASCADE,
     depth INTEGER NOT NULL,
-    state TEXT NOT NULL,
+    payload_kind INTEGER NOT NULL,
+    payload BLOB NOT NULL,
     move TEXT NOT NULL,
     position INTEGER NOT NULL,
     processing_time_ms INTEGER NOT NULL DEFAULT 0,
@@ -74,40 +70,12 @@ class Database:
         self.path = path.expanduser().resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
+            version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+            tables = connection.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' LIMIT 1").fetchone()
+            if tables and version != 2:
+                raise RuntimeError("The database uses an incompatible history format; start with a new database")
             connection.executescript(SCHEMA)
-            self._migrate(connection)
-
-    @staticmethod
-    def _columns(connection: sqlite3.Connection, table: str) -> set[str]:
-        return {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})")}
-
-    def _migrate(self, connection: sqlite3.Connection) -> None:
-        session_columns = self._columns(connection, "sessions")
-        if "current_node_id" not in session_columns:
-            connection.execute("ALTER TABLE sessions ADD COLUMN current_node_id INTEGER")
-        if "admin_mode" not in session_columns:
-            connection.execute("ALTER TABLE sessions ADD COLUMN admin_mode INTEGER NOT NULL DEFAULT 1")
-        player_columns = self._columns(connection, "session_players")
-        if "view_position" not in player_columns:
-            connection.execute("ALTER TABLE session_players ADD COLUMN view_position INTEGER")
-        if "spectator" not in player_columns:
-            connection.execute("ALTER TABLE session_players ADD COLUMN spectator INTEGER NOT NULL DEFAULT 0")
-        sessions = connection.execute("SELECT id FROM sessions WHERE current_node_id IS NULL").fetchall()
-        for session in sessions:
-            existing = connection.execute("SELECT 1 FROM history_nodes WHERE session_id = ? LIMIT 1", (session["id"],)).fetchone()
-            if existing:
-                continue
-            parent_id = None
-            depth = 0
-            for state in connection.execute("SELECT * FROM session_states WHERE session_id = ? ORDER BY seq", (session["id"],)):
-                depth += 1
-                cursor = connection.execute(
-                    "INSERT INTO history_nodes(session_id, parent_id, depth, state, move, position, processing_time_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (session["id"], parent_id, depth, state["state"], state["move"], state["position"], state["processing_time_ms"], state["created_at"]),
-                )
-                parent_id = int(cursor.lastrowid)
-            if parent_id is not None:
-                connection.execute("UPDATE sessions SET current_node_id = ?, next_seq = ? WHERE id = ?", (parent_id, depth, session["id"]))
+            connection.execute("PRAGMA user_version = 2")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -212,14 +180,20 @@ class Database:
             ).fetchone()
         if row is None:
             raise LookupError("Session token not found")
-        return dict(row)
+        session = dict(row)
+        session["state"] = state_text(session["state"])
+        session["initial_state"] = state_text(session["initial_state"])
+        return session
 
     def session_by_invite(self, code: str) -> dict[str, Any]:
         with self.connect() as connection:
             row = connection.execute("SELECT * FROM sessions WHERE invite_code = ?", (code.upper(),)).fetchone()
         if row is None:
             raise LookupError("Room not found")
-        return dict(row)
+        session = dict(row)
+        session["state"] = state_text(session["state"])
+        session["initial_state"] = state_text(session["initial_state"])
+        return session
 
     def players(self, session_id: int) -> list[dict[str, Any]]:
         with self.connect() as connection:
@@ -291,7 +265,7 @@ class Database:
                     raise ValueError(f"Unknown player operation: {kind}")
 
     def start_session(self, session_id: int, update: dict[str, Any]) -> None:
-        encoded = json.dumps(update, separators=(",", ":"))
+        encoded = compress_state(update)
         with self.connect() as connection:
             connection.execute(
                 "UPDATE sessions SET phase = 'started', state = ?, initial_state = ?, current_node_id = NULL, next_seq = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND phase = 'new'",
@@ -299,24 +273,52 @@ class Database:
             )
 
     def save_move(self, session_id: int, position: int, move: Any, update: dict[str, Any], processing_time_ms: int) -> None:
-        encoded = json.dumps(update, separators=(",", ":"))
+        encoded = compress_state(update)
         phase = update["game"]["phase"]
         with self.connect() as connection:
-            session = connection.execute("SELECT current_node_id FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            session = connection.execute("SELECT current_node_id, state FROM sessions WHERE id = ?", (session_id,)).fetchone()
             if session is None:
                 raise LookupError("Session not found")
             parent_id = session["current_node_id"]
             parent = connection.execute("SELECT depth FROM history_nodes WHERE id = ?", (parent_id,)).fetchone() if parent_id else None
             depth = int(parent["depth"]) + 1 if parent else 1
+            payload_kind, payload = encode_history(decompress_state(session["state"]), update, depth)
             cursor = connection.execute(
-                "INSERT INTO history_nodes(session_id, parent_id, depth, state, move, position, processing_time_ms) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (session_id, parent_id, depth, encoded, json.dumps(move), position, processing_time_ms),
+                "INSERT INTO history_nodes(session_id, parent_id, depth, payload_kind, payload, move, position, processing_time_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (session_id, parent_id, depth, payload_kind, payload, json.dumps(move), position, processing_time_ms),
             )
             node_id = int(cursor.lastrowid)
             connection.execute(
                 "UPDATE sessions SET state = ?, phase = ?, next_seq = ?, current_node_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (encoded, phase, depth, node_id, session_id),
             )
+
+    @staticmethod
+    def _node_state(connection: sqlite3.Connection, session: sqlite3.Row, node_id: int | None) -> dict[str, Any]:
+        if node_id is None:
+            return decompress_state(session["initial_state"])
+        chain = []
+        current_id: int | None = node_id
+        while current_id is not None:
+            node = connection.execute("SELECT * FROM history_nodes WHERE id = ?", (current_id,)).fetchone()
+            if node is None:
+                raise LookupError("History node not found")
+            chain.append(node)
+            if int(node["payload_kind"]) == SNAPSHOT:
+                break
+            current_id = node["parent_id"]
+        if int(chain[-1]["payload_kind"]) == SNAPSHOT:
+            state = apply_history({}, SNAPSHOT, chain[-1]["payload"])
+            pending = reversed(chain[:-1])
+        else:
+            state = decompress_state(session["initial_state"])
+            pending = reversed(chain)
+        for node in pending:
+            if int(node["payload_kind"]) != DELTA:
+                state = apply_history({}, SNAPSHOT, node["payload"])
+            else:
+                state = apply_history(state, DELTA, node["payload"])
+        return state
 
     def can_undo(self, session_id: int, position: int | None, administrator: bool = False) -> bool:
         if position is None:
@@ -344,12 +346,12 @@ class Database:
             if latest is None or (not administrator and latest["position"] != position):
                 return False
             previous = connection.execute("SELECT * FROM history_nodes WHERE id = ?", (latest["parent_id"],)).fetchone() if latest["parent_id"] else None
-            state = previous["state"] if previous else session["initial_state"]
+            state = self._node_state(connection, session, int(previous["id"]) if previous else None)
             depth = int(previous["depth"]) if previous else 0
-            phase = json.loads(state)["game"]["phase"]
+            phase = state["game"]["phase"]
             connection.execute(
                 "UPDATE sessions SET state = ?, phase = ?, next_seq = ?, current_node_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (state, phase, depth, latest["parent_id"], session_id),
+                (compress_state(state), phase, depth, latest["parent_id"], session_id),
             )
             return True
 
@@ -474,13 +476,13 @@ class Database:
             target_id = int(target["id"]) if target is not None else None
             if target_id == original_id:
                 return False
-            state = target["state"] if target is not None else session["initial_state"]
-            if not state or state == "{}":
+            state = self._node_state(connection, session, int(target["id"]) if target is not None else None)
+            if not state:
                 return False
-            phase = json.loads(state)["game"]["phase"]
+            phase = state["game"]["phase"]
             connection.execute(
                 "UPDATE sessions SET state = ?, phase = ?, next_seq = ?, current_node_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (state, phase, int(target["depth"]) if target else 0, target["id"] if target else None, session_id),
+                (compress_state(state), phase, int(target["depth"]) if target else 0, target["id"] if target else None, session_id),
             )
             return True
 

@@ -58,9 +58,12 @@ links the complete deck and chooses its initial area without listing every card:
 pieces:
   source: assets/items.json
   initial: {area: deck}
+  extra:
+    - {id: red-token, label: Red token, type: token, color: '#d94b4b', initial: {area: tokens}}
 ```
 
-Image paths inside `items.json` are relative to that file. See
+`extra` keeps reusable resources beside a linked card dataset without expanding
+the deck in YAML. Image paths inside `items.json` are relative to that file. See
 `examples/poker/play.yaml` for a complete 52-card example.
 
 `trick-assisted` advances after each played card, pauses after every player has
@@ -83,6 +86,37 @@ their own area in the preferred position.
 Set `maxDrop` on an area to limit how many selected pieces it accepts in one
 operation. For example, `maxDrop: 1` keeps a table slot single-card while a
 discard pile without that property accepts an entire selection.
+
+Player areas may also define `canHide: toggle`, `sync`, or `select`. `toggle`
+lets each owner hide or show their area, `sync` keeps every matching player
+area hidden until all owners reveal theirs, and `select` lets the owner choose
+which players can see it. Hidden contents use Boardzilla's native view
+screening, so other clients receive neither the pieces nor their count.
+
+Optional `toolboxes` place shared or player-owned trays outside the felt. An
+area joins one with `toolbox: toolbox-id`; `kind: supply` makes it a stack-like
+bowl, and `infinite: true` replenishes every component removed from it. Pieces
+accept `type: card`, `token`, `chip`, or `d6`, plus optional `color` and `value`.
+Dropping a resource on its toolbox returns it to the matching supply declared
+by its initial area. Toolboxes are omitted entirely when the manifest does not
+define them.
+
+```yaml
+toolboxes:
+  - {id: general-tools, label: General tools, scope: shared, side: left}
+areas:
+  - id: red-tokens
+    label: Red tokens
+    kind: supply
+    scope: shared
+    visibility: public
+    toolbox: general-tools
+    infinite: true
+    actions: [move-from, move-to]
+    layout: {rows: 1, columns: 1}
+pieces:
+  - {id: red-token, label: Red token, type: token, color: '#d94b4b', copies: 6, initial: {area: red-tokens}}
+```
 
 The runtime intentionally contains only universal tabletop operations. Rules,
 validation, scoring, and automation can later be layered on top without

@@ -10,10 +10,34 @@
     "winnerDecider": "last"
   },
   "board": {
-    "aspectRatio": 1.6,
+    "aspectRatio": 1.7,
     "background": "#173f35"
   },
+  "toolboxes": [
+    { "id": "general-tools", "label": "General tools", "scope": "shared", "side": "left" },
+    { "id": "player-tools", "label": "My tools", "scope": "player", "side": "right" }
+  ],
   "areas": [
+    {
+      "id": "shared-tokens", "label": "Tokens", "kind": "supply", "scope": "shared",
+      "visibility": "public", "toolbox": "general-tools", "infinite": true,
+      "actions": ["move-from", "move-to"], "layout": { "rows": 1, "columns": 1 }
+    },
+    {
+      "id": "shared-markers", "label": "Markers", "kind": "supply", "scope": "shared",
+      "visibility": "public", "toolbox": "general-tools", "infinite": true,
+      "actions": ["move-from", "move-to"], "layout": { "rows": 1, "columns": 1 }
+    },
+    {
+      "id": "player-chips", "label": "Poker chips", "kind": "supply", "scope": "player",
+      "visibility": "public", "toolbox": "player-tools", "infinite": true,
+      "actions": ["move-from", "move-to"], "layout": { "rows": 1, "columns": 1 }
+    },
+    {
+      "id": "player-dice", "label": "Dice", "kind": "supply", "scope": "player",
+      "visibility": "public", "toolbox": "player-tools",
+      "actions": ["move-from", "move-to"], "layout": { "rows": 1, "columns": 1 }
+    },
     {
       "id": "deck",
       "label": "Deck",
@@ -72,10 +96,11 @@
     },
     {
       "id": "player-area",
-      "label": "Player area",
+      "label": "Tableau",
       "kind": "area",
       "scope": "player",
       "visibility": "public",
+      "canHide": "toggle",
       "actions": ["move-from", "move-to"],
       "layout": {
         "owner": { "left": 2, "top": 72, "width": 18, "height": 25 },
@@ -86,6 +111,10 @@
     }
   ],
   "pieces": [
+    { "id": "red-token", "label": "Red token", "type": "token", "color": "#d94b4b", "copies": 6, "initial": { "area": "shared-tokens" } },
+    { "id": "blue-marker", "label": "Blue marker", "type": "token", "color": "#4287d9", "copies": 6, "initial": { "area": "shared-markers" } },
+    { "id": "poker-chip", "label": "Poker chip", "type": "chip", "color": "#e7c65b", "value": 5, "copies": 6, "initial": { "area": "player-chips", "forEachPlayer": true } },
+    { "id": "player-die", "label": "Player die", "type": "d6", "color": "#f4f0dd", "initial": { "area": "player-dice", "forEachPlayer": true } },
     { "id": "sun", "label": "Sun card", "copies": 18, "front": "assets/card-sun.svg", "back": "assets/card-back.svg", "initial": { "area": "deck" } },
     { "id": "moon", "label": "Moon card", "copies": 17, "front": "assets/card-moon.svg", "back": "assets/card-back.svg", "initial": { "area": "deck" } },
     { "id": "forest", "label": "Forest card", "copies": 17, "front": "assets/card-forest.svg", "back": "assets/card-back.svg", "initial": { "area": "deck" } },

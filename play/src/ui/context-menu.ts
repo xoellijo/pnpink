@@ -124,7 +124,10 @@ class ContextMenu {
       const controller = gui.add({ [key]: () => {
         this.run(action.run);
       } }, key).name(action.label);
+      controller.domElement.title = action.label;
+      controller.domElement.setAttribute('aria-label', action.label);
       if (action.icon) controller.icon(action.icon);
+      if (action.active) controller.domElement.classList.add('pnpink-active');
     }
   }
 }
@@ -146,6 +149,10 @@ export function canChoose(element: GameElement, actionName: string): boolean {
   return choicesFor(element, actionName).length > 0;
 }
 
+export function useCanChoose(element: GameElement, actionName: string): boolean {
+  return gameStore(state => choicesForState(state, element, actionName).length > 0);
+}
+
 export function chooseElement(element: GameElement, actionName: string): boolean {
   const choices = choicesFor(element, actionName);
   if (!choices.length) return false;
@@ -158,6 +165,16 @@ export function chooseSequence(actionName: string, ...elements: GameElement[]): 
   for (const element of elements) {
     if (!chooseElement(element, actionName)) return false;
   }
+  return true;
+}
+
+export function beginChoice(actionName: string, args: Record<string, unknown>): boolean {
+  const state = gameStore.getState();
+  const move = state.pendingMoves?.find(candidate => candidate.name === actionName);
+  if (!move) return false;
+  clearTransientDragVisuals();
+  state.clearMove();
+  gameStore.getState().selectMove(move, args);
   return true;
 }
 
@@ -176,7 +193,10 @@ export function hasPendingAction(actionName: string): boolean {
 }
 
 function choicesFor(element: GameElement, actionName: string) {
-  const state = gameStore.getState();
+  return choicesForState(gameStore.getState(), element, actionName);
+}
+
+function choicesForState(state: ReturnType<typeof gameStore.getState>, element: GameElement, actionName: string) {
   const selections = state.boardSelections[element.branch()];
   if (!selections) return [];
   return [...new Set([

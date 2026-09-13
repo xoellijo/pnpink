@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from boardzilla_lite.database import Database
+from boardzilla_lite.history_codec import DELTA, SNAPSHOT, SNAPSHOT_INTERVAL, apply_history, encode_history
 
 
 class DatabaseTests(unittest.TestCase):
@@ -92,7 +93,35 @@ class DatabaseTests(unittest.TestCase):
         current = self.db.session_by_token(session["access_token"])
         self.assertEqual(json.loads(current["state"])["marker"], "original")
 
+    def test_history_codec_preserves_reordered_boardzilla_entities(self):
+        previous = {
+            "game": {"state": {"board": [{"_id": 0, "children": [{"_id": 1}, {"_id": 2}]}]}},
+            "players": [{"position": 1, "state": {"board": [{"_ref": 0, "children": [{"_ref": 1}, {"_ref": 2}]}]}}],
+        }
+        current = {
+            "game": {"state": {"board": [{"_id": 0, "children": [{"_id": 2}, {"_id": 1, "faceUp": True}]}]}},
+            "players": [{"position": 1, "state": {"board": [{"_ref": 0, "children": [{"_ref": 2}, {"_ref": 1, "faceUp": True}]}]}}],
+        }
+        kind, payload = encode_history(previous, current, 1)
+        self.assertEqual(kind, DELTA)
+        self.assertEqual(apply_history(previous, kind, payload), current)
+
+    def test_periodic_history_node_is_snapshot(self):
+        _, session, _ = self.started_session()
+        for marker in range(1, SNAPSHOT_INTERVAL + 1):
+            update = {"game": {"phase": "started", "currentPlayers": [1]}, "players": [], "marker": marker}
+            self.db.save_move(session["id"], 1, {"marker": marker}, update, 1)
+        with self.db.connect() as connection:
+            kinds = [row["payload_kind"] for row in connection.execute(
+                "SELECT payload_kind FROM history_nodes WHERE session_id = ? ORDER BY depth", (session["id"],)
+            )]
+        self.assertEqual(kinds[:-1], [DELTA] * (SNAPSHOT_INTERVAL - 1))
+        self.assertEqual(kinds[-1], SNAPSHOT)
+        for _ in range(SNAPSHOT_INTERVAL):
+            self.assertTrue(self.db.navigate_history(session["id"], "back-action"))
+        restored = self.db.session_by_token(session["access_token"])
+        self.assertEqual(json.loads(restored["state"]), {"game": {"phase": "started", "currentPlayers": [1]}, "players": []})
+
 
 if __name__ == "__main__":
     unittest.main()
-

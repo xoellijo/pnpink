@@ -61,16 +61,6 @@ function middleTruncate(value, maximum) {
   return `${value.slice(0, left)}...${value.slice(-right)}`;
 }
 
-function compactTitle(gameName, playerName, maximum = 30) {
-  const separator = ' - ';
-  const available = maximum - separator.length;
-  let gameLength = Math.min(gameName.length, Math.ceil(available / 2));
-  let playerLength = Math.min(playerName.length, available - gameLength);
-  gameLength = Math.min(gameName.length, available - playerLength);
-  playerLength = Math.min(playerName.length, available - gameLength);
-  return `${middleTruncate(gameName, gameLength)}${separator}${middleTruncate(playerName, playerLength)}`;
-}
-
 function playerColor(position, fallback = '#394759') {
   return details.players.find(player => player.position === position)?.color || fallback;
 }
@@ -177,7 +167,7 @@ function buildServerMenu() {
   const viewer = details.players.find(player => player.position === details.position);
   const viewerColor = viewer?.color || '#4de3ad';
   const fullTitle = `${details.game.friendlyName} - ${details.playerName}`;
-  serverMenu = new XGUI({autoPlace: false, title: compactTitle(details.game.friendlyName, details.playerName), width: 258, touchStyles: false});
+  serverMenu = new XGUI({autoPlace: false, title: middleTruncate(details.playerName, 30), width: 206, touchStyles: false});
   serverMenu.domElement.classList.add('server-menu');
   serverMenu.domElement.title = fullTitle;
   serverMenu.domElement.style.setProperty('--viewer-color', viewerColor);
