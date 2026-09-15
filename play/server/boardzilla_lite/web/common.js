@@ -1,6 +1,8 @@
 const PnPInkPlay = (() => {
   const storageKey = 'pnpinkPlayTokens';
   const legacyKey = ['board', 'zillaLiteTokens'].join('');
+  const usersKey = 'pnpinkPlayUsers';
+  const activeUserKey = 'pnpinkPlayActiveUser';
   const icons = {
     'arrow-left': '<path d="M21 11.25H5.31l5.22-5.22-1.06-1.06-6.145 6.145a1.26 1.26 0 0 0 0 1.77L9.47 19.03l1.06-1.06-5.22-5.22H21z"/>',
     'arrow-right': '<path d="M20.675 11.115 14.53 4.97l-1.06 1.06 5.22 5.22H3v1.5h15.69l-5.22 5.22 1.06 1.06 6.145-6.145a1.26 1.26 0 0 0 0-1.77"/>',
@@ -10,8 +12,10 @@ const PnPInkPlay = (() => {
     'chevron-right': '<path d="m9.03 20.03-1.06-1.06L14.94 12 7.97 5.03l1.06-1.06 7.145 7.145c.485.485.485 1.28 0 1.77z"/>',
     'check': '<path d="m9.55 18.2-5.4-5.4 1.06-1.06 4.34 4.34 9.24-9.24 1.06 1.06z"/>',
     'close': '<path d="m20.28 4.78-1.06-1.06L12 10.94 4.78 3.72 3.72 4.78 10.94 12l-7.22 7.22 1.06 1.06L12 13.06l7.22 7.22 1.06-1.06L13.06 12z"/>',
+    'download': '<path d="M11.25 3h1.5v11.19l3.72-3.72 1.06 1.06L12 17.06l-5.53-5.53 1.06-1.06 3.72 3.72zM4 19h16v1.5H4z"/>',
     'eye': '<path fill-rule="evenodd" d="M2.065 12.31c.13.29 3.275 7.19 9.935 7.19s9.805-6.895 9.935-7.19l.145-.33-.165-.32C21.765 11.365 18.135 4.5 12 4.5c-6.66 0-9.805 6.905-9.935 7.2l-.135.305zM12 18c-4.95 0-7.755-4.735-8.415-5.995C4.245 10.74 7.055 6 12 6c4.525 0 7.635 4.73 8.4 6.025C19.72 13.32 16.95 18 12 18m-4-6c0 2.205 1.795 4 4 4s4-1.795 4-4-1.795-4-4-4-4 1.795-4 4m1.5 0a2.501 2.501 0 0 1 5 0 2.5 2.5 0 0 1-5 0" clip-rule="evenodd"/>',
     'home': '<path d="M19.75 21H14v-5.005a2 2 0 1 0-4 0V21H4.25C3.56 21 3 20.44 3 19.75v-9.315l8.13-7.885a1.24 1.24 0 0 1 1.74 0L21 10.435v9.315c0 .69-.56 1.25-1.25 1.25m-4.25-1.5h4v-8.435L12 3.795 4.5 11.07v8.435h4V16c0-1.93 1.57-3.5 3.5-3.5s3.5 1.57 3.5 3.5z"/>',
+    'fullscreen': '<path d="M3 9V3h6v1.5H4.5V9zm12-6h6v6h-1.5V4.5H15zM4.5 15v4.5H9V21H3v-6zM21 15v6h-6v-1.5h4.5V15z"/>',
     'link-alt-02': '<path fill-rule="evenodd" d="M10.04 13.965a5.22 5.22 0 0 0 3.71 1.535h.005c1.34 0 2.685-.51 3.71-1.535l3-3a5.26 5.26 0 0 0 0-7.425 5.26 5.26 0 0 0-7.425 0l-2.5 2.5L11.6 7.1l2.5-2.5a3.76 3.76 0 0 1 5.305 0 3.76 3.76 0 0 1 0 5.305l-3 3a3.76 3.76 0 0 1-5.305 0 3.8 3.8 0 0 1-.59-.77l-1.295.755c.225.395.505.755.825 1.075m-6.5 6.5A5.22 5.22 0 0 0 7.25 22h.005c1.34 0 2.685-.51 3.71-1.535l2.5-2.5-1.06-1.06-2.5 2.5a3.76 3.76 0 0 1-5.305 0 3.76 3.76 0 0 1 0-5.305l3-3a3.76 3.76 0 0 1 5.305 0c.23.23.425.49.59.77l1.295-.755a5 5 0 0 0-.825-1.075 5.26 5.26 0 0 0-7.425 0l-3 3a5.26 5.26 0 0 0 0 7.425" clip-rule="evenodd"/>',
     'play': '<path d="M7.25 20.18c-.215 0-.43-.055-.625-.17A1.24 1.24 0 0 1 6 18.925V5.07a1.251 1.251 0 0 1 1.875-1.085l12 6.93c.39.225.625.63.625 1.085s-.235.855-.625 1.085l-12 6.93c-.195.115-.41.17-.625.17zM7.5 5.505v12.99L18.75 12z"/>',
     'plus': '<path d="M20 11.25h-7.25V4h-1.5v7.25H4v1.5h7.25V20h1.5v-7.25H20z"/>',
@@ -35,6 +39,50 @@ const PnPInkPlay = (() => {
     localStorage.setItem(storageKey, JSON.stringify(tokens));
     if (localStorage.getItem(legacyKey)) localStorage.removeItem(legacyKey);
     return tokens;
+  }
+
+  function knownUsers() {
+    try {
+      const users = JSON.parse(localStorage.getItem(usersKey) || '[]');
+      return Array.isArray(users) ? users.filter(user => user?.id && user?.name && user?.token) : [];
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  function rememberUser(user) {
+    const users = knownUsers().filter(candidate => candidate.id !== user.id);
+    users.push({id: user.id, name: user.name, token: user.token});
+    localStorage.setItem(usersKey, JSON.stringify(users));
+    return user;
+  }
+
+  function activeUser() {
+    const users = knownUsers();
+    const token = localStorage.getItem(activeUserKey);
+    const active = users.find(user => user.token === token) || users.at(-1) || null;
+    if (active && active.token !== token) localStorage.setItem(activeUserKey, active.token);
+    return active;
+  }
+
+  function setActiveUser(user) {
+    rememberUser(user);
+    localStorage.setItem(activeUserKey, user.token);
+    return user;
+  }
+
+  function clearActiveUser() {
+    const fallback = knownUsers().at(-1);
+    if (fallback) localStorage.setItem(activeUserKey, fallback.token);
+    else localStorage.removeItem(activeUserKey);
+    return fallback || null;
+  }
+
+  function authFetch(path, options = {}, user = activeUser()) {
+    if (!user) return Promise.reject(new Error('Choose a player first'));
+    const headers = new Headers(options.headers || {});
+    headers.set('Authorization', `Bearer ${user.token}`);
+    return fetch(path, {...options, headers});
   }
 
   function saveToken(roomID, token) {
@@ -68,7 +116,11 @@ const PnPInkPlay = (() => {
     });
   }
 
-  return {loadTokens, saveToken, removeToken, escapeHTML, icon, hydrateIcons};
+  return {
+    loadTokens, saveToken, removeToken,
+    knownUsers, rememberUser, activeUser, setActiveUser, clearActiveUser, authFetch,
+    escapeHTML, icon, hydrateIcons,
+  };
 })();
 
 PnPInkPlay.hydrateIcons();
@@ -78,4 +130,3 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').catch(error => console.warn('PWA registration failed', error));
   });
 }
-

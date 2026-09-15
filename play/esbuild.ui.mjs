@@ -9,7 +9,7 @@ const boardzillaStorePlugin = {
     buildContext.onResolve({ filter: /^pnpink-boardzilla-store$/ }, () => ({
       path: path.resolve('node_modules/@boardzilla/core/entry/ui/store.js'),
     }));
-    buildContext.onLoad({ filter: /@boardzilla\/core\/entry\/ui\/store\.js$/ }, async ({ path: sourcePath }) => {
+    buildContext.onLoad({ filter: /@boardzilla[\\/]core[\\/]entry[\\/]ui[\\/]store\.js$/ }, async ({ path: sourcePath }) => {
       let source = await readFile(sourcePath, 'utf8');
       const replacements = [
         [
@@ -19,7 +19,7 @@ const boardzillaStorePlugin = {
         [
           'const elementChosen = { [move.selections[0].name]: s.gameManager.game.atBranch(dragElement) };',
           `const draggedElement = s.gameManager.game.atBranch(dragElement);
-                const selectedPieces = s.selected?.length > 1 && s.selected.includes(draggedElement) ? s.selected : undefined;
+                const selectedPieces = s.selected?.length > 1 && s.selected.some(candidate => candidate.branch() === draggedElement.branch()) ? s.selected : undefined;
                 const elementChosen = {
                     [move.selections[0].name]: draggedElement,
                     ...(selectedPieces ? { pieces: selectedPieces } : {})
@@ -27,7 +27,7 @@ const boardzillaStorePlugin = {
         ],
         [
           'get().selectMove(move, { [selection.name]: element });',
-          `const selectedPieces = move.name === 'move' && s.selected?.length > 1 && s.selected.includes(element)
+          `const selectedPieces = move.name === 'move' && s.selected?.length > 1 && s.selected.some(candidate => candidate.branch() === element.branch())
                 ? s.selected
                 : undefined;
             get().selectMove(move, {
@@ -48,10 +48,14 @@ const boardzillaStorePlugin = {
 const boardzillaDragPlugin = {
   name: 'boardzilla-drag-compatibility',
   setup(buildContext) {
-    buildContext.onLoad({ filter: /@boardzilla\/core\/entry\/ui\/game\/components\/Element\.js$/ }, async ({ path: sourcePath }) => {
+    buildContext.onLoad({ filter: /@boardzilla[\\/]core[\\/]entry[\\/]ui[\\/]game[\\/]components[\\/]Element\.js$/ }, async ({ path: sourcePath }) => {
       let source = await readFile(sourcePath, 'utf8');
       const replacements = [
         ['if (!isMobile && element instanceof Piece) {', 'if (element instanceof Piece) {'],
+        [
+          's.selected?.includes(element) || Object.values(s.move?.args || {}).some',
+          's.selected?.some(candidate => candidate.branch() === element.branch()) || Object.values(s.move?.args || {}).some',
+        ],
         ['const domElement = useRef(null);', `const domElement = useRef(null);
     const touchDrop = useRef({ active: false, target: undefined });
     const dragGroupOffsets = useRef(new Map());`],
@@ -63,9 +67,9 @@ const boardzillaDragPlugin = {
           `wrapper.current.setAttribute('data-lasty', String(data.lastY));
             dragGroupOffsets.current.clear();
             const selected = gameStore.getState().selected ?? [];
-            if (selected.length > 1 && selected.includes(element)) {
+            if (selected.length > 1 && selected.some(candidate => candidate.branch() === element.branch())) {
                 const anchorRect = wrapper.current.getBoundingClientRect();
-                selected.filter(candidate => candidate !== element).forEach((candidate, index) => {
+                selected.filter(candidate => candidate.branch() !== element.branch()).forEach((candidate, index) => {
                     const peer = document.getElementById(candidate.name)?.parentElement;
                     if (!peer?.classList.contains('transform-wrapper')) return;
                     const peerRect = peer.getBoundingClientRect();
@@ -80,7 +84,7 @@ const boardzillaDragPlugin = {
           'setDragging({ deltaY, deltaX });',
           `setDragging({ deltaY, deltaX });
                 for (const selected of gameStore.getState().selected ?? []) {
-                    if (selected === element) continue;
+                    if (selected.branch() === element.branch()) continue;
                     const peer = document.getElementById(selected.name)?.parentElement;
                     if (!peer?.classList.contains('transform-wrapper')) continue;
                     const offset = dragGroupOffsets.current.get(selected.name) ?? { x: 0, y: 0 };
@@ -157,7 +161,7 @@ const boardzillaDragPlugin = {
 const boardzillaControlsPlugin = {
   name: 'boardzilla-controls',
   setup(buildContext) {
-    buildContext.onLoad({ filter: /@boardzilla\/core\/entry\/ui\/game\/components\/PlayerControls\.js$/ }, async ({ path: sourcePath }) => {
+    buildContext.onLoad({ filter: /@boardzilla[\\/]core[\\/]entry[\\/]ui[\\/]game[\\/]components[\\/]PlayerControls\.js$/ }, async ({ path: sourcePath }) => {
       let source = await readFile(sourcePath, 'utf8');
       const replacements = [
         [
@@ -166,9 +170,10 @@ const boardzillaControlsPlugin = {
     if (!boardPrompt && controls.moves.length === 0)`,
           `if (!position || !controls)
         return null;
-    const visibleMoves = controls.moves.filter(move => ![
-        'draw', 'move', 'discard', 'flip', 'setFace', 'flipDeck', 'shuffle', 'deal', 'roll', 'concealArea'
-    ].includes(move.name) && !move.name.startsWith('reorder-'));
+    const nativeControlMoves = ['takeTrick', 'endTurn'];
+    const visibleMoves = controls.moves.filter(move => nativeControlMoves.some(name =>
+        move.name === name || move.name.startsWith(name + ':') || move.name.endsWith(':' + name)
+    ));
     if (visibleMoves.length === 0)`,
         ],
         ['controls.moves.map((pendingMove, i) => {', 'visibleMoves.map((pendingMove, i) => {'],

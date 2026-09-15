@@ -1,37 +1,57 @@
 const gameSelect = document.querySelector('#game');
+const gameGrid = document.querySelector('#game-grid');
 const roomsNode = document.querySelector('#rooms');
 const searchNode = document.querySelector('#room-search');
 const selectAllNode = document.querySelector('#select-all');
 const deleteNode = document.querySelector('#delete-selected');
 const selectedCountNode = document.querySelector('#selected-count');
+const userSelect = document.querySelector('#active-user');
+const userDialog = document.querySelector('#user-dialog');
+const createButton = document.querySelector('#create-form button.primary-action');
+const shareUserButton = document.querySelector('#share-user');
 
 let roomData = [];
-let accessByRoom = new Map();
 const selectedRooms = new Set();
 
 async function loadGames() {
-  const data = await fetch('/games').then(response => response.json());
+  const response = await fetch('/games', {cache: 'no-store'});
+  if (!response.ok) throw new Error(await response.text());
+  const data = await response.json();
   gameSelect.innerHTML = data.games.map(game =>
-    `<option value="${PnPInkPlay.escapeHTML(game.name)}">${PnPInkPlay.escapeHTML(game.friendlyName)} Â· ${game.minPlayers}-${game.maxPlayers} players</option>`
+    `<option value="${PnPInkPlay.escapeHTML(game.name)}">${PnPInkPlay.escapeHTML(game.friendlyName)} · ${game.minPlayers}-${game.maxPlayers} players</option>`
   ).join('');
+  gameGrid.innerHTML = data.games.map((game, index) =>
+    `<div class="game-tile-shell"><button type="button" class="game-tile${index === 0 ? ' selected' : ''}" data-game="${PnPInkPlay.escapeHTML(game.name)}">
+      <span class="game-cover"${game.cover ? ` style="background-image:url('${PnPInkPlay.escapeHTML(game.cover)}')"` : ''}><span>${PnPInkPlay.escapeHTML(game.friendlyName).slice(0, 1).toUpperCase()}</span></span>
+      <span class="game-tile-copy"><strong>${PnPInkPlay.escapeHTML(game.friendlyName)}</strong><small>${game.minPlayers === game.maxPlayers ? game.minPlayers : `${game.minPlayers}–${game.maxPlayers}`} players</small></span>
+    </button>${game.designer ? `<a class="game-designer-link" href="${PnPInkPlay.escapeHTML(game.designer)}" title="Open Game Designer">Design</a>` : ''}</div>`
+  ).join('');
+  gameGrid.querySelectorAll('.game-tile').forEach(tile => tile.addEventListener('click', () => {
+    gameSelect.value = tile.dataset.game;
+    gameGrid.querySelectorAll('.game-tile').forEach(candidate => candidate.classList.toggle('selected', candidate === tile));
+  }));
 }
 
-async function resolveAccess(rooms) {
-  const tokens = PnPInkPlay.loadTokens();
-  const entries = await Promise.all(rooms.map(async room => {
-    const token = tokens[room.id];
-    if (!token) return [room.id, null];
-    try {
-      const response = await fetch(`/sessions/${token}`);
-      if (!response.ok) throw new Error();
-      const session = await response.json();
-      return [room.id, {token, owner: session.host, administrator: session.administrator}];
-    } catch (_error) {
-      PnPInkPlay.removeToken(room.id);
-      return [room.id, null];
-    }
-  }));
-  accessByRoom = new Map(entries);
+function renderUsers() {
+  const active = PnPInkPlay.activeUser();
+  userSelect.innerHTML = PnPInkPlay.knownUsers().map(user =>
+    `<option value="${PnPInkPlay.escapeHTML(user.token)}"${active?.id === user.id ? ' selected' : ''}>${PnPInkPlay.escapeHTML(user.name)}</option>`
+  ).join('');
+  createButton.disabled = !active;
+  shareUserButton.disabled = !active;
+}
+
+async function importSharedUser() {
+  const url = new URL(location.href);
+  const token = url.searchParams.get('identity');
+  if (!token) return;
+  url.searchParams.delete('identity');
+  history.replaceState(null, '', url.pathname + url.search + url.hash);
+  const candidate = {token};
+  const response = await PnPInkPlay.authFetch('/users/me', {}, candidate);
+  if (!response.ok) throw new Error('This player identity link is no longer valid');
+  const {user} = await response.json();
+  PnPInkPlay.setActiveUser({...user, token});
 }
 
 function selectedVisibleRooms() {
@@ -47,34 +67,41 @@ function updateSelection() {
   deleteNode.disabled = selectedRooms.size === 0;
 }
 
-function roomAction(room, access) {
-  if (access) return `<a class="room-action icon-action" href="/s/${access.token}" title="Resume game" aria-label="Resume game">${PnPInkPlay.icon('play')}</a>`;
-  if (room.phase === 'new') return `<a class="room-action secondary icon-action" href="/join/${room.inviteCode}" title="Join as player" aria-label="Join as player">${PnPInkPlay.icon('user-plus')}</a>`;
-  return `<a class="room-action secondary icon-action" href="/join/${room.inviteCode}?spectate=1" title="Watch as spectator" aria-label="Watch as spectator">${PnPInkPlay.icon('eye')}</a>`;
+function activityText(room) {
+  if (room.phase === 'new') return 'Waiting for players';
+  if (room.phase === 'finished') return 'Finished';
+  if (room.yourTurn) return 'Your turn';
+  if (room.waitingFor?.length) return `Waiting for ${room.waitingFor.join(', ')}`;
+  return 'In progress';
 }
 
 function renderRooms() {
   const query = searchNode.value.trim().toLowerCase();
   const filtered = roomData.filter(room =>
-    !query || `${room.friendlyName} ${room.inviteCode} ${room.phase}`.toLowerCase().includes(query)
+    !query || `${room.friendlyName} ${room.inviteCode} ${room.phase} ${activityText(room)}`.toLowerCase().includes(query)
   );
+  if (!PnPInkPlay.activeUser()) {
+    roomsNode.innerHTML = `<div class="empty-state"><span>${PnPInkPlay.icon('user')}</span><strong>Choose a player</strong><p>Each tab keeps its own active identity.</p></div>`;
+    updateSelection();
+    return;
+  }
   if (!filtered.length) {
-    roomsNode.innerHTML = `<div class="empty-state"><span>${PnPInkPlay.icon(roomData.length ? 'search' : 'sparks')}</span><strong>${roomData.length ? 'No matching rooms' : 'No rooms yet'}</strong><p>${roomData.length ? 'Try another game name or room code.' : 'Create your first persistent playtest.'}</p></div>`;
+    roomsNode.innerHTML = `<div class="empty-state"><span>${PnPInkPlay.icon(roomData.length ? 'search' : 'sparks')}</span><strong>${roomData.length ? 'No matching games' : 'No games for this player'}</strong><p>${roomData.length ? 'Try another game name or room code.' : 'Create a room or open an invitation.'}</p></div>`;
     updateSelection();
     return;
   }
   roomsNode.innerHTML = filtered.map(room => {
-    const access = accessByRoom.get(room.id);
-    const owner = Boolean(access?.owner);
     const checked = selectedRooms.has(room.id) ? ' checked' : '';
-    return `<article class="room-card">
-      <label class="room-select"${owner ? '' : ' hidden'} title="Select room"><input type="checkbox" value="${room.id}"${checked}><span></span></label>
+    const activityClass = room.yourTurn ? ' your-turn' : '';
+    return `<article class="room-card${activityClass}">
+      <label class="room-select" title="Select game"><input type="checkbox" value="${room.id}"${checked}><span></span></label>
       <div class="room-icon">${PnPInkPlay.escapeHTML(room.friendlyName).slice(0, 1).toUpperCase()}</div>
       <div class="room-info">
         <div class="room-title"><strong>${PnPInkPlay.escapeHTML(room.friendlyName)}</strong><span class="status ${PnPInkPlay.escapeHTML(room.phase)}">${PnPInkPlay.escapeHTML(room.phase)}</span></div>
-        <div class="room-meta"><code>${PnPInkPlay.escapeHTML(room.inviteCode)}</code><span>${room.players}/${room.seatCount} players</span><span>${room.spectators || 0} watching</span>${owner ? '<span class="owner-tag">Yours</span>' : ''}</div>
+        <div class="room-activity${activityClass}">${PnPInkPlay.escapeHTML(activityText(room))}</div>
+        <div class="room-meta"><code>${PnPInkPlay.escapeHTML(room.inviteCode)}</code><span>${room.players}/${room.seatCount} players</span>${room.spectator ? '<span>Watching</span>' : ''}${room.owner ? '<span class="owner-tag">Admin</span>' : ''}</div>
       </div>
-      ${roomAction(room, access)}
+      <a class="room-action icon-action" href="/s/${room.token}" title="Resume game" aria-label="Resume game">${PnPInkPlay.icon('play')}</a>
     </article>`;
   }).join('');
   roomsNode.querySelectorAll('.room-select input').forEach(input => input.addEventListener('change', () => {
@@ -86,26 +113,33 @@ function renderRooms() {
 }
 
 async function loadRooms() {
-  roomsNode.innerHTML = '<div class="loading"><span></span>Loading roomsâ€¦</div>';
-  const data = await fetch('/rooms').then(response => response.json());
-  roomData = data.rooms;
-  await resolveAccess(roomData);
-  for (const roomID of [...selectedRooms]) {
-    if (!accessByRoom.get(roomID)?.owner) selectedRooms.delete(roomID);
+  const active = PnPInkPlay.activeUser();
+  selectedRooms.clear();
+  if (!active) {
+    roomData = [];
+    renderRooms();
+    return;
   }
+  roomsNode.innerHTML = '<div class="loading"><span></span>Loading games…</div>';
+  const response = await PnPInkPlay.authFetch('/users/me/rooms');
+  if (!response.ok) throw new Error(await response.text());
+  roomData = (await response.json()).rooms;
   renderRooms();
+}
+
+function openUserDialog() {
+  document.querySelector('#user-error').textContent = '';
+  document.querySelector('#new-user-name').value = '';
+  if (userDialog.showModal) userDialog.showModal(); else userDialog.setAttribute('open', '');
+  document.querySelector('#new-user-name').focus();
 }
 
 document.querySelector('#create-form').addEventListener('submit', async event => {
   event.preventDefault();
-  const response = await fetch('/sessions', {
+  const response = await PnPInkPlay.authFetch('/sessions', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      gameName: gameSelect.value,
-      name: document.querySelector('#name').value,
-      adminMode: document.querySelector('#admin-mode').checked,
-    }),
+    body: JSON.stringify({gameName: gameSelect.value, adminMode: document.querySelector('#admin-mode').checked}),
   });
   if (!response.ok) return alert(await response.text());
   const session = await response.json();
@@ -113,6 +147,43 @@ document.querySelector('#create-form').addEventListener('submit', async event =>
   location.href = `/s/${session.playerAccessToken}`;
 });
 
+document.querySelector('#user-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const response = await fetch('/users', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: document.querySelector('#new-user-name').value}),
+  });
+  if (!response.ok) {
+    document.querySelector('#user-error').textContent = await response.text();
+    return;
+  }
+  const {user} = await response.json();
+  PnPInkPlay.setActiveUser(user);
+  userDialog.close?.();
+  renderUsers();
+  await loadRooms();
+});
+
+document.querySelector('#new-user').addEventListener('click', openUserDialog);
+shareUserButton.addEventListener('click', async () => {
+  const user = PnPInkPlay.activeUser();
+  if (!user) return;
+  const url = `${location.origin}/?identity=${encodeURIComponent(user.token)}`;
+  try {
+    await navigator.clipboard.writeText(url);
+    alert('Player identity link copied. Treat it as a private link.');
+  } catch (_error) {
+    prompt('Copy this private player identity link:', url);
+  }
+});
+document.querySelector('#cancel-user').addEventListener('click', () => userDialog.close?.());
+userSelect.addEventListener('change', async () => {
+  const user = PnPInkPlay.knownUsers().find(candidate => candidate.token === userSelect.value);
+  if (user) PnPInkPlay.setActiveUser(user);
+  renderUsers();
+  await loadRooms();
+});
 searchNode.addEventListener('input', renderRooms);
 selectAllNode.addEventListener('change', () => {
   document.querySelectorAll('.room-select:not([hidden]) input').forEach(input => {
@@ -124,22 +195,30 @@ selectAllNode.addEventListener('change', () => {
 });
 deleteNode.addEventListener('click', async () => {
   const selected = [...selectedRooms];
-  if (!selected.length || !confirm(`Delete ${selected.length} selected room${selected.length === 1 ? '' : 's'}? This cannot be undone.`)) return;
+  if (!selected.length || !confirm(`Delete ${selected.length} selected game${selected.length === 1 ? '' : 's'}? This cannot be undone.`)) return;
   deleteNode.disabled = true;
   for (const roomID of selected) {
-    const access = accessByRoom.get(roomID);
-    if (!access?.owner) continue;
-    const response = await fetch(`/sessions/${access.token}`, {method: 'DELETE'});
-    if (response.ok) {
-      PnPInkPlay.removeToken(roomID);
-      selectedRooms.delete(roomID);
-    }
+    const room = roomData.find(candidate => candidate.id === roomID);
+    if (!room?.owner) continue;
+    const response = await fetch(`/sessions/${room.token}`, {method: 'DELETE'});
+    if (response.ok) PnPInkPlay.removeToken(roomID);
   }
   await loadRooms();
 });
 document.querySelector('#refresh').addEventListener('click', loadRooms);
 
-Promise.all([loadGames(), loadRooms()]).catch(error => {
-  roomsNode.innerHTML = `<p class="error">${PnPInkPlay.escapeHTML(error)}</p>`;
-});
+async function start() {
+  await importSharedUser();
+  renderUsers();
+  await Promise.all([loadGames(), loadRooms()]);
+  if (!PnPInkPlay.knownUsers().length) {
+    document.querySelector('#cancel-user').hidden = true;
+    userDialog.addEventListener('cancel', event => event.preventDefault());
+    openUserDialog();
+  }
+}
 
+start().catch(error => {
+  renderUsers();
+  roomsNode.innerHTML = `<p class="error">${PnPInkPlay.escapeHTML(error.message || error)}</p>`;
+});

@@ -15,15 +15,19 @@ class DatabaseTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def user(self, name="Host"):
+        created = self.db.create_user(name)
+        return self.db.user_by_token(created["token"])
+
     def started_session(self):
-        created = self.db.create_session("example", "Host", 2, True, {"position": 1, "color": "#fff"})
+        created = self.db.create_session("example", self.user(), 2, True, {"position": 1, "color": "#fff"})
         session = self.db.session_by_token(created["playerAccessToken"])
         initial = {"game": {"phase": "started", "currentPlayers": [1]}, "players": []}
         self.db.start_session(session["id"], initial)
         return created, session, initial
 
     def test_sessions_survive_new_database_instance(self):
-        created = self.db.create_session("example", "Host", 2, True, {"position": 1, "color": "#fff"})
+        created = self.db.create_session("example", self.user(), 2, True, {"position": 1, "color": "#fff"})
         reopened = Database(self.db.path)
         session = reopened.session_by_token(created["playerAccessToken"])
         self.assertEqual(session["game_name"], "example")
@@ -43,8 +47,8 @@ class DatabaseTests(unittest.TestCase):
         self.assertTrue(self.db.history_status(session["id"])["canForward"])
 
     def test_spectator_is_persistent_and_not_counted_as_player(self):
-        created = self.db.create_session("example", "Host", 2, True, {"position": 1, "color": "#fff"})
-        spectator = self.db.spectate_session(created["inviteCode"], "Viewer")
+        created = self.db.create_session("example", self.user(), 2, True, {"position": 1, "color": "#fff"})
+        spectator = self.db.spectate_session(created["inviteCode"], self.user("Viewer"))
         reopened = Database(self.db.path)
         session = reopened.session_by_token(spectator["token"])
         room = reopened.rooms()[0]
@@ -54,10 +58,22 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(room["spectator_count"], 1)
 
     def test_administrator_perspective_is_persistent(self):
-        created = self.db.create_session("example", "Host", 2, True, {"position": 1, "color": "#fff"})
+        created = self.db.create_session("example", self.user(), 2, True, {"position": 1, "color": "#fff"})
         self.db.set_view_position(created["playerAccessToken"], -1)
         reopened = Database(self.db.path)
         self.assertEqual(reopened.session_by_token(created["playerAccessToken"])["view_position"], -1)
+
+    def test_user_can_join_multiple_games_and_resume_same_seat(self):
+        host = self.user("Xoel")
+        guest = self.user("Ana")
+        first = self.db.create_session("example", host, 2, True, {"position": 1, "color": "#fff"})
+        second = self.db.create_session("example", host, 2, True, {"position": 1, "color": "#fff"})
+        joined = self.db.join_session(first["inviteCode"], guest, {"position": 2, "color": "#000"})
+        resumed = self.db.join_session(first["inviteCode"], guest, {"position": 2, "color": "#000"})
+        self.assertEqual(joined["token"], resumed["token"])
+        self.assertEqual(len(self.db.rooms_for_user(host["id"])), 2)
+        self.assertEqual(len(self.db.rooms_for_user(guest["id"])), 1)
+        self.assertNotEqual(first["playerAccessToken"], second["playerAccessToken"])
 
     def test_turn_navigation_groups_consecutive_actions(self):
         _, session, _ = self.started_session()

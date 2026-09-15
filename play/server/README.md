@@ -1,4 +1,4 @@
-# PnPInk Play Server
+# PnPPlay Server
 
 This directory contains the versioned source of the lightweight local Play
 server. It uses SQLite for rooms and complete branched game history, and runs
@@ -21,3 +21,9 @@ not versioned here.
 python -m unittest discover play/server/tests
 python -m boardzilla_lite --games GAME_DIRECTORY --database data/play.db
 ```
+
+Open `/designer/GAME_NAME` from the server computer to edit a declarative
+`play.yaml`. The Game Designer builds its lil-xgui property panels from
+`web/play.schema.json`, previews area changes immediately, saves atomically,
+and notices external YAML edits. Designer write routes are unavailable through
+LAN connections; remote devices remain play-only clients.

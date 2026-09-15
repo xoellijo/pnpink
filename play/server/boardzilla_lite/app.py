@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import ipaddress
 import json
 import mimetypes
 import time
@@ -60,6 +61,21 @@ def session_and_player(request: web.Request) -> tuple[dict[str, Any], GameDefini
     return session, game_for_session(request, session)
 
 
+def authenticated_user(request: web.Request) -> dict[str, Any]:
+    authorization = request.headers.get("Authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise web.HTTPUnauthorized(text="A player identity is required")
+    try:
+        return request.app[DB_KEY].user_by_token(token)
+    except LookupError as exc:
+        raise web.HTTPUnauthorized(text=str(exc)) from exc
+
+
+def public_user(user: dict[str, Any]) -> dict[str, Any]:
+    return {"id": user["public_id"], "name": user["name"]}
+
+
 def public_room(room: dict[str, Any], games: GameRegistry) -> dict[str, Any]:
     try:
         game = games.get(room["game_name"])
@@ -77,6 +93,41 @@ def public_room(room: dict[str, Any], games: GameRegistry) -> dict[str, Any]:
         "seatCount": room["seat_count"],
         "updatedAt": room["updated_at"],
     }
+
+
+def user_room(room: dict[str, Any], games: GameRegistry, players: list[dict[str, Any]]) -> dict[str, Any]:
+    result = public_room(room, games)
+    current_players = json_value(room.get("state"), {}).get("game", {}).get("currentPlayers", [])
+    position = room.get("player_position")
+    your_turn = room["phase"] == "started" and position is not None and position in current_players
+    waiting_for = [
+        player["name"] for player in players
+        if is_seated_player(player) and player["position"] in current_players
+    ]
+    result.update(
+        {
+            "token": room["player_access_token"],
+            "owner": bool(room["player_host"]),
+            "spectator": bool(room["player_spectator"]),
+            "yourTurn": your_turn,
+            "waitingFor": waiting_for,
+        }
+    )
+    return result
+
+
+def is_local_request(request: web.Request) -> bool:
+    try:
+        address = ipaddress.ip_address(request.remote or "")
+    except ValueError:
+        return False
+    mapped_address = getattr(address, "ipv4_mapped", None)
+    return address.is_loopback or bool(mapped_address and mapped_address.is_loopback)
+
+
+def require_local_designer(request: web.Request) -> None:
+    if not is_local_request(request):
+        raise web.HTTPForbidden(text="The Game Designer is only available from this computer")
 
 
 def users_event(db: Database, session: dict[str, Any]) -> dict[str, Any]:
@@ -184,17 +235,31 @@ async def session_page(request: web.Request) -> web.FileResponse:
     return web.FileResponse(files("boardzilla_lite").joinpath("web/session.html"))
 
 
-async def web_asset(request: web.Request) -> web.FileResponse:
+async def designer_page(request: web.Request) -> web.FileResponse:
+    require_local_designer(request)
+    request.app[GAMES_KEY].get(request.match_info["name"])
+    return web.FileResponse(files("boardzilla_lite").joinpath("web/designer.html"))
+
+
+def asset_response(target, *, headers: dict[str, str] | None = None, content_type: str | None = None) -> web.StreamResponse:
+    media_type = content_type or mimetypes.guess_type(target)[0] or "application/octet-stream"
+    response_headers = headers or {}
+    if media_type.startswith("text/") or media_type in {"application/javascript", "application/json", "application/manifest+json"}:
+        return web.Response(body=target.read_bytes(), headers=response_headers, content_type=media_type, charset="utf-8")
+    return web.FileResponse(target, headers=response_headers)
+
+
+async def web_asset(request: web.Request) -> web.StreamResponse:
     name = request.match_info["name"]
     if "/" in name or "\\" in name:
         raise web.HTTPNotFound()
     target = files("boardzilla_lite").joinpath(f"web/{name}")
     if not target.is_file():
         raise web.HTTPNotFound()
-    return web.FileResponse(target)
+    return asset_response(target)
 
 
-async def pwa_asset(request: web.Request) -> web.FileResponse:
+async def pwa_asset(request: web.Request) -> web.StreamResponse:
     name = request.match_info["name"]
     if name not in {"manifest.webmanifest", "app-icon.svg", "sw.js"}:
         raise web.HTTPNotFound()
@@ -202,11 +267,41 @@ async def pwa_asset(request: web.Request) -> web.FileResponse:
     headers = {"Cache-Control": "no-cache"} if name == "sw.js" else {}
     if name == "sw.js":
         headers["Service-Worker-Allowed"] = "/"
-    return web.FileResponse(target, headers=headers)
+    content_type = "application/manifest+json" if name == "manifest.webmanifest" else None
+    return asset_response(target, headers=headers, content_type=content_type)
 
 
 async def list_games(request: web.Request) -> web.Response:
-    return web.json_response({"games": [game.public() for game in request.app[GAMES_KEY].all()]})
+    can_design = is_local_request(request)
+    games = [{**game.public(), "designer": f"/designer/{game.name}" if can_design and game.play_manifest is not None else None} for game in request.app[GAMES_KEY].all()]
+    return web.json_response({"games": games})
+
+
+async def get_game_definition(request: web.Request) -> web.Response:
+    require_local_designer(request)
+    manifest, revision = request.app[GAMES_KEY].authoring_manifest(request.match_info["name"])
+    schema = json.loads(files("boardzilla_lite").joinpath("web/play.schema.json").read_text(encoding="utf-8"))
+    return web.json_response({"manifest": manifest, "revision": revision, "schema": schema})
+
+
+async def save_game_definition(request: web.Request) -> web.Response:
+    require_local_designer(request)
+    body = await request.json()
+    manifest = body.get("manifest")
+    if not isinstance(manifest, dict):
+        raise ValueError("manifest must be an object")
+    try:
+        saved, revision = request.app[GAMES_KEY].save_manifest(request.match_info["name"], manifest, body.get("revision"))
+    except RuntimeError as exc:
+        raise web.HTTPConflict(text=str(exc)) from exc
+    return web.json_response({"manifest": saved, "revision": revision})
+
+
+async def game_cover(request: web.Request) -> web.FileResponse:
+    game = request.app[GAMES_KEY].get(request.match_info["name"])
+    if not game.cover_path:
+        raise web.HTTPNotFound()
+    return web.FileResponse(game.cover_path, headers={"Cache-Control": "public, max-age=3600"})
 
 
 async def list_rooms(request: web.Request) -> web.Response:
@@ -214,7 +309,25 @@ async def list_rooms(request: web.Request) -> web.Response:
     return web.json_response({"rooms": rooms})
 
 
+async def create_user(request: web.Request) -> web.Response:
+    body = await request.json()
+    user = request.app[DB_KEY].create_user(str(body.get("name", "")))
+    return web.json_response({"user": {"id": user["publicID"], "name": user["name"], "token": user["token"]}}, status=201)
+
+
+async def get_user(request: web.Request) -> web.Response:
+    return web.json_response({"user": public_user(authenticated_user(request))})
+
+
+async def list_user_rooms(request: web.Request) -> web.Response:
+    user = authenticated_user(request)
+    db = request.app[DB_KEY]
+    rooms = [user_room(room, request.app[GAMES_KEY], db.players(room["id"])) for room in db.rooms_for_user(user["id"])]
+    return web.json_response({"rooms": rooms})
+
+
 async def create_session(request: web.Request) -> web.Response:
+    user = authenticated_user(request)
     body = await request.json()
     game = request.app[GAMES_KEY].get(body["gameName"])
     seat_count = int(body.get("seatCount", game.default_players))
@@ -223,7 +336,7 @@ async def create_session(request: web.Request) -> web.Response:
     seat = await asyncio.to_thread(request.app[RUNNER_KEY].seat_player, game.server_bundle, [], seat_count, game.play_manifest)
     result = request.app[DB_KEY].create_session(
         game.name,
-        str(body.get("name", "Host")).strip() or "Host",
+        user,
         seat_count,
         bool(body.get("adminMode", body.get("allowUndo", True))),
         seat,
@@ -234,13 +347,29 @@ async def create_session(request: web.Request) -> web.Response:
 async def invite_details(request: web.Request) -> web.Response:
     session = request.app[DB_KEY].session_by_invite(request.match_info["code"])
     game = game_for_session(request, session)
-    return web.json_response({"name": game.name, "friendlyName": game.friendly_name, "phase": session["phase"]})
+    players = [{
+        "userID": player["public_id"],
+        "name": player["name"],
+        "position": player["position"],
+        "ready": bool(player["ready"]),
+        "spectator": bool(player["spectator"]),
+    } for player in request.app[DB_KEY].players(session["id"])]
+    return web.json_response({
+        "name": game.name,
+        "friendlyName": game.friendly_name,
+        "phase": session["phase"],
+        "seatCount": session["seat_count"],
+        "players": players,
+    })
 
 
 async def join_session(request: web.Request) -> web.Response:
-    body = await request.json()
+    user = authenticated_user(request)
     db = request.app[DB_KEY]
     session = db.session_by_invite(request.match_info["code"])
+    existing = db.player_for_user(session["id"], user["id"])
+    if existing:
+        return web.json_response({"sessionID": session["id"], "token": existing["access_token"], "userID": existing["session_user_id"]})
     game = game_for_session(request, session)
     seated = [player for player in db.players(session["id"]) if is_seated_player(player)]
     if len(seated) >= session["seat_count"]:
@@ -249,16 +378,16 @@ async def join_session(request: web.Request) -> web.Response:
     seat = await asyncio.to_thread(request.app[RUNNER_KEY].seat_player, game.server_bundle, players, session["seat_count"], game.play_manifest)
     if not seat or seat.get("position") is None:
         raise ValueError("No player seat is available; join as a spectator instead")
-    result = db.join_session(session["invite_code"], str(body.get("name", "Player")).strip() or "Player", seat)
+    result = db.join_session(session["invite_code"], user, seat)
     request.app[EVENTS_KEY].publish(session["id"])
     return web.json_response(result, status=201)
 
 
 async def spectate_session(request: web.Request) -> web.Response:
-    body = await request.json()
+    user = authenticated_user(request)
     db = request.app[DB_KEY]
     session = db.session_by_invite(request.match_info["code"])
-    result = db.spectate_session(session["invite_code"], str(body.get("name", "Spectator")).strip() or "Spectator")
+    result = db.spectate_session(session["invite_code"], user)
     request.app[EVENTS_KEY].publish(session["id"])
     return web.json_response(result, status=201)
 
@@ -269,10 +398,11 @@ async def get_session(request: web.Request) -> web.Response:
     current_players = json_value(session.get("state"), {}).get("game", {}).get("currentPlayers", [])
     administrator = is_administrator(session)
     players = []
-    for player in request.app[DB_KEY].players(session["id"]):
+    room_players = request.app[DB_KEY].players(session["id"])
+    for player in room_players:
         if not is_seated_player(player):
             continue
-        details = {"position": player["position"], "name": player["name"], "color": player["color"]}
+        details = {"position": player["position"], "name": player["name"], "color": player["color"], "userID": player["public_id"]}
         if administrator:
             details["sessionURL"] = f"/s/{player['access_token']}"
         players.append(details)
@@ -286,6 +416,12 @@ async def get_session(request: web.Request) -> web.Response:
             "viewPosition": session.get("view_position"),
             "effectivePosition": position,
             "players": players,
+            "participants": [{
+                "userID": player["public_id"],
+                "name": player["name"],
+                "ready": bool(player["ready"]),
+                "spectator": bool(player["spectator"]),
+            } for player in room_players],
             "currentPlayers": current_players,
             "allowUndo": bool(session["allow_undo"]),
             "canUndo": (not session.get("spectator")) and request.app[DB_KEY].can_undo(session["id"], position, bool(session["host"])),
@@ -526,6 +662,9 @@ async def ui_html(request: web.Request) -> web.Response:
     bootstrap = {
         "host": bool(session["host"]),
         "userID": viewed_player["session_user_id"] if viewed_player else session["session_user_id"],
+        "gameName": game.friendly_name,
+        "gameCover": game.public()["cover"],
+        "inviteURL": f"/join/{session['invite_code']}",
         "minPlayers": game.min_players,
         "maxPlayers": game.max_players,
         "defaultPlayers": game.default_players,
@@ -537,11 +676,11 @@ async def ui_html(request: web.Request) -> web.Response:
     if game.play_manifest is not None:
         manifest_json = json.dumps(game.play_manifest, ensure_ascii=False).replace("<", "\\u003c")
         play_bootstrap = f"<script>globalThis.__PNPINK_PLAY_MANIFEST__={manifest_json};</script>"
-    document = f"""<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><style>html,body,#root{{width:100%;height:100%;margin:0;overflow:hidden}}</style><link rel=\"stylesheet\" href=\"/sessions/{token}/ui.css\"></head><body data-bootstrap-json=\"{encoded}\"><div id=\"root\"></div>{play_bootstrap}<script src=\"/sessions/{token}/ui.js\"></script><script>window.top.postMessage({{type:'sendDark'}},'*');</script></body></html>"""
+    document = f"""<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><style>html,body,#root{{width:100%;height:100%;margin:0;overflow:hidden}}</style><link rel=\"stylesheet\" href=\"/sessions/{token}/ui.css\"><link rel=\"stylesheet\" href=\"/static/game-shell.css\"></head><body data-bootstrap-json=\"{encoded}\"><div id=\"root\"></div>{play_bootstrap}<script src=\"/sessions/{token}/ui.js\"></script><script src=\"/static/game-shell.js\"></script><script>window.top.postMessage({{type:'sendDark'}},'*');</script></body></html>"""
     return web.Response(text=document, content_type="text/html", headers={"Cache-Control": "no-store"})
 
 
-async def ui_asset(request: web.Request) -> web.FileResponse:
+async def ui_asset(request: web.Request) -> web.StreamResponse:
     session, game = session_and_player(request)
     relative = request.match_info["path"]
     if relative == "ui.js":
@@ -554,7 +693,7 @@ async def ui_asset(request: web.Request) -> web.FileResponse:
         if game.ui_directory not in target.parents or not target.is_file():
             raise web.HTTPNotFound()
     content_type, _ = mimetypes.guess_type(target)
-    return web.FileResponse(target, headers={"Content-Type": content_type or "application/octet-stream", "Cache-Control": "no-store"})
+    return asset_response(target, headers={"Cache-Control": "no-store"}, content_type=content_type)
 
 
 @web.middleware
@@ -574,8 +713,19 @@ async def errors(request: web.Request, handler):
         raise web.HTTPInternalServerError(text=str(exc)) from exc
 
 
+async def add_utf8_charset(request: web.Request, response: web.StreamResponse) -> None:
+    content_type = response.headers.get("Content-Type", "")
+    media_type = content_type.partition(";")[0].strip().lower()
+    if "charset=" not in content_type.lower() and (
+        media_type.startswith("text/")
+        or media_type in {"application/javascript", "application/json", "application/manifest+json"}
+    ):
+        response.headers["Content-Type"] = f"{content_type}; charset=utf-8"
+
+
 def create_app(game_roots: list[Path], database_path: Path) -> web.Application:
     app = web.Application(middlewares=[errors], client_max_size=1024 * 1024)
+    app.on_response_prepare.append(add_utf8_charset)
     app[DB_KEY] = Database(database_path)
     app[GAMES_KEY] = GameRegistry(game_roots)
     app[RUNNER_KEY] = GameRunner()
@@ -584,10 +734,17 @@ def create_app(game_roots: list[Path], database_path: Path) -> web.Application:
     app.router.add_get("/", index)
     app.router.add_get("/join/{code}", join_page)
     app.router.add_get("/s/{token}", session_page)
+    app.router.add_get("/designer/{name}", designer_page)
     app.router.add_get("/{name:manifest\\.webmanifest|app-icon\\.svg|sw\\.js}", pwa_asset)
     app.router.add_get("/static/{name}", web_asset)
     app.router.add_get("/games", list_games)
+    app.router.add_get("/designer-api/games/{name}", get_game_definition)
+    app.router.add_put("/designer-api/games/{name}", save_game_definition)
+    app.router.add_get("/games/{name}/cover", game_cover)
     app.router.add_get("/rooms", list_rooms)
+    app.router.add_post("/users", create_user)
+    app.router.add_get("/users/me", get_user)
+    app.router.add_get("/users/me/rooms", list_user_rooms)
     app.router.add_post("/sessions", create_session)
     app.router.add_get("/invites/{code}", invite_details)
     app.router.add_post("/invites/{code}", join_session)

@@ -36,5 +36,9 @@ src/docs/*.pdf
 site/
 chat_package_stage/
 
+# Node development dependencies and local cache
+play/node_modules/
+play/.npm-cache/
+
 # old branches
 .git_old/

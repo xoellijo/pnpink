@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#171924">
+  <title>PnPPlay - Game Designer</title>
+  <link rel="icon" href="/app-icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="importmap">{"imports":{"lil-gui":"/static/lil-gui.esm.min.js"}}</script>
+</head>
+<body class="designer-body">
+  <header class="designer-toolbar">
+    <a class="brand" href="/"><span class="brand-mark small">P</span><span>PnP<b>Play</b></span></a>
+    <div><strong id="designer-title">Game Designer</strong><small id="designer-status">Loading manifest…</small></div>
+    <label class="designer-autosave"><input id="designer-autosave" type="checkbox" checked> Auto-save</label>
+    <button id="designer-reload" class="secondary" type="button">Reload</button>
+    <button id="designer-save" type="button">Save</button>
+  </header>
+  <main class="designer-shell">
+    <section class="designer-preview-panel">
+      <div class="designer-preview-tools"><span>Live layout preview</span><small>Drag areas; use the corner to resize.</small></div>
+      <div id="designer-stage" class="designer-stage">
+        <div id="designer-toolbox-left" class="designer-toolbox designer-toolbox-left"></div>
+        <div id="designer-board" class="designer-board"></div>
+        <div id="designer-toolbox-right" class="designer-toolbox designer-toolbox-right"></div>
+      </div>
+    </section>
+    <aside id="designer-menu" class="designer-menu"></aside>
+  </main>
+  <script src="/static/common.js"></script>
+  <script type="module" src="/static/designer.js"></script>
+</body>
+</html>

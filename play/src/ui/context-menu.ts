@@ -165,6 +165,7 @@ export function chooseSequence(actionName: string, ...elements: GameElement[]): 
   for (const element of elements) {
     if (!chooseElement(element, actionName)) return false;
   }
+  gameStore.setState({ selected: undefined });
   return true;
 }
 
@@ -185,6 +186,7 @@ export function submitChoice(actionName: string, args: Record<string, unknown>):
   clearTransientDragVisuals();
   state.clearMove();
   gameStore.getState().selectMove(move, args);
+  gameStore.setState({ selected: undefined });
   return true;
 }
 

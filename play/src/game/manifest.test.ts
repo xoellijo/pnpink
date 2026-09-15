@@ -54,4 +54,12 @@ describe('play manifest', () => {
     expect(() => validateManifest(invalid)).toThrow('maxCardsPerPlay');
   });
 
+  it('validates opponent panel modes', () => {
+    const configured = structuredClone(rawManifest) as PlayManifest;
+    configured.players = { count: 4, panelMode: 'standard' };
+    expect(validateManifest(configured).players?.panelMode).toBe('standard');
+    configured.players.panelMode = 'sideways' as 'rotate';
+    expect(() => validateManifest(configured)).toThrow('opponent panel mode');
+  });
+
 });

@@ -1,14 +1,15 @@
 {
   "id": "/",
-  "name": "PnPInk Play",
-  "short_name": "PnPInk",
+  "name": "PnPPlay",
+  "short_name": "PnPPlay",
   "description": "A lightweight local tabletop playtesting workspace.",
   "start_url": "/",
   "scope": "/",
-  "display": "standalone",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
   "orientation": "any",
-  "background_color": "#080c13",
-  "theme_color": "#080c13",
+  "background_color": "#12141d",
+  "theme_color": "#171924",
   "icons": [
     {
       "src": "/app-icon.svg",
@@ -18,4 +19,3 @@
     }
   ]
 }
-

@@ -9,12 +9,15 @@ let details;
 let serverMenu;
 let turnBadge;
 let undoButton;
+let appModeButton;
+let installPrompt;
 let historyStatus;
 let historyHasBranches = false;
 let uiReady = false;
 let viewedPosition;
 let deferredGameUpdate;
 let reconnectTimer;
+const setupIdentity = document.querySelector('#setup-identity');
 
 function notify(message) {
   toast.textContent = message;
@@ -97,6 +100,45 @@ function setEnabled(controller, enabled) {
 
 function updateUndo(canUndo) {
   if (undoButton) undoButton.hidden = !details?.allowUndo || !canUndo;
+}
+
+function installedApp() {
+  return window.matchMedia('(display-mode: fullscreen)').matches
+    || window.matchMedia('(display-mode: standalone)').matches
+    || navigator.standalone === true;
+}
+
+function updateAppModeButton() {
+  if (!appModeButton) return;
+  const fullscreenAvailable = Boolean(document.documentElement.requestFullscreen) && !document.fullscreenElement;
+  const iosInstall = /iPad|iPhone|iPod/.test(navigator.userAgent) && !installedApp();
+  appModeButton.hidden = installedApp() || (!installPrompt && !fullscreenAvailable && !iosInstall);
+  const installAvailable = Boolean(installPrompt) || iosInstall;
+  appModeButton.innerHTML = PnPInkPlay.icon(installAvailable ? 'download' : 'fullscreen', installAvailable ? 'Install PnPPlay' : 'Enter fullscreen');
+  appModeButton.title = installAvailable ? 'Install PnPPlay' : 'Enter fullscreen';
+  appModeButton.setAttribute('aria-label', appModeButton.title);
+}
+
+async function enterAppMode() {
+  if (installPrompt) {
+    const prompt = installPrompt;
+    installPrompt = undefined;
+    await prompt.prompt();
+    const choice = await prompt.userChoice;
+    if (choice.outcome === 'accepted') notify('PnPPlay installed');
+    updateAppModeButton();
+    return;
+  }
+  if (/iPad|iPhone|iPod/.test(navigator.userAgent) && !installedApp()) {
+    notify('Use Share, then Add to Home Screen');
+    return;
+  }
+  try {
+    await document.documentElement.requestFullscreen({navigationUI: 'hide'});
+  } catch (_error) {
+    notify('Fullscreen is unavailable in this browser');
+  }
+  updateAppModeButton();
 }
 
 async function undoLatestMove() {
@@ -187,7 +229,15 @@ function buildServerMenu() {
     event.stopPropagation();
     undoLatestMove();
   });
-  titleElement.append(turnBadge, undoButton);
+  appModeButton = document.createElement('button');
+  appModeButton.className = 'server-menu-title-app';
+  appModeButton.addEventListener('pointerdown', event => event.stopPropagation());
+  appModeButton.addEventListener('click', event => {
+    event.stopPropagation();
+    enterAppMode();
+  });
+  titleElement.append(turnBadge, appModeButton, undoButton);
+  updateAppModeButton();
 
   menuState.lobby = () => { location.href = '/'; };
   const primaryActions = [
@@ -235,6 +285,52 @@ function buildServerMenu() {
   serverMenu.close();
 }
 
+function renderSetupIdentity() {
+  const users = PnPInkPlay.knownUsers();
+  const currentIdentity = users.find(user => user.id === details.userID);
+  if (currentIdentity) PnPInkPlay.setActiveUser(currentIdentity);
+  const connected = new Map((details.participants || details.players).map(player => [player.userID, player]));
+  const userSelect = document.querySelector('#setup-user');
+  document.querySelector('#setup-game-name').textContent = details.game.friendlyName;
+  userSelect.innerHTML = users.map(user => {
+    const participant = connected.get(user.id);
+    const status = participant ? participant.name === details.playerName ? 'current' : 'joined' : 'available';
+    return `<option value="${PnPInkPlay.escapeHTML(user.token)}"${details.userID === user.id ? ' selected' : ''}>${PnPInkPlay.escapeHTML(user.name)} · ${status}</option>`;
+  }).join('');
+  document.querySelector('#setup-local-status').innerHTML = users.map(user => {
+    const participant = connected.get(user.id);
+    return `<span class="${participant ? 'connected' : ''}" title="${PnPInkPlay.escapeHTML(user.name)}: ${participant ? participant.ready ? 'ready' : 'joined' : 'not in this room'}">${PnPInkPlay.icon(participant?.ready ? 'check' : 'user')} ${PnPInkPlay.escapeHTML(user.name)}</span>`;
+  }).join('');
+  setupIdentity.hidden = false;
+}
+
+async function switchSetupUser(tokenValue) {
+  const user = PnPInkPlay.knownUsers().find(candidate => candidate.token === tokenValue);
+  if (!user || user.id === details.userID) return;
+  const endpoint = details.spectator ? `/invites/${details.inviteCode}/spectate` : `/invites/${details.inviteCode}`;
+  const response = await PnPInkPlay.authFetch(endpoint, {method: 'POST'}, user);
+  if (!response.ok) {
+    renderSetupIdentity();
+    notify(await response.text());
+    return;
+  }
+  const session = await response.json();
+  PnPInkPlay.setActiveUser(user);
+  PnPInkPlay.saveToken(session.sessionID, session.token);
+  location.replace(`/s/${session.token}`);
+}
+
+async function refreshSetupIdentity() {
+  if (details.phase !== 'new') return;
+  const response = await fetch(`/sessions/${token}`);
+  if (!response.ok) return;
+  details = await response.json();
+  renderSetupIdentity();
+}
+
+document.querySelector('#setup-user').addEventListener('change', event => switchSetupUser(event.target.value));
+document.querySelector('#setup-copy-invite').addEventListener('click', () => copyText(`${location.origin}/join/${details.inviteCode}`, 'Invitation link copied'));
+
 function updateRoomState(message) {
   const gameStarted = message.type === 'gameUpdate' && details.phase === 'new';
   if (message.type === 'gameUpdate') details.phase = 'started';
@@ -246,6 +342,10 @@ function updateRoomState(message) {
   updateUndo(message.canUndo);
   updateHistory(message.history);
   if (gameStarted) viewedPosition = message.position;
+  if (gameStarted) {
+    setupIdentity.hidden = true;
+    if (!serverMenu) buildServerMenu();
+  }
   if ((details.spectator || details.viewPosition === -1) && viewedPosition !== message.position) {
     viewedPosition = message.position;
     reloadGameFrame();
@@ -306,6 +406,7 @@ window.addEventListener('message', event => {
 function receive(message) {
   if (message.type === 'ping') return;
   if (message.type === 'roomDeleted') { location.href = '/'; return; }
+  if (message.type === 'users' && details.phase === 'new') refreshSetupIdentity();
   if (document.hidden && (message.type === 'gameUpdate' || message.type === 'gameFinished')) {
     deferredGameUpdate = message;
     return;
@@ -316,7 +417,7 @@ function receive(message) {
 function connectEventSource() {
   const stream = new EventSource(`/sessions/${token}/events`);
   stream.onmessage = event => receive(JSON.parse(event.data));
-  stream.onerror = () => notify('Reconnectingâ€¦');
+  stream.onerror = () => notify('Reconnecting...');
 }
 
 function connectSocket() {
@@ -327,7 +428,7 @@ function connectSocket() {
   socket.onmessage = event => receive(JSON.parse(event.data));
   socket.onclose = () => {
     if (!opened) return connectEventSource();
-    notify('Reconnectingâ€¦');
+    notify('Reconnecting...');
     clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(connectSocket, 1000);
   };
@@ -339,9 +440,10 @@ async function start() {
   details = await response.json();
   document.body.classList.toggle('spectator-view', details.spectator);
   PnPInkPlay.saveToken(details.sessionID, token);
-  document.title = `PnPInk Play: ${details.game.friendlyName} - ${details.playerName}`;
+  document.title = `PnPPlay: ${details.game.friendlyName} - ${details.playerName}`;
   viewedPosition = details.effectivePosition;
-  buildServerMenu();
+  if (details.phase === 'new') renderSetupIdentity();
+  else buildServerMenu();
   reloadGameFrame();
   connectSocket();
 }
@@ -352,5 +454,18 @@ document.addEventListener('visibilitychange', () => {
   deferredGameUpdate = undefined;
   if (!updateRoomState(message)) send(message);
 });
+
+window.addEventListener('beforeinstallprompt', event => {
+  event.preventDefault();
+  installPrompt = event;
+  updateAppModeButton();
+});
+
+window.addEventListener('appinstalled', () => {
+  installPrompt = undefined;
+  updateAppModeButton();
+});
+
+document.addEventListener('fullscreenchange', updateAppModeButton);
 
 start().catch(error => notify(String(error)));

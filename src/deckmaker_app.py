@@ -292,7 +292,7 @@ class DeckMakerApp:
         GUI.attach_tooltip(auto_create_cb, "Auto-start generate")
         GUI.attach_tooltip(auto_open_cb, "Auto-start Open SVG")
         GUI.attach_tooltip(auto_export_cb, "Auto-start export")
-        GUI.attach_tooltip(self.play_btn, "Export all generated items for immediate play\nStart the local PnPInk Play server\nOpen a new persistent room in your browser")
+        GUI.attach_tooltip(self.play_btn, "Export all generated items for immediate play\nStart the local PnPPlay server\nOpen a new persistent room in your browser")
         self.log_text = scrolledtext.ScrolledText(deck_tab, height=13, wrap="word", state="disabled", font=log_font)
         self.log_text.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
         try:

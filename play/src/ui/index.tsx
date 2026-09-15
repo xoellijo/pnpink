@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { GameElement, Piece, ProfileBadge, render } from '@boardzilla/core';
 import { Flippable, useD6 } from '@boardzilla/core/components';
-import setup, { areaIsConcealed, areaIsConcealedFrom, areaItems, isPlayItem, manifest, PlayArea, PlayDestination, PlayDie, PlayGame, PlayItem, PlayPiece, PlayPlayer, PlayResource, PlayStack, PlayToolbox, PlayZone, reorderActionName } from '../game/index.js';
+import setup, { areaIsConcealed, areaIsConcealedFrom, areaItems, isPlayItem, manifest, PlayArea, PlayDestination, PlayDie, PlayGame, PlayItem, PlayPiece, PlayPlayer, PlayPlayerPanel, PlayResource, PlayStack, PlayToolbox, PlayZone, reorderActionName } from '../game/index.js';
 import type { AreaDefinition, Box } from '../manifest.js';
 import { beginChoice, canChoose, chooseElement, chooseSequence, contextMenu, ContextAction, hasPendingAction, submitChoice, useCanChoose } from './context-menu.js';
 import { clearSelected, elementAtBranch, selectedElements, setSelected, toggleSelected, useSelectedElements } from './multiselect.js';
@@ -78,8 +78,6 @@ function ZoneView({ zone, viewer }: { zone: PlayArea; viewer: PlayPlayer }) {
   const isOpponentHand = zone.kind === 'hand' && owner?.position !== viewer.position;
   const isOpponentSubarea = owner?.position !== viewer.position
     && (zone.kind === 'hand' || zone.definitionId === 'tricks' || zone.definitionId === 'player-area');
-  const isOwnPrimaryArea = owner?.position === viewer.position
-    && (zone.kind === 'hand' || zone.definitionId === 'tricks' || zone.definitionId === 'player-area');
   const isMoveTarget = useCanChoose(zone, 'move');
   const isConcealedOwner = owner?.position === viewer.position && areaIsConcealed(zone);
   const isConcealedViewer = areaIsConcealedFrom(zone, viewer.position);
@@ -94,7 +92,7 @@ function ZoneView({ zone, viewer }: { zone: PlayArea; viewer: PlayPlayer }) {
       icon: 'griddy-icons:info-circle',
       run: () => openPreview(previewItem ?? { label: zoneSummary(zone), node }),
     } : undefined;
-    const top = areaItems(zone).at(-1);
+    const top = zone.top(Piece);
     const stackInfo = top instanceof PlayPiece ? pieceInfoAction(top, viewer) : undefined;
     const selectTop = topSelectionActions(zone, stackInfo, () => queueMicrotask(() => showZoneActions(x, y)));
     if (selectTop) actions.push(selectTop);
@@ -136,6 +134,8 @@ function ZoneView({ zone, viewer }: { zone: PlayArea; viewer: PlayPlayer }) {
   });
   const hoverShortcuts = shortcutsForZone(zone);
   useHoverShortcuts(zone.branch(), hoverShortcuts);
+  const itemCount = areaItems(zone).length;
+  const quantity = zone.infinite ? '' : ` (${itemCount})`;
   return <div
     className={`play-zone zone-${zone.kind} zone-${zone.definitionId} ${isOpponentHand ? 'opponent-hand' : ''} ${isOpponentSubarea ? 'opponent-subarea' : ''} ${isMoveTarget ? 'move-target' : ''} ${isConcealedOwner ? 'concealed-owner' : ''} ${isConcealedViewer ? 'concealed-viewer' : ''}`}
     title={isConcealedViewer ? 'Hidden area' : zoneSummary(zone)}
@@ -153,9 +153,11 @@ function ZoneView({ zone, viewer }: { zone: PlayArea; viewer: PlayPlayer }) {
     }}
     {...contextHandlers}
   >
-    {(!isOpponentSubarea || zone.kind === 'hand' || zone.definitionId === 'tricks')
-      && <span className="zone-title-icon iconify" data-icon={zoneIcon(zone)} aria-hidden="true" />}
-    {!isOpponentSubarea && <span className="zone-label">{owner && !isOwnPrimaryArea ? `${owner.name} · ${zoneDisplayLabel(zone)}` : zoneDisplayLabel(zone)}</span>}
+    <span className="zone-tag">
+      <span className="zone-tag-icon iconify" data-icon={zoneIcon(zone)} aria-hidden="true" />
+      {!zone.infinite && <span className="zone-tag-count">{itemCount}</span>}
+      <span className="zone-tag-label">{zoneDisplayLabel(zone)}{quantity}</span>
+    </span>
     {!isOpponentSubarea && <span className="zone-watermark iconify" data-icon={zoneIcon(zone)} aria-hidden="true" />}
   </div>;
 }
@@ -222,6 +224,15 @@ function zoneDisplayLabel(zone: PlayArea): string {
   return zone.definitionId === 'player-area' ? 'TABLEAU' : zone.label;
 }
 
+function contrastingTextColor(color: string): string {
+  const hex = color.match(/^#([0-9a-f]{6})$/i)?.[1];
+  if (!hex) return '#ffffff';
+  const red = Number.parseInt(hex.slice(0, 2), 16);
+  const green = Number.parseInt(hex.slice(2, 4), 16);
+  const blue = Number.parseInt(hex.slice(4, 6), 16);
+  return (red * 299 + green * 587 + blue * 114) / 1000 > 155 ? '#071b17' : '#ffffff';
+}
+
 function zoneSummary(zone: PlayArea): string {
   const owner = zone.ownerPosition >= 0
     ? zone.game.players.find(player => player.position === zone.ownerPosition)
@@ -259,13 +270,16 @@ function isStackedZone(zone: PlayArea): boolean {
   return areaItems(zone).length > 1 && rows * columns === 1;
 }
 
+function topAreaItems(zone: PlayArea, count = areaItems(zone).length): PlayItem[] {
+  return [...zone.topN(count, Piece)].filter(isPlayItem);
+}
+
 function shortcutsForZone(zone: PlayArea): HoverShortcuts {
   return {
     shuffle: canChoose(zone, 'shuffle') ? () => chooseElement(zone, 'shuffle') : undefined,
     selectTop: isStackedZone(zone)
       ? count => {
-        const items = areaItems(zone);
-        setSelected(count ? items.slice(-count) : items);
+        setSelected(count ? topAreaItems(zone, count) : areaItems(zone));
       }
       : undefined,
   };
@@ -299,7 +313,7 @@ function topSelectionActions(zone: PlayArea, info?: ContextAction, refresh?: () 
       label: count === 'all' ? 'All' : String(count),
       active: selected.length === (count === 'all' ? items.length : Math.min(count, items.length)),
       run: () => {
-        setSelected(count === 'all' ? items : items.slice(-count));
+        setSelected(count === 'all' ? items : topAreaItems(zone, count));
         refresh?.();
       },
     }))],
@@ -367,7 +381,7 @@ function stackOperationActions(zone: PlayArea, viewer: PlayPlayer): ContextActio
 
 function selectedPieceGroup(piece: PlayItem): PlayItem[] {
   const selected = selectedElements().filter(isPlayItem);
-  return selected.length > 1 && selected.includes(piece) ? selected : [piece];
+  return selected.length > 1 && selected.some(candidate => candidate.branch() === piece.branch()) ? selected : [piece];
 }
 
 function flipSelection(piece: PlayPiece): void {
@@ -381,16 +395,17 @@ function PieceView({ piece, viewer }: { piece: PlayItem; viewer: PlayPlayer }) {
   const selected = useSelectedElements();
   const zone = piece.game.zoneOf(piece)!;
   const selectedPieces = selected.filter(isPlayItem);
-  const selectedIndex = selectedPieces.indexOf(piece);
+  const selectedIndex = selectedPieces.findIndex(candidate => candidate.branch() === piece.branch());
   const stackedSelection = selectedPieces.length > 1
     && selectedIndex >= 0
     && isStackedZone(zone)
-    && selectedPieces.every(candidate => piece.game.zoneOf(candidate) === zone);
+    && selectedPieces.every(candidate => piece.game.zoneOf(candidate)?.branch() === zone.branch());
   const selectionOffset = stackedSelection ? selectedPieces.length - selectedIndex - 1 : 0;
   const selectionStyle = stackedSelection ? {
     '--selection-x': `${selectionOffset * .18}vmin`,
     '--selection-y': `${-1.2 - selectionOffset * .32}vmin`,
   } as React.CSSProperties : undefined;
+  const selectionAnchor = stackedSelection && selectedIndex === 0;
   const visible = piece.isVisibleTo(viewer);
   const source = piece instanceof PlayPiece ? (visible && piece.faceUp || !piece.back ? piece.front : piece.back) : '';
   const front = piece instanceof PlayPiece && piece.front ? assetUrl(piece.front) : '';
@@ -469,6 +484,7 @@ function PieceView({ piece, viewer }: { piece: PlayItem; viewer: PlayPlayer }) {
     data-pnpink-branch={piece.branch()}
     data-pnpink-selectable={selectable ? 'true' : 'false'}
     data-pnpink-stack-selection={stackedSelection ? 'true' : undefined}
+    data-pnpink-selection-anchor={selectionAnchor ? 'true' : undefined}
     style={selectionStyle}
     onPointerEnter={() => {
       if (source) setPreviewCandidate({ label: visible ? piece.label : 'Hidden component', source: assetUrl(source) });
@@ -489,7 +505,7 @@ function PieceView({ piece, viewer }: { piece: PlayItem; viewer: PlayPlayer }) {
         return;
       }
       const selected = selectedElements();
-      if (selected.length > 1 && selected.includes(piece)) {
+      if (selected.length > 1 && selected.some(candidate => candidate.branch() === piece.branch())) {
         event.preventDefault();
         event.stopPropagation();
         showActions(event.clientX, event.clientY);
@@ -507,11 +523,43 @@ function PieceView({ piece, viewer }: { piece: PlayItem; viewer: PlayPlayer }) {
         {back ? <img draggable={false} src={back} alt="Hidden component" /> : <strong>?</strong>}
       </Flippable.Back>
     </Flippable> : piece instanceof PlayPiece ? <span
-      className={`resource-shape resource-${piece.pieceType}`}
+      className={`resource-shape resource-${piece.pieceType} resource-${piece.shape}`}
       style={{ '--resource-color': piece.color || '#d8b64c' } as React.CSSProperties}
     >{piece.value}</span> : <span className="native-die-host" />}
-    {stackedSelection && selectedIndex === 0 && <span className="selection-count">{selectedPieces.length} selected</span>}
+    {selectionAnchor && <span className="selection-count">{selectedPieces.length}</span>}
   </div>;
+}
+
+function DieInteraction({ die }: { die: PlayDie }) {
+  const selectable = canChoose(die, 'move');
+  const showActions = (x: number, y: number) => {
+    const dieActions: ContextAction[] = [];
+    if (canChoose(die, 'roll')) {
+      dieActions.push({ label: 'Roll', icon: 'mdi:dice-6-outline', run: () => chooseElement(die, 'roll') });
+    }
+    if (canChoose(die, 'setDie')) {
+      dieActions.push(...[1, 2, 3, 4, 5, 6].map(value => ({
+        label: String(value),
+        run: () => submitChoice('setDie', { die, value }),
+      })));
+    }
+    const actions: ContextAction[] = dieActions.length ? [{ label: 'Die actions', row: dieActions }] : [];
+    if (actions.length) contextMenu.show({ title: '', x, y, actions });
+  };
+  const { consumeClick, ...contextHandlers } = useContextTrigger(showActions, () => {
+    if (selectable) setSelected([die]);
+  });
+  return <span
+    className="play-die-hitbox"
+    data-pnpink-branch={die.branch()}
+    data-pnpink-selectable={selectable ? 'true' : 'false'}
+    onClickCapture={event => {
+      if (!consumeClick()) return;
+      event.preventDefault();
+      event.stopPropagation();
+    }}
+    {...contextHandlers}
+  />;
 }
 
 function toolboxBox(toolbox: PlayToolbox, viewer: PlayPlayer, portrait: boolean): Box {
@@ -524,8 +572,8 @@ function toolboxBox(toolbox: PlayToolbox, viewer: PlayPlayer, portrait: boolean)
       : { left: 2, top: 90, width: 96, height: 9 };
   }
   return toolbox.side === 'right'
-    ? { left: 90.5, top: 17, width: 8.5, height: 66 }
-    : { left: 1, top: 17, width: 8.5, height: 66 };
+    ? { left: 93.2, top: 17, width: 5.8, height: 66 }
+    : { left: 1, top: 17, width: 5.8, height: 66 };
 }
 
 function toolboxAreaBox(zone: PlayArea, portrait: boolean): Box {
@@ -545,7 +593,11 @@ function boardBox(box: Box, portrait: boolean, withToolboxes: boolean): Box {
   if (!withToolboxes) return box;
   return portrait
     ? { left: box.left, top: 11 + box.top * .78, width: box.width, height: box.height * .78 }
-    : { left: 11 + box.left * .78, top: box.top, width: box.width * .78, height: box.height };
+    : { left: 7 + box.left * .86, top: box.top, width: box.width * .86, height: box.height };
+}
+
+function playfieldAspectRatio(): number {
+  return manifest.board.aspectRatio * (manifest.toolboxes?.length ? .86 : 1);
 }
 
 interface SelectionRect {
@@ -605,7 +657,7 @@ function useLassoSelection(): SelectionRect | undefined {
           return;
         }
       }
-      if (event.button !== 0 || (event.target as Element).closest('.play-piece, .lil-gui, button, input, select')) return;
+      if (event.button !== 0 || (event.target as Element).closest('.Piece, .play-piece, .lil-gui, button, input, select')) return;
       origin = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
       additive = event.ctrlKey || event.metaKey ? selectedElements() : [];
       if (!additive.length) clearSelected();
@@ -640,55 +692,35 @@ function relativePosition(zone: PlayArea, viewer: PlayPlayer): number {
   return (zone.ownerPosition - viewer.position + count) % count;
 }
 
-type PlayerPanel = {
+type PlayerSeat = {
   frame: Box;
-  hand: Box;
-  tricks: Box;
-  personal: Box;
   rotation: number;
+  mirrored: boolean;
 };
 
-function rotatedInsetBox(frame: Box, rotation: number, left: number, top: number, width: number, height: number): Box {
-  let rotatedLeft = left;
-  let rotatedTop = top;
-  let rotatedWidth = width;
-  let rotatedHeight = height;
-  if (rotation === 90) {
-    rotatedLeft = 100 - top - height;
-    rotatedTop = left;
-    rotatedWidth = height;
-    rotatedHeight = width;
-  } else if (rotation === 180) {
-    rotatedLeft = 100 - left - width;
-    rotatedTop = 100 - top - height;
-  } else if (rotation === 270) {
-    rotatedLeft = top;
-    rotatedTop = 100 - left - width;
-    rotatedWidth = height;
-    rotatedHeight = width;
+function playerSeat(relative: number, count: number, portrait = false): PlayerSeat {
+  const panelMode = manifest.players?.panelMode ?? 'rotate';
+  if (relative === 0) {
+    return { frame: { left: 1, top: 76, width: 98, height: 23 }, rotation: 0, mirrored: false };
   }
-  return {
-    left: frame.left + frame.width * rotatedLeft / 100,
-    top: frame.top + frame.height * rotatedTop / 100,
-    width: frame.width * rotatedWidth / 100,
-    height: frame.height * rotatedHeight / 100,
-  };
-}
-
-function layoutBoxForRotation(box: Box, rotation: number): Box {
-  if (rotation !== 90 && rotation !== 270) return box;
-  const aspectRatio = manifest.board.aspectRatio;
-  const centerX = box.left + box.width / 2;
-  const centerY = box.top + box.height / 2;
-  return {
-    left: centerX - box.height / aspectRatio / 2,
-    top: centerY - box.width * aspectRatio / 2,
-    width: box.height / aspectRatio,
-    height: box.width * aspectRatio,
-  };
-}
-
-function playerPanel(relative: number, count: number): PlayerPanel {
+  if (portrait) {
+    const columns = Math.min(3, count - 1);
+    const rows = Math.ceil((count - 1) / columns);
+    const gap = 1;
+    const width = (96 - gap * (columns - 1)) / columns;
+    const height = Math.min(10, (24 - gap * (rows - 1)) / rows);
+    const index = relative - 1;
+    return {
+      frame: {
+        left: 2 + index % columns * (width + gap),
+        top: 2 + Math.floor(index / columns) * (height + gap),
+        width,
+        height,
+      },
+      rotation: 0,
+      mirrored: panelMode === 'rotate',
+    };
+  }
   const opponents = Array.from({ length: count - 1 }, (_, index) => index + 1);
   let top: number[];
   let left: number[];
@@ -715,7 +747,7 @@ function playerPanel(relative: number, count: number): PlayerPanel {
   const sideAvailable = 48;
   const sideCount = Math.max(left.length, right.length);
   const topCapacity = top.length ? (topAvailable - gap * (top.length - 1)) / top.length : Number.POSITIVE_INFINITY;
-  const aspectRatio = manifest.board.aspectRatio;
+  const aspectRatio = playfieldAspectRatio();
   const sideCapacity = sideCount
     ? (sideAvailable - gap * (sideCount - 1)) / sideCount / aspectRatio
     : Number.POSITIVE_INFINITY;
@@ -723,9 +755,6 @@ function playerPanel(relative: number, count: number): PlayerPanel {
   const baseWidth = Math.min(preferredWidth, topCapacity / .8, sideCapacity / .8);
   const logicalWidth = baseWidth * .8;
   const logicalHeight = baseWidth / 1.35 * 1.1;
-  const handInset = [3, 56, 72, 41] as const;
-  const tricksInset = [77, 56, 20, 41] as const;
-  const personalInset = [3, 3, 72, 50] as const;
 
   if (top.includes(relative)) {
     const occupied = logicalWidth * top.length + gap * (top.length - 1);
@@ -737,34 +766,30 @@ function playerPanel(relative: number, count: number): PlayerPanel {
     };
     return {
       frame,
-      hand: rotatedInsetBox(frame, 180, ...handInset),
-      tricks: rotatedInsetBox(frame, 180, ...tricksInset),
-      personal: rotatedInsetBox(frame, 180, ...personalInset),
-      rotation: 180,
+      rotation: 0,
+      mirrored: panelMode === 'rotate',
     };
   }
 
   const onLeft = left.includes(relative);
   const side = onLeft ? left : right;
-  const rotatedWidth = logicalHeight / aspectRatio;
-  const rotatedHeight = logicalWidth * aspectRatio;
-  const occupied = rotatedHeight * side.length + gap * (side.length - 1);
+  const rotate = panelMode === 'rotate';
+  const sideWidth = rotate ? logicalHeight / aspectRatio : logicalWidth;
+  const sideHeight = rotate ? logicalWidth * aspectRatio : logicalHeight;
+  const occupied = sideHeight * side.length + gap * (side.length - 1);
+  const sideIndex = side.indexOf(relative);
+  const visualIndex = onLeft ? side.length - sideIndex - 1 : sideIndex;
   const frame = {
-    left: onLeft ? .8 : 99.2 - rotatedWidth,
-    top: 25 + (sideAvailable - occupied) / 2 + side.indexOf(relative) * (rotatedHeight + gap),
-    width: rotatedWidth,
-    height: rotatedHeight,
+    left: onLeft ? .8 : 99.2 - sideWidth,
+    top: 25 + (sideAvailable - occupied) / 2 + visualIndex * (sideHeight + gap),
+    width: sideWidth,
+    height: sideHeight,
   };
-  const rotation = onLeft ? 90 : 270;
-  const hand = rotatedInsetBox(frame, rotation, ...handInset);
-  const tricks = rotatedInsetBox(frame, rotation, ...tricksInset);
-  const personal = rotatedInsetBox(frame, rotation, ...personalInset);
+  const rotation = rotate ? onLeft ? 90 : 270 : 0;
   return {
     frame,
-    hand: layoutBoxForRotation(hand, rotation),
-    tricks: layoutBoxForRotation(tricks, rotation),
-    personal: layoutBoxForRotation(personal, rotation),
     rotation,
+    mirrored: false,
   };
 }
 
@@ -775,7 +800,7 @@ function previewPieceSource(piece: PlayPiece, viewer: PlayPlayer): string {
 }
 
 function PreviewCards({ area, viewer, limit = 12 }: { area?: PlayArea; viewer: PlayPlayer; limit?: number }) {
-  const pieces = area ? [...area.all(PlayPiece)].slice(-limit) : [];
+  const pieces = area ? [...area.topN(limit, PlayPiece)] : [];
   return <>{pieces.map(piece => {
     const source = previewPieceSource(piece, viewer);
     return source
@@ -807,63 +832,55 @@ function PlayerPanelPreview({ player, viewer }: { player: PlayPlayer; viewer: Pl
   </div>;
 }
 
-function portraitOpponentBox(relative: number, count: number): Box {
-  const left = count >= 4 ? (relative === 1 ? 2 : relative === count - 1 ? 72 : 37) : relative === 1 ? 18 : 57;
-  return { left, top: 3, width: 20, height: 10 };
+function PlayerPanelView({ panel, viewer, mirrored }: { panel: PlayPlayerPanel; viewer: PlayPlayer; mirrored: boolean }) {
+  const player = panel.game.players.find(candidate => candidate.position === panel.ownerPosition)!;
+  return <div
+    className={`player-seat-panel ${mirrored ? 'mirrored' : ''}`}
+    style={{
+      '--player-color': player.color,
+      '--player-tag-foreground': contrastingTextColor(player.color),
+    } as React.CSSProperties}
+    onPointerEnter={() => setPreviewCandidate({
+      label: `${player.name}'s player area`,
+      content: <PlayerPanelPreview player={player} viewer={viewer} />,
+    })}
+    onPointerLeave={() => setPreviewCandidate()}
+  >
+    <span className="player-seat-tag">
+      <span className="player-seat-icon iconify" data-icon="griddy-icons:user-circle" aria-hidden="true" />
+      <span className="player-seat-name">{player.name}</span>
+    </span>
+  </div>;
 }
 
-function zoneRotation(zone: PlayArea, viewer: PlayPlayer): number {
-  if (zone.ownerPosition < 0 || zone.ownerPosition === viewer.position) return 0;
-  return playerPanel(relativePosition(zone, viewer), zone.game.players.length).rotation;
-}
-
-function rawZoneBox(zone: PlayArea, viewer: PlayPlayer, boardSize: string): Box {
+function rawZoneBox(zone: PlayArea, viewer: PlayPlayer): Box {
   const definition = manifest.areas.find(candidate => candidate.id === zone.definitionId)!;
-  const portrait = boardSize === 'portrait';
   if (definition.scope === 'shared') {
-    if (!portrait) {
-      if (zone.kind === 'center' || zone.kind === 'table') return { left: 17, top: 24, width: 66, height: 50 };
-      if (zone.kind === 'deck' || zone.definitionId === 'deck') return { left: 17.8, top: 57.5, width: 6.4, height: 15 };
-      if (zone.kind === 'discard' || zone.definitionId === 'discard') return { left: 75.8, top: 57.5, width: 6.4, height: 15 };
-      return definition.layout.shared!;
-    }
-    if (zone.kind === 'center' || zone.kind === 'table') return { left: 17, top: 27, width: 66, height: 44 };
-    if (zone.kind === 'deck' || zone.definitionId === 'deck') return { left: 2, top: 37, width: 14, height: 22 };
-    if (zone.kind === 'discard' || zone.definitionId === 'discard') return { left: 84, top: 37, width: 14, height: 22 };
     return definition.layout.shared!;
-  }
-  if (zone.kind === 'hand') {
-    if (zone.ownerPosition === viewer.position) return portrait
-      ? { left: 2, top: 77, width: 96, height: 21 }
-      : { left: 25, top: 74, width: 63, height: 24 };
-    if (portrait) return portraitOpponentBox(relativePosition(zone, viewer), zone.game.players.length);
-    return playerPanel(relativePosition(zone, viewer), zone.game.players.length).hand;
-  }
-  if (zone.definitionId === 'tricks') {
-    if (zone.ownerPosition === viewer.position) return portrait
-      ? { left: 84, top: 78, width: 13, height: 18 }
-      : { left: 90, top: 76, width: 8, height: 20 };
-    if (portrait) {
-      const hand = portraitOpponentBox(relativePosition(zone, viewer), zone.game.players.length);
-      return { left: hand.left + hand.width + 1, top: hand.top, width: 5, height: hand.height };
-    }
-    return playerPanel(relativePosition(zone, viewer), zone.game.players.length).tricks;
-  }
-  if (zone.definitionId === 'player-area' && zone.ownerPosition !== viewer.position) {
-    if (portrait) {
-      const hand = portraitOpponentBox(relativePosition(zone, viewer), zone.game.players.length);
-      return { left: hand.left, top: 14, width: 12, height: 10 };
-    }
-    return playerPanel(relativePosition(zone, viewer), zone.game.players.length).personal;
-  }
-  if (zone.definitionId === 'player-area' && zone.ownerPosition === viewer.position) {
-    return portrait ? definition.layout.owner! : { left: 2, top: 75, width: 21, height: 23 };
   }
   return zone.ownerPosition === viewer.position ? definition.layout.owner! : definition.layout.opponent!;
 }
 
+function playerZoneBox(zone: PlayArea, viewer: PlayPlayer, boardSize: string): Box {
+  const box = rawZoneBox(zone, viewer);
+  if (zone.ownerPosition === viewer.position) return box;
+  const seat = playerSeat(relativePosition(zone, viewer), zone.game.players.length, boardSize === 'portrait');
+  return seat.mirrored ? { ...box, top: 100 - box.top - box.height } : box;
+}
+
 function zoneBox(zone: PlayArea, viewer: PlayPlayer, boardSize: string): Box {
-  return boardBox(rawZoneBox(zone, viewer, boardSize), boardSize === 'portrait', Boolean(manifest.toolboxes?.length));
+  return boardBox(rawZoneBox(zone, viewer), boardSize === 'portrait', Boolean(manifest.toolboxes?.length));
+}
+
+function supplyLayout(definition: AreaDefinition, width: number, height: number) {
+  return {
+    area: { left: (100 - width) / 2, top: (100 - height) / 2, width, height },
+    rows: definition.layout.rows ?? { min: 1 },
+    columns: definition.layout.columns ?? { min: 1 },
+    alignment: 'center' as const,
+    scaling: 'fit' as const,
+    gap: 0.1,
+  };
 }
 
 function pieceLayout(definition: AreaDefinition, opponent = false) {
@@ -883,11 +900,16 @@ function pieceLayout(definition: AreaDefinition, opponent = false) {
     columns: 1,
     margin: 0,
   };
-  if (opponent && definition.id === 'player-area') return {
-    area: { left: 2, top: 3, width: 96, height: 94 },
-    rows: definition.layout.rows ?? { min: 1 },
-    columns: definition.layout.columns ?? { min: 1 },
-    margin: definition.layout.gap ?? 0.25,
+  if (definition.id === 'player-area') return {
+    area: opponent
+      ? { left: 2, top: 3, width: 96, height: 94 }
+      : { left: 3, top: 16, width: 94, height: 81 },
+    rows: 2,
+    columns: { min: 1 },
+    direction: 'ltr' as const,
+    alignment: 'center' as const,
+    scaling: 'fit' as const,
+    gap: definition.layout.gap ?? 0.25,
   };
   if (definition.kind === 'deck' || definition.kind === 'discard') return {
     area: { left: 3, top: 19, width: 94, height: 78 },
@@ -927,32 +949,6 @@ function Table({ game, viewer, boardSize }: { game: PlayGame; viewer: PlayPlayer
   const hasToolboxes = Boolean(manifest.toolboxes?.length);
   return <main className={`play-table ${hasToolboxes ? 'has-toolboxes' : ''}`} style={{ '--felt-background': manifest.board.background, ...playerColors } as React.CSSProperties}>
     <header><div><h1>{manifest.name}</h1><p>{manifest.description}</p></div><div className="turn-status">{game.trickComplete ? 'Trick complete' : current ? `${current.name}'s turn` : 'Free play'}</div></header>
-    {boardSize !== 'portrait' && [...game.players]
-      .filter(player => player.position !== viewer.position)
-      .map(player => {
-        const relative = (player.position - viewer.position + game.players.length) % game.players.length;
-        const panel = playerPanel(relative, game.players.length);
-        const frame = boardBox(panel.frame, false, hasToolboxes);
-        return <div
-          key={player.position}
-          className={`player-seat-panel rotation-${panel.rotation}`}
-          style={{
-            left: `${frame.left}%`,
-            top: `${frame.top}%`,
-            width: `${frame.width}%`,
-            height: `${frame.height}%`,
-            '--player-color': player.color,
-          } as React.CSSProperties}
-          onPointerEnter={() => setPreviewCandidate({
-            label: `${player.name}'s player area`,
-            content: <PlayerPanelPreview player={player} viewer={viewer} />,
-          })}
-          onPointerLeave={() => setPreviewCandidate()}
-        >
-          <span className="player-seat-name">{player.name}</span>
-          <span className="player-seat-icon iconify" data-icon="griddy-icons:user-circle" aria-hidden="true" />
-        </div>;
-      })}
     <footer><ProfileBadge player={viewer} /> Drag a highlighted card or tap it to play.</footer>
     <PreviewOverlay />
     <KeyboardShortcuts />
@@ -967,8 +963,16 @@ render(setup, {
   ],
   layout: (game, viewer, boardSize) => {
     useD6(game);
+    const hasToolboxes = Boolean(manifest.toolboxes?.length);
     game.appearance({ className: 'pnpink-play-root', render: current => <Table game={current} viewer={viewer} boardSize={boardSize} /> });
     game.all(PlayToolbox).appearance({ render: toolbox => <ToolboxView toolbox={toolbox} /> });
+    game.all(PlayPlayerPanel).appearance({
+      render: panel => <PlayerPanelView
+        panel={panel}
+        viewer={viewer}
+        mirrored={playerSeat((panel.ownerPosition - viewer.position + game.players.length) % game.players.length, game.players.length, boardSize === 'portrait').mirrored}
+      />,
+    });
     game.all(PlayZone).appearance({ render: zone => <ZoneView zone={zone} viewer={viewer} /> });
     game.all(PlayStack).appearance({
       render: zone => <ZoneView zone={zone} viewer={viewer} />,
@@ -979,18 +983,31 @@ render(setup, {
     });
     game.all(PlayPiece).appearance({ aspectRatio: 0.7, render: piece => <PieceView piece={piece} viewer={viewer} /> });
     game.all(PlayResource).appearance({ aspectRatio: 1, render: piece => <PieceView piece={piece} viewer={viewer} /> });
-    game.all(PlayDie).appearance({ className: 'play-die' });
+    for (const die of game.all(PlayDie)) {
+      const nativeRender = die._ui.appearance.render;
+      die.appearance({
+        className: 'D6 play-die',
+        render: current => <>{nativeRender && nativeRender(current)}<DieInteraction die={current} /></>,
+      });
+    }
     for (const toolbox of game.toolboxes()) {
       game.layout(toolbox, { slots: [toolboxBox(toolbox, viewer, boardSize === 'portrait')] });
     }
+    for (const panel of game.playerPanels()) {
+      const seat = playerSeat((panel.ownerPosition - viewer.position + game.players.length) % game.players.length, game.players.length, boardSize === 'portrait');
+      panel.rotation = seat.rotation;
+      game.layout(panel, { slots: [boardBox(seat.frame, boardSize === 'portrait', hasToolboxes)] });
+    }
     for (const zone of game.areas()) {
       const definition = manifest.areas.find(candidate => candidate.id === zone.definitionId)!;
-      zone.rotation = zoneRotation(zone, viewer);
       if (zone.toolboxId) {
         const toolbox = game.toolboxes().find(candidate => (
           candidate.definitionId === zone.toolboxId && candidate.ownerPosition === zone.ownerPosition
         ));
         if (toolbox) toolbox.layout(zone, { slots: [toolboxAreaBox(zone, boardSize === 'portrait')] });
+      } else if (zone.ownerPosition >= 0) {
+        const panel = game.playerPanels().find(candidate => candidate.ownerPosition === zone.ownerPosition);
+        if (panel) panel.layout(zone, { slots: [playerZoneBox(zone, viewer, boardSize)] });
       } else {
         game.layout(zone, { slots: [zoneBox(zone, viewer, boardSize)] });
       }
@@ -1005,6 +1022,9 @@ render(setup, {
         }
       } else if (zone instanceof PlayStack) {
         zone.configureLayout({ area: { left: 3, top: 16, width: 94, height: 81 } });
+      } else if (zone.kind === 'supply') {
+        zone.layout(PlayResource, supplyLayout(definition, 14, 16));
+        zone.layout(PlayDie, supplyLayout(definition, 9.3, 10.7));
       } else {
         zone.layout(Piece, pieceLayout(definition, zone.kind === 'hand' && zone.ownerPosition !== viewer.position));
       }

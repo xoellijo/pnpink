@@ -16,6 +16,10 @@ export class PlayToolbox extends Space<PlayGame, PlayPlayer> {
   ownerPosition = -1;
 }
 
+export class PlayPlayerPanel extends Space<PlayGame, PlayPlayer> {
+  ownerPosition = -1;
+}
+
 export class PlayZone extends Space<PlayGame, PlayPlayer> {
   definitionId = '';
   label = '';
@@ -92,6 +96,7 @@ export class PlayPiece extends Piece<PlayGame, PlayPlayer> {
   pieceType: PieceDefinition['type'] = 'card';
   color = '';
   value = '';
+  shape: PieceDefinition['shape'] = 'circle';
   homeAreaId = '';
   infiniteSource = false;
 }
@@ -136,6 +141,14 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
 
   toolboxes(): PlayToolbox[] {
     return this.all(PlayToolbox);
+  }
+
+  playerPanels(): PlayPlayerPanel[] {
+    return this.all(PlayPlayerPanel);
+  }
+
+  playerPanel(player: PlayPlayer): PlayPlayerPanel | undefined {
+    return this.playerPanels().find(panel => panel.ownerPosition === player.position);
   }
 
   initialize(): void {
@@ -269,7 +282,7 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
   }
 
   nextPlayer(player: PlayPlayer): PlayPlayer {
-    const players = [...this.players];
+    const players = [...this.players].sort((left, right) => left.position - right.position);
     const index = players.findIndex(candidate => candidate.position === player.position);
     const reverse = manifest.turns?.order === 'left' || manifest.turns?.order === 'counterclockwise';
     const offset = reverse ? players.length - 1 : 1;
@@ -277,7 +290,7 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
   }
 
   previousPlayer(player: PlayPlayer): PlayPlayer {
-    const players = [...this.players];
+    const players = [...this.players].sort((left, right) => left.position - right.position);
     const index = players.findIndex(candidate => candidate.position === player.position);
     const reverse = manifest.turns?.order === 'left' || manifest.turns?.order === 'counterclockwise';
     const offset = reverse ? 1 : players.length - 1;
@@ -345,6 +358,10 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
 
   rollableDice(player: PlayPlayer): PlayDie[] {
     return this.movablePieces(player).filter((piece): piece is PlayDie => piece instanceof PlayDie);
+  }
+
+  settableDice(player: PlayPlayer): PlayDie[] {
+    return this.rollableDice(player);
   }
 
   hideableZones(player: PlayPlayer): PlayArea[] {
@@ -459,6 +476,7 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
       label: definition.label,
       color: definition.color ?? '',
       value: String(definition.value ?? ''),
+      shape: definition.shape ?? 'circle',
       homeAreaId: definition.initial.area,
       infiniteSource: target.infinite,
     };
@@ -477,7 +495,7 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
 export default createGame(PlayPlayer, PlayGame, game => {
   const { action } = game;
   const { eachPlayer, forLoop, loop, playerActions } = game.flowCommands;
-  game.registerClasses(PlayToolbox, PlayZone, PlayStack, PlayPiece, PlayResource, PlayDie);
+  game.registerClasses(PlayToolbox, PlayPlayerPanel, PlayZone, PlayStack, PlayPiece, PlayResource, PlayDie);
 
   for (const definition of manifest.toolboxes ?? []) {
     const owners = definition.scope === 'player' ? game.players : [undefined];
@@ -491,6 +509,13 @@ export default createGame(PlayPlayer, PlayGame, game => {
         player: owner,
       });
     }
+  }
+
+  for (const player of game.players) {
+    game.create(PlayPlayerPanel, `player-panel-${player.position}`, {
+      ownerPosition: player.position,
+      player,
+    });
   }
 
   for (const definition of manifest.areas) {
@@ -520,7 +545,7 @@ export default createGame(PlayPlayer, PlayGame, game => {
         const playerProperties = { ...properties, ownerPosition: player.position, player };
         const parent = definition.toolbox
           ? game.toolboxes().find(toolbox => toolbox.definitionId === definition.toolbox && toolbox.ownerPosition === player.position) ?? game
-          : game;
+          : game.playerPanel(player) ?? game;
         if (pileByDefault) parent.create(PlayStack, definition.id, playerProperties);
         else parent.create(PlayZone, definition.id, playerProperties);
       }
@@ -734,6 +759,14 @@ export default createGame(PlayPlayer, PlayGame, game => {
         game.repeatAction = true;
       }).message('{{player}} rolls {{die}}.'),
 
+    setDie: player => action({ prompt: 'Set a die', condition: game.settableDice(player).length > 0 })
+      .chooseOnBoard('die', game.settableDice(player), { prompt: 'Choose a die' })
+      .do(rawArgs => {
+        const { die, value } = rawArgs as unknown as { die: PlayDie; value?: number };
+        if (Number.isInteger(value) && value! >= 1 && value! <= 6) die.current = value!;
+        game.repeatAction = true;
+      }).message('{{player}} sets {{die}} to {{value}}.'),
+
     concealArea: player => action({ condition: game.hideableZones(player).length > 0 })
       .chooseOnBoard('zone', game.hideableZones(player), { skipIf: 'never' })
       .chooseFrom('operation', ({ zone }) => game.concealChoices(player, zone), { prompt: 'Choose visibility' })
@@ -767,7 +800,7 @@ export default createGame(PlayPlayer, PlayGame, game => {
   });
 
   const reorderActionNames = reorderDefinitions.map(definition => `reorder-${definition.id}`);
-  const genericActions = ['draw', 'move', ...reorderActionNames, 'discard', 'flip', 'setFace', 'flipDeck', 'shuffle', 'deal', 'roll', 'concealArea', 'endTurn'];
+  const genericActions = ['draw', 'move', ...reorderActionNames, 'discard', 'flip', 'setFace', 'flipDeck', 'shuffle', 'deal', 'roll', 'setDie', 'concealArea', 'endTurn'];
   const turnMode = manifest.turns?.mode ?? 'guided';
   const maximumTrickCards = manifest.turns?.maxCardsPerPlay ?? 1;
   if (turnMode === 'free') {
@@ -798,7 +831,7 @@ export default createGame(PlayPlayer, PlayGame, game => {
               prompt: maximumTrickCards === 0
                 ? 'Play one or more cards'
                 : `Play up to ${maximumTrickCards} card${maximumTrickCards === 1 ? '' : 's'}`,
-              actions: ['move', ...reorderActionNames, 'flip', 'setFace', 'flipDeck', 'shuffle', 'deal', 'roll', 'concealArea'],
+              actions: ['move', ...reorderActionNames, 'flip', 'setFace', 'flipDeck', 'shuffle', 'deal', 'roll', 'setDie', 'concealArea'],
               skipIf: 'always',
             })],
           })],

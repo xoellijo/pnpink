@@ -19,8 +19,9 @@ export function clearSelected(): void {
 
 export function toggleSelected(element: GameElement): void {
   const selected = selectedElements();
-  setSelected(selected.includes(element)
-    ? selected.filter(candidate => candidate !== element)
+  const branch = element.branch();
+  setSelected(selected.some(candidate => candidate.branch() === branch)
+    ? selected.filter(candidate => candidate.branch() !== branch)
     : [...selected, element]);
 }
 

@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#080c13">
+  <meta name="theme-color" content="#171924">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="PnPInk Play">
-  <title>PnPInk Play - Game Lobby</title>
+  <meta name="apple-mobile-web-app-title" content="PnPPlay">
+  <title>PnPPlay - Game Lobby</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/app-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/app-icon.svg">
@@ -16,8 +16,14 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/" aria-label="PnPInk Play lobby"><span class="brand-mark">P</span><span>PnPInk <b>Play</b></span></a>
+    <a class="brand" href="/" aria-label="PnPPlay lobby"><span class="brand-mark">P</span><span>PnP<b>Play</b></span></a>
     <span class="topbar-note">Local playtesting workspace</span>
+    <div class="identity-switcher">
+      <span data-icon="user"></span>
+      <select id="active-user" aria-label="Active player"><option value="">Choose player</option></select>
+      <button id="share-user" class="icon-button" type="button" title="Use this player on another device" aria-label="Share player identity"><span data-icon="share"></span></button>
+      <button id="new-user" class="icon-button" type="button" title="Create player" aria-label="Create player"><span data-icon="user-plus"></span></button>
+    </div>
   </header>
   <main class="lobby">
     <section class="create-panel">
@@ -25,8 +31,8 @@
       <h1>Bring a prototype to the table.</h1>
       <p>Create a persistent room, invite players, and continue on any device.</p>
       <form id="create-form">
-        <label>Game<select id="game" required></select></label>
-        <label>Your name<input id="name" value="Player 1" maxlength="40" required></label>
+        <label class="game-picker-label">Choose a game<select id="game" required hidden></select></label>
+        <div id="game-grid" class="game-grid"></div>
         <label class="switch-row">
           <span><strong>Admin mode</strong><small>Perspective and history controls for the creator</small></span>
           <input id="admin-mode" type="checkbox" checked role="switch">
@@ -47,8 +53,17 @@
       <div id="rooms" class="rooms" aria-live="polite"></div>
     </section>
   </main>
+  <dialog id="user-dialog" class="user-dialog">
+    <form id="user-form">
+      <div class="eyebrow">New identity</div>
+      <h2>Create a player</h2>
+      <p>This player stays available in this browser.</p>
+      <label>Player name<input id="new-user-name" maxlength="40" autocomplete="nickname" required></label>
+      <div class="dialog-actions"><button id="cancel-user" type="button" class="secondary">Cancel</button><button>Create player</button></div>
+      <p id="user-error" class="error"></p>
+    </form>
+  </dialog>
   <script src="/static/common.js"></script>
   <script src="/static/lobby.js"></script>
 </body>
 </html>
-

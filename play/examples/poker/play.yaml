@@ -1,9 +1,11 @@
 schema: 1
 name: Poker Table
-description: A standard 52-card deck on a lightweight four-player table.
+description: A 52-card sandbox table for two to eight players.
 
 players:
-  count: 4
+  min: 2
+  max: 8
+  panelMode: rotate
 
 turns:
   mode: trick-assisted
@@ -12,7 +14,7 @@ turns:
   winnerDecider: last
 
 board:
-  aspectRatio: 1.7
+  aspectRatio: 1.85
   background: "#173f35"
 
 toolboxes:
@@ -66,7 +68,7 @@ areas:
     visibility: hidden
     actions: [draw, move-from]
     layout:
-      shared: {left: 8, top: 37, width: 10, height: 26}
+      shared: {left: 25, top: 58, width: 7, height: 15}
       rows: 1
       columns: 1
 
@@ -89,7 +91,7 @@ areas:
     visibility: public
     actions: [move-from, move-to, discard-to]
     layout:
-      shared: {left: 82, top: 37, width: 10, height: 26}
+      shared: {left: 68, top: 58, width: 7, height: 15}
       rows: 1
       columns: 1
 
@@ -100,8 +102,8 @@ areas:
     visibility: owner
     actions: [move-from, move-to]
     layout:
-      owner: {left: 12, top: 76, width: 76, height: 22}
-      opponent: {left: 34, top: 2, width: 32, height: 14}
+      owner: {left: 21, top: 14, width: 73, height: 83}
+      opponent: {left: 3, top: 56, width: 72, height: 41}
       rows: 1
       columns: 13
 
@@ -112,8 +114,8 @@ areas:
     visibility: public
     actions: [move-from, move-to]
     layout:
-      owner: {left: 90, top: 76, width: 8, height: 20}
-      opponent: {left: 72, top: 3, width: 8, height: 15}
+      owner: {left: 95, top: 14, width: 4, height: 83}
+      opponent: {left: 77, top: 56, width: 20, height: 41}
       rows: 1
       columns: 1
 
@@ -125,8 +127,8 @@ areas:
     canHide: toggle
     actions: [move-from, move-to]
     layout:
-      owner: {left: 2, top: 72, width: 8, height: 25}
-      opponent: {left: 80, top: 3, width: 8, height: 22}
+      owner: {left: 1, top: 14, width: 19, height: 83}
+      opponent: {left: 3, top: 3, width: 72, height: 50}
       rows: 1
       columns: 1
 
@@ -134,11 +136,11 @@ pieces:
   source: assets/items.json
   initial: {area: deck}
   extra:
-    - {id: red-token, label: Red token, type: token, color: '#d94b4b', copies: 6, initial: {area: shared-tokens}}
-    - {id: blue-marker, label: Blue marker, type: token, color: '#4287d9', copies: 6, initial: {area: shared-markers}}
+    - {id: red-token, label: Red token, type: token, shape: circle, color: '#d94b4b', copies: 6, initial: {area: shared-tokens}}
+    - {id: blue-marker, label: Blue marker, type: token, shape: square, color: '#4287d9', copies: 6, initial: {area: shared-markers}}
     - {id: poker-chip, label: Poker chip, type: chip, color: '#e7c65b', value: 5, copies: 6, initial: {area: player-chips, forEachPlayer: true}}
     - {id: player-die, label: Player die, type: d6, color: '#f4f0dd', initial: {area: player-dice, forEachPlayer: true}}
 
 setup:
   - shuffle: deck
-  - deal: {from: deck, to: hand, count: 13}
+  - deal: {from: deck, to: hand, count: 5}

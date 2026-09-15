@@ -7,7 +7,7 @@ from .app import create_app
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="PnPInk Play local server")
+    parser = argparse.ArgumentParser(description="PnPPlay local server")
     parser.add_argument("--games", action="append", required=True, type=Path)
     parser.add_argument("--database", type=Path, default=Path("data/pnpink-play.db"))
     parser.add_argument("--host", default="0.0.0.0")
@@ -23,4 +23,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Prepare and launch an immediate PnPInk Play table."""
+"""Prepare and launch an immediate PnPPlay table."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def find_runtime() -> Path:
         root = candidate.expanduser().resolve()
         if (root / "launch.py").is_file() and (root / "vendor" / "aiohttp").is_dir() and (root / "server" / "boardzilla_lite").is_dir():
             return root
-    raise RuntimeError("PnPInk Play runtime is not installed")
+    raise RuntimeError("PnPPlay runtime is not installed")
 
 
 def _game_id(template: str) -> str:
@@ -160,7 +160,7 @@ def prepare_game(template: str, svg_path: str, runtime: Path) -> tuple[Path, str
         "ui": {"root": str(runtime_game), "outDir": "build/ui"},
         "game": {"root": str(runtime_game), "out": "build/game/game-interface.js"},
         "name": game_id,
-        "friendlyName": f"{template_path.stem} — PnPInk Play",
+        "friendlyName": f"{template_path.stem} — PnPPlay",
     }
     _write_json(game_dir / "play.json", play_manifest)
     _write_yaml(game_dir / "play.yaml", play_manifest)
@@ -176,7 +176,7 @@ def _free_port(start: int = 8081, stop: int = 8089) -> int:
             except OSError:
                 continue
         return port
-    raise RuntimeError("No free local port available for PnPInk Play")
+    raise RuntimeError("No free local port available for PnPPlay")
 
 
 def _request_json(url: str, body: dict | None = None) -> dict:
@@ -187,7 +187,7 @@ def _request_json(url: str, body: dict | None = None) -> dict:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace").strip()
-        raise RuntimeError(detail or f"PnPInk Play server returned HTTP {error.code}") from error
+        raise RuntimeError(detail or f"PnPPlay server returned HTTP {error.code}") from error
 
 
 class PlayServer:
@@ -241,7 +241,7 @@ class PlayServer:
             ]
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             with self.log_path.open("a", encoding="utf-8") as server_log:
-                server_log.write(f"\n--- Starting PnPInk Play on port {self.port} ---\n")
+                server_log.write(f"\n--- Starting PnPPlay on port {self.port} ---\n")
                 server_log.flush()
                 self.process = subprocess.Popen(
                     command,
@@ -254,14 +254,14 @@ class PlayServer:
             endpoint = f"http://127.0.0.1:{self.port}/games"
             for _attempt in range(40):
                 if self.process.poll() is not None:
-                    raise self._startup_error("PnPInk Play server stopped during startup")
+                    raise self._startup_error("PnPPlay server stopped during startup")
                 try:
                     _request_json(endpoint)
                     break
                 except Exception:
                     time.sleep(0.15)
             else:
-                raise self._startup_error("PnPInk Play server did not start")
+                raise self._startup_error("PnPPlay server did not start")
 
         try:
             session = _request_json(

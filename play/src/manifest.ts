@@ -6,9 +6,11 @@ export type AreaHideMode = 'toggle' | 'sync' | 'select';
 export type ToolboxScope = 'shared' | 'player';
 export type ToolboxSide = 'left' | 'right';
 export type PieceType = 'card' | 'token' | 'chip' | 'd6';
+export type ResourceShape = 'circle' | 'square';
 export type TurnMode = 'free' | 'guided' | 'trick-assisted';
 export type TurnOrder = 'right' | 'left' | 'clockwise' | 'counterclockwise';
 export type WinnerDecider = 'all' | 'last' | 'next-to-last' | 'host';
+export type OpponentPanelMode = 'rotate' | 'standard';
 
 export interface Box {
   left: number;
@@ -59,6 +61,7 @@ export interface PieceDefinition {
   back?: string;
   color?: string;
   value?: string | number;
+  shape?: ResourceShape;
   initial: {
     area: string;
     forEachPlayer?: boolean;
@@ -74,6 +77,7 @@ export interface PlayManifest {
     count?: number;
     min?: number;
     max?: number;
+    panelMode?: OpponentPanelMode;
   };
   turns?: {
     mode: TurnMode;
@@ -102,7 +106,7 @@ declare global {
 
 export function currentManifest(): PlayManifest {
   const value = globalThis.__PNPINK_PLAY_MANIFEST__;
-  if (!value) throw new Error('PnPInk Play manifest was not provided');
+  if (!value) throw new Error('PnPPlay manifest was not provided');
   return validateManifest(value);
 }
 
@@ -159,6 +163,9 @@ export function validateManifest(value: PlayManifest): PlayManifest {
     }
     const type = piece.type ?? 'card';
     if (!['card', 'token', 'chip', 'd6'].includes(type)) throw new Error(`${piece.id} has an invalid piece type`);
+    if (piece.shape !== undefined && !['circle', 'square'].includes(piece.shape)) {
+      throw new Error(`${piece.id} has an invalid resource shape`);
+    }
     if (type === 'card' && !piece.front) throw new Error(`Card ${piece.id} needs a front image`);
   }
   if (value.players?.count !== undefined && (value.players.min !== undefined || value.players.max !== undefined)) {
@@ -167,6 +174,9 @@ export function validateManifest(value: PlayManifest): PlayManifest {
   const playerMin = value.players?.count ?? value.players?.min ?? 2;
   const playerMax = value.players?.count ?? value.players?.max ?? playerMin;
   if (playerMin < 1 || playerMax < playerMin) throw new Error('Invalid player count');
+  if (value.players?.panelMode !== undefined && !['rotate', 'standard'].includes(value.players.panelMode)) {
+    throw new Error(`Invalid opponent panel mode: ${value.players.panelMode}`);
+  }
   if (
     value.turns?.order !== undefined
     && !['right', 'left', 'clockwise', 'counterclockwise'].includes(value.turns.order)

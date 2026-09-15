@@ -1,13 +1,17 @@
-const CACHE_NAME = 'pnpink-play-shell-v8';
+const CACHE_NAME = 'pnpplay-shell-v23';
 const APP_SHELL = [
   '/',
   '/manifest.webmanifest',
   '/app-icon.svg',
   '/static/style.css',
+  '/static/game-shell.css',
+  '/static/game-shell.js',
   '/static/common.js',
   '/static/lobby.js',
   '/static/join.js',
   '/static/session.js',
+  '/static/designer.js',
+  '/static/play.schema.json',
   '/static/lil-xgui.min.js',
   '/static/lil-gui.esm.min.js',
 ];
@@ -42,4 +46,3 @@ self.addEventListener('fetch', event => {
     return response;
   }).catch(() => caches.match(request)));
 });
-

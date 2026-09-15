@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#080c13">
+  <meta name="theme-color" content="#171924">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="PnPInk Play">
-  <title>PnPInk Play - Loading game</title>
+  <meta name="apple-mobile-web-app-title" content="PnPPlay">
+  <title>PnPPlay - Loading game</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/app-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/app-icon.svg">
@@ -16,7 +16,14 @@
   <script type="importmap">{"imports":{"lil-gui":"/static/lil-gui.esm.min.js"}}</script>
 </head>
 <body class="session-body">
-  <main class="game-frame"><iframe id="ui" title="PnPInk Play game"></iframe></main>
+  <section id="setup-identity" class="setup-identity" hidden>
+    <a href="/" class="setup-home" title="Back to lobby" aria-label="Back to lobby"><span data-icon="home"></span></a>
+    <div class="setup-room-name"><small>Game setup</small><strong id="setup-game-name">PnPPlay</strong></div>
+    <label class="setup-user-picker"><span>Playing as</span><select id="setup-user"></select></label>
+    <div id="setup-local-status" class="setup-local-status"></div>
+    <button id="setup-copy-invite" class="setup-share" type="button" title="Copy invitation link" aria-label="Copy invitation link"><span data-icon="share"></span></button>
+  </section>
+  <main class="game-frame"><iframe id="ui" title="PnPPlay game"></iframe></main>
   <div id="toast" class="toast"></div>
   <script src="/static/common.js"></script>
   <script type="module" src="/static/session.js"></script>

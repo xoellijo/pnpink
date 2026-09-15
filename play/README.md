@@ -1,6 +1,6 @@
-# PnPInk Play
+# PnPPlay
 
-`pnpink-play` turns a declarative game package into a playable browser table.
+`PnPPlay` turns a declarative game package into a playable browser table.
 The package describes pieces, areas, initial setup, visibility, layout, and
 the generic operations players may perform. No game-specific TypeScript is
 required for sandbox-style prototypes.
@@ -96,7 +96,8 @@ screening, so other clients receive neither the pieces nor their count.
 Optional `toolboxes` place shared or player-owned trays outside the felt. An
 area joins one with `toolbox: toolbox-id`; `kind: supply` makes it a stack-like
 bowl, and `infinite: true` replenishes every component removed from it. Pieces
-accept `type: card`, `token`, `chip`, or `d6`, plus optional `color` and `value`.
+accept `type: card`, `token`, `chip`, or `d6`, plus optional `color`, `value`, and
+`shape: circle|square` for compact resources. Dice use Boardzilla's native animated `D6` component.
 Dropping a resource on its toolbox returns it to the matching supply declared
 by its initial area. Toolboxes are omitted entirely when the manifest does not
 define them.

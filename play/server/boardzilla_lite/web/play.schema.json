@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pnpplay.local/play.schema.json",
+  "title": "PnPPlay game",
+  "type": "object",
+  "required": ["schema", "name", "board", "areas", "pieces"],
+  "properties": {
+    "schema": {"type": "integer", "const": 1, "readOnly": true},
+    "name": {"type": "string", "title": "Game name", "minLength": 1},
+    "description": {"type": "string", "title": "Description"},
+    "players": {"$ref": "#/$defs/players"},
+    "turns": {"$ref": "#/$defs/turns"},
+    "board": {"$ref": "#/$defs/board"},
+    "toolboxes": {"type": "array", "items": {"$ref": "#/$defs/toolbox"}},
+    "areas": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/area"}},
+    "pieces": {
+      "oneOf": [
+        {"type": "array", "items": {"$ref": "#/$defs/piece"}},
+        {"$ref": "#/$defs/pieceSource"}
+      ]
+    }
+  },
+  "$defs": {
+    "players": {
+      "title": "Players",
+      "type": "object",
+      "properties": {
+        "count": {"type": "integer", "title": "Fixed players", "minimum": 1, "maximum": 16},
+        "min": {"type": "integer", "title": "Minimum", "minimum": 1, "maximum": 16, "default": 2},
+        "max": {"type": "integer", "title": "Maximum", "minimum": 1, "maximum": 16, "default": 4},
+        "panelMode": {"type": "string", "title": "Opponent panels", "enum": ["rotate", "standard"], "default": "rotate"}
+      }
+    },
+    "turns": {
+      "title": "Turns",
+      "type": "object",
+      "properties": {
+        "mode": {"type": "string", "enum": ["free", "guided", "trick-assisted"], "default": "free"},
+        "order": {"type": "string", "enum": ["right", "left", "clockwise", "counterclockwise"], "default": "right"},
+        "maxCardsPerPlay": {"type": "integer", "title": "Cards per play", "minimum": 0, "maximum": 99, "default": 1},
+        "winnerDecider": {"type": "string", "title": "Trick winner", "enum": ["all", "last", "next-to-last", "host"], "default": "last"}
+      }
+    },
+    "board": {
+      "title": "Board",
+      "type": "object",
+      "required": ["aspectRatio"],
+      "properties": {
+        "aspectRatio": {"type": "number", "title": "Aspect ratio", "minimum": 0.25, "maximum": 4, "multipleOf": 0.01, "default": 1.6},
+        "background": {"type": "string", "title": "Background", "format": "color", "default": "#173f35"}
+      }
+    },
+    "box": {
+      "type": "object",
+      "required": ["left", "top", "width", "height"],
+      "properties": {
+        "left": {"type": "number", "minimum": 0, "maximum": 100, "multipleOf": 0.1},
+        "top": {"type": "number", "minimum": 0, "maximum": 100, "multipleOf": 0.1},
+        "width": {"type": "number", "minimum": 1, "maximum": 100, "multipleOf": 0.1},
+        "height": {"type": "number", "minimum": 1, "maximum": 100, "multipleOf": 0.1}
+      }
+    },
+    "layout": {
+      "type": "object",
+      "properties": {
+        "shared": {"$ref": "#/$defs/box"},
+        "owner": {"$ref": "#/$defs/box"},
+        "opponent": {"$ref": "#/$defs/box"},
+        "rows": {"type": "integer", "minimum": 1, "maximum": 30, "default": 1},
+        "columns": {"type": "integer", "minimum": 1, "maximum": 30, "default": 1},
+        "gap": {"type": "number", "minimum": 0, "maximum": 50, "multipleOf": 0.1, "default": 0}
+      }
+    },
+    "toolbox": {
+      "title": "Toolbox",
+      "type": "object",
+      "required": ["id", "label", "scope"],
+      "properties": {
+        "id": {"type": "string", "title": "ID"},
+        "label": {"type": "string", "title": "Label"},
+        "scope": {"type": "string", "enum": ["shared", "player"], "default": "shared"},
+        "side": {"type": "string", "enum": ["left", "right"], "default": "left"}
+      }
+    },
+    "area": {
+      "title": "Area",
+      "type": "object",
+      "required": ["id", "label", "kind", "scope", "visibility", "layout"],
+      "properties": {
+        "id": {"type": "string", "title": "ID"},
+        "label": {"type": "string", "title": "Label"},
+        "kind": {"type": "string", "enum": ["hand", "stack", "center", "free", "table", "deck", "discard", "area", "supply"], "default": "free"},
+        "scope": {"type": "string", "enum": ["shared", "player"], "default": "shared"},
+        "visibility": {"type": "string", "enum": ["public", "owner", "hidden"], "default": "public"},
+        "actions": {"type": "array", "title": "Actions", "items": {"type": "string", "enum": ["draw", "move-from", "move-to", "discard-to", "shuffle", "deal"]}},
+        "maxDrop": {"type": "integer", "title": "Maximum drop", "minimum": 1, "maximum": 999},
+        "insert": {"type": "string", "enum": ["top", "bottom"], "default": "top"},
+        "allowShuffle": {"type": "boolean", "title": "Allow shuffle", "default": true},
+        "allowDeal": {"type": "boolean", "title": "Allow deal", "default": true},
+        "canHide": {"type": "string", "title": "Can hide", "enum": ["toggle", "sync", "select"]},
+        "toolbox": {"type": "string", "title": "Toolbox ID"},
+        "infinite": {"type": "boolean", "default": false},
+        "layout": {"$ref": "#/$defs/layout"}
+      }
+    },
+    "initial": {
+      "type": "object",
+      "required": ["area"],
+      "properties": {
+        "area": {"type": "string", "title": "Initial area"},
+        "forEachPlayer": {"type": "boolean", "title": "For every player", "default": false},
+        "faceUp": {"type": "boolean", "title": "Face up", "default": false}
+      }
+    },
+    "piece": {
+      "title": "Component",
+      "type": "object",
+      "required": ["id", "label", "initial"],
+      "properties": {
+        "id": {"type": "string", "title": "ID"},
+        "label": {"type": "string", "title": "Label"},
+        "type": {"type": "string", "enum": ["card", "token", "chip", "d6"], "default": "card"},
+        "copies": {"type": "integer", "minimum": 1, "maximum": 9999, "default": 1},
+        "front": {"type": "string", "title": "Front asset"},
+        "back": {"type": "string", "title": "Back asset"},
+        "color": {"type": "string", "format": "color", "default": "#d8b64c"},
+        "value": {"title": "Value", "type": ["string", "number"]},
+        "shape": {"type": "string", "enum": ["circle", "square"], "default": "circle"},
+        "initial": {"$ref": "#/$defs/initial"}
+      }
+    },
+    "pieceSource": {
+      "title": "Component source",
+      "type": "object",
+      "required": ["source", "initial"],
+      "properties": {
+        "source": {"type": "string", "title": "Items JSON"},
+        "initial": {"$ref": "#/$defs/initial"},
+        "extra": {"type": "array", "items": {"$ref": "#/$defs/piece"}}
+      }
+    }
+  }
+}

@@ -12,6 +12,14 @@ from .history_codec import DELTA, SNAPSHOT, apply_history, compress_state, decom
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    public_id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    access_token TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     game_name TEXT NOT NULL,
@@ -32,6 +40,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS session_players (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     session_user_id TEXT NOT NULL,
     name TEXT NOT NULL,
     color TEXT,
@@ -44,6 +53,7 @@ CREATE TABLE IF NOT EXISTS session_players (
     spectator INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(session_id, user_id),
     UNIQUE(session_id, session_user_id),
     UNIQUE(session_id, position)
 );
@@ -60,7 +70,9 @@ CREATE TABLE IF NOT EXISTS history_nodes (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS sessions_updated_idx ON sessions(updated_at DESC);
+CREATE INDEX IF NOT EXISTS users_access_token_idx ON users(access_token);
 CREATE INDEX IF NOT EXISTS session_players_session_idx ON session_players(session_id);
+CREATE INDEX IF NOT EXISTS session_players_user_idx ON session_players(user_id, session_id);
 CREATE INDEX IF NOT EXISTS history_nodes_parent_idx ON history_nodes(session_id, parent_id, id DESC);
 """
 
@@ -72,10 +84,10 @@ class Database:
         with self.connect() as connection:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
             tables = connection.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' LIMIT 1").fetchone()
-            if tables and version != 2:
+            if tables and version != 3:
                 raise RuntimeError("The database uses an incompatible history format; start with a new database")
             connection.executescript(SCHEMA)
-            connection.execute("PRAGMA user_version = 2")
+            connection.execute("PRAGMA user_version = 3")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -103,11 +115,41 @@ class Database:
         alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         return "".join(secrets.choice(alphabet) for _ in range(length))
 
-    def create_session(self, game_name: str, name: str, seat_count: int, admin_mode: bool, seat: dict[str, Any] | None) -> dict[str, Any]:
+    def create_user(self, name: str) -> dict[str, Any]:
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValueError("Player name is required")
+        if len(clean_name) > 40:
+            raise ValueError("Player name must be 40 characters or fewer")
+        with self.connect() as connection:
+            public_id = self.token()
+            access_token = self.token(32)
+            cursor = connection.execute(
+                "INSERT INTO users(public_id, name, access_token) VALUES (?, ?, ?)",
+                (public_id, clean_name, access_token),
+            )
+            user_id = int(cursor.lastrowid)
+        return {"id": user_id, "publicID": public_id, "name": clean_name, "token": access_token}
+
+    def user_by_token(self, token: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM users WHERE access_token = ?", (token,)).fetchone()
+        if row is None:
+            raise LookupError("User token not found")
+        return dict(row)
+
+    def player_for_user(self, session_id: int, user_id: int) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM session_players WHERE session_id = ? AND user_id = ?",
+                (session_id, user_id),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def create_session(self, game_name: str, user: dict[str, Any], seat_count: int, admin_mode: bool, seat: dict[str, Any] | None) -> dict[str, Any]:
         with self.connect() as connection:
             invite_code = self.invite_code()
             access_token = self.token(20)
-            user_id = self.token()
             random_seed = self.token(24)
             cursor = connection.execute(
                 "INSERT INTO sessions(game_name, invite_code, random_seed, allow_undo, admin_mode, seat_count) VALUES (?, ?, ?, 1, ?, ?)",
@@ -116,57 +158,69 @@ class Database:
             session_id = int(cursor.lastrowid)
             connection.execute(
                 """INSERT INTO session_players(
-                    session_id, session_user_id, name, color, position, host, settings, access_token
-                ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)""",
+                    session_id, user_id, session_user_id, name, color, position, host, settings, access_token
+                ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)""",
                 (
                     session_id,
-                    user_id,
-                    name,
+                    user["id"],
+                    user["public_id"],
+                    user["name"],
                     seat.get("color") if seat else None,
                     seat.get("position") if seat else None,
                     json.dumps(seat.get("settings", {}) if seat else {}),
                     access_token,
                 ),
             )
-        return {"sessionID": session_id, "inviteCode": invite_code, "playerAccessToken": access_token, "userID": user_id}
+        return {"sessionID": session_id, "inviteCode": invite_code, "playerAccessToken": access_token, "userID": user["public_id"]}
 
-    def join_session(self, invite_code: str, name: str, seat: dict[str, Any] | None) -> dict[str, Any]:
+    def join_session(self, invite_code: str, user: dict[str, Any], seat: dict[str, Any] | None) -> dict[str, Any]:
         with self.connect() as connection:
             session = connection.execute("SELECT * FROM sessions WHERE invite_code = ?", (invite_code.upper(),)).fetchone()
             if session is None:
                 raise LookupError("Room not found")
+            existing = connection.execute(
+                "SELECT access_token, session_user_id FROM session_players WHERE session_id = ? AND user_id = ?",
+                (session["id"], user["id"]),
+            ).fetchone()
+            if existing:
+                return {"sessionID": session["id"], "token": existing["access_token"], "userID": existing["session_user_id"]}
             if session["phase"] != "new":
                 raise ValueError("The game has already started")
             access_token = self.token(20)
-            user_id = self.token()
             connection.execute(
                 """INSERT INTO session_players(
-                    session_id, session_user_id, name, color, position, settings, access_token
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    session_id, user_id, session_user_id, name, color, position, settings, access_token
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     session["id"],
-                    user_id,
-                    name,
+                    user["id"],
+                    user["public_id"],
+                    user["name"],
                     seat.get("color") if seat else None,
                     seat.get("position") if seat else None,
                     json.dumps(seat.get("settings", {}) if seat else {}),
                     access_token,
                 ),
             )
-        return {"sessionID": session["id"], "token": access_token, "userID": user_id}
+        return {"sessionID": session["id"], "token": access_token, "userID": user["public_id"]}
 
-    def spectate_session(self, invite_code: str, name: str) -> dict[str, Any]:
+    def spectate_session(self, invite_code: str, user: dict[str, Any]) -> dict[str, Any]:
         with self.connect() as connection:
             session = connection.execute("SELECT * FROM sessions WHERE invite_code = ?", (invite_code.upper(),)).fetchone()
             if session is None:
                 raise LookupError("Room not found")
+            existing = connection.execute(
+                "SELECT access_token, session_user_id FROM session_players WHERE session_id = ? AND user_id = ?",
+                (session["id"], user["id"]),
+            ).fetchone()
+            if existing:
+                return {"sessionID": session["id"], "token": existing["access_token"], "userID": existing["session_user_id"]}
             access_token = self.token(20)
-            user_id = self.token()
             connection.execute(
-                "INSERT INTO session_players(session_id, session_user_id, name, host, settings, access_token, ready, spectator) VALUES (?, ?, ?, 0, '{}', ?, 1, 1)",
-                (session["id"], user_id, name, access_token),
+                "INSERT INTO session_players(session_id, user_id, session_user_id, name, host, settings, access_token, ready, spectator) VALUES (?, ?, ?, ?, 0, '{}', ?, 1, 1)",
+                (session["id"], user["id"], user["public_id"], user["name"], access_token),
             )
-        return {"sessionID": session["id"], "token": access_token, "userID": user_id}
+        return {"sessionID": session["id"], "token": access_token, "userID": user["public_id"]}
 
     def session_by_token(self, token: str) -> dict[str, Any]:
         with self.connect() as connection:
@@ -198,7 +252,9 @@ class Database:
     def players(self, session_id: int) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM session_players WHERE session_id = ? ORDER BY position IS NULL, position, id",
+                """SELECT p.*, u.public_id
+                   FROM session_players p JOIN users u ON u.id = p.user_id
+                   WHERE p.session_id = ? ORDER BY p.position IS NULL, p.position, p.id""",
                 (session_id,),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -213,6 +269,28 @@ class Database:
                    GROUP BY s.id ORDER BY s.updated_at DESC"""
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def rooms_for_user(self, user_id: int) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT s.*, mine.access_token AS player_access_token, mine.position AS player_position,
+                          mine.host AS player_host, mine.spectator AS player_spectator,
+                          COUNT(CASE WHEN all_players.position IS NOT NULL AND all_players.spectator = 0 THEN 1 END) AS player_count,
+                          COUNT(CASE WHEN all_players.spectator = 1 THEN 1 END) AS spectator_count
+                   FROM session_players mine
+                   JOIN sessions s ON s.id = mine.session_id
+                   LEFT JOIN session_players all_players ON all_players.session_id = s.id
+                   WHERE mine.user_id = ?
+                   GROUP BY s.id, mine.id
+                   ORDER BY s.updated_at DESC""",
+                (user_id,),
+            ).fetchall()
+        rooms = []
+        for row in rows:
+            room = dict(row)
+            room["state"] = state_text(room["state"])
+            rooms.append(room)
+        return rooms
 
     def update_settings(self, session_id: int, settings: Any, seat_count: int) -> None:
         with self.connect() as connection:
