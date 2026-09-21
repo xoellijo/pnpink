@@ -99,6 +99,9 @@ export class PlayPiece extends Piece<PlayGame, PlayPlayer> {
   shape: PieceDefinition['shape'] = 'circle';
   homeAreaId = '';
   infiniteSource = false;
+  roles: string[] = [];
+  tags: string[] = [];
+  properties: Record<string, unknown> = {};
 }
 
 PlayPiece.revealWhenHidden('back', 'faceUp');
@@ -112,6 +115,9 @@ export class PlayDie extends D6<PlayGame> {
   value = '';
   homeAreaId = '';
   infiniteSource = false;
+  roles: string[] = [];
+  tags: string[] = [];
+  properties: Record<string, unknown> = {};
 }
 
 export type PlayItem = PlayPiece | PlayDie;
@@ -125,6 +131,18 @@ export function areaItems(zone: PlayArea): PlayItem[] {
   return [...zone.all(Piece)].filter(isPlayItem);
 }
 
+function acceptsPiece(definition: AreaDefinition | undefined, piece: PlayItem): boolean {
+  const accepts = definition?.accepts;
+  if (!accepts) return true;
+  const type = piece instanceof PlayDie ? 'die' : piece.pieceType ?? 'card';
+  if (typeof accepts === 'string') return type === accepts || (type === 'd6' && accepts === 'die');
+  if (accepts.types?.length && !accepts.types.some(candidate => candidate === type || (type === 'd6' && candidate === 'die'))) return false;
+  if (accepts.roles?.length && !accepts.roles.some(role => piece.roles.includes(role))) return false;
+  if (accepts.tags?.length && !accepts.tags.every(tag => piece.tags.includes(tag))) return false;
+  if (accepts.properties && !Object.entries(accepts.properties).every(([key, value]) => piece.properties[key] === value)) return false;
+  return true;
+}
+
 export function reorderActionName(zone: PlayArea): string {
   return `reorder-${zone.definitionId}`;
 }
@@ -133,7 +151,7 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
   repeatAction = false;
   trickLeaderPosition = 1;
   trickComplete = false;
-  resourceSequence = 0;
+  componentSequences: Record<string, number> = {};
 
   areas(): PlayArea[] {
     return [...this.all(PlayZone), ...this.all(PlayStack)];
@@ -220,6 +238,7 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
     const areas = this.zonesWith('move-to', player).filter(zone => {
       const definition = manifest.areas.find(candidate => candidate.id === zone.definitionId);
       return pieces.every(piece => this.zoneOf(piece) !== zone)
+        && pieces.every(piece => acceptsPiece(definition, piece))
         && (zone.kind !== 'supply' || pieces.every(piece => (
           piece.homeAreaId === zone.definitionId
           && (zone.ownerPosition < 0 || zone.ownerPosition === player.position)
@@ -274,7 +293,7 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
   }
 
   trickPile(player: PlayPlayer): PlayArea | undefined {
-    return this.areas().find(zone => zone.definitionId === 'tricks' && zone.ownerPosition === player.position);
+    return this.areas().find(zone => zone.kind === 'tricks' && zone.ownerPosition === player.position);
   }
 
   playerAt(position: number): PlayPlayer {
@@ -470,7 +489,10 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
   createItem(componentId: string, target: PlayArea, ownerPosition = -1): PlayItem {
     const definition = manifest.pieces.find(candidate => candidate.id === componentId);
     if (!definition) throw new Error(`Unknown component: ${componentId}`);
-    const name = `${definition.id}-${ownerPosition < 0 ? 'shared' : ownerPosition}-${this.resourceSequence++}`;
+    const sequenceKey = `${definition.id}:${ownerPosition}`;
+    const sequence = this.componentSequences[sequenceKey] ?? 0;
+    this.componentSequences[sequenceKey] = sequence + 1;
+    const name = `${definition.id}-${ownerPosition < 0 ? 'shared' : ownerPosition}-${sequence}`;
     const common = {
       componentId: definition.id,
       label: definition.label,
@@ -479,9 +501,12 @@ export class PlayGame extends Game<PlayGame, PlayPlayer> {
       shape: definition.shape ?? 'circle',
       homeAreaId: definition.initial.area,
       infiniteSource: target.infinite,
+      roles: definition.roles ?? [],
+      tags: definition.tags ?? [],
+      properties: definition.properties ?? {},
     };
-    if (definition.type === 'd6') return target.create(PlayDie, name, common);
-    const PieceClass = definition.type === 'token' || definition.type === 'chip' ? PlayResource : PlayPiece;
+    if (definition.type === 'die' || definition.type === 'd6') return target.create(PlayDie, name, common);
+    const PieceClass = ['token', 'chip', 'pawn', 'meeple', 'cube', 'marker'].includes(definition.type ?? '') ? PlayResource : PlayPiece;
     return target.create(PieceClass, name, {
       ...common,
       pieceType: definition.type ?? 'card',
@@ -519,8 +544,8 @@ export default createGame(PlayPlayer, PlayGame, game => {
   }
 
   for (const definition of manifest.areas) {
-    const pileByDefault = ['stack', 'deck', 'discard', 'supply'].includes(definition.kind);
-    const cardPileByDefault = ['stack', 'deck', 'discard'].includes(definition.kind);
+    const pileByDefault = ['stack', 'deck', 'discard', 'tricks', 'supply'].includes(definition.kind);
+    const cardPileByDefault = ['stack', 'deck', 'discard', 'tricks'].includes(definition.kind);
     const properties = {
       definitionId: definition.id,
       label: definition.label,

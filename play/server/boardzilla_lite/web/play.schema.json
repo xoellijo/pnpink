@@ -8,9 +8,11 @@
     "schema": {"type": "integer", "const": 1, "readOnly": true},
     "name": {"type": "string", "title": "Game name", "minLength": 1},
     "description": {"type": "string", "title": "Description"},
+    "updates": {"$ref": "#/$defs/updates"},
     "players": {"$ref": "#/$defs/players"},
     "turns": {"$ref": "#/$defs/turns"},
     "board": {"$ref": "#/$defs/board"},
+    "types": {"$ref": "#/$defs/types"},
     "toolboxes": {"type": "array", "items": {"$ref": "#/$defs/toolbox"}},
     "areas": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/area"}},
     "pieces": {
@@ -21,6 +23,37 @@
     }
   },
   "$defs": {
+    "updates": {
+      "title": "Saved-game updates",
+      "type": "object",
+      "properties": {
+        "mode": {"type": "string", "enum": ["versioned", "latest-only"], "default": "versioned"},
+        "assets": {"$ref": "#/$defs/updatePolicy"},
+        "components": {"$ref": "#/$defs/updatePolicy"},
+        "rules": {"$ref": "#/$defs/updatePolicy"}
+      }
+    },
+    "updatePolicy": {
+      "type": "string",
+      "enum": ["live", "new-games", "pinned"],
+      "default": "pinned"
+    },
+    "extends": {
+      "title": "Inherited type",
+      "oneOf": [
+        {"type": "string"},
+        {"type": "array", "items": {"type": "string"}, "minItems": 1}
+      ]
+    },
+    "types": {
+      "title": "Reusable types",
+      "description": "Named defaults inherited by areas and pieces.",
+      "type": "object",
+      "properties": {
+        "areas": {"type": "object", "additionalProperties": {"type": "object"}},
+        "pieces": {"type": "object", "additionalProperties": {"type": "object"}}
+      }
+    },
     "players": {
       "title": "Players",
       "type": "object",
@@ -85,11 +118,12 @@
     "area": {
       "title": "Area",
       "type": "object",
-      "required": ["id", "label", "kind", "scope", "visibility", "layout"],
+      "required": ["id"],
       "properties": {
+        "extends": {"$ref": "#/$defs/extends"},
         "id": {"type": "string", "title": "ID"},
         "label": {"type": "string", "title": "Label"},
-        "kind": {"type": "string", "enum": ["hand", "stack", "center", "free", "table", "deck", "discard", "area", "supply"], "default": "free"},
+        "kind": {"type": "string", "enum": ["hand", "stack", "center", "free", "table", "deck", "discard", "tricks", "tableau", "area", "supply"], "default": "free"},
         "scope": {"type": "string", "enum": ["shared", "player"], "default": "shared"},
         "visibility": {"type": "string", "enum": ["public", "owner", "hidden"], "default": "public"},
         "actions": {"type": "array", "title": "Actions", "items": {"type": "string", "enum": ["draw", "move-from", "move-to", "discard-to", "shuffle", "deal"]}},
@@ -100,6 +134,21 @@
         "canHide": {"type": "string", "title": "Can hide", "enum": ["toggle", "sync", "select"]},
         "toolbox": {"type": "string", "title": "Toolbox ID"},
         "infinite": {"type": "boolean", "default": false},
+        "accepts": {
+          "title": "Accepted components",
+          "oneOf": [
+            {"$ref": "#/$defs/pieceType"},
+            {
+              "type": "object",
+              "properties": {
+                "types": {"type": "array", "items": {"$ref": "#/$defs/pieceType"}},
+                "roles": {"type": "array", "items": {"type": "string"}},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "properties": {"type": "object"}
+              }
+            }
+          ]
+        },
         "layout": {"$ref": "#/$defs/layout"}
       }
     },
@@ -115,19 +164,28 @@
     "piece": {
       "title": "Component",
       "type": "object",
-      "required": ["id", "label", "initial"],
+      "required": ["id"],
       "properties": {
+        "extends": {"$ref": "#/$defs/extends"},
         "id": {"type": "string", "title": "ID"},
         "label": {"type": "string", "title": "Label"},
-        "type": {"type": "string", "enum": ["card", "token", "chip", "d6"], "default": "card"},
+        "type": {"$ref": "#/$defs/pieceType"},
         "copies": {"type": "integer", "minimum": 1, "maximum": 9999, "default": 1},
         "front": {"type": "string", "title": "Front asset"},
         "back": {"type": "string", "title": "Back asset"},
         "color": {"type": "string", "format": "color", "default": "#d8b64c"},
         "value": {"title": "Value", "type": ["string", "number"]},
+        "roles": {"type": "array", "items": {"type": "string"}},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "properties": {"type": "object"},
         "shape": {"type": "string", "enum": ["circle", "square"], "default": "circle"},
         "initial": {"$ref": "#/$defs/initial"}
       }
+    },
+    "pieceType": {
+      "type": "string",
+      "enum": ["card", "tile", "token", "die", "d6", "pawn", "meeple", "cube", "marker", "chip", "board", "mat", "area"],
+      "default": "card"
     },
     "pieceSource": {
       "title": "Component source",

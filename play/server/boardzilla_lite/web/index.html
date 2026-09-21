@@ -18,11 +18,11 @@
   <header class="topbar">
     <a class="brand" href="/" aria-label="PnPPlay lobby"><span class="brand-mark">P</span><span>PnP<b>Play</b></span></a>
     <span class="topbar-note">Local playtesting workspace</span>
-    <div class="identity-switcher">
-      <span data-icon="user"></span>
-      <select id="active-user" aria-label="Active player"><option value="">Choose player</option></select>
-      <button id="share-user" class="icon-button" type="button" title="Use this player on another device" aria-label="Share player identity"><span data-icon="share"></span></button>
-      <button id="new-user" class="icon-button" type="button" title="Create player" aria-label="Create player"><span data-icon="user-plus"></span></button>
+    <div class="identity-switcher" title="Users in this device">
+      <button id="install-app" class="icon-button" type="button" title="Install PnPPlay" aria-label="Install PnPPlay" hidden><span data-icon="download"></span></button>
+      <button id="share-user" class="icon-button" type="button" title="Use this player on another device" aria-label="Use this player on another device"><span data-icon="devices"></span></button>
+      <button id="new-user" class="icon-button" type="button" title="Create a new player on this device" aria-label="Create player"><span data-icon="user-plus"></span></button>
+      <select id="active-user" title="Users in this device" aria-label="Users in this device"><option value="">Choose player</option></select>
     </div>
   </header>
   <main class="lobby">

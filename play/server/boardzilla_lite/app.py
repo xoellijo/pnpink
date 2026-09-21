@@ -24,6 +24,8 @@ GAMES_KEY = web.AppKey("games", GameRegistry)
 RUNNER_KEY = web.AppKey("runner", GameRunner)
 EVENTS_KEY = web.AppKey("events", EventBus)
 LOCKS_KEY = web.AppKey("locks", dict)
+WATCHER_KEY = web.AppKey("revision_watcher", asyncio.Task)
+DEFAULT_AVATAR = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='21' r='12' fill='none' stroke='%23fff' stroke-width='5'/%3E%3Cpath d='M10 58v-5c0-11 9-20 20-20h4c11 0 20 9 20 20v5' fill='none' stroke='%23fff' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E"
 
 
 def json_value(value: str | None, fallback: Any) -> Any:
@@ -37,7 +39,7 @@ def player_for_game(player: dict[str, Any]) -> dict[str, Any]:
         "id": player["session_user_id"],
         "position": player["position"],
         "name": player["name"],
-        "avatar": f"/avatar/{player['name']}",
+        "avatar": DEFAULT_AVATAR,
         "color": player["color"],
         "settings": json_value(player["settings"], {}),
         "host": bool(player["host"]),
@@ -49,7 +51,7 @@ def is_seated_player(player: dict[str, Any]) -> bool:
 
 
 def game_for_session(request: web.Request, session: dict[str, Any]) -> GameDefinition:
-    return request.app[GAMES_KEY].get(session["game_name"])
+    return request.app[GAMES_KEY].get(session["game_name"], session.get("game_revision"))
 
 
 def is_administrator(session: dict[str, Any]) -> bool:
@@ -148,7 +150,7 @@ def users_event(db: Database, session: dict[str, Any]) -> dict[str, Any]:
             {
                 "id": player["session_user_id"],
                 "name": player["name"],
-                "avatar": f"/avatar/{player['name']}",
+                "avatar": DEFAULT_AVATAR,
                 "playerDetails": details,
             }
         )
@@ -241,9 +243,25 @@ async def designer_page(request: web.Request) -> web.FileResponse:
     return web.FileResponse(files("boardzilla_lite").joinpath("web/designer.html"))
 
 
-def asset_response(target, *, headers: dict[str, str] | None = None, content_type: str | None = None) -> web.StreamResponse:
+def asset_etag(target) -> str:
+    stat = target.stat()
+    return f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
+
+
+def asset_response(
+    request: web.Request,
+    target,
+    *,
+    headers: dict[str, str] | None = None,
+    content_type: str | None = None,
+) -> web.StreamResponse:
     media_type = content_type or mimetypes.guess_type(target)[0] or "application/octet-stream"
-    response_headers = headers or {}
+    response_headers = dict(headers or {})
+    etag = asset_etag(target)
+    response_headers["ETag"] = etag
+    requested_etags = request.headers.get("If-None-Match", "")
+    if any(candidate.removeprefix("W/") in {etag, "*"} for candidate in map(str.strip, requested_etags.split(","))):
+        return web.Response(status=304, headers=response_headers)
     if media_type.startswith("text/") or media_type in {"application/javascript", "application/json", "application/manifest+json"}:
         return web.Response(body=target.read_bytes(), headers=response_headers, content_type=media_type, charset="utf-8")
     return web.FileResponse(target, headers=response_headers)
@@ -256,7 +274,7 @@ async def web_asset(request: web.Request) -> web.StreamResponse:
     target = files("boardzilla_lite").joinpath(f"web/{name}")
     if not target.is_file():
         raise web.HTTPNotFound()
-    return asset_response(target)
+    return asset_response(request, target)
 
 
 async def pwa_asset(request: web.Request) -> web.StreamResponse:
@@ -268,7 +286,7 @@ async def pwa_asset(request: web.Request) -> web.StreamResponse:
     if name == "sw.js":
         headers["Service-Worker-Allowed"] = "/"
     content_type = "application/manifest+json" if name == "manifest.webmanifest" else None
-    return asset_response(target, headers=headers, content_type=content_type)
+    return asset_response(request, target, headers=headers, content_type=content_type)
 
 
 async def list_games(request: web.Request) -> web.Response:
@@ -297,11 +315,46 @@ async def save_game_definition(request: web.Request) -> web.Response:
     return web.json_response({"manifest": saved, "revision": revision})
 
 
-async def game_cover(request: web.Request) -> web.FileResponse:
+async def game_revisions(request: web.Request) -> web.Response:
+    require_local_designer(request)
+    name = request.match_info["name"]
+    game = request.app[GAMES_KEY].get(name)
+    usage = request.app[DB_KEY].revision_usage(name)
+    revisions = request.app[GAMES_KEY].revisions(name)
+    for revision in revisions:
+        revision["rooms"] = usage.get(revision["revision"], {"total": 0, "new": 0, "started": 0, "finished": 0})
+    return web.json_response({
+        "current": game.revision,
+        "updates": (game.play_manifest or {}).get("updates", {}),
+        "revisions": revisions,
+    })
+
+
+async def restore_game_revision(request: web.Request) -> web.Response:
+    require_local_designer(request)
+    name = request.match_info["name"]
+    revision = request.match_info["revision"]
+    request.app[GAMES_KEY].restore_revision(name, revision)
+    _apply_revision_changes(request.app, request.app[GAMES_KEY].refresh())
+    return web.json_response({"current": request.app[GAMES_KEY].get(name).revision})
+
+
+async def delete_game_revision(request: web.Request) -> web.Response:
+    require_local_designer(request)
+    name = request.match_info["name"]
+    revision = request.match_info["revision"]
+    usage = request.app[DB_KEY].revision_usage(name).get(revision, {}).get("total", 0)
+    if usage:
+        raise ValueError(f"Revision is used by {usage} saved room(s)")
+    request.app[GAMES_KEY].delete_revision(name, revision)
+    return web.Response(status=204)
+
+
+async def game_cover(request: web.Request) -> web.StreamResponse:
     game = request.app[GAMES_KEY].get(request.match_info["name"])
     if not game.cover_path:
         raise web.HTTPNotFound()
-    return web.FileResponse(game.cover_path, headers={"Cache-Control": "public, max-age=3600"})
+    return asset_response(request, game.cover_path, headers={"Cache-Control": "public, no-cache"})
 
 
 async def list_rooms(request: web.Request) -> web.Response:
@@ -329,6 +382,7 @@ async def list_user_rooms(request: web.Request) -> web.Response:
 async def create_session(request: web.Request) -> web.Response:
     user = authenticated_user(request)
     body = await request.json()
+    _apply_revision_changes(request.app, request.app[GAMES_KEY].refresh())
     game = request.app[GAMES_KEY].get(body["gameName"])
     seat_count = int(body.get("seatCount", game.default_players))
     if not game.min_players <= seat_count <= game.max_players:
@@ -340,6 +394,7 @@ async def create_session(request: web.Request) -> web.Response:
         seat_count,
         bool(body.get("adminMode", body.get("allowUndo", True))),
         seat,
+        game.revision,
     )
     return web.json_response(result, status=201)
 
@@ -539,7 +594,7 @@ async def set_perspective(request: web.Request) -> web.Response:
     if position is not None and position not in valid:
         raise ValueError("Invalid player perspective")
     request.app[DB_KEY].set_view_position(session["access_token"], position)
-    request.app[EVENTS_KEY].publish(session["id"])
+    request.app[EVENTS_KEY].publish(session["id"], access_tokens={session["access_token"]})
     return web.Response(status=204)
 
 
@@ -558,6 +613,18 @@ async def navigate_history(request: web.Request) -> web.Response:
     if changed:
         request.app[EVENTS_KEY].publish(session["id"])
     return web.json_response({"changed": changed, "history": request.app[DB_KEY].history_status(session["id"])})
+
+
+async def create_history_checkpoint(request: web.Request) -> web.Response:
+    session, _ = session_and_player(request)
+    if not is_administrator(session):
+        raise PermissionError("Only the administrator can create checkpoints")
+    body = await request.json()
+    checkpoint_id = request.app[DB_KEY].create_checkpoint(session["id"], str(body.get("name", "")))
+    return web.json_response({
+        "checkpointID": checkpoint_id,
+        "history": request.app[DB_KEY].history_status(session["id"]),
+    })
 
 
 async def delete_session(request: web.Request) -> web.Response:
@@ -599,6 +666,9 @@ async def session_events(request: web.Request) -> web.StreamResponse:
             if signal == "deleted":
                 await send({"type": "roomDeleted"})
                 break
+            if signal == "revision":
+                await send({"type": "gameRevision"})
+                continue
             refreshed = request.app[DB_KEY].session_by_token(request.match_info["token"])
             for event in snapshot_events(request.app[DB_KEY], refreshed):
                 await send(event)
@@ -641,6 +711,9 @@ async def session_socket(request: web.Request) -> web.WebSocketResponse:
             if signal == "deleted":
                 await send({"type": "roomDeleted"})
                 break
+            if signal == "revision":
+                await send({"type": "gameRevision"})
+                continue
             refreshed = request.app[DB_KEY].session_by_token(request.match_info["token"])
             for event in snapshot_events(request.app[DB_KEY], refreshed):
                 await send(event)
@@ -693,7 +766,7 @@ async def ui_asset(request: web.Request) -> web.StreamResponse:
         if game.ui_directory not in target.parents or not target.is_file():
             raise web.HTTPNotFound()
     content_type, _ = mimetypes.guess_type(target)
-    return asset_response(target, headers={"Cache-Control": "no-store"}, content_type=content_type)
+    return asset_response(request, target, headers={"Cache-Control": "private, no-cache"}, content_type=content_type)
 
 
 @web.middleware
@@ -723,6 +796,43 @@ async def add_utf8_charset(request: web.Request, response: web.StreamResponse) -
         response.headers["Content-Type"] = f"{content_type}; charset=utf-8"
 
 
+def _apply_revision_changes(app: web.Application, changes) -> None:
+    for change in changes:
+        result = app[DB_KEY].apply_game_revision(
+            change.game_name,
+            change.previous,
+            change.current,
+            change.kind,
+            change.updates,
+        )
+        for session_id in result["promoted"]:
+            app[EVENTS_KEY].publish(session_id, "revision")
+        for session_id in result["deleted"]:
+            app[EVENTS_KEY].publish(session_id, "deleted")
+
+
+async def _start_revision_watcher(app: web.Application) -> None:
+    async def watch() -> None:
+        while True:
+            await asyncio.sleep(1)
+            try:
+                _apply_revision_changes(app, app[GAMES_KEY].refresh())
+            except Exception:
+                app.logger.exception("Unable to refresh game revisions")
+
+    app[WATCHER_KEY] = asyncio.create_task(watch())
+
+
+async def _stop_revision_watcher(app: web.Application) -> None:
+    task = app.get(WATCHER_KEY)
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
 def create_app(game_roots: list[Path], database_path: Path) -> web.Application:
     app = web.Application(middlewares=[errors], client_max_size=1024 * 1024)
     app.on_response_prepare.append(add_utf8_charset)
@@ -731,6 +841,10 @@ def create_app(game_roots: list[Path], database_path: Path) -> web.Application:
     app[RUNNER_KEY] = GameRunner()
     app[EVENTS_KEY] = EventBus()
     app[LOCKS_KEY] = defaultdict(asyncio.Lock)
+    app[DB_KEY].bind_unversioned_sessions({game.name: game.revision for game in app[GAMES_KEY].all()})
+    _apply_revision_changes(app, app[GAMES_KEY].refresh())
+    app.on_startup.append(_start_revision_watcher)
+    app.on_cleanup.append(_stop_revision_watcher)
     app.router.add_get("/", index)
     app.router.add_get("/join/{code}", join_page)
     app.router.add_get("/s/{token}", session_page)
@@ -740,6 +854,9 @@ def create_app(game_roots: list[Path], database_path: Path) -> web.Application:
     app.router.add_get("/games", list_games)
     app.router.add_get("/designer-api/games/{name}", get_game_definition)
     app.router.add_put("/designer-api/games/{name}", save_game_definition)
+    app.router.add_get("/designer-api/games/{name}/revisions", game_revisions)
+    app.router.add_post("/designer-api/games/{name}/revisions/{revision}/restore", restore_game_revision)
+    app.router.add_delete("/designer-api/games/{name}/revisions/{revision}", delete_game_revision)
     app.router.add_get("/games/{name}/cover", game_cover)
     app.router.add_get("/rooms", list_rooms)
     app.router.add_post("/users", create_user)
@@ -759,6 +876,7 @@ def create_app(game_roots: list[Path], database_path: Path) -> web.Application:
     app.router.add_post("/sessions/{token}/undo", undo)
     app.router.add_post("/sessions/{token}/perspective", set_perspective)
     app.router.add_post("/sessions/{token}/history", navigate_history)
+    app.router.add_post("/sessions/{token}/history/checkpoints", create_history_checkpoint)
     app.router.add_delete("/sessions/{token}", delete_session)
     app.router.add_get("/sessions/{token}/ui.html", ui_html)
     app.router.add_get("/sessions/{token}/{path:.*}", ui_asset)

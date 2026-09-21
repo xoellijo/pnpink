@@ -5,6 +5,7 @@ import re
 import math
 import time
 import hashlib
+import json
 
 
 # ---------------- spritesheet alias token parsing ----------------
@@ -32,6 +33,7 @@ import render_helpers as RHP
 import render_planner as RPL
 import render_tokens as RTK
 import template_compose as TCOMP
+import semantic_metadata as SEMANTIC
 from typing import Dict, Optional, Tuple
 
 _slot_index_to_rc = RPL.slot_index_to_rc
@@ -203,7 +205,8 @@ def render_phase(ctx):
             if not key:
                 continue
             key_s = str(key)
-            hk = parse_header_key_full(key_s)
+            is_semantic = SEMANTIC.is_semantic_header(key_s)
+            hk = None if is_semantic else parse_header_key_full(key_s)
             target_ids = list((hk or {}).get("target_ids") or [])
             fast_text_target = ""
             fast_text_plain = False
@@ -254,6 +257,7 @@ def render_phase(ctx):
                 "hk": hk,
                 "is_clone": key_s.startswith("clone_"),
                 "is_internal": key_s.startswith("__dm_") or key_s.startswith("_"),
+                "is_semantic": is_semantic,
                 "fast_text_target": fast_text_target,
                 "fast_text_plain": fast_text_plain,
             })
@@ -573,6 +577,10 @@ def render_phase(ctx):
             for t in toks:
                 t = (t or "").strip()
                 if not t:
+                    continue
+                t, was_quoted = RTK.unquote_iterator_item(t)
+                if was_quoted:
+                    out.append(t)
                     continue
                 # Group repetition in iterator lists: K*(...)
                 m_rep_grp = re.match(r"^(\d+)\*\((.*)\)$", t)
@@ -1926,7 +1934,10 @@ def render_phase(ctx):
     front_field_indices = _field_indices_between(None, first_back_col)
     compiled_field_specs = _compile_field_specs(headers, front_field_indices)
     compiled_clone_specs = [s for s in compiled_field_specs if s.get("is_clone")]
-    compiled_apply_specs = [s for s in compiled_field_specs if (not s.get("is_clone")) and (not s.get("is_internal"))]
+    compiled_apply_specs = [
+        s for s in compiled_field_specs
+        if (not s.get("is_clone")) and (not s.get("is_internal")) and (not s.get("is_semantic"))
+    ]
     style_targets = {
         str(_tid or "").strip()
         for _spec in compiled_apply_specs
@@ -3024,6 +3035,9 @@ def render_phase(ctx):
         card_group.set('data-pnpink-source-row', str(int(row.get('__dm_source_row__', idx) or idx)))
         card_group.set('data-pnpink-variant-index', str(int(row.get('__dm_variant_index__', 1) or 1)))
         card_group.set('data-pnpink-copy-index', str(int(row.get('__dm_copy_index__', 1) or 1)))
+        semantic_metadata = SEMANTIC.from_mapping(row_map)
+        if semantic_metadata:
+            card_group.set('data-pnpink-metadata', json.dumps(semantic_metadata, ensure_ascii=False, separators=(',', ':')))
         if text_geometry_possible and TXT.scope_needs_text_geometry(card_group):
             _text_prepare_t0 = time.perf_counter()
             TXT.process_text_geometry(
@@ -3266,7 +3280,12 @@ def render_phase(ctx):
                     back_signature = [str(tmpl_root.get('id') or 'card')]
                     for back_spec in back_specs:
                         back_key = str(back_spec.get("key") or "")
-                        if not back_key or back_key.startswith("__dm_") or back_key.startswith("_"):
+                        if (
+                            not back_key
+                            or back_key.startswith("__dm_")
+                            or back_key.startswith("_")
+                            or back_spec.get("is_semantic")
+                        ):
                             continue
                         bi = int(back_spec.get("index") or 0)
                         back_val = cells_for_back[bi] if bi < len(cells_for_back) else ""
@@ -3322,6 +3341,9 @@ def render_phase(ctx):
                     card_group.set('data-pnpink-source-row', str(int(back_row.get('__dm_source_row__', idx) or idx)))
                     card_group.set('data-pnpink-variant-index', str(int(back_row.get('__dm_variant_index__', 1) or 1)))
                     card_group.set('data-pnpink-copy-index', str(int(back_row.get('__dm_copy_index__', 1) or 1)))
+                    back_metadata = SEMANTIC.from_mapping(back_row_map)
+                    if back_metadata:
+                        card_group.set('data-pnpink-metadata', json.dumps(back_metadata, ensure_ascii=False, separators=(',', ':')))
                     card_group.set('data-pnpink-content-key', hashlib.sha1('\n'.join(back_signature).encode('utf-8')).hexdigest()[:16])
                     back_final_scale = _fit_group_to_slot(card_group, (bx, by, bw, bh), (slot_x, slot_y, slot_w, slot_h), bbid)
 

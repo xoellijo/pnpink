@@ -7,11 +7,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import socket
 import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import export_items as EXPORTITEMS
@@ -43,6 +45,11 @@ def _game_id(template: str) -> str:
     stem = ''.join(character.lower() if character.isalnum() else '-' for character in Path(template).stem).strip('-') or 'pnpink-game'
     digest = hashlib.sha1(os.path.normcase(os.path.abspath(template)).encode('utf-8')).hexdigest()[:8]
     return f"{stem}-{digest}"
+
+
+def game_project(template: str) -> tuple[Path, str]:
+    template_path = Path(template).resolve()
+    return template_path.with_suffix(".play"), _game_id(str(template_path))
 
 
 def _write_json(path: Path, value: dict) -> None:
@@ -101,6 +108,69 @@ def _write_yaml(path: Path, value: dict) -> None:
     os.replace(temporary, path)
 
 
+def _content_address_play_assets(assets_dir: Path, result: dict) -> None:
+    renamed: dict[str, str] = {}
+    for item in result.get("results", []):
+        for field in ("front", "back"):
+            source_name = item.get(field)
+            if not source_name:
+                continue
+            if source_name in renamed:
+                item[field] = renamed[source_name]
+                continue
+            source = assets_dir / source_name
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()[:20]
+            target_name = f"{digest}{source.suffix.lower()}"
+            target = assets_dir / target_name
+            if target != source:
+                if target.exists():
+                    source.unlink()
+                else:
+                    os.replace(source, target)
+            renamed[source_name] = target_name
+            item[field] = target_name
+    manifest_path = assets_dir / "items.json"
+    temporary_manifest = manifest_path.with_suffix(".json.tmp")
+    temporary_manifest.write_text(
+        json.dumps({"schema": 2, "items": result.get("results", [])}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    os.replace(temporary_manifest, manifest_path)
+
+
+def _sync_configured_runtime_game(runtime: Path, template_path: Path, source_assets: Path) -> tuple[Path, str] | None:
+    games_root = runtime / "games"
+    for manifest_path in games_root.glob("*/game.json"):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        configured = str(manifest.get("pnpinkTemplate") or "").strip()
+        if not configured:
+            continue
+        configured_path = Path(configured).expanduser()
+        matches = configured_path.name.casefold() == template_path.name.casefold()
+        if configured_path.is_absolute():
+            matches = os.path.normcase(str(configured_path.resolve())) == os.path.normcase(str(template_path))
+        if not matches:
+            continue
+        target_game = manifest_path.parent
+        target_assets = target_game / "assets"
+        target_assets.mkdir(parents=True, exist_ok=True)
+        source_manifest = json.loads((source_assets / "items.json").read_text(encoding="utf-8"))
+        for item in source_manifest.get("items", []):
+            for field in ("front", "back"):
+                name = item.get(field)
+                if name:
+                    source = source_assets / str(name)
+                    target = target_assets / source.name
+                    if not target.exists():
+                        shutil.copy2(source, target)
+        _write_json(target_assets / "items.json", source_manifest)
+        return target_game, str(manifest["name"])
+    return None
+
+
 def prepare_game(template: str, svg_path: str, runtime: Path) -> tuple[Path, str]:
     template_path = Path(template).resolve()
     game_id = _game_id(str(template_path))
@@ -118,18 +188,9 @@ def prepare_game(template: str, svg_path: str, runtime: Path) -> tuple[Path, str
     )
     if not ok:
         raise RuntimeError(str(result.get("error") or "Unable to export Play assets"))
+    _content_address_play_assets(assets_dir, result)
 
-    components = []
-    for item in result.get("results", []):
-        components.append({
-            "id": item["name"],
-            "label": item["name"],
-            "copies": int(item.get("copies") or 1),
-            "front": f"assets/{item['front']}",
-            "back": f"assets/{item['back']}" if item.get("back") else None,
-            "initial": {"zone": "deck", "faceUp": False},
-        })
-    if not components:
+    if not result.get("results"):
         raise RuntimeError("The generated SVG contains no playable items")
 
     play_manifest = {
@@ -139,14 +200,18 @@ def prepare_game(template: str, svg_path: str, runtime: Path) -> tuple[Path, str
         "players": {"count": 4},
         "turns": {"mode": "trick-assisted", "order": "clockwise"},
         "board": {"aspectRatio": 1.6, "background": "#173f35"},
-        "zones": [
+        "updates": {"mode": "versioned", "assets": "live", "components": "new-games", "rules": "pinned"},
+        "areas": [
             {"id": "deck", "label": "Deck", "kind": "stack", "scope": "shared", "visibility": "hidden", "actions": ["draw", "shuffle"], "layout": {"shared": {"left": 7, "top": 36, "width": 11, "height": 28}, "rows": 1, "columns": 1}},
             {"id": "table", "label": "Table", "kind": "center", "scope": "shared", "visibility": "public", "actions": ["move-from", "move-to"], "layout": {"shared": {"left": 22, "top": 23, "width": 56, "height": 52}, "rows": 3, "columns": 6}},
             {"id": "discard", "label": "Discard", "kind": "stack", "scope": "shared", "visibility": "public", "actions": ["move-from", "move-to", "discard-to"], "layout": {"shared": {"left": 82, "top": 36, "width": 11, "height": 28}, "rows": 1, "columns": 1}},
             {"id": "hand", "label": "Hand", "kind": "hand", "scope": "player", "visibility": "owner", "actions": ["move-from", "move-to"], "layout": {"owner": {"left": 22, "top": 78, "width": 56, "height": 19}, "opponent": {"left": 31, "top": 2, "width": 38, "height": 16}, "rows": 1, "columns": 8}},
             {"id": "tricks", "label": "Tricks", "kind": "stack", "scope": "player", "visibility": "public", "actions": ["move-from", "move-to"], "layout": {"owner": {"left": 90, "top": 76, "width": 8, "height": 20}, "opponent": {"left": 72, "top": 3, "width": 8, "height": 15}, "rows": 1, "columns": 1}},
         ],
-        "components": components,
+        "pieces": {
+            "source": "assets/items.json",
+            "initial": {"area": "deck", "faceUp": False},
+        },
         "setup": [
             {"shuffle": "deck"},
             {"deal": {"from": "deck", "to": "hand", "count": 13}},
@@ -162,9 +227,19 @@ def prepare_game(template: str, svg_path: str, runtime: Path) -> tuple[Path, str
         "name": game_id,
         "friendlyName": f"{template_path.stem} — PnPPlay",
     }
-    _write_json(game_dir / "play.json", play_manifest)
-    _write_yaml(game_dir / "play.yaml", play_manifest)
+    authoring_manifest = game_dir / "play.yaml"
+    existing_text = authoring_manifest.read_text(encoding="utf-8", errors="replace") if authoring_manifest.is_file() else ""
+    legacy_generated_manifest = bool(existing_text and ("\nzones:" in existing_text or "\ncomponents:" in existing_text))
+    if not existing_text or legacy_generated_manifest:
+        _write_json(game_dir / "play.json", play_manifest)
+        _write_yaml(authoring_manifest, play_manifest)
     _write_json(game_dir / "game.json", game_manifest)
+    configured_game = _sync_configured_runtime_game(runtime, template_path, assets_dir)
+    if configured_game is not None:
+        return configured_game
+    deployed_game = runtime / "games" / game_id
+    deployed_game.mkdir(parents=True, exist_ok=True)
+    _write_json(deployed_game / "game.json", {"projectRoot": str(game_dir)})
     return game_dir, game_id
 
 
@@ -179,9 +254,12 @@ def _free_port(start: int = 8081, stop: int = 8089) -> int:
     raise RuntimeError("No free local port available for PnPPlay")
 
 
-def _request_json(url: str, body: dict | None = None) -> dict:
+def _request_json(url: str, body: dict | None = None, *, token: str = "") -> dict:
     payload = json.dumps(body).encode("utf-8") if body is not None else None
-    request = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"} if payload else {})
+    headers = {"Content-Type": "application/json"} if payload else {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, data=payload, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=5) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -196,6 +274,15 @@ class PlayServer:
         self.game_dir: Path | None = None
         self.port = 0
         self.log_path: Path | None = None
+
+    @staticmethod
+    def _server_has_game(port: int, game_id: str) -> bool:
+        try:
+            response = _request_json(f"http://127.0.0.1:{port}/games")
+        except Exception:
+            return False
+        games = response.get("games", response if isinstance(response, list) else [])
+        return any(isinstance(game, dict) and game.get("name") == game_id for game in games)
 
     def _startup_error(self, message: str) -> RuntimeError:
         detail = ""
@@ -219,6 +306,29 @@ class PlayServer:
                 process.kill()
 
     def open_game(self, game_dir: Path, game_id: str, runtime: Path) -> str:
+        self.ensure(game_dir, runtime)
+        try:
+            user = _request_json(f"http://127.0.0.1:{self.port}/users", {"name": "Host"})["user"]
+            session = _request_json(
+                f"http://127.0.0.1:{self.port}/sessions",
+                {"gameName": game_id, "seatCount": 2, "adminMode": True},
+                token=user["token"],
+            )
+        except Exception:
+            self.close()
+            raise
+        return f"http://127.0.0.1:{self.port}/s/{session['playerAccessToken']}"
+
+    def ensure(self, game_dir: Path, runtime: Path) -> None:
+        game_manifest = json.loads((game_dir / "game.json").read_text(encoding="utf-8"))
+        game_id = str(game_manifest["name"])
+        for _attempt in range(20):
+            if self._server_has_game(8080, game_id):
+                self.close()
+                self.port = 8080
+                self.game_dir = game_dir
+                return
+            time.sleep(0.1)
         if self.process is None or self.process.poll() is not None or self.game_dir != game_dir:
             self.close()
             self.port = _free_port()
@@ -263,12 +373,10 @@ class PlayServer:
             else:
                 raise self._startup_error("PnPPlay server did not start")
 
-        try:
-            session = _request_json(
-                f"http://127.0.0.1:{self.port}/sessions",
-                {"gameName": game_id, "name": "Host", "seatCount": 2, "adminMode": True},
-            )
-        except Exception:
-            self.close()
-            raise
-        return f"http://127.0.0.1:{self.port}/s/{session['playerAccessToken']}"
+    def lobby_url(self, game_dir: Path, runtime: Path) -> str:
+        self.ensure(game_dir, runtime)
+        return f"http://127.0.0.1:{self.port}/"
+
+    def designer_url(self, game_dir: Path, game_id: str, runtime: Path) -> str:
+        self.ensure(game_dir, runtime)
+        return f"http://127.0.0.1:{self.port}/designer/{urllib.parse.quote(game_id)}"

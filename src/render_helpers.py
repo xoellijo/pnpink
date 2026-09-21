@@ -49,6 +49,9 @@ def build_row_map(headers: list, row: dict) -> Dict[str, str]:
         if v is None:
             v = ""
         out[str(h)] = str(v)
+    for header, value in list(out.items()):
+        if header.startswith("$") and len(header) > 1:
+            out.setdefault(header[1:], value)
     if isinstance(row, dict):
         for k, v in row.items():
             if k == "cells":

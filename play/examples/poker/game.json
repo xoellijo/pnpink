@@ -11,5 +11,6 @@
     "out": "build/game/game-interface.js"
   },
   "name": "pnpink-poker-table",
-  "friendlyName": "PnPPlay — Poker Table"
+  "friendlyName": "PnPPlay — Poker Table",
+  "pnpinkTemplate": "poker_deck.svg"
 }

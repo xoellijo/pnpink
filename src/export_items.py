@@ -12,6 +12,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 import inkscape_cli as INKSCAPE
+import semantic_metadata as SEMANTIC
 
 
 _CSS_PX_PER_UNIT = {
@@ -116,6 +117,12 @@ def discover_items(svg_path: str) -> tuple[list[dict], dict[int, list[dict]]]:
             continue
         item_index = int(str(node.get("data-pnpink-item-index") or len(fronts) + 1))
         bbox = _bbox(node)
+        try:
+            metadata = json.loads(str(node.get("data-pnpink-metadata") or "{}"))
+            if not isinstance(metadata, dict):
+                metadata = {}
+        except (TypeError, ValueError):
+            metadata = {}
         item = {
             "id": node_id,
             "itemIndex": item_index,
@@ -127,6 +134,7 @@ def discover_items(svg_path: str) -> tuple[list[dict], dict[int, list[dict]]]:
             "contentKey": str(node.get("data-pnpink-content-key") or ""),
             "bbox": bbox,
             "exportArea": _export_area(bbox, export_scale),
+            "metadata": metadata,
         }
         if face == "front":
             fronts.append(item)
@@ -209,11 +217,13 @@ def export_items_via_inkscape(svg_path: str, out_path: str, *, export_type: str,
                 "front": front_name,
                 "back": back_name or None,
                 "copies": len(copies),
-                "sourceItems": [item["itemIndex"] for item in copies],
-                "dataset": representative["dataset"],
-                "row": representative["row"],
-                "variant": representative["variant"],
+                "source": {
+                    "dataset": representative["dataset"],
+                    "row": representative["row"],
+                    "variant": representative["variant"],
+                },
             }
+            record.update(SEMANTIC.manifest_fields(representative.get("metadata") or {}))
             records.append(record)
         if png_jobs:
             for _item, target in png_jobs:
@@ -239,7 +249,7 @@ def export_items_via_inkscape(svg_path: str, out_path: str, *, export_type: str,
             for record in records:
                 on_item_created(str(output_directory / record["front"]), record["name"])
         manifest_path = output_directory / "items.json"
-        manifest_path.write_text(json.dumps({"schema": 1, "items": records}, indent=2), encoding="utf-8")
+        manifest_path.write_text(json.dumps({"schema": 2, "items": records}, indent=2, ensure_ascii=False), encoding="utf-8")
         return True, {
             "elapsed_s": time.perf_counter() - started,
             "item_count": len(records),

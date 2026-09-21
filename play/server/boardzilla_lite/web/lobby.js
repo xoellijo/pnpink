@@ -9,8 +9,10 @@ const userSelect = document.querySelector('#active-user');
 const userDialog = document.querySelector('#user-dialog');
 const createButton = document.querySelector('#create-form button.primary-action');
 const shareUserButton = document.querySelector('#share-user');
+const installButton = document.querySelector('#install-app');
 
 let roomData = [];
+let installPrompt;
 const selectedRooms = new Set();
 
 async function loadGames() {
@@ -206,6 +208,31 @@ deleteNode.addEventListener('click', async () => {
   await loadRooms();
 });
 document.querySelector('#refresh').addEventListener('click', loadRooms);
+
+installButton.addEventListener('click', async () => {
+  if (installPrompt) {
+    const prompt = installPrompt;
+    installPrompt = undefined;
+    await prompt.prompt();
+    await prompt.userChoice;
+    installButton.hidden = true;
+  } else if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+    alert('Use Share, then Add to Home Screen.');
+  }
+});
+
+window.addEventListener('beforeinstallprompt', event => {
+  event.preventDefault();
+  installPrompt = event;
+  installButton.hidden = false;
+});
+
+window.addEventListener('appinstalled', () => {
+  installPrompt = undefined;
+  installButton.hidden = true;
+});
+
+if (/iPad|iPhone|iPod/.test(navigator.userAgent) && navigator.standalone !== true) installButton.hidden = false;
 
 async function start() {
   await importSharedUser();

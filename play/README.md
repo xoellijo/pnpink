@@ -36,6 +36,28 @@ Every package contains `play.yaml` or `play.json` and its referenced image
 files. YAML may contain comments and describes players, turn assistance,
 areas, pieces and setup without becoming a rules language.
 
+PnPPlay provides common area types (`deck`, `discard`, `table`, `hand`,
+`tricks`, `tableau`, and supplies) and piece types (`card`, `token`,
+`square-token`, `chip`, and `die`) from `standard.yaml`. Games use them directly
+with `extends`, so they only describe what is unique to that game.
+
+Named defaults under local `types.areas` and `types.pieces` can add new types or
+override the standard ones. Types may inherit other types or combine several
+using `extends: [type-a, type-b]`. Nested objects such as `layout` and `initial`
+merge deeply, while arrays and scalar values replace the inherited value. The
+server resolves everything to a flat manifest before the generic game reaches
+Boardzilla.
+
+```yaml
+areas:
+  - {id: waste, extends: discard, label: Discard, layout: {shared: {left: 80, top: 60, width: 8, height: 20}}}
+pieces:
+  - {id: coin, extends: token, label: Coin, color: '#d8b64c', initial: {area: waste}}
+```
+
+See `examples/play-reference.yaml` for a commented English reference covering
+every manifest section and `examples/poker/play.yaml` for a working compact game.
+
 ```yaml
 players:
   count: 4

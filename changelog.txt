@@ -1,6 +1,12 @@
 [Unreleased]
 - Add the first manifest-driven PnPInk Play runtime, with shared and per-player zones, private hands, decks, discards, table areas, reusable component assets, and generic draw, move, discard, flip, shuffle, and end-turn actions on Boardzilla Core.
 - Add `Pages`, `Items`, and `IDs` units to additional-format export, including compact item selectors, exact card-bbox crops without page marks, copy deduplication, shared or per-card backs, and an `items.json` manifest for playable packages.
+- Add the persistent PnPPlay server with local users, rooms, spectators, administrator perspectives, WebSocket updates, compressed branching history, checkpoints, and resumable SQLite sessions.
+- Add responsive tabletop interaction for desktop and mobile, including visual drag-and-drop, lasso and stack multiselection, contextual actions, keyboard shortcuts, card/area previews, player-relative layouts, toolboxes, and installable PWA support.
+- Add declarative YAML catalogs, reusable area and piece types, semantic component metadata, schema-driven lil-xgui editing, and a documented reference manifest for creating generic tabletop games.
+- Add content-addressed Play assets and game revisions with configurable live, new-game, pinned, and latest-only update policies, plus revision restore and cleanup from Game Designer.
+- Integrate Deckmaker with PnPPlay through regeneration and asset synchronization, linked runtime games, Game Designer, lobby, and new-room actions.
+- Add a configurable Poker Table showcase for two to eight players using PnPInk-generated cards and the generic PnPPlay runtime.
 
 [0.57]
 - Fix rectangle text decorators with user-space fill gradients by normalizing the copied gradient from the style rect's original bbox before fitting it to the measured text.

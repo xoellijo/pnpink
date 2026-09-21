@@ -167,6 +167,7 @@ class DeckMakerApp:
         self._source_change_after_id = None
         self._suppress_source_change = False
         self._generated_output_ready = False
+        self._pending_play_sync = False
         self._dataset_source_invalid = False
         self._snapshot_path = _normalize_path(initial.snapshot_path) if initial and initial.snapshot_path else ""
         self._snapshot_template_mtime_ns = 0
@@ -287,12 +288,19 @@ class DeckMakerApp:
         auto_export_cb.grid(row=0, column=4, sticky="w", padx=(0, 2))
         self.pdf_btn = ttk.Button(buttons, text="Export", command=self._export_clicked)
         self.pdf_btn.grid(row=0, column=5, sticky="w", padx=(0, 12))
-        self.play_btn = ttk.Button(buttons, text="Play", command=self._play_clicked)
+        self.play_btn = ttk.Menubutton(buttons, text="PnPPlay")
+        play_menu = tk.Menu(self.play_btn, tearoff=False)
+        play_menu.add_command(label="Regenerate, sync & open Game Designer", command=self._play_clicked)
+        play_menu.add_separator()
+        play_menu.add_command(label="Open Game Designer", command=lambda: self._open_play_page("designer"))
+        play_menu.add_command(label="Open Lobby", command=lambda: self._open_play_page("lobby"))
+        play_menu.add_command(label="Create New Room", command=lambda: self._open_play_page("room"))
+        self.play_btn.configure(menu=play_menu)
         self.play_btn.grid(row=0, column=6, sticky="w")
         GUI.attach_tooltip(auto_create_cb, "Auto-start generate")
         GUI.attach_tooltip(auto_open_cb, "Auto-start Open SVG")
         GUI.attach_tooltip(auto_export_cb, "Auto-start export")
-        GUI.attach_tooltip(self.play_btn, "Export all generated items for immediate play\nStart the local PnPPlay server\nOpen a new persistent room in your browser")
+        GUI.attach_tooltip(self.play_btn, "Synchronize generated components with PnPPlay\nOpen the web Game Designer or lobby\nCreate a persistent room")
         self.log_text = scrolledtext.ScrolledText(deck_tab, height=13, wrap="word", state="disabled", font=log_font)
         self.log_text.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
         try:
@@ -1490,7 +1498,7 @@ class DeckMakerApp:
         can_generate = (not busy) and self._can_generate(template)
         can_open = (not busy) and self._can_open_output(template)
         can_export = (not busy) and self._template_exists(template) and bool(self._selected_export_outputs())
-        can_play = (not busy) and self._template_exists(template) and os.path.isfile(DMPATHS.output_svg(template))
+        can_play = (not busy) and self._can_generate(template)
         try:
             self.run_btn.configure(state="normal" if can_generate else "disabled")
             self.open_btn.configure(state="normal" if can_open else "disabled")
@@ -2038,6 +2046,7 @@ class DeckMakerApp:
         self._render_thread.start()
 
     def _render_worker(self, req: AppRequest):
+        succeeded = False
         try:
             import dataset_state as DSTATE
             import engine as ENG
@@ -2066,11 +2075,13 @@ class DeckMakerApp:
                 PREFLIGHT.write_text_report(DMPATHS.output_svg(req.template))
             elapsed = (time.perf_counter() - self._run_started_at) if self._run_started_at else 0.0
             self._generated_output_ready = os.path.isfile(DMPATHS.output_svg(req.template))
+            succeeded = self._generated_output_ready
             self.root.after(0, lambda: self._render_done(f"Done ({elapsed:.2f}s)"))
             self.root.after(0, self._after_create_success)
         except Exception as ex:
             self._generated_output_ready = False
             self._dataset_source_invalid = True
+            self._pending_play_sync = False
             _l.w("[deckmaker_app] render failed:\n" + traceback.format_exc())
             self.root.after(0, lambda: self._render_done(f"Error: {ex}"))
         finally:
@@ -2078,6 +2089,8 @@ class DeckMakerApp:
             self._stop_web_activity_monitor()
             self._render_thread = None
             self.root.after(0, self._refresh_action_button_state)
+            if succeeded and self._pending_play_sync:
+                self.root.after(0, self._sync_play_assets)
 
     def _render_done(self, status: str):
         self.progress.stop()
@@ -2181,10 +2194,20 @@ class DeckMakerApp:
             self._log("Wait for render to finish before starting Play")
             return
         template = _normalize_path(self.template_var.get())
+        if not template or not self._can_generate(template):
+            self._set_base_status("Choose a valid template and dataset before starting Play")
+            self._log("PnPPlay synchronization requires a valid template and dataset")
+            return
+        self._pending_play_sync = True
+        self._log("PnPPlay sync started: regenerating the deck from its current dataset")
+        self._run_clicked()
+
+    def _sync_play_assets(self):
+        self._pending_play_sync = False
+        template = _normalize_path(self.template_var.get())
         svg_path = DMPATHS.output_svg(template) if template else ""
         if not template or not os.path.isfile(svg_path):
-            self._set_base_status("Generate the deck before starting Play")
-            self._log("Play requires a generated output SVG")
+            self._set_base_status("PnPPlay sync failed: generated output SVG not found")
             self._refresh_action_button_state()
             return
         self._post_create_busy = True
@@ -2198,10 +2221,10 @@ class DeckMakerApp:
             try:
                 runtime = PLAY.find_runtime()
                 game_dir, game_id = PLAY.prepare_game(template, svg_path, runtime)
-                self._queue_ui_activity("Starting local Play server...")
-                url = self._play_server.open_game(game_dir, game_id, runtime)
+                self._queue_ui_activity("Opening PnPPlay Game Designer...")
+                url = self._play_server.designer_url(game_dir, game_id, runtime)
                 self.root.after(0, lambda: self._open_url_in_system(url))
-                self.root.after(0, lambda: self._render_done(f"Play ready: {game_dir}"))
+                self.root.after(0, lambda: self._render_done(f"PnPPlay synchronized: {game_dir}"))
             except Exception as ex:
                 _l.w("[play] failed %s\n%s", str(ex), traceback.format_exc())
                 self.root.after(0, lambda ex=ex: self._render_done(f"Play failed: {ex}"))
@@ -2210,6 +2233,44 @@ class DeckMakerApp:
                 self.root.after(0, self._refresh_action_button_state)
 
         threading.Thread(target=worker, name="pnpink-play", daemon=True).start()
+
+    def _open_play_page(self, target: str):
+        if self._render_thread and self._render_thread.is_alive():
+            self._log("Wait for render to finish before opening PnPPlay")
+            return
+        template = _normalize_path(self.template_var.get())
+        if not template:
+            self._set_base_status("Open a template before starting PnPPlay")
+            return
+        game_dir, game_id = PLAY.game_project(template)
+        if not (game_dir / "game.json").is_file():
+            self._set_base_status("Synchronize this project with PnPPlay first")
+            self._log("Use PnPPlay > Sync & open Game Designer first")
+            return
+        self._post_create_busy = True
+        self._refresh_action_button_state()
+        self.progress.start(10)
+        self._set_base_status("Opening PnPPlay...")
+
+        def worker():
+            try:
+                runtime = PLAY.find_runtime()
+                if target == "designer":
+                    url = self._play_server.designer_url(game_dir, game_id, runtime)
+                elif target == "lobby":
+                    url = self._play_server.lobby_url(game_dir, runtime)
+                else:
+                    url = self._play_server.open_game(game_dir, game_id, runtime)
+                self.root.after(0, lambda: self._open_url_in_system(url))
+                self.root.after(0, lambda: self._render_done("PnPPlay ready"))
+            except Exception as ex:
+                _l.w("[play] failed %s\n%s", str(ex), traceback.format_exc())
+                self.root.after(0, lambda ex=ex: self._render_done(f"Play failed: {ex}"))
+            finally:
+                self._post_create_busy = False
+                self.root.after(0, self._refresh_action_button_state)
+
+        threading.Thread(target=worker, name="pnpink-play-open", daemon=True).start()
 
     def _export_worker(self, template: str, options: ExportOptions):
         try:

@@ -5,7 +5,7 @@ import setup, { areaIsConcealed, areaIsConcealedFrom, areaItems, isPlayItem, man
 import type { AreaDefinition, Box } from '../manifest.js';
 import { beginChoice, canChoose, chooseElement, chooseSequence, contextMenu, ContextAction, hasPendingAction, submitChoice, useCanChoose } from './context-menu.js';
 import { clearSelected, elementAtBranch, selectedElements, setSelected, toggleSelected, useSelectedElements } from './multiselect.js';
-import { openPreview, PreviewOverlay, setPreviewCandidate } from './preview.js';
+import { openPreview, PreviewOverlay, setPreviewCandidate, usePreviewCandidate } from './preview.js';
 import { HoverShortcuts, KeyboardShortcuts, useHoverShortcuts } from './shortcuts.js';
 import './style.scss';
 
@@ -77,13 +77,14 @@ function ZoneView({ zone, viewer }: { zone: PlayArea; viewer: PlayPlayer }) {
     : undefined;
   const isOpponentHand = zone.kind === 'hand' && owner?.position !== viewer.position;
   const isOpponentSubarea = owner?.position !== viewer.position
-    && (zone.kind === 'hand' || zone.definitionId === 'tricks' || zone.definitionId === 'player-area');
+    && (zone.kind === 'hand' || zone.kind === 'tricks' || zone.kind === 'tableau');
   const isMoveTarget = useCanChoose(zone, 'move');
   const isConcealedOwner = owner?.position === viewer.position && areaIsConcealed(zone);
   const isConcealedViewer = areaIsConcealedFrom(zone, viewer.position);
   const previewItem = isConcealedViewer
     ? undefined
     : { label: zoneSummary(zone), content: <AreaPreview area={zone} viewer={viewer} /> };
+  usePreviewCandidate(zone.branch(), previewItem);
   const { consumeClick: consumeZoneClick, ...contextHandlers } = useContextTrigger(function showZoneActions(x, y) {
     const actions: ContextAction[] = [];
     const node = elementNode(zone);
@@ -221,7 +222,7 @@ function areaVisibilityAction(zone: PlayArea, viewer: PlayPlayer): ContextAction
 }
 
 function zoneDisplayLabel(zone: PlayArea): string {
-  return zone.definitionId === 'player-area' ? 'TABLEAU' : zone.label;
+  return zone.kind === 'tableau' ? 'TABLEAU' : zone.label;
 }
 
 function contrastingTextColor(color: string): string {
@@ -252,12 +253,25 @@ function assetUrl(path: string): string {
   return path ? new URL(path, window.location.href.replace(/ui\.html$/, '')).href : '';
 }
 
+function pieceAssets(piece: PlayPiece): { front: string; back: string } {
+  const definition = manifest.pieces.find(candidate => candidate.id === piece.componentId);
+  return {
+    front: definition?.front ?? piece.front,
+    back: definition?.back ?? piece.back,
+  };
+}
+
+function visiblePieceSource(piece: PlayPiece, viewer: PlayPlayer): string {
+  const assets = pieceAssets(piece);
+  return piece.isVisibleTo(viewer) && piece.faceUp || !assets.back ? assets.front : assets.back;
+}
+
 function zoneIcon(zone: PlayDestination): string {
   if (zone instanceof PlayToolbox) return zone.scope === 'shared' ? 'mdi:toolbox-outline' : 'mdi:account-wrench-outline';
-  if (zone.kind === 'discard' || zone.definitionId === 'discard') return 'griddy-icons:trash';
-  if (zone.definitionId === 'tricks') return 'griddy-icons:trophy';
+  if (zone.kind === 'discard') return 'griddy-icons:trash';
+  if (zone.kind === 'tricks') return 'griddy-icons:trophy';
   if (zone.kind === 'center' || zone.kind === 'table') return 'griddy-icons:grid-alt';
-  if (zone.kind === 'deck' || zone.definitionId === 'deck') return 'griddy-icons:layers';
+  if (zone.kind === 'deck') return 'griddy-icons:layers';
   if (zone.kind === 'hand') return 'mdi:hand-back-right-outline';
   if (zone.ownerPosition >= 0) return 'griddy-icons:user-circle';
   return 'griddy-icons:component-card';
@@ -287,7 +301,7 @@ function shortcutsForZone(zone: PlayArea): HoverShortcuts {
 
 function pieceInfoAction(piece: PlayPiece, viewer: PlayPlayer): ContextAction | undefined {
   const visible = piece.isVisibleTo(viewer);
-  const source = visible && piece.faceUp || !piece.back ? piece.front : piece.back;
+  const source = visiblePieceSource(piece, viewer);
   return source ? {
     label: 'Info',
     icon: 'griddy-icons:info-circle',
@@ -407,9 +421,14 @@ function PieceView({ piece, viewer }: { piece: PlayItem; viewer: PlayPlayer }) {
   } as React.CSSProperties : undefined;
   const selectionAnchor = stackedSelection && selectedIndex === 0;
   const visible = piece.isVisibleTo(viewer);
-  const source = piece instanceof PlayPiece ? (visible && piece.faceUp || !piece.back ? piece.front : piece.back) : '';
-  const front = piece instanceof PlayPiece && piece.front ? assetUrl(piece.front) : '';
-  const back = piece instanceof PlayPiece && piece.back ? assetUrl(piece.back) : '';
+  const assets = piece instanceof PlayPiece ? pieceAssets(piece) : { front: '', back: '' };
+  const source = piece instanceof PlayPiece ? visiblePieceSource(piece, viewer) : '';
+  const front = assets.front ? assetUrl(assets.front) : '';
+  const back = assets.back ? assetUrl(assets.back) : '';
+  const previewItem = source
+    ? { label: visible ? piece.label : 'Hidden component', source: assetUrl(source) }
+    : undefined;
+  usePreviewCandidate(piece.branch(), previewItem);
   const showActions = (x: number, y: number) => {
     const group = selectedPieceGroup(piece);
     const actions: ContextAction[] = [];
@@ -487,10 +506,16 @@ function PieceView({ piece, viewer }: { piece: PlayItem; viewer: PlayPlayer }) {
     data-pnpink-selection-anchor={selectionAnchor ? 'true' : undefined}
     style={selectionStyle}
     onPointerEnter={() => {
-      if (source) setPreviewCandidate({ label: visible ? piece.label : 'Hidden component', source: assetUrl(source) });
+      setPreviewCandidate(previewItem);
     }}
-    onPointerLeave={() => {
-      setPreviewCandidate();
+    onPointerLeave={event => {
+      const zoneNode = event.currentTarget.closest<HTMLElement>('.play-zone');
+      const related = event.relatedTarget;
+      if (!areaIsConcealedFrom(zone, viewer.position) && zoneNode && related instanceof Node && zoneNode.contains(related)) {
+        setPreviewCandidate({ label: zoneSummary(zone), content: <AreaPreview area={zone} viewer={viewer} /> });
+      } else {
+        setPreviewCandidate();
+      }
     }}
     onClickCapture={event => {
       if (consumeClick()) {
@@ -515,7 +540,7 @@ function PieceView({ piece, viewer }: { piece: PlayItem; viewer: PlayPlayer }) {
     }}
     {...contextHandlers}
   >
-    {piece instanceof PlayPiece && piece.pieceType === 'card' ? <Flippable>
+    {piece instanceof PlayPiece && ['card', 'tile', 'board', 'mat', 'area'].includes(piece.pieceType ?? 'card') ? <Flippable>
       <Flippable.Front>
         {front ? <img draggable={false} src={front} alt={piece.label} /> : <strong>{visible ? piece.label : '?'}</strong>}
       </Flippable.Front>
@@ -571,9 +596,13 @@ function toolboxBox(toolbox: PlayToolbox, viewer: PlayPlayer, portrait: boolean)
       ? { left: 2, top: 1, width: 96, height: 9 }
       : { left: 2, top: 90, width: 96, height: 9 };
   }
+  const areaCount = toolbox.game.areas().filter(candidate => (
+    candidate.toolboxId === toolbox.definitionId && candidate.ownerPosition === toolbox.ownerPosition
+  )).length;
+  const height = Math.min(66, 8 + Math.max(1, areaCount) * 15);
   return toolbox.side === 'right'
-    ? { left: 93.2, top: 17, width: 5.8, height: 66 }
-    : { left: 1, top: 17, width: 5.8, height: 66 };
+    ? { left: 92.8, top: 99 - height, width: 6.5, height }
+    : { left: .7, top: 99 - height, width: 6.5, height };
 }
 
 function toolboxAreaBox(zone: PlayArea, portrait: boolean): Box {
@@ -593,11 +622,11 @@ function boardBox(box: Box, portrait: boolean, withToolboxes: boolean): Box {
   if (!withToolboxes) return box;
   return portrait
     ? { left: box.left, top: 11 + box.top * .78, width: box.width, height: box.height * .78 }
-    : { left: 7 + box.left * .86, top: box.top, width: box.width * .86, height: box.height };
+    : { left: 7.5 + box.left * .85, top: box.top, width: box.width * .85, height: box.height };
 }
 
 function playfieldAspectRatio(): number {
-  return manifest.board.aspectRatio * (manifest.toolboxes?.length ? .86 : 1);
+  return manifest.board.aspectRatio * (manifest.toolboxes?.length ? .85 : 1);
 }
 
 interface SelectionRect {
@@ -696,12 +725,13 @@ type PlayerSeat = {
   frame: Box;
   rotation: number;
   mirrored: boolean;
+  placement: 'owner' | 'top' | 'left' | 'right';
 };
 
 function playerSeat(relative: number, count: number, portrait = false): PlayerSeat {
   const panelMode = manifest.players?.panelMode ?? 'rotate';
   if (relative === 0) {
-    return { frame: { left: 1, top: 76, width: 98, height: 23 }, rotation: 0, mirrored: false };
+    return { frame: { left: 1, top: 78, width: 98, height: 21 }, rotation: 0, mirrored: false, placement: 'owner' };
   }
   if (portrait) {
     const columns = Math.min(3, count - 1);
@@ -719,6 +749,7 @@ function playerSeat(relative: number, count: number, portrait = false): PlayerSe
       },
       rotation: 0,
       mirrored: panelMode === 'rotate',
+      placement: 'top',
     };
   }
   const opponents = Array.from({ length: count - 1 }, (_, index) => index + 1);
@@ -754,7 +785,7 @@ function playerSeat(relative: number, count: number, portrait = false): PlayerSe
   const preferredWidth = count === 4 ? 27 : 24;
   const baseWidth = Math.min(preferredWidth, topCapacity / .8, sideCapacity / .8);
   const logicalWidth = baseWidth * .8;
-  const logicalHeight = baseWidth / 1.35 * 1.1;
+  const logicalHeight = baseWidth / 1.35 * 1.2;
 
   if (top.includes(relative)) {
     const occupied = logicalWidth * top.length + gap * (top.length - 1);
@@ -768,34 +799,37 @@ function playerSeat(relative: number, count: number, portrait = false): PlayerSe
       frame,
       rotation: 0,
       mirrored: panelMode === 'rotate',
+      placement: 'top',
     };
   }
 
   const onLeft = left.includes(relative);
   const side = onLeft ? left : right;
   const rotate = panelMode === 'rotate';
-  const sideWidth = rotate ? logicalHeight / aspectRatio : logicalWidth;
-  const sideHeight = rotate ? logicalWidth * aspectRatio : logicalHeight;
-  const occupied = sideHeight * side.length + gap * (side.length - 1);
+  const visualWidth = rotate ? logicalHeight / aspectRatio : logicalWidth;
+  const visualHeight = rotate ? logicalWidth * aspectRatio : logicalHeight;
+  const occupied = visualHeight * side.length + gap * (side.length - 1);
   const sideIndex = side.indexOf(relative);
   const visualIndex = onLeft ? side.length - sideIndex - 1 : sideIndex;
+  const visualLeft = onLeft ? .8 : 99.2 - visualWidth;
+  const visualTop = 26 + (sideAvailable - occupied) / 2 + visualIndex * (visualHeight + gap);
   const frame = {
-    left: onLeft ? .8 : 99.2 - sideWidth,
-    top: 25 + (sideAvailable - occupied) / 2 + visualIndex * (sideHeight + gap),
-    width: sideWidth,
-    height: sideHeight,
+    left: visualLeft + visualWidth / 2 - logicalWidth / 2,
+    top: visualTop + visualHeight / 2 - logicalHeight / 2,
+    width: logicalWidth,
+    height: logicalHeight,
   };
   const rotation = rotate ? onLeft ? 90 : 270 : 0;
   return {
     frame,
     rotation,
     mirrored: false,
+    placement: onLeft ? 'left' : 'right',
   };
 }
 
 function previewPieceSource(piece: PlayPiece, viewer: PlayPlayer): string {
-  const visible = piece.isVisibleTo(viewer);
-  const source = visible && piece.faceUp || !piece.back ? piece.front : piece.back;
+  const source = visiblePieceSource(piece, viewer);
   return source ? assetUrl(source) : '';
 }
 
@@ -810,7 +844,7 @@ function PreviewCards({ area, viewer, limit = 12 }: { area?: PlayArea; viewer: P
 }
 
 function AreaPreview({ area, viewer }: { area: PlayArea; viewer: PlayPlayer }) {
-  const kind = area.kind === 'hand' ? 'hand' : area.definitionId === 'tricks' ? 'tricks' : 'personal';
+  const kind = area.kind === 'hand' ? 'hand' : area.kind === 'tricks' ? 'tricks' : 'personal';
   return <div className={`area-preview area-preview-${kind}`}>
     <span className="area-preview-title">{zoneSummary(area)}</span>
     <span className="area-preview-icon iconify" data-icon={zoneIcon(area)} aria-hidden="true" />
@@ -821,8 +855,8 @@ function AreaPreview({ area, viewer }: { area: PlayArea; viewer: PlayPlayer }) {
 function PlayerPanelPreview({ player, viewer }: { player: PlayPlayer; viewer: PlayPlayer }) {
   const areas = player.game.areas().filter(area => area.ownerPosition === player.position);
   const hand = areas.find(area => area.kind === 'hand');
-  const tricks = areas.find(area => area.definitionId === 'tricks');
-  const personal = areas.find(area => area.definitionId === 'player-area');
+  const tricks = areas.find(area => area.kind === 'tricks');
+  const personal = areas.find(area => area.kind === 'tableau');
   return <div className="player-panel-preview" style={{ '--player-color': player.color } as React.CSSProperties}>
     <strong>{player.name}</strong>
     <span className="player-panel-preview-icon iconify" data-icon="griddy-icons:user-circle" aria-hidden="true" />
@@ -832,10 +866,10 @@ function PlayerPanelPreview({ player, viewer }: { player: PlayPlayer; viewer: Pl
   </div>;
 }
 
-function PlayerPanelView({ panel, viewer, mirrored }: { panel: PlayPlayerPanel; viewer: PlayPlayer; mirrored: boolean }) {
+function PlayerPanelView({ panel, viewer, seat }: { panel: PlayPlayerPanel; viewer: PlayPlayer; seat: PlayerSeat }) {
   const player = panel.game.players.find(candidate => candidate.position === panel.ownerPosition)!;
   return <div
-    className={`player-seat-panel ${mirrored ? 'mirrored' : ''}`}
+    className={`player-seat-panel ${seat.mirrored ? 'mirrored' : ''} ${seat.placement}-panel ${seat.placement === 'owner' ? '' : 'opponent-panel'} ${player.isCurrent() ? 'current-player' : ''}`}
     style={{
       '--player-color': player.color,
       '--player-tag-foreground': contrastingTextColor(player.color),
@@ -885,7 +919,7 @@ function supplyLayout(definition: AreaDefinition, width: number, height: number)
 
 function pieceLayout(definition: AreaDefinition, opponent = false) {
   if (definition.kind === 'hand') return {
-    area: { left: opponent ? 11 : 2, top: opponent ? 3 : 16, width: opponent ? 87 : 96, height: opponent ? 94 : 82 },
+    area: { left: opponent ? 13 : 2, top: opponent ? 17 : 9, width: opponent ? 85 : 96, height: opponent ? 80 : 88 },
     rows: 1,
     columns: { min: 1 },
     direction: 'ltr' as const,
@@ -894,16 +928,16 @@ function pieceLayout(definition: AreaDefinition, opponent = false) {
     maxOverlap: opponent ? 88 : 72,
     gap: opponent ? 0.08 : 0.25,
   };
-  if (opponent && definition.id === 'tricks') return {
-    area: { left: 0, top: 3, width: 72, height: 94 },
+  if (opponent && definition.kind === 'tricks') return {
+    area: { left: 2, top: 17, width: 68, height: 80 },
     rows: 1,
     columns: 1,
     margin: 0,
   };
-  if (definition.id === 'player-area') return {
+  if (definition.kind === 'tableau') return {
     area: opponent
       ? { left: 2, top: 3, width: 96, height: 94 }
-      : { left: 3, top: 16, width: 94, height: 81 },
+      : { left: 3, top: 9, width: 94, height: 88 },
     rows: 2,
     columns: { min: 1 },
     direction: 'ltr' as const,
@@ -967,11 +1001,11 @@ render(setup, {
     game.appearance({ className: 'pnpink-play-root', render: current => <Table game={current} viewer={viewer} boardSize={boardSize} /> });
     game.all(PlayToolbox).appearance({ render: toolbox => <ToolboxView toolbox={toolbox} /> });
     game.all(PlayPlayerPanel).appearance({
-      render: panel => <PlayerPanelView
-        panel={panel}
-        viewer={viewer}
-        mirrored={playerSeat((panel.ownerPosition - viewer.position + game.players.length) % game.players.length, game.players.length, boardSize === 'portrait').mirrored}
-      />,
+      render: panel => <PlayerPanelView panel={panel} viewer={viewer} seat={playerSeat(
+        (panel.ownerPosition - viewer.position + game.players.length) % game.players.length,
+        game.players.length,
+        boardSize === 'portrait',
+      )} />,
     });
     game.all(PlayZone).appearance({ render: zone => <ZoneView zone={zone} viewer={viewer} /> });
     game.all(PlayStack).appearance({

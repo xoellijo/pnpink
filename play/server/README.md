@@ -27,3 +27,10 @@ Open `/designer/GAME_NAME` from the server computer to edit a declarative
 `web/play.schema.json`, previews area changes immediately, saves atomically,
 and notices external YAML edits. Designer write routes are unavailable through
 LAN connections; remote devices remain play-only clients.
+
+## Raspberry Pi
+
+The Node-free Raspberry Pi OS installer, `systemd` service and atomic updater
+are documented in [`../deploy/raspberry/README.md`](../deploy/raspberry/README.md).
+The database is stored separately from application releases, so updates never
+replace users, rooms or history.

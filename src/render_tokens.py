@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from typing import Optional, Tuple
 
 import log as LOG
@@ -9,6 +10,19 @@ import dsl as DSL
 import transform_fx as TFX
 
 _l = LOG
+
+
+def unquote_iterator_item(value: str) -> tuple[str, bool]:
+    text = str(value or "").strip()
+    if len(text) < 2 or text[0] not in ('"', "'") or text[-1] != text[0]:
+        return text, False
+    try:
+        parsed = shlex.split(text, posix=True)
+        if len(parsed) == 1:
+            return parsed[0], True
+    except ValueError:
+        pass
+    return text[1:-1], True
 
 
 def excel_col_to_num(s: str):

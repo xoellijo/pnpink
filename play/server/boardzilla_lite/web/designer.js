@@ -13,6 +13,7 @@ const autosaveNode = document.querySelector('#designer-autosave');
 let manifest;
 let schema;
 let revision;
+let revisionData;
 let dirty = false;
 let saving = false;
 let saveTimer;
@@ -228,6 +229,25 @@ function renderDesignerMenu() {
     type: 'object', required: ['name'], properties: { name: schema.properties.name, description: schema.properties.description },
   });
 
+  manifest.updates ||= { mode: 'versioned', assets: 'live', components: 'new-games', rules: 'pinned' };
+  const updatesFolder = designerGUI.addFolder('Updates & revisions');
+  addObjectControls(updatesFolder, manifest.updates, resolveSchema(schema.properties.updates, manifest.updates));
+  for (const item of revisionData?.revisions || []) {
+    const rooms = item.rooms?.total || 0;
+    const marker = item.current ? '●' : '○';
+    const folder = updatesFolder.addFolder(`${marker} ${item.revision.slice(0, 8)} · ${item.kind} · ${rooms} room${rooms === 1 ? '' : 's'}`);
+    const details = { revision: item.revision, created: new Date(item.createdAt * 1000).toLocaleString(), rooms };
+    folder.add(details, 'revision').disable().name('Revision');
+    folder.add(details, 'created').disable().name('Created');
+    folder.add(details, 'rooms').disable().name('Saved rooms');
+    if (!item.current) {
+      addAction(folder, `restore_${item.revision}`, 'Restore as current', () => restoreRevision(item.revision));
+      if (!rooms) addAction(folder, `delete_${item.revision}`, 'Delete unused revision', () => deleteRevision(item.revision), 'designer-delete');
+    }
+    folder.close?.();
+  }
+  updatesFolder.close?.();
+
   manifest.players ||= { min: 2, max: 4 };
   const playersFolder = designerGUI.addFolder('Players');
   addObjectControls(playersFolder, manifest.players, resolveSchema(schema.properties.players, manifest.players));
@@ -361,6 +381,8 @@ async function saveManifest() {
     manifest = data.manifest;
     revision = data.revision;
     dirty = false;
+    await loadRevisions();
+    renderDesignerMenu();
     setStatus('Saved · new rooms use this definition', 'saved');
   } catch (error) {
     setStatus(String(error.message || error), 'error');
@@ -370,11 +392,44 @@ async function saveManifest() {
   }
 }
 
+async function loadRevisions() {
+  const response = await fetch(`/designer-api/games/${encodeURIComponent(gameName)}/revisions`, { cache: 'no-store' });
+  if (!response.ok) throw new Error(await response.text());
+  revisionData = await response.json();
+}
+
+async function restoreRevision(targetRevision) {
+  if (!confirm(`Restore revision ${targetRevision.slice(0, 8)} as current?\n\nThe configured update policy will be applied to saved rooms.`)) return;
+  const response = await fetch(
+    `/designer-api/games/${encodeURIComponent(gameName)}/revisions/${encodeURIComponent(targetRevision)}/restore`,
+    { method: 'POST' },
+  );
+  if (!response.ok) return setStatus(await response.text(), 'error');
+  revision = undefined;
+  await loadManifest(true);
+}
+
+async function deleteRevision(targetRevision) {
+  if (!confirm(`Delete unused revision ${targetRevision.slice(0, 8)}?`)) return;
+  const response = await fetch(
+    `/designer-api/games/${encodeURIComponent(gameName)}/revisions/${encodeURIComponent(targetRevision)}`,
+    { method: 'DELETE' },
+  );
+  if (!response.ok) return setStatus(await response.text(), 'error');
+  await loadRevisions();
+  renderDesignerMenu();
+}
+
 async function loadManifest(force = false) {
   const response = await fetch(`/designer-api/games/${encodeURIComponent(gameName)}`, { cache: 'no-store' });
   if (!response.ok) throw new Error(await response.text());
   const data = await response.json();
-  if (!force && revision && data.revision === revision) return;
+  const previousGameRevision = revisionData?.current;
+  await loadRevisions();
+  if (!force && revision && data.revision === revision) {
+    if (previousGameRevision !== revisionData?.current) renderDesignerMenu();
+    return;
+  }
   if (!force && dirty) {
     setStatus('The YAML changed on disk · reload to accept it', 'error');
     return;

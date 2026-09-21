@@ -13,6 +13,18 @@ const boardzillaStorePlugin = {
       let source = await readFile(sourcePath, 'utf8');
       const replacements = [
         [
+          'const position = s.position || update.position;',
+          'const position = update.position ?? s.position;',
+        ],
+        [
+          "if (s.setup && (gameManager.phase === 'new' || update.state.sequence !== s.renderedSequence + 1)) {",
+          "if (s.setup && (gameManager.phase === 'new' || update.state.sequence !== s.renderedSequence + 1 || s.position !== update.position)) {",
+        ],
+        [
+          'if (update.state.sequence === s.renderedSequence + 1 && state.rendered)',
+          'if (update.state.sequence === s.renderedSequence + 1 && s.position === update.position && state.rendered)',
+        ],
+        [
           'placement: undefined,\n        };',
           'placement: undefined,\n            selected: undefined,\n        };',
         ],
@@ -38,6 +50,30 @@ const boardzillaStorePlugin = {
       ];
       for (const [before, after] of replacements) {
         if (!source.includes(before)) throw new Error('Boardzilla multiselect store patch no longer matches store.js');
+        source = source.replace(before, after);
+      }
+      return { contents: source, loader: 'js' };
+    });
+  },
+};
+
+const boardzillaPerspectivePlugin = {
+  name: 'boardzilla-perspective',
+  setup(buildContext) {
+    buildContext.onLoad({ filter: /@boardzilla[\\/]core[\\/]entry[\\/]ui[\\/]Main\.js$/ }, async ({ path: sourcePath }) => {
+      let source = await readFile(sourcePath, 'utf8');
+      const replacements = [
+        [
+          'const [gameManager, updateState, setUserOnline, announcementIndex] = gameStore(s => [s.gameManager, s.updateState, s.setUserOnline, s.announcementIndex]);',
+          'const [gameManager, updateState, setUserOnline, announcementIndex, position] = gameStore(s => [s.gameManager, s.updateState, s.setUserOnline, s.announcementIndex, s.position]);',
+        ],
+        [
+          "React.createElement(Game, null)",
+          "React.createElement(Game, { key: position ?? 'setup' })",
+        ],
+      ];
+      for (const [before, after] of replacements) {
+        if (!source.includes(before)) throw new Error('Boardzilla perspective patch no longer matches Main.js');
         source = source.replace(before, after);
       }
       return { contents: source, loader: 'js' };
@@ -179,7 +215,7 @@ const boardzillaControlsPlugin = {
         ['controls.moves.map((pendingMove, i) => {', 'visibleMoves.map((pendingMove, i) => {'],
         [
           'className: `player-controls ${controls.name.replace(":", "-")}`',
-          'className: `player-controls ${controls.name.replace(":", "-")} ${visibleMoves.some(move => move.name === "takeTrick") ? "winner-controls" : ""}`',
+          'className: `player-controls ${controls.name.replace(":", "-")} ${visibleMoves.some(move => move.name === "takeTrick" || move.name.startsWith("takeTrick:") || move.name.endsWith(":takeTrick")) ? "winner-controls" : ""}`',
         ],
       ];
       for (const [before, after] of replacements) {
@@ -200,5 +236,5 @@ await build({
   keepNames: true,
   assetNames: 'assets/[name]-[hash]',
   loader: { '.svg': 'file', '.png': 'file', '.jpg': 'file', '.jpeg': 'file', '.webp': 'file', '.ttf': 'file', '.scss': 'css', '.ogg': 'dataurl' },
-  plugins: [boardzillaStorePlugin, boardzillaDragPlugin, boardzillaControlsPlugin, sassPlugin()],
+  plugins: [boardzillaStorePlugin, boardzillaPerspectivePlugin, boardzillaDragPlugin, boardzillaControlsPlugin, sassPlugin()],
 });

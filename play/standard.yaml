@@ -1,0 +1,100 @@
+schema: 1
+
+updates:
+  mode: versioned
+  assets: live
+  components: new-games
+  rules: pinned
+
+types:
+  areas:
+    movable:
+      visibility: public
+      actions: [move-from, move-to]
+      insert: top
+    shared-supply:
+      extends: movable
+      kind: supply
+      scope: shared
+      infinite: true
+      layout: {rows: 1, columns: 1}
+    player-supply:
+      extends: shared-supply
+      scope: player
+    shared-stack:
+      extends: movable
+      kind: stack
+      scope: shared
+      layout: {rows: 1, columns: 1}
+    deck:
+      extends: shared-stack
+      kind: deck
+      visibility: hidden
+      actions: [draw, move-from, shuffle]
+    discard:
+      extends: shared-stack
+      kind: discard
+      actions: [move-from, move-to, discard-to]
+    table:
+      extends: movable
+      kind: center
+      scope: shared
+      maxDrop: 1
+      layout: {rows: 2, columns: 5}
+    player-zone:
+      extends: movable
+      scope: player
+      layout: {rows: 1, columns: 1}
+    hand:
+      extends: player-zone
+      kind: hand
+      visibility: owner
+      layout: {rows: 1, columns: 13}
+    tricks:
+      extends: player-zone
+      kind: tricks
+    tableau:
+      extends: player-zone
+      kind: tableau
+      canHide: toggle
+
+  pieces:
+    token:
+      type: token
+      shape: circle
+      copies: 6
+    square-token:
+      extends: token
+      shape: square
+    chip:
+      type: chip
+      copies: 6
+    die:
+      type: die
+    tile:
+      type: tile
+      copies: 1
+    pawn:
+      type: pawn
+      copies: 1
+    meeple:
+      type: meeple
+      copies: 1
+    cube:
+      type: cube
+      copies: 1
+    marker:
+      type: marker
+      copies: 1
+    board:
+      type: board
+      copies: 1
+    mat:
+      type: mat
+      copies: 1
+    area:
+      type: area
+      copies: 1
+    card:
+      type: card
+      copies: 1

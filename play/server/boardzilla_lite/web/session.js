@@ -9,10 +9,12 @@ let details;
 let serverMenu;
 let turnBadge;
 let undoButton;
-let appModeButton;
-let installPrompt;
 let historyStatus;
-let historyHasBranches = false;
+let historyData;
+let historyFolder;
+let checkpointButtonController;
+let checkpointInputController;
+let checkpointEditing = false;
 let uiReady = false;
 let viewedPosition;
 let deferredGameUpdate;
@@ -33,15 +35,20 @@ function controllerIcon(controller, icon, title) {
   return controller;
 }
 
-function buttonRow(actions, className) {
+function buttonRow(actions, className, parent = serverMenu) {
   let first;
   for (const action of actions) {
-    menuState[action.key] = action.run;
+    menuState[action.key] = action.number ? action.value : action.run;
     if (action.options) menuState[action.key] = action.value;
     const controller = first
-      ? first.append(menuState, action.key, ...(action.options ? [action.options] : []))
-      : serverMenu.add(menuState, action.key, ...(action.options ? [action.options] : []));
-    if (action.options) {
+      ? first.append(menuState, action.key, ...(action.options ? [action.options] : action.number ? [0, action.maximum || 0, 1] : []))
+      : parent.add(menuState, action.key, ...(action.options ? [action.options] : action.number ? [0, action.maximum || 0, 1] : []));
+    if (action.number) {
+      controller.name('').onFinishChange(action.onChange);
+      controller.domElement.title = action.title;
+      controller.domElement.setAttribute('aria-label', action.title);
+      controller.domElement.classList.add('server-menu-history-number');
+    } else if (action.options) {
       controller.name('').onChange(action.onChange);
       controller.domElement.title = action.title;
       controller.domElement.setAttribute('aria-label', action.title);
@@ -53,7 +60,7 @@ function buttonRow(actions, className) {
     first ??= controller;
   }
   const row = first.$multi ?? first.domElement;
-  row.classList.add('server-menu-row', className);
+  row.classList.add('server-menu-row', ...className.split(/\s+/).filter(Boolean));
   return row;
 }
 
@@ -102,45 +109,6 @@ function updateUndo(canUndo) {
   if (undoButton) undoButton.hidden = !details?.allowUndo || !canUndo;
 }
 
-function installedApp() {
-  return window.matchMedia('(display-mode: fullscreen)').matches
-    || window.matchMedia('(display-mode: standalone)').matches
-    || navigator.standalone === true;
-}
-
-function updateAppModeButton() {
-  if (!appModeButton) return;
-  const fullscreenAvailable = Boolean(document.documentElement.requestFullscreen) && !document.fullscreenElement;
-  const iosInstall = /iPad|iPhone|iPod/.test(navigator.userAgent) && !installedApp();
-  appModeButton.hidden = installedApp() || (!installPrompt && !fullscreenAvailable && !iosInstall);
-  const installAvailable = Boolean(installPrompt) || iosInstall;
-  appModeButton.innerHTML = PnPInkPlay.icon(installAvailable ? 'download' : 'fullscreen', installAvailable ? 'Install PnPPlay' : 'Enter fullscreen');
-  appModeButton.title = installAvailable ? 'Install PnPPlay' : 'Enter fullscreen';
-  appModeButton.setAttribute('aria-label', appModeButton.title);
-}
-
-async function enterAppMode() {
-  if (installPrompt) {
-    const prompt = installPrompt;
-    installPrompt = undefined;
-    await prompt.prompt();
-    const choice = await prompt.userChoice;
-    if (choice.outcome === 'accepted') notify('PnPPlay installed');
-    updateAppModeButton();
-    return;
-  }
-  if (/iPad|iPhone|iPod/.test(navigator.userAgent) && !installedApp()) {
-    notify('Use Share, then Add to Home Screen');
-    return;
-  }
-  try {
-    await document.documentElement.requestFullscreen({navigationUI: 'hide'});
-  } catch (_error) {
-    notify('Fullscreen is unavailable in this browser');
-  }
-  updateAppModeButton();
-}
-
 async function undoLatestMove() {
   const response = await fetch(`/sessions/${token}/undo`, {method: 'POST'});
   notify(response.ok ? 'Move undone' : await response.text());
@@ -148,21 +116,46 @@ async function undoLatestMove() {
 
 function updateHistory(history) {
   if (!history) return;
-  if (historyStatus) historyStatus.textContent = `${history.index}/${history.tip}${history.forks ? ` (${history.forks} forks)` : ''}`;
+  historyData = history;
+  if (historyStatus) historyStatus.textContent = `History ${history.turnIndex}/${history.turnTotal} (${history.currentBranch || '1'})`;
   setEnabled(menuControllers.historyStart, history.canBack);
   setEnabled(menuControllers.historyBackTurn, history.canBack);
   setEnabled(menuControllers.historyBackAction, history.canBack);
   setEnabled(menuControllers.historyForwardAction, history.canForward);
   setEnabled(menuControllers.historyForwardTurn, history.canForward);
   setEnabled(menuControllers.historyEnd, history.canForward);
+  for (const [key, value, maximum] of [
+    ['historyAction', history.actionIndex, history.actionTotal],
+    ['historyTurn', history.turnIndex, history.turnTotal],
+    ['historyRound', history.roundIndex, history.roundTotal],
+  ]) {
+    const controller = menuControllers[key];
+    if (!controller) continue;
+    menuState[key] = value;
+    controller.max(maximum).updateDisplay();
+  }
+  if (menuControllers.historyRoundRow) menuControllers.historyRoundRow.hidden = !history.roundTotal;
   if (menuControllers.historyBranch) {
-    historyHasBranches = history.branches.length > 1;
-    const options = Object.fromEntries(history.branches.map((item, index) => [`Branch ${index + 1} / P${item.position}`, String(item.nodeID)]));
-    menuControllers.historyBranch.options(options).show(history.branches.length > 1);
-    if (history.branches.length) {
-      menuState.historyBranch = String(history.branches[0].nodeID);
-      menuControllers.historyBranch.updateDisplay();
+    const options = {};
+    const checkpoints = history.checkpoints || [];
+    for (const branch of history.branches || []) {
+      options[branch.path === '1' ? '1  Main' : `${branch.path}  Fork`] = branch.nodeID == null ? 'start' : `branch:${branch.nodeID}`;
+      for (const checkpoint of checkpoints.filter(item => item.path === branch.path)) {
+        options[`${checkpoint.name} (${checkpoint.path})`] = checkpoint.nodeID == null ? 'start' : `node:${checkpoint.nodeID}`;
+      }
     }
+    for (const checkpoint of checkpoints.filter(item => !(history.branches || []).some(branch => branch.path === item.path))) {
+      options[`${checkpoint.name} (${checkpoint.path})`] = checkpoint.nodeID == null ? 'start' : `node:${checkpoint.nodeID}`;
+    }
+    if (!Object.keys(options).length) options['1  Main'] = 'start';
+    menuControllers.historyBranch.options(options).onChange(navigateHistoryPoint);
+    menuControllers.historyBranch.domElement.classList.add('server-menu-history-select');
+    const checkpoint = checkpoints.find(item => item.nodeID === history.currentNodeID);
+    const branch = (history.branches || []).find(item => item.path === history.currentBranch);
+    menuState.historyBranch = checkpoint
+      ? checkpoint.nodeID == null ? 'start' : `node:${checkpoint.nodeID}`
+      : branch ? branch.nodeID == null ? 'start' : `branch:${branch.nodeID}` : Object.values(options)[0];
+    menuControllers.historyBranch.updateDisplay();
   }
 }
 
@@ -188,21 +181,73 @@ async function setPerspective(value) {
   });
   if (!response.ok) return notify(await response.text());
   details.viewPosition = value === '' ? null : Number(value);
-  viewedPosition = undefined;
-  reloadGameFrame();
+  viewedPosition = details.viewPosition === -1
+    ? details.currentPlayers?.[0]
+    : details.viewPosition ?? details.position;
 }
 
 async function navigateHistory(command) {
-  const branchID = command === 'forward-action' && historyHasBranches
-    ? Number(menuState.historyBranch)
-    : undefined;
   const response = await fetch(`/sessions/${token}/history`, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({command, branchID}),
+    body: JSON.stringify({command}),
   });
   if (!response.ok) return notify(await response.text());
   updateHistory((await response.json()).history);
+}
+
+async function navigateHistoryValue(command, value) {
+  const response = await fetch(`/sessions/${token}/history`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({command, branchID: Math.max(0, Number(value) || 0)}),
+  });
+  if (!response.ok) return notify(await response.text());
+  updateHistory((await response.json()).history);
+}
+
+async function navigateHistoryPoint(value) {
+  if (!value) return;
+  const response = await fetch(`/sessions/${token}/history`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      command: value === 'start' ? 'start' : value.startsWith('branch:') ? 'branch' : 'node',
+      branchID: value === 'start' ? undefined : Number(value.slice(value.indexOf(':') + 1)),
+    }),
+  });
+  if (!response.ok) return notify(await response.text());
+  updateHistory((await response.json()).history);
+}
+
+function editCheckpoint() {
+  checkpointEditing = true;
+  menuState.checkpointName = '';
+  checkpointInputController.updateDisplay();
+  checkpointButtonController.hide();
+  checkpointInputController.show();
+  requestAnimationFrame(() => checkpointInputController.$input.focus());
+}
+
+function cancelCheckpoint() {
+  checkpointEditing = false;
+  checkpointInputController.hide();
+  checkpointButtonController.show();
+}
+
+async function saveCheckpoint() {
+  if (!checkpointEditing) return;
+  const name = menuState.checkpointName.trim();
+  cancelCheckpoint();
+  if (!name) return;
+  const response = await fetch(`/sessions/${token}/history/checkpoints`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name}),
+  });
+  if (!response.ok) return notify(await response.text());
+  updateHistory((await response.json()).history);
+  notify('Checkpoint saved');
 }
 
 function buildServerMenu() {
@@ -229,15 +274,7 @@ function buildServerMenu() {
     event.stopPropagation();
     undoLatestMove();
   });
-  appModeButton = document.createElement('button');
-  appModeButton.className = 'server-menu-title-app';
-  appModeButton.addEventListener('pointerdown', event => event.stopPropagation());
-  appModeButton.addEventListener('click', event => {
-    event.stopPropagation();
-    enterAppMode();
-  });
-  titleElement.append(turnBadge, appModeButton, undoButton);
-  updateAppModeButton();
+  titleElement.append(turnBadge, undoButton);
 
   menuState.lobby = () => { location.href = '/'; };
   const primaryActions = [
@@ -264,19 +301,62 @@ function buildServerMenu() {
   buttonRow(primaryActions, 'server-menu-actions');
 
   if (details.administrator) {
-    const historyRow = buttonRow([
-      {key: 'historyStart', icon: 'skip-back', title: 'First action', run: () => navigateHistory('start')},
-      {key: 'historyBackTurn', icon: 'arrow-left', title: 'Previous turn', run: () => navigateHistory('back-turn')},
-      {key: 'historyBackAction', icon: 'chevron-left', title: 'Previous action', run: () => navigateHistory('back-action')},
-      {key: 'historyForwardAction', icon: 'chevron-right', title: 'Next action', run: () => navigateHistory('forward-action')},
-      {key: 'historyForwardTurn', icon: 'arrow-right', title: 'Next turn', run: () => navigateHistory('forward-turn')},
-      {key: 'historyEnd', icon: 'skip-forward', title: 'Latest action', run: () => navigateHistory('end')},
-    ], 'server-menu-history');
+    historyFolder = serverMenu.addFolder('History');
+    historyFolder.domElement.classList.add('server-menu-history-folder');
+    historyFolder.$title.textContent = '';
+    historyFolder.$title.insertAdjacentHTML('beforeend', PnPInkPlay.icon('book-open', 'History'));
     historyStatus = document.createElement('span');
     historyStatus.className = 'server-menu-history-status';
-    historyRow.prepend(historyStatus);
+    historyFolder.$title.append(historyStatus);
+    menuState.newCheckpoint = editCheckpoint;
+    checkpointButtonController = historyFolder.append(menuState, 'newCheckpoint');
+    checkpointButtonController.domElement.classList.add('server-menu-checkpoint-controller');
+    controllerIcon(checkpointButtonController, 'bookmark-plus', 'Create checkpoint');
+    menuState.checkpointName = '';
+    checkpointInputController = historyFolder.append(menuState, 'checkpointName').name('');
+    checkpointInputController.domElement.classList.add('server-menu-checkpoint-input');
+    checkpointInputController.$input.placeholder = 'Checkpoint name';
+    checkpointInputController.hide();
+    for (const controller of [checkpointButtonController, checkpointInputController]) {
+      controller.domElement.addEventListener('pointerdown', event => event.stopPropagation());
+      controller.domElement.addEventListener('click', event => event.stopPropagation());
+    }
+    checkpointInputController.$input.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        saveCheckpoint();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        cancelCheckpoint();
+      }
+    });
+    checkpointInputController.$input.addEventListener('blur', saveCheckpoint);
+    buttonRow([
+      {key: 'historyStart', icon: 'skip-back', title: 'First action', run: () => navigateHistory('start')},
+      {key: 'historyBackAction', icon: 'chevron-left', title: 'Previous action', run: () => navigateHistory('back-action')},
+      {key: 'historyAction', number: true, value: 0, title: 'Go to action', onChange: value => navigateHistoryValue('action', value)},
+      {key: 'historyForwardAction', icon: 'chevron-right', title: 'Next action', run: () => navigateHistory('forward-action')},
+      {key: 'historyEnd', icon: 'skip-forward', title: 'Latest action', run: () => navigateHistory('end')},
+    ], 'server-menu-history server-menu-history-actions', historyFolder);
+    buttonRow([
+      {key: 'historyFirstTurn', icon: 'skip-back', title: 'First turn', run: () => navigateHistoryValue('turn', 0)},
+      {key: 'historyBackTurn', icon: 'arrow-left', title: 'Previous turn', run: () => navigateHistory('back-turn')},
+      {key: 'historyTurn', number: true, value: 0, title: 'Go to turn', onChange: value => navigateHistoryValue('turn', value)},
+      {key: 'historyForwardTurn', icon: 'arrow-right', title: 'Next turn', run: () => navigateHistory('forward-turn')},
+      {key: 'historyLastTurn', icon: 'skip-forward', title: 'Latest turn', run: () => navigateHistory('end')},
+    ], 'server-menu-history server-menu-history-turns', historyFolder);
+    menuControllers.historyRoundRow = buttonRow([
+      {key: 'historyFirstRound', icon: 'skip-back', title: 'First round', run: () => navigateHistoryValue('round', 0)},
+      {key: 'historyBackRound', icon: 'arrow-left', title: 'Previous round', run: () => navigateHistoryValue('round', Math.max(0, (historyData?.roundIndex || 0) - 1))},
+      {key: 'historyRound', number: true, value: 0, title: 'Go to round', onChange: value => navigateHistoryValue('round', value)},
+      {key: 'historyForwardRound', icon: 'arrow-right', title: 'Next round', run: () => navigateHistoryValue('round', Math.min(historyData?.roundTotal || 0, (historyData?.roundIndex || 0) + 1))},
+      {key: 'historyLastRound', icon: 'skip-forward', title: 'Latest round', run: () => navigateHistoryValue('round', historyData?.roundTotal || 0)},
+    ], 'server-menu-history server-menu-history-rounds', historyFolder);
     menuState.historyBranch = '';
-    menuControllers.historyBranch = serverMenu.add(menuState, 'historyBranch', {'No branches': ''}).name('Branch').hide();
+    menuControllers.historyBranch = historyFolder.add(menuState, 'historyBranch', {'1  Main': 'start'}).name('').onChange(navigateHistoryPoint);
+    menuControllers.historyBranch.domElement.classList.add('server-menu-history-select');
+    controllerIcon(menuControllers.historyBranch, 'arrow-split-right-alt', 'Branches and checkpoints');
+    historyFolder.close();
   }
 
   updateUndo(details.canUndo);
@@ -289,18 +369,11 @@ function renderSetupIdentity() {
   const users = PnPInkPlay.knownUsers();
   const currentIdentity = users.find(user => user.id === details.userID);
   if (currentIdentity) PnPInkPlay.setActiveUser(currentIdentity);
-  const connected = new Map((details.participants || details.players).map(player => [player.userID, player]));
   const userSelect = document.querySelector('#setup-user');
   document.querySelector('#setup-game-name').textContent = details.game.friendlyName;
-  userSelect.innerHTML = users.map(user => {
-    const participant = connected.get(user.id);
-    const status = participant ? participant.name === details.playerName ? 'current' : 'joined' : 'available';
-    return `<option value="${PnPInkPlay.escapeHTML(user.token)}"${details.userID === user.id ? ' selected' : ''}>${PnPInkPlay.escapeHTML(user.name)} · ${status}</option>`;
-  }).join('');
-  document.querySelector('#setup-local-status').innerHTML = users.map(user => {
-    const participant = connected.get(user.id);
-    return `<span class="${participant ? 'connected' : ''}" title="${PnPInkPlay.escapeHTML(user.name)}: ${participant ? participant.ready ? 'ready' : 'joined' : 'not in this room'}">${PnPInkPlay.icon(participant?.ready ? 'check' : 'user')} ${PnPInkPlay.escapeHTML(user.name)}</span>`;
-  }).join('');
+  userSelect.innerHTML = users.map(user =>
+    `<option value="${PnPInkPlay.escapeHTML(user.token)}"${details.userID === user.id ? ' selected' : ''}>${PnPInkPlay.escapeHTML(user.name)}</option>`
+  ).join('');
   setupIdentity.hidden = false;
 }
 
@@ -329,6 +402,34 @@ async function refreshSetupIdentity() {
 }
 
 document.querySelector('#setup-user').addEventListener('change', event => switchSetupUser(event.target.value));
+document.querySelector('#setup-share-user').addEventListener('click', () => {
+  const user = PnPInkPlay.knownUsers().find(candidate => candidate.id === details.userID);
+  if (user) copyText(`${location.origin}/?identity=${encodeURIComponent(user.token)}`, 'Private player link copied');
+});
+const setupUserDialog = document.querySelector('#setup-user-dialog');
+document.querySelector('#setup-new-user').addEventListener('click', () => {
+  document.querySelector('#setup-user-error').textContent = '';
+  document.querySelector('#setup-new-user-name').value = '';
+  if (setupUserDialog.showModal) setupUserDialog.showModal(); else setupUserDialog.setAttribute('open', '');
+  document.querySelector('#setup-new-user-name').focus();
+});
+document.querySelector('#setup-cancel-user').addEventListener('click', () => setupUserDialog.close?.());
+document.querySelector('#setup-user-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const response = await fetch('/users', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: document.querySelector('#setup-new-user-name').value}),
+  });
+  if (!response.ok) {
+    document.querySelector('#setup-user-error').textContent = await response.text();
+    return;
+  }
+  const {user} = await response.json();
+  PnPInkPlay.setActiveUser(user);
+  setupUserDialog.close?.();
+  await switchSetupUser(user.token);
+});
 document.querySelector('#setup-copy-invite').addEventListener('click', () => copyText(`${location.origin}/join/${details.inviteCode}`, 'Invitation link copied'));
 
 function updateRoomState(message) {
@@ -348,8 +449,6 @@ function updateRoomState(message) {
   }
   if ((details.spectator || details.viewPosition === -1) && viewedPosition !== message.position) {
     viewedPosition = message.position;
-    reloadGameFrame();
-    return true;
   }
   return false;
 }
@@ -406,6 +505,7 @@ window.addEventListener('message', event => {
 function receive(message) {
   if (message.type === 'ping') return;
   if (message.type === 'roomDeleted') { location.href = '/'; return; }
+  if (message.type === 'gameRevision') { reloadGameFrame(); return; }
   if (message.type === 'users' && details.phase === 'new') refreshSetupIdentity();
   if (document.hidden && (message.type === 'gameUpdate' || message.type === 'gameFinished')) {
     deferredGameUpdate = message;
@@ -454,18 +554,5 @@ document.addEventListener('visibilitychange', () => {
   deferredGameUpdate = undefined;
   if (!updateRoomState(message)) send(message);
 });
-
-window.addEventListener('beforeinstallprompt', event => {
-  event.preventDefault();
-  installPrompt = event;
-  updateAppModeButton();
-});
-
-window.addEventListener('appinstalled', () => {
-  installPrompt = undefined;
-  updateAppModeButton();
-});
-
-document.addEventListener('fullscreenchange', updateAppModeButton);
 
 start().catch(error => notify(String(error)));

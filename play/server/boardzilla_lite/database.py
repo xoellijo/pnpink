@@ -5,6 +5,7 @@ import secrets
 import sqlite3
 import string
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -23,6 +24,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     game_name TEXT NOT NULL,
+    game_revision TEXT,
     phase TEXT NOT NULL DEFAULT 'new',
     next_seq INTEGER NOT NULL DEFAULT 0,
     state BLOB,
@@ -69,11 +71,23 @@ CREATE TABLE IF NOT EXISTS history_nodes (
     processing_time_ms INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS history_checkpoints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    node_id INTEGER REFERENCES history_nodes(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS history_heads (
+    session_id INTEGER PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    node_id INTEGER REFERENCES history_nodes(id) ON DELETE CASCADE
+);
 CREATE INDEX IF NOT EXISTS sessions_updated_idx ON sessions(updated_at DESC);
 CREATE INDEX IF NOT EXISTS users_access_token_idx ON users(access_token);
 CREATE INDEX IF NOT EXISTS session_players_session_idx ON session_players(session_id);
 CREATE INDEX IF NOT EXISTS session_players_user_idx ON session_players(user_id, session_id);
 CREATE INDEX IF NOT EXISTS history_nodes_parent_idx ON history_nodes(session_id, parent_id, id DESC);
+CREATE INDEX IF NOT EXISTS history_checkpoints_session_idx ON history_checkpoints(session_id, node_id, id);
 """
 
 
@@ -81,13 +95,48 @@ class Database:
     def __init__(self, path: Path):
         self.path = path.expanduser().resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._archive_incompatible_database()
         with self.connect() as connection:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
             tables = connection.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' LIMIT 1").fetchone()
-            if tables and version != 3:
+            if tables and version == 3:
+                connection.execute("ALTER TABLE sessions ADD COLUMN game_revision TEXT")
+                version = 4
+            if tables and version not in (0, 4):
                 raise RuntimeError("The database uses an incompatible history format; start with a new database")
             connection.executescript(SCHEMA)
-            connection.execute("PRAGMA user_version = 3")
+            connection.execute("PRAGMA user_version = 4")
+
+    def _archive_incompatible_database(self) -> None:
+        if not self.path.is_file():
+            return
+        connection = sqlite3.connect(self.path)
+        try:
+            tables = {
+                row[0]
+                for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            }
+            if not tables:
+                return
+            player_columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(session_players)")
+            }
+            user_columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
+            compatible = "users" in tables and {"user_id", "session_user_id"} <= player_columns and {
+                "public_id",
+                "access_token",
+            } <= user_columns
+        finally:
+            connection.close()
+        if compatible:
+            return
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        backup = self.path.with_name(f"{self.path.name}.legacy-{timestamp}")
+        self.path.replace(backup)
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(f"{self.path}{suffix}")
+            if sidecar.exists():
+                sidecar.replace(Path(f"{backup}{suffix}"))
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -146,14 +195,22 @@ class Database:
             ).fetchone()
         return dict(row) if row else None
 
-    def create_session(self, game_name: str, user: dict[str, Any], seat_count: int, admin_mode: bool, seat: dict[str, Any] | None) -> dict[str, Any]:
+    def create_session(
+        self,
+        game_name: str,
+        user: dict[str, Any],
+        seat_count: int,
+        admin_mode: bool,
+        seat: dict[str, Any] | None,
+        game_revision: str | None = None,
+    ) -> dict[str, Any]:
         with self.connect() as connection:
             invite_code = self.invite_code()
             access_token = self.token(20)
             random_seed = self.token(24)
             cursor = connection.execute(
-                "INSERT INTO sessions(game_name, invite_code, random_seed, allow_undo, admin_mode, seat_count) VALUES (?, ?, ?, 1, ?, ?)",
-                (game_name, invite_code, random_seed, int(admin_mode), seat_count),
+                "INSERT INTO sessions(game_name, game_revision, invite_code, random_seed, allow_undo, admin_mode, seat_count) VALUES (?, ?, ?, ?, 1, ?, ?)",
+                (game_name, game_revision, invite_code, random_seed, int(admin_mode), seat_count),
             )
             session_id = int(cursor.lastrowid)
             connection.execute(
@@ -345,6 +402,7 @@ class Database:
     def start_session(self, session_id: int, update: dict[str, Any]) -> None:
         encoded = compress_state(update)
         with self.connect() as connection:
+            connection.execute("DELETE FROM history_heads WHERE session_id = ?", (session_id,))
             connection.execute(
                 "UPDATE sessions SET phase = 'started', state = ?, initial_state = ?, current_node_id = NULL, next_seq = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND phase = 'new'",
                 (encoded, encoded, session_id),
@@ -366,6 +424,10 @@ class Database:
                 (session_id, parent_id, depth, payload_kind, payload, json.dumps(move), position, processing_time_ms),
             )
             node_id = int(cursor.lastrowid)
+            connection.execute(
+                "INSERT INTO history_heads(session_id, node_id) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET node_id = excluded.node_id",
+                (session_id, node_id),
+            )
             connection.execute(
                 "UPDATE sessions SET state = ?, phase = ?, next_seq = ?, current_node_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (encoded, phase, depth, node_id, session_id),
@@ -460,57 +522,249 @@ class Database:
             "SELECT * FROM history_nodes WHERE session_id = ? AND parent_id = ? ORDER BY id DESC", (session_id, parent_id)
         ).fetchall()
 
+    @staticmethod
+    def _move_round(node: sqlite3.Row) -> int | None:
+        move = json.loads(node["move"])
+        candidates = [move]
+        if isinstance(move, dict) and isinstance(move.get("data"), dict):
+            candidates.append(move["data"])
+        for candidate in candidates:
+            for key in ("round", "roundNumber", "round_number"):
+                value = candidate.get(key) if isinstance(candidate, dict) else None
+                if isinstance(value, int) and value >= 0:
+                    return value
+        return None
+
+    @staticmethod
+    def _history_structure(nodes: list[sqlite3.Row]) -> dict[str, Any]:
+        nodes_by_id = {int(node["id"]): node for node in nodes}
+        children_by_parent: dict[int | None, list[sqlite3.Row]] = {}
+        for node in nodes:
+            parent_id = int(node["parent_id"]) if node["parent_id"] is not None else None
+            children_by_parent.setdefault(parent_id, []).append(node)
+
+        branch_by_node: dict[int, str] = {}
+        branch_suffixes: dict[str, int] = {}
+        branch_nodes: dict[str, list[sqlite3.Row]] = {"1": []}
+        branch_starts: dict[str, sqlite3.Row | None] = {"1": None}
+        for node in nodes:
+            node_id = int(node["id"])
+            parent_id = int(node["parent_id"]) if node["parent_id"] is not None else None
+            siblings = children_by_parent[parent_id]
+            sibling_index = siblings.index(node)
+            parent_branch = branch_by_node.get(parent_id, "1")
+            if sibling_index == 0:
+                path = parent_branch
+            elif parent_id is None:
+                path = str(sibling_index + 1)
+            else:
+                suffix = branch_suffixes.get(parent_branch, 1) + 1
+                branch_suffixes[parent_branch] = suffix
+                path = f"{parent_branch}.{suffix}"
+            branch_by_node[node_id] = path
+            branch_nodes.setdefault(path, []).append(node)
+            if path != parent_branch and path not in branch_starts:
+                branch_starts[path] = node
+
+        branches = []
+        for path, path_nodes in branch_nodes.items():
+            start = branch_starts.get(path)
+            tip = path_nodes[-1] if path_nodes else None
+            branches.append({
+                "nodeID": int(tip["id"]) if tip is not None else None,
+                "startNodeID": int(start["id"]) if start is not None else None,
+                "baseNodeID": int(start["parent_id"]) if start is not None and start["parent_id"] is not None else None,
+                "depth": int(tip["depth"]) if tip is not None else 0,
+                "path": path,
+                "position": int(start["position"]) if start is not None else None,
+                "move": json.loads(start["move"]) if start is not None else None,
+                "createdAt": start["created_at"] if start is not None else None,
+            })
+        branches.sort(key=lambda branch: tuple(int(part) for part in branch["path"].split(".")))
+        return {
+            "nodesByID": nodes_by_id,
+            "childrenByParent": children_by_parent,
+            "branchByNode": branch_by_node,
+            "branchNodes": branch_nodes,
+            "branches": branches,
+        }
+
+    @staticmethod
+    def _node_chain(nodes_by_id: dict[int, sqlite3.Row], tip_id: int | None) -> list[sqlite3.Row]:
+        chain: list[sqlite3.Row] = []
+        current_id = tip_id
+        while current_id is not None:
+            node = nodes_by_id.get(current_id)
+            if node is None:
+                break
+            chain.append(node)
+            current_id = int(node["parent_id"]) if node["parent_id"] is not None else None
+        chain.reverse()
+        return chain
+
+    @staticmethod
+    def _turn_groups(nodes: list[sqlite3.Row]) -> list[list[sqlite3.Row]]:
+        groups: list[list[sqlite3.Row]] = []
+        for node in nodes:
+            if not groups or groups[-1][-1]["position"] != node["position"]:
+                groups.append([])
+            groups[-1].append(node)
+        return groups
+
+    @staticmethod
+    def _round_groups(nodes: list[sqlite3.Row]) -> list[list[sqlite3.Row]]:
+        groups: list[list[sqlite3.Row]] = []
+        current_round: int | None = None
+        for node in nodes:
+            round_number = Database._move_round(node)
+            if round_number is None:
+                continue
+            if not groups or round_number != current_round:
+                groups.append([])
+                current_round = round_number
+            groups[-1].append(node)
+        return groups
+
+    @staticmethod
+    def _set_history_head(connection: sqlite3.Connection, session_id: int, node_id: int | None) -> None:
+        connection.execute(
+            "INSERT INTO history_heads(session_id, node_id) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET node_id = excluded.node_id",
+            (session_id, node_id),
+        )
+
     def history_status(self, session_id: int) -> dict[str, Any]:
         with self.connect() as connection:
             session = connection.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
             if session is None:
                 raise LookupError("Session not found")
-            current_id = session["current_node_id"]
-            children = self._children(connection, session_id, current_id)
-            forward = children[0] if children else None
+            current_id = int(session["current_node_id"]) if session["current_node_id"] is not None else None
             forks = connection.execute(
                 "SELECT COUNT(*) AS total FROM (SELECT parent_id FROM history_nodes WHERE session_id = ? GROUP BY parent_id HAVING COUNT(*) > 1)",
                 (session_id,),
             ).fetchone()["total"]
-            tip = forward
-            while tip is not None:
-                child = self._child(connection, session_id, tip["id"])
-                if child is None:
-                    break
-                tip = child
+            nodes = connection.execute(
+                "SELECT * FROM history_nodes WHERE session_id = ? ORDER BY id", (session_id,)
+            ).fetchall()
+            structure = self._history_structure(nodes)
+            nodes_by_id = structure["nodesByID"]
+            branch_by_node = structure["branchByNode"]
+            branches = structure["branches"]
+            head_row = connection.execute("SELECT node_id FROM history_heads WHERE session_id = ?", (session_id,)).fetchone()
+            selected_tip_id = int(head_row["node_id"]) if head_row and head_row["node_id"] is not None else current_id
+            if selected_tip_id not in nodes_by_id:
+                selected_tip_id = current_id
+            selected_chain = self._node_chain(nodes_by_id, selected_tip_id)
+            selected_ids = [int(node["id"]) for node in selected_chain]
+            if current_id is not None and current_id not in selected_ids:
+                selected_tip_id = current_id
+                selected_chain = self._node_chain(nodes_by_id, selected_tip_id)
+                selected_ids = [int(node["id"]) for node in selected_chain]
+            if head_row is None:
+                self._set_history_head(connection, session_id, selected_tip_id)
+            selected_branch = branch_by_node.get(selected_tip_id, "1")
+            branch_index = selected_ids.index(current_id) + 1 if current_id in selected_ids else 0
+            turn_groups = self._turn_groups(selected_chain)
+            turn_index = next((index + 1 for index, group in enumerate(turn_groups) if current_id in {int(node["id"]) for node in group}), 0)
+            round_groups = self._round_groups(selected_chain)
+            round_index = next((index + 1 for index, group in enumerate(round_groups) if current_id in {int(node["id"]) for node in group}), 0)
+            current_chain_index = selected_ids.index(current_id) if current_id in selected_ids else -1
+            forward = selected_chain[current_chain_index + 1] if current_chain_index + 1 < len(selected_chain) else None
+            children = self._children(connection, session_id, current_id)
+
+            def branch_name(node_id: int | None) -> str:
+                return branch_by_node.get(node_id, "1")
+
+            checkpoints = connection.execute(
+                "SELECT * FROM history_checkpoints WHERE session_id = ? ORDER BY id", (session_id,)
+            ).fetchall()
             return {
-                "index": int(session["next_seq"]),
-                "tip": int(tip["depth"]) if tip is not None else int(session["next_seq"]),
-                "canBack": current_id is not None,
+                "index": branch_index,
+                "tip": len(selected_chain),
+                "actionIndex": branch_index,
+                "actionTotal": len(selected_chain),
+                "turnIndex": turn_index,
+                "turnTotal": len(turn_groups),
+                "roundIndex": round_index,
+                "roundTotal": len(round_groups),
+                "currentNodeID": current_id,
+                "currentBranch": selected_branch,
+                "selectedTipID": selected_tip_id,
+                "canBack": branch_index > 0,
                 "canForward": forward is not None,
                 "forks": int(forks),
-                "branches": [
+                "branches": branches,
+                "choices": [
                     {
                         "nodeID": int(child["id"]),
                         "depth": int(child["depth"]),
+                        "path": branch_name(int(child["id"])),
                         "position": int(child["position"]),
                         "move": json.loads(child["move"]),
                         "createdAt": child["created_at"],
                     }
                     for child in children
                 ],
+                "checkpoints": [
+                    {
+                        "id": int(checkpoint["id"]),
+                        "nodeID": int(checkpoint["node_id"]) if checkpoint["node_id"] is not None else None,
+                        "depth": int(nodes_by_id[int(checkpoint["node_id"])]["depth"]) if checkpoint["node_id"] is not None else 0,
+                        "path": branch_name(int(checkpoint["node_id"]) if checkpoint["node_id"] is not None else None),
+                        "name": checkpoint["name"],
+                        "createdAt": checkpoint["created_at"],
+                    }
+                    for checkpoint in checkpoints
+                ],
             }
+
+    def create_checkpoint(self, session_id: int, name: str) -> int:
+        with self.connect() as connection:
+            session = connection.execute("SELECT current_node_id FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            if session is None:
+                raise LookupError("Session not found")
+            clean_name = name.strip()[:80]
+            if not clean_name:
+                total = connection.execute(
+                    "SELECT COUNT(*) AS total FROM history_checkpoints WHERE session_id = ?", (session_id,)
+                ).fetchone()["total"]
+                clean_name = f"Checkpoint {int(total) + 1}"
+            cursor = connection.execute(
+                "INSERT INTO history_checkpoints(session_id, node_id, name) VALUES (?, ?, ?)",
+                (session_id, session["current_node_id"], clean_name),
+            )
+            return int(cursor.lastrowid)
 
     def navigate_history(self, session_id: int, command: str, branch_id: int | None = None) -> bool:
         with self.connect() as connection:
             session = connection.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
             if session is None:
                 raise LookupError("Session not found")
-            current = connection.execute("SELECT * FROM history_nodes WHERE id = ?", (session["current_node_id"],)).fetchone() if session["current_node_id"] else None
+            nodes = connection.execute("SELECT * FROM history_nodes WHERE session_id = ? ORDER BY id", (session_id,)).fetchall()
+            structure = self._history_structure(nodes)
+            nodes_by_id = structure["nodesByID"]
+            current_id = int(session["current_node_id"]) if session["current_node_id"] is not None else None
+            current = nodes_by_id.get(current_id) if current_id is not None else None
             original_id = int(current["id"]) if current is not None else None
+            head_row = connection.execute("SELECT node_id FROM history_heads WHERE session_id = ?", (session_id,)).fetchone()
+            selected_tip_id = int(head_row["node_id"]) if head_row and head_row["node_id"] is not None else current_id
+            if selected_tip_id not in nodes_by_id:
+                selected_tip_id = current_id
+            selected_chain = self._node_chain(nodes_by_id, selected_tip_id)
+            selected_ids = [int(node["id"]) for node in selected_chain]
+            if current_id is not None and current_id not in selected_ids:
+                selected_tip_id = current_id
+                selected_chain = self._node_chain(nodes_by_id, selected_tip_id)
+                selected_ids = [int(node["id"]) for node in selected_chain]
+            selected_branch = structure["branchByNode"].get(selected_tip_id, "1")
+            chain_index = selected_ids.index(current_id) if current_id in selected_ids else -1
             target = current
             if command == "start":
                 target = None
             elif command == "back-action":
-                target = connection.execute("SELECT * FROM history_nodes WHERE id = ?", (current["parent_id"],)).fetchone() if current and current["parent_id"] else None
+                target = selected_chain[chain_index - 1] if chain_index > 0 else None
             elif command == "forward-action":
                 if branch_id is None:
-                    target = self._child(connection, session_id, current["id"] if current else None)
+                    target = selected_chain[chain_index + 1] if chain_index + 1 < len(selected_chain) else None
                 else:
                     parent_id = current["id"] if current else None
                     if parent_id is None:
@@ -529,26 +783,46 @@ class Database:
                 if current is None:
                     return False
                 position = current["position"]
-                while current is not None and current["position"] == position:
-                    current = connection.execute("SELECT * FROM history_nodes WHERE id = ?", (current["parent_id"],)).fetchone() if current["parent_id"] else None
-                target = current
-            elif command in {"forward-turn", "end"}:
-                target = self._child(connection, session_id, current["id"] if current else None)
-                if target is None:
+                index = chain_index
+                while index >= 0 and selected_chain[index]["position"] == position:
+                    index -= 1
+                target = selected_chain[index] if index >= 0 else None
+            elif command == "forward-turn":
+                index = chain_index + 1
+                if index >= len(selected_chain):
                     return False
-                if command == "forward-turn":
-                    position = target["position"]
-                    while True:
-                        child = self._child(connection, session_id, target["id"])
-                        if child is None or child["position"] != position:
-                            break
-                        target = child
+                position = selected_chain[index]["position"]
+                while index + 1 < len(selected_chain) and selected_chain[index + 1]["position"] == position:
+                    index += 1
+                target = selected_chain[index]
+            elif command == "end":
+                target = nodes_by_id.get(selected_tip_id) if selected_tip_id is not None else None
+            elif command in {"action", "turn", "round"}:
+                value = max(0, int(branch_id or 0))
+                if command == "action":
+                    target = selected_chain[value - 1] if value and value <= len(selected_chain) else None
                 else:
-                    while True:
-                        child = self._child(connection, session_id, target["id"])
-                        if child is None:
-                            break
-                        target = child
+                    groups = self._turn_groups(selected_chain) if command == "turn" else self._round_groups(selected_chain)
+                    target = groups[value - 1][-1] if value and value <= len(groups) else None
+            elif command == "branch":
+                if branch_id is None or branch_id not in nodes_by_id:
+                    raise ValueError("The selected branch does not exist")
+                selected_tip_id = branch_id
+                self._set_history_head(connection, session_id, selected_tip_id)
+                target = nodes_by_id[selected_tip_id]
+            elif command == "node":
+                if branch_id is None:
+                    target = None
+                else:
+                    target = connection.execute(
+                        "SELECT * FROM history_nodes WHERE id = ? AND session_id = ?",
+                        (branch_id, session_id),
+                    ).fetchone()
+                    if target is None:
+                        raise ValueError("The selected history point does not exist")
+                    target_path = structure["branchByNode"].get(int(target["id"]), "1")
+                    selected_tip_id = next(item["nodeID"] for item in structure["branches"] if item["path"] == target_path)
+                    self._set_history_head(connection, session_id, selected_tip_id)
             else:
                 raise ValueError(f"Unknown history command: {command}")
             target_id = int(target["id"]) if target is not None else None
@@ -567,3 +841,67 @@ class Database:
     def delete_session(self, session_id: int) -> None:
         with self.connect() as connection:
             connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+
+    def bind_unversioned_sessions(self, revisions: dict[str, str]) -> None:
+        with self.connect() as connection:
+            for game_name, revision in revisions.items():
+                connection.execute(
+                    "UPDATE sessions SET game_revision = ? WHERE game_name = ? AND game_revision IS NULL",
+                    (revision, game_name),
+                )
+
+    def apply_game_revision(
+        self,
+        game_name: str,
+        previous: str,
+        current: str,
+        kind: str,
+        updates: dict[str, Any],
+    ) -> dict[str, list[int]]:
+        promoted: list[int] = []
+        deleted: list[int] = []
+        mode = str(updates.get("mode") or "versioned")
+        policy = str(updates.get(kind) or ("live" if kind == "assets" else "pinned"))
+        with self.connect() as connection:
+            if mode == "latest-only" and kind != "assets":
+                rows = connection.execute(
+                    "SELECT id FROM sessions WHERE game_name = ? AND (game_revision <> ? OR game_revision IS NULL)",
+                    (game_name, current),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT id FROM sessions WHERE game_name = ? AND game_revision = ?",
+                    (game_name, previous),
+                ).fetchall()
+            session_ids = [int(row["id"]) for row in rows]
+            if not session_ids:
+                return {"promoted": promoted, "deleted": deleted}
+            if mode == "latest-only" and kind != "assets":
+                connection.executemany("DELETE FROM sessions WHERE id = ?", [(session_id,) for session_id in session_ids])
+                deleted.extend(session_ids)
+            elif policy == "live":
+                connection.executemany(
+                    "UPDATE sessions SET game_revision = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    [(current, session_id) for session_id in session_ids],
+                )
+                promoted.extend(session_ids)
+        return {"promoted": promoted, "deleted": deleted}
+
+    def revision_usage(self, game_name: str) -> dict[str, dict[str, int]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT game_revision, phase, COUNT(*) AS amount
+                   FROM sessions WHERE game_name = ?
+                   GROUP BY game_revision, phase""",
+                (game_name,),
+            ).fetchall()
+        usage: dict[str, dict[str, int]] = {}
+        for row in rows:
+            revision = str(row["game_revision"] or "unversioned")
+            counts = usage.setdefault(revision, {"total": 0, "new": 0, "started": 0, "finished": 0})
+            amount = int(row["amount"])
+            counts["total"] += amount
+            phase = str(row["phase"] or "")
+            if phase in counts:
+                counts[phase] += amount
+        return usage

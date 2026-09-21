@@ -139,9 +139,12 @@ button:disabled { cursor: default; opacity: .42; }
 .game-frame { height: calc(100dvh - var(--safe-top) - var(--safe-bottom)); }
 .game-frame iframe { display: block; width: 100%; height: 100%; border: 0; background: #0d1117; }
 .spectator-view .game-frame iframe { pointer-events: none; }
-.setup-identity { position: fixed; left: 50%; top: calc(var(--safe-top) + 7px); z-index: 60; display: flex; width: min(760px, calc(100vw - var(--safe-left) - var(--safe-right) - 14px)); min-height: 43px; align-items: center; gap: 9px; padding: 5px 7px; translate: -50% 0; border: 1px solid #ffffff20; border-radius: 10px; background: #090a0edb; box-shadow: 0 8px 28px #0009; backdrop-filter: blur(10px); }
+.setup-identity { position: fixed; left: calc(var(--safe-left) + 7px); right: calc(var(--safe-right) + 7px); top: calc(var(--safe-top) + 7px); z-index: 60; display: flex; width: auto; min-height: 43px; align-items: center; gap: 9px; padding: 5px 7px; border: 1px solid #ffffff20; border-radius: 10px; background: #090a0edb; box-shadow: 0 8px 28px #0009; backdrop-filter: blur(10px); }
 .setup-identity button, .setup-identity select { min-height: 31px; height: 31px; border-radius: 7px; }
 .setup-home, .setup-share { display: grid; width: 31px; min-width: 31px; min-height: 31px; place-items: center; padding: 0; border: 1px solid #ffffff1c; border-radius: 7px; color: #fff; background: #191b24d9; }
+.setup-user-switcher { flex: 0 1 auto; min-width: 0; }
+.setup-user-switcher select { width: min(190px, 28vw); min-width: 90px; }
+.setup-user-switcher > span { font-size: 17px; }
 .setup-room-name { min-width: 110px; display: grid; line-height: 1.05; }
 .setup-room-name small { color: var(--accent); font-size: 8px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
 .setup-room-name strong { max-width: 180px; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
@@ -172,9 +175,6 @@ button:disabled { cursor: default; opacity: .42; }
 .lil-gui.server-menu .server-menu-title-undo { flex: 0 0 21px; width: 21px !important; height: 21px; min-width: 21px; min-height: 21px; margin-left: 3px; padding: 0; border: 0; border-radius: 4px; color: #fff; background: #ffffff12; }
 .lil-gui.server-menu .server-menu-title-undo:hover { background: #ffffff28; }
 .lil-gui.server-menu .server-menu-title-undo .griddy-icon { width: 13px; height: 13px; margin: auto; }
-.lil-gui.server-menu .server-menu-title-app { flex: 0 0 21px; width: 21px !important; height: 21px; min-width: 21px; min-height: 21px; margin-left: 3px; padding: 0; border: 0; border-radius: 4px; color: #fff; background: #ffffff12; }
-.lil-gui.server-menu .server-menu-title-app:hover { background: #ffffff28; }
-.lil-gui.server-menu .server-menu-title-app .griddy-icon { width: 13px; height: 13px; margin: auto; }
 .server-menu-row { align-items: center; }
 .server-menu-row > .controller { width: 0 !important; min-width: 0; flex: 1 1 0 !important; margin: 3px 0; padding: 1px 2px; }
 .server-menu-row .controller .name { display: flex; align-items: center; justify-content: center; width: auto; min-width: 0; padding: 0; line-height: 1; }
@@ -184,8 +184,38 @@ button:disabled { cursor: default; opacity: .42; }
 .server-menu-actions .server-menu-perspective { flex: 1.5 1 82px !important; }
 .server-menu-perspective .widget { min-width: 0; }
 .server-menu-perspective .display { padding-left: 4px !important; padding-right: 13px !important; }
-.server-menu-history { border-top: 1px solid #ffffff12; }
-.server-menu-history-status { flex: 0 0 auto; padding: 0 4px 0 3px; color: #ddd; font-size: 9px; font-weight: 700; white-space: nowrap; }
+.server-menu-history-folder { width: 100%; border-top: 1px solid #ffffff18; color: #fff; background: #070707; }
+.lil-gui.server-menu .server-menu-history-folder > .title { display: flex; align-items: center; width: 100%; height: 24px; padding: 0 3px 0 5px; color: #fff; background: #050505; font-size: 10px; font-weight: 750; }
+.lil-gui.server-menu .server-menu-history-folder > .title::before { content: "\25BE" !important; flex: 0 0 auto; padding-right: 3px; color: #fff; font-family: inherit !important; }
+.lil-gui.server-menu .server-menu-history-folder.closed > .title::before { content: "\25B8" !important; }
+.lil-gui.server-menu .server-menu-history-folder > .title > .remove-bar { display: flex; flex: 1 1 auto; width: 0; min-width: 0; min-height: 0; height: 24px; align-items: center; justify-content: flex-start; gap: 4px; overflow: hidden; padding: 0; border: 0; color: #fff !important; background: transparent !important; font: inherit; line-height: 1; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.lil-gui.server-menu .server-menu-history-folder > .title > .remove-bar::before { display: none !important; content: none !important; }
+.lil-gui.server-menu .server-menu-history-folder > .title > .remove-bar:hover,
+.lil-gui.server-menu .server-menu-history-folder > .title > .remove-bar:focus,
+.lil-gui.server-menu .server-menu-history-folder > .title > .remove-bar:active { color: #fff !important; background: transparent !important; opacity: 1; text-decoration: none; }
+.server-menu-history-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.server-menu-history-folder > .title .griddy-icon { flex: 0 0 auto; width: 14px; height: 14px; color: #fff; }
+.server-menu-history-folder > .children { background: #070707; }
+.server-menu-checkpoint-controller { flex: 0 0 23px !important; width: 23px !important; min-width: 23px; height: 20px; margin-left: auto; padding: 0 !important; border: 0 !important; }
+.server-menu-checkpoint-controller .widget, .server-menu-checkpoint-controller button { width: 23px !important; height: 20px !important; min-height: 20px !important; padding: 0 !important; color: #fff !important; background: #101010 !important; }
+.server-menu-checkpoint-controller .name { display: grid !important; width: 100% !important; place-items: center; }
+.server-menu-checkpoint-controller .griddy-icon { width: 14px !important; height: 14px !important; margin: 0 !important; }
+.server-menu-checkpoint-input { flex: 1 1 105px !important; width: 105px !important; min-width: 0; height: 20px; margin-left: 3px; padding: 0 !important; }
+.server-menu-checkpoint-input .name { display: none !important; }
+.server-menu-checkpoint-input .widget, .server-menu-checkpoint-input input { width: 100% !important; height: 20px !important; min-height: 20px !important; color: #fff !important; background: #151515 !important; font-size: 10px !important; }
+.server-menu-history { border-top: 0; }
+.server-menu-history + .server-menu-history { border-top: 1px solid #ffffff0d; }
+.server-menu-history .server-menu-history-number { flex: 0 0 42px !important; }
+.server-menu-history-number .name { display: none !important; }
+.server-menu-history-number .widget { width: 100% !important; }
+.server-menu-history-number input { width: 100% !important; height: var(--widget-height) !important; min-height: 0 !important; padding: 0 3px !important; color: #fff !important; background: #101010 !important; font-size: 9px !important; text-align: center; }
+.server-menu-history-select { margin: 2px 3px 4px !important; width: calc(100% - 6px) !important; color: #fff !important; background: #070707 !important; }
+.server-menu-history-select .name { display: flex !important; width: 23px !important; min-width: 23px; align-items: center; justify-content: center; }
+.server-menu-history-select .name .griddy-icon { width: 14px; height: 14px; margin: 0 !important; color: #fff; }
+.server-menu-history-select .widget { width: calc(100% - 23px) !important; }
+.lil-gui.server-menu .server-menu-history-select .display,
+.lil-gui.server-menu .server-menu-history-select .widget:hover .display,
+.lil-gui.server-menu .server-menu-history-select .display.focus { padding-left: 6px !important; color: #fff !important; background: #101010 !important; font-size: 10px; text-align: left; }
 .toast { position: fixed; left: 50%; bottom: calc(18px + var(--safe-bottom)); z-index: 10; translate: -50% 20px; padding: 10px 15px; border: 1px solid #3b5068; border-radius: 9px; color: #eaf2fb; background: #101a28; opacity: 0; pointer-events: none; transition: .2s; }
 .toast.visible { opacity: 1; translate: -50% 0; }
 
@@ -262,10 +292,13 @@ button:disabled { cursor: default; opacity: .42; }
   .room-meta span:nth-of-type(2) { display: none; }
   .select-all { font-size: 11px; }
   .lil-gui.server-menu { top: calc(var(--safe-top) + 5px) !important; right: calc(var(--safe-right) + 5px) !important; bottom: auto !important; width: min(206px, calc(100vw - var(--safe-left) - var(--safe-right) - 10px)) !important; }
-  .setup-identity { top: calc(var(--safe-top) + 4px); width: calc(100vw - var(--safe-left) - var(--safe-right) - 8px); gap: 5px; padding: 4px; }
+  .topbar { gap: 8px; }
+  .identity-switcher select { max-width: min(145px, 38vw); }
+  .setup-identity { left: calc(var(--safe-left) + 4px); right: calc(var(--safe-right) + 4px); top: calc(var(--safe-top) + 4px); width: auto; gap: 4px; padding: 4px; }
   .setup-room-name { min-width: 0; flex: 1; }
   .setup-room-name strong { max-width: 28vw; }
-  .setup-room-name small, .setup-user-picker > span, .setup-local-status { display: none; }
-  .setup-user-picker { min-width: 0; }
-  .setup-user-picker select { width: min(42vw, 170px); }
+  .setup-room-name small { display: none; }
+  .setup-user-switcher { gap: 4px; }
+  .setup-user-switcher > span { display: none; }
+  .setup-user-switcher select { width: min(28vw, 120px); min-width: 64px; }
 }

@@ -10,6 +10,20 @@ export interface PreviewItem {
 const previewEvent = 'pnpink-play-preview';
 let candidate: PreviewItem | undefined;
 let spaceHeld = false;
+let pointer = { x: 0, y: 0 };
+const registered = new Map<string, PreviewItem>();
+
+function previewAtPointer(): PreviewItem | undefined {
+  for (const hit of document.elementsFromPoint(pointer.x, pointer.y)) {
+    let node: Element | null = hit;
+    while (node) {
+      const branch = (node as HTMLElement).dataset?.pnpinkBranch;
+      if (branch && registered.has(branch)) return registered.get(branch);
+      node = node.parentElement;
+    }
+  }
+  return undefined;
+}
 
 function emitPreview(item?: PreviewItem): void {
   window.dispatchEvent(new CustomEvent(previewEvent, { detail: item }));
@@ -18,6 +32,14 @@ function emitPreview(item?: PreviewItem): void {
 export function setPreviewCandidate(item?: PreviewItem): void {
   candidate = item;
   if (spaceHeld && item) emitPreview(item);
+}
+
+export function usePreviewCandidate(branch: string, item?: PreviewItem): void {
+  useEffect(() => {
+    if (item) registered.set(branch, item);
+    else registered.delete(branch);
+    return () => { registered.delete(branch); };
+  }, [branch, item]);
 }
 
 export function openPreview(item: PreviewItem): void {
@@ -31,13 +53,15 @@ export function PreviewOverlay() {
   useEffect(() => {
     const update = (event: Event) => setItem((event as CustomEvent<PreviewItem | undefined>).detail);
     const keyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement;
-      if (event.code !== 'Space' || event.repeat || target.matches('input, textarea, select')) return;
-      if (!candidate) return;
+      const target = event.target as HTMLElement | null;
+      const isElement = typeof target?.matches === 'function';
+      if (event.code !== 'Space' || event.repeat || isElement && target.matches('input, textarea, select')) return;
+      const item = candidate ?? previewAtPointer();
+      if (!item) return;
       event.preventDefault();
-      if (target.closest('.lil-gui')) target.blur();
+      if (isElement && target.closest('.lil-gui')) target.blur();
       spaceHeld = true;
-      emitPreview(candidate);
+      emitPreview(item);
     };
     const keyUp = (event: KeyboardEvent) => {
       if (event.code !== 'Space' || !spaceHeld) return;
@@ -48,15 +72,32 @@ export function PreviewOverlay() {
     const escape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') emitPreview();
     };
+    const trackPointer = (event: PointerEvent) => {
+      pointer = { x: event.clientX, y: event.clientY };
+    };
     window.addEventListener(previewEvent, update);
-    window.addEventListener('keydown', keyDown);
-    window.addEventListener('keydown', escape);
-    window.addEventListener('keyup', keyUp);
+    window.addEventListener('pointermove', trackPointer, { passive: true });
+    window.addEventListener('pointerover', trackPointer, { passive: true });
+    window.addEventListener('keydown', keyDown, true);
+    window.addEventListener('keydown', escape, true);
+    window.addEventListener('keyup', keyUp, true);
+    if (window.parent !== window) {
+      window.parent.addEventListener('keydown', keyDown, true);
+      window.parent.addEventListener('keydown', escape, true);
+      window.parent.addEventListener('keyup', keyUp, true);
+    }
     return () => {
       window.removeEventListener(previewEvent, update);
-      window.removeEventListener('keydown', keyDown);
-      window.removeEventListener('keydown', escape);
-      window.removeEventListener('keyup', keyUp);
+      window.removeEventListener('pointermove', trackPointer);
+      window.removeEventListener('pointerover', trackPointer);
+      window.removeEventListener('keydown', keyDown, true);
+      window.removeEventListener('keydown', escape, true);
+      window.removeEventListener('keyup', keyUp, true);
+      if (window.parent !== window) {
+        window.parent.removeEventListener('keydown', keyDown, true);
+        window.parent.removeEventListener('keydown', escape, true);
+        window.parent.removeEventListener('keyup', keyUp, true);
+      }
     };
   }, []);
 

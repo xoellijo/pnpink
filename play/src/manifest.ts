@@ -1,16 +1,20 @@
 export type AreaScope = 'shared' | 'player';
 export type AreaVisibility = 'public' | 'owner' | 'hidden';
-export type AreaKind = 'hand' | 'stack' | 'center' | 'free' | 'table' | 'deck' | 'discard' | 'area' | 'supply';
+export type AreaKind = 'hand' | 'stack' | 'center' | 'free' | 'table' | 'deck' | 'discard' | 'tricks' | 'tableau' | 'area' | 'supply';
 export type AreaAction = 'draw' | 'move-from' | 'move-to' | 'discard-to' | 'shuffle' | 'deal';
 export type AreaHideMode = 'toggle' | 'sync' | 'select';
 export type ToolboxScope = 'shared' | 'player';
 export type ToolboxSide = 'left' | 'right';
-export type PieceType = 'card' | 'token' | 'chip' | 'd6';
+export type PieceType = 'card' | 'tile' | 'token' | 'die' | 'd6' | 'pawn' | 'meeple' | 'cube' | 'marker' | 'chip' | 'board' | 'mat' | 'area';
 export type ResourceShape = 'circle' | 'square';
 export type TurnMode = 'free' | 'guided' | 'trick-assisted';
 export type TurnOrder = 'right' | 'left' | 'clockwise' | 'counterclockwise';
 export type WinnerDecider = 'all' | 'last' | 'next-to-last' | 'host';
 export type OpponentPanelMode = 'rotate' | 'standard';
+export type UpdatePolicy = 'live' | 'new-games' | 'pinned';
+export type UpdateMode = 'versioned' | 'latest-only';
+
+const PIECE_TYPES: PieceType[] = ['card', 'tile', 'token', 'die', 'd6', 'pawn', 'meeple', 'cube', 'marker', 'chip', 'board', 'mat', 'area'];
 
 export interface Box {
   left: number;
@@ -29,6 +33,7 @@ export interface AreaLayout {
 }
 
 export interface AreaDefinition {
+  extends?: string | string[];
   id: string;
   label: string;
   kind: AreaKind;
@@ -42,8 +47,18 @@ export interface AreaDefinition {
   canHide?: AreaHideMode;
   toolbox?: string;
   infinite?: boolean;
+  accepts?: PieceAcceptance;
   layout: AreaLayout;
 }
+
+export interface PieceAcceptanceFilter {
+  types?: PieceType[];
+  roles?: string[];
+  tags?: string[];
+  properties?: Record<string, unknown>;
+}
+
+export type PieceAcceptance = PieceType | PieceAcceptanceFilter;
 
 export interface ToolboxDefinition {
   id: string;
@@ -53,6 +68,7 @@ export interface ToolboxDefinition {
 }
 
 export interface PieceDefinition {
+  extends?: string | string[];
   id: string;
   label: string;
   type?: PieceType;
@@ -61,6 +77,9 @@ export interface PieceDefinition {
   back?: string;
   color?: string;
   value?: string | number;
+  roles?: string[];
+  tags?: string[];
+  properties?: Record<string, unknown>;
   shape?: ResourceShape;
   initial: {
     area: string;
@@ -73,6 +92,12 @@ export interface PlayManifest {
   schema: 1;
   name: string;
   description?: string;
+  updates?: {
+    mode: UpdateMode;
+    assets: UpdatePolicy;
+    components: UpdatePolicy;
+    rules: UpdatePolicy;
+  };
   players?: {
     count?: number;
     min?: number;
@@ -88,6 +113,10 @@ export interface PlayManifest {
   board: {
     aspectRatio: number;
     background?: string;
+  };
+  types?: {
+    areas?: Record<string, Partial<AreaDefinition>>;
+    pieces?: Record<string, Partial<PieceDefinition>>;
   };
   toolboxes?: ToolboxDefinition[];
   areas: AreaDefinition[];
@@ -111,7 +140,14 @@ export function currentManifest(): PlayManifest {
 }
 
 export function validateManifest(value: PlayManifest): PlayManifest {
+  value = resolveManifestTypes(value);
   if (value.schema !== 1) throw new Error(`Unsupported play manifest schema: ${value.schema}`);
+  if (value.updates) {
+    if (!['versioned', 'latest-only'].includes(value.updates.mode)) throw new Error('Invalid update mode');
+    for (const key of ['assets', 'components', 'rules'] as const) {
+      if (!['live', 'new-games', 'pinned'].includes(value.updates[key])) throw new Error(`Invalid ${key} update policy`);
+    }
+  }
   const areaIds = new Set<string>();
   const toolboxIds = new Set<string>();
   for (const toolbox of value.toolboxes ?? []) {
@@ -154,6 +190,22 @@ export function validateManifest(value: PlayManifest): PlayManifest {
     if (area.canHide !== undefined && area.scope !== 'player') {
       throw new Error(`Hideable area ${area.id} must have player scope`);
     }
+    if (typeof area.accepts === 'string' && !PIECE_TYPES.includes(area.accepts)) {
+      throw new Error(`Area ${area.id} accepts an invalid piece type`);
+    }
+    if (area.accepts && typeof area.accepts === 'object') {
+      if (area.accepts.types?.some(type => !PIECE_TYPES.includes(type))) {
+        throw new Error(`Area ${area.id} accepts an invalid piece type`);
+      }
+      if (area.accepts.roles?.some(role => typeof role !== 'string') || area.accepts.tags?.some(tag => typeof tag !== 'string')) {
+        throw new Error(`Area ${area.id} has invalid semantic filters`);
+      }
+      if (area.accepts.properties !== undefined && (
+        !area.accepts.properties || typeof area.accepts.properties !== 'object' || Array.isArray(area.accepts.properties)
+      )) {
+        throw new Error(`Area ${area.id} has invalid property filters`);
+      }
+    }
   }
   for (const piece of value.pieces) {
     const area = value.areas.find(candidate => candidate.id === piece.initial.area);
@@ -162,11 +214,24 @@ export function validateManifest(value: PlayManifest): PlayManifest {
       throw new Error(`${piece.id} uses forEachPlayer with shared area ${area.id}`);
     }
     const type = piece.type ?? 'card';
-    if (!['card', 'token', 'chip', 'd6'].includes(type)) throw new Error(`${piece.id} has an invalid piece type`);
+    if (!PIECE_TYPES.includes(type)) {
+      throw new Error(`${piece.id} has an invalid piece type`);
+    }
     if (piece.shape !== undefined && !['circle', 'square'].includes(piece.shape)) {
       throw new Error(`${piece.id} has an invalid resource shape`);
     }
-    if (type === 'card' && !piece.front) throw new Error(`Card ${piece.id} needs a front image`);
+    if (['card', 'tile', 'board', 'mat', 'area'].includes(type) && !piece.front) {
+      throw new Error(`${type} ${piece.id} needs a front image`);
+    }
+    if (piece.roles !== undefined && (!Array.isArray(piece.roles) || piece.roles.some(role => typeof role !== 'string'))) {
+      throw new Error(`${piece.id} has invalid roles`);
+    }
+    if (piece.tags !== undefined && (!Array.isArray(piece.tags) || piece.tags.some(tag => typeof tag !== 'string'))) {
+      throw new Error(`${piece.id} has invalid tags`);
+    }
+    if (piece.properties !== undefined && (!piece.properties || typeof piece.properties !== 'object' || Array.isArray(piece.properties))) {
+      throw new Error(`${piece.id} has invalid properties`);
+    }
   }
   if (value.players?.count !== undefined && (value.players.min !== undefined || value.players.max !== undefined)) {
     throw new Error('players.count cannot be combined with players.min or players.max');
@@ -205,6 +270,80 @@ export function validateManifest(value: PlayManifest): PlayManifest {
     }
   }
   return value;
+}
+
+function mergeDefinitions<T extends object>(base: Partial<T>, override: Partial<T>): Partial<T> {
+  const result = cloneValue(base) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(override)) {
+    const current = result[key];
+    result[key] = value && current && typeof value === 'object' && typeof current === 'object'
+      && !Array.isArray(value) && !Array.isArray(current)
+      ? mergeDefinitions(current, value)
+      : cloneValue(value);
+  }
+  return result as Partial<T>;
+}
+
+function cloneValue<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(cloneValue) as T;
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, cloneValue(item)])) as T;
+  }
+  return value;
+}
+
+function parentNames(value: string | string[] | undefined, context: string): string[] {
+  if (value === undefined) return [];
+  const names = typeof value === 'string' ? [value] : value;
+  if (!Array.isArray(names) || names.some(name => typeof name !== 'string' || !name)) {
+    throw new Error(`${context}.extends must be a type name or list of type names`);
+  }
+  return names;
+}
+
+function resolveDefinitions<T extends { extends?: string | string[] }>(
+  items: T[],
+  definitions: Record<string, Partial<T>> = {},
+  category: string,
+): T[] {
+  const resolved = new Map<string, Partial<T>>();
+  const resolving = new Set<string>();
+  const resolveType = (name: string): Partial<T> => {
+    const cached = resolved.get(name);
+    if (cached) return cached;
+    const definition = definitions[name];
+    if (!definition) throw new Error(`Unknown ${category} type: ${name}`);
+    if (resolving.has(name)) throw new Error(`Circular ${category} type inheritance: ${name}`);
+    resolving.add(name);
+    let result: Partial<T> = {};
+    for (const parent of parentNames(definition.extends, `${category} type ${name}`)) {
+      result = mergeDefinitions(result, resolveType(parent));
+    }
+    const { extends: _extends, ...own } = definition;
+    result = mergeDefinitions(result, own as Partial<T>);
+    resolving.delete(name);
+    resolved.set(name, result);
+    return result;
+  };
+  Object.keys(definitions).forEach(resolveType);
+  return items.map((item, index) => {
+    let result: Partial<T> = {};
+    for (const parent of parentNames(item.extends, `${category}[${index + 1}]`)) {
+      result = mergeDefinitions(result, resolveType(parent));
+    }
+    const { extends: _extends, ...own } = item;
+    return mergeDefinitions(result, own as Partial<T>) as T;
+  });
+}
+
+export function resolveManifestTypes(value: PlayManifest): PlayManifest {
+  const resolved = cloneValue(value);
+  resolved.areas = resolveDefinitions(resolved.areas, resolved.types?.areas, 'area');
+  if (Array.isArray(resolved.pieces)) {
+    resolved.pieces = resolveDefinitions(resolved.pieces, resolved.types?.pieces, 'piece');
+  }
+  delete resolved.types;
+  return resolved;
 }
 
 export function setupOperations(value: PlayManifest): Array<{ shuffle: string } | { deal: { from: string; to: string; count: number } }> {

@@ -19,12 +19,25 @@
   <section id="setup-identity" class="setup-identity" hidden>
     <a href="/" class="setup-home" title="Back to lobby" aria-label="Back to lobby"><span data-icon="home"></span></a>
     <div class="setup-room-name"><small>Game setup</small><strong id="setup-game-name">PnPPlay</strong></div>
-    <label class="setup-user-picker"><span>Playing as</span><select id="setup-user"></select></label>
-    <div id="setup-local-status" class="setup-local-status"></div>
-    <button id="setup-copy-invite" class="setup-share" type="button" title="Copy invitation link" aria-label="Copy invitation link"><span data-icon="share"></span></button>
+    <div class="identity-switcher setup-user-switcher" title="Users in this device">
+      <button id="setup-copy-invite" class="setup-share" type="button" title="Copy invitation link" aria-label="Copy invitation link"><span data-icon="share"></span></button>
+      <button id="setup-share-user" class="setup-share" type="button" title="Use this player on another device" aria-label="Use this player on another device"><span data-icon="devices"></span></button>
+      <button id="setup-new-user" class="setup-share" type="button" title="Create a new player and join this game" aria-label="Create player"><span data-icon="user-plus"></span></button>
+      <select id="setup-user" title="Users in this device" aria-label="Users in this device"></select>
+    </div>
   </section>
   <main class="game-frame"><iframe id="ui" title="PnPPlay game"></iframe></main>
   <div id="toast" class="toast"></div>
+  <dialog id="setup-user-dialog" class="user-dialog">
+    <form id="setup-user-form">
+      <div class="eyebrow">New identity</div>
+      <h2>Create a player</h2>
+      <p>This player will join the current game.</p>
+      <label>Player name<input id="setup-new-user-name" maxlength="40" autocomplete="nickname" required></label>
+      <div class="dialog-actions"><button id="setup-cancel-user" type="button" class="secondary">Cancel</button><button>Create and join</button></div>
+      <p id="setup-user-error" class="error"></p>
+    </form>
+  </dialog>
   <script src="/static/common.js"></script>
   <script type="module" src="/static/session.js"></script>
 </body>

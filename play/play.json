@@ -41,7 +41,7 @@
     {
       "id": "deck",
       "label": "Deck",
-      "kind": "stack",
+      "kind": "deck",
       "scope": "shared",
       "visibility": "hidden",
       "actions": ["draw", "move-from"],
@@ -60,7 +60,7 @@
     {
       "id": "discard",
       "label": "Discard",
-      "kind": "stack",
+      "kind": "discard",
       "scope": "shared",
       "visibility": "public",
       "actions": ["move-from", "move-to", "discard-to"],
@@ -69,7 +69,7 @@
     {
       "id": "tricks",
       "label": "Tricks",
-      "kind": "stack",
+      "kind": "tricks",
       "scope": "player",
       "visibility": "public",
       "actions": ["move-from", "move-to"],
@@ -97,7 +97,7 @@
     {
       "id": "player-area",
       "label": "Tableau",
-      "kind": "area",
+      "kind": "tableau",
       "scope": "player",
       "visibility": "public",
       "canHide": "toggle",
