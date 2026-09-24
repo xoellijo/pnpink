@@ -6,6 +6,7 @@ export interface ContextAction {
   label: string;
   icon?: string;
   active?: boolean;
+  disabled?: boolean;
   iconOnly?: boolean;
   run?: () => void;
   children?: ContextAction[];
@@ -39,7 +40,7 @@ class ContextMenu {
 
   show(request: ContextMenuRequest): void {
     this.hide();
-    const width = Math.min(238, window.innerWidth - 10);
+    const width = Math.min(268, window.innerWidth - 10);
     this.gui = new XGUI({ autoPlace: false, title: '', touchStyles: true, width });
     this.gui.domElement.classList.add('pnpink-context-menu');
     this.gui.domElement.querySelector(':scope > .title')?.remove();
@@ -107,6 +108,10 @@ class ContextMenu {
           if (rowAction.iconOnly) controller.domElement.classList.add('pnpink-icon-only');
           if (rowAction.icon) controller.icon(rowAction.icon);
           if (rowAction.active) controller.domElement.classList.add('pnpink-active');
+          if (rowAction.disabled) {
+            (controller as unknown as { disable?: () => void }).disable?.();
+            controller.domElement.classList.add('pnpink-disabled');
+          }
           first ??= controller;
         }
         const row = first?.$multi ?? first?.domElement;
@@ -128,6 +133,10 @@ class ContextMenu {
       controller.domElement.setAttribute('aria-label', action.label);
       if (action.icon) controller.icon(action.icon);
       if (action.active) controller.domElement.classList.add('pnpink-active');
+      if (action.disabled) {
+        (controller as unknown as { disable?: () => void }).disable?.();
+        controller.domElement.classList.add('pnpink-disabled');
+      }
     }
   }
 }

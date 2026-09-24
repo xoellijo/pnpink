@@ -38,6 +38,7 @@ nav:
   - Export: export.md
   - PnPPlay:
       - Component Metadata: pnpplay/component-metadata.md
+      - Game Templates: pnpplay/game-templates.md
       - Game Versioning: pnpplay/game-versioning.md
   - Extensions and Tools: extensions.md
   - Snippets: snippets.md

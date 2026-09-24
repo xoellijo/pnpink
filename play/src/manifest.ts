@@ -32,6 +32,11 @@ export interface AreaLayout {
   gap?: number;
 }
 
+export interface StackTabDefinition {
+  showCount?: boolean;
+  autoHide?: boolean;
+}
+
 export interface AreaDefinition {
   extends?: string | string[];
   id: string;
@@ -47,6 +52,7 @@ export interface AreaDefinition {
   canHide?: AreaHideMode;
   toolbox?: string;
   infinite?: boolean;
+  stackTab?: StackTabDefinition;
   accepts?: PieceAcceptance;
   layout: AreaLayout;
 }
@@ -171,6 +177,17 @@ export function validateManifest(value: PlayManifest): PlayManifest {
     }
     if (area.infinite !== undefined && typeof area.infinite !== 'boolean') {
       throw new Error(`Area ${area.id} has an invalid infinite value`);
+    }
+    if (area.stackTab !== undefined) {
+      if (!area.stackTab || typeof area.stackTab !== 'object' || Array.isArray(area.stackTab)) {
+        throw new Error(`Area ${area.id} has an invalid stackTab value`);
+      }
+      if (area.stackTab.showCount !== undefined && typeof area.stackTab.showCount !== 'boolean') {
+        throw new Error(`Area ${area.id} has an invalid stackTab.showCount value`);
+      }
+      if (area.stackTab.autoHide !== undefined && typeof area.stackTab.autoHide !== 'boolean') {
+        throw new Error(`Area ${area.id} has an invalid stackTab.autoHide value`);
+      }
     }
     if (area.maxDrop !== undefined && (!Number.isInteger(area.maxDrop) || area.maxDrop < 1)) {
       throw new Error(`Area ${area.id} has an invalid maxDrop`);

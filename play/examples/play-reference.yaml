@@ -5,6 +5,10 @@
 # Manifest format version. Currently it must be 1.
 schema: 1
 
+# A whole-game template may provide players, turns, board, areas and setup.
+# Areas and toolboxes with the same ID merge deeply with the inherited item.
+# extends: trick-game
+
 # Saved rooms use immutable game revisions. These values are inherited from
 # standard.yaml and only need to be present when this game overrides them.
 updates:
@@ -53,6 +57,8 @@ types:
       extends: movable
       kind: stack
       scope: shared
+      # The white tab drags the complete stack. Both options default to true.
+      stackTab: {showCount: true, autoHide: true}
       layout: {rows: 1, columns: 1}
 
     deck:
@@ -192,6 +198,11 @@ pieces:
 #   source: assets/items.json
 #   extends: card               # Defaults applied to every imported item
 #   initial: {area: deck}
+#   overrides:                  # Properties matched against component IDs, in order
+#     points:
+#       "*": 0                 # Every card starts at zero
+#       "*H": 1                # Hearts replace that value with one
+#       QS: 13                  # Queen of Spades is the most specific override
 #   extra:                      # Optional pieces not present in items.json
 #     - {id: die, extends: die, label: Die, initial: {area: token-bowl}}
 

@@ -6,6 +6,21 @@ updates:
   components: new-games
   rules: pinned
 
+templates:
+  trick-game:
+    players: {min: 2, max: 8, panelMode: rotate}
+    turns: {mode: trick-assisted, order: right, maxCardsPerPlay: 1, winnerDecider: last}
+    board: {aspectRatio: 1.85, background: "#173f35"}
+    areas:
+      - {id: deck, extends: deck, label: Deck, layout: {shared: {left: 25, top: 58, width: 7, height: 15}}}
+      - {id: table, extends: table, label: Table, layout: {shared: {left: 24, top: 27, width: 52, height: 50}}}
+      - {id: discard, extends: discard, label: Discard, layout: {shared: {left: 68, top: 58, width: 7, height: 15}}}
+      - {id: hand, extends: hand, label: Hand, layout: {owner: {left: 21, top: 9, width: 70, height: 88}, opponent: {left: 3, top: 56, width: 72, height: 41}}}
+      - {id: tricks, extends: tricks, label: Tricks, layout: {owner: {left: 92, top: 23, width: 7, height: 74}, opponent: {left: 77, top: 56, width: 20, height: 41}}}
+      - {id: player-area, extends: tableau, label: Tableau, layout: {owner: {left: 1, top: 9, width: 19, height: 88}, opponent: {left: 3, top: 3, width: 72, height: 50}}}
+    setup:
+      - shuffle: deck
+
 types:
   areas:
     movable:
@@ -25,6 +40,7 @@ types:
       extends: movable
       kind: stack
       scope: shared
+      stackTab: {showCount: true, autoHide: true}
       layout: {rows: 1, columns: 1}
     deck:
       extends: shared-stack

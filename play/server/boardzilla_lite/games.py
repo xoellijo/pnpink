@@ -5,6 +5,7 @@ import json
 import os
 from copy import deepcopy
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
@@ -94,10 +95,47 @@ def _standard_updates() -> dict[str, Any]:
     return deepcopy(updates)
 
 
+def _standard_templates() -> dict[str, Any]:
+    templates = _standard_catalog().get("templates", {})
+    if not isinstance(templates, dict):
+        raise ValueError("PnPPlay standard catalog templates must be an object")
+    return deepcopy(templates)
+
+
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     result = deepcopy(base)
     for key, value in override.items():
         if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = deepcopy(value)
+    return result
+
+
+def _merge_named_items(base: list[Any], override: list[Any]) -> list[Any]:
+    result = deepcopy(base)
+    positions = {
+        str(item["id"]): index
+        for index, item in enumerate(result)
+        if isinstance(item, dict) and item.get("id") is not None
+    }
+    for item in override:
+        item_id = str(item.get("id")) if isinstance(item, dict) and item.get("id") is not None else None
+        if item_id is not None and item_id in positions and isinstance(result[positions[item_id]], dict):
+            result[positions[item_id]] = _deep_merge(result[positions[item_id]], item)
+        else:
+            if item_id is not None:
+                positions[item_id] = len(result)
+            result.append(deepcopy(item))
+    return result
+
+
+def _merge_manifest(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    result = deepcopy(base)
+    for key, value in override.items():
+        if key in {"areas", "toolboxes"} and isinstance(value, list) and isinstance(result.get(key), list):
+            result[key] = _merge_named_items(result[key], value)
+        elif isinstance(value, dict) and isinstance(result.get(key), dict):
             result[key] = _deep_merge(result[key], value)
         else:
             result[key] = deepcopy(value)
@@ -112,6 +150,62 @@ def _parent_names(value: Any, context: str) -> list[str]:
     if isinstance(value, list) and all(isinstance(item, str) and item.strip() for item in value):
         return value
     raise ValueError(f"{context}.extends must be a type name or a list of type names")
+
+
+def _apply_manifest_templates(manifest: dict[str, Any]) -> dict[str, Any]:
+    local_templates = manifest.get("templates", {})
+    if local_templates is None:
+        local_templates = {}
+    if not isinstance(local_templates, dict):
+        raise ValueError("templates must be an object")
+    definitions = _deep_merge(_standard_templates(), local_templates)
+    resolved: dict[str, dict[str, Any]] = {}
+    resolving: set[str] = set()
+
+    def resolve(name: str) -> dict[str, Any]:
+        if name in resolved:
+            return resolved[name]
+        definition = definitions.get(name)
+        if not isinstance(definition, dict):
+            raise ValueError(f"Unknown game template: {name}")
+        if name in resolving:
+            raise ValueError(f"Circular game template inheritance: {name}")
+        resolving.add(name)
+        result: dict[str, Any] = {}
+        for parent in _parent_names(definition.get("extends"), f"template {name}"):
+            result = _merge_manifest(result, resolve(parent))
+        result = _merge_manifest(result, {
+            key: value for key, value in definition.items() if key not in {"extends", "templates"}
+        })
+        resolving.remove(name)
+        resolved[name] = result
+        return result
+
+    result: dict[str, Any] = {}
+    for parent in _parent_names(manifest.get("extends"), "manifest"):
+        result = _merge_manifest(result, resolve(parent))
+    return _merge_manifest(result, {
+        key: value for key, value in manifest.items() if key not in {"extends", "templates"}
+    })
+
+
+def _apply_piece_property_overrides(piece: dict[str, Any], overrides: Any) -> None:
+    if overrides is None:
+        return
+    if not isinstance(overrides, dict):
+        raise ValueError("pieces.overrides must be an object")
+    properties = deepcopy(piece.get("properties", {}))
+    if not isinstance(properties, dict):
+        raise ValueError(f"Component {piece['id']} properties must be an object")
+    for property_name, patterns in overrides.items():
+        if not isinstance(patterns, dict):
+            raise ValueError(f"pieces.overrides.{property_name} must map ID patterns to values")
+        for pattern, value in patterns.items():
+            if not isinstance(pattern, str) or not pattern:
+                raise ValueError(f"pieces.overrides.{property_name} contains an invalid ID pattern")
+            if fnmatchcase(str(piece["id"]), pattern):
+                properties[str(property_name)] = deepcopy(value)
+    piece["properties"] = properties
 
 
 def _resolved_types(definitions: Any, category: str) -> dict[str, dict[str, Any]]:
@@ -213,7 +307,7 @@ def _asset_path(root: Path, source_directory: Path, value: str) -> str:
 
 
 def _prepare_manifest(root: Path, manifest: dict[str, Any]) -> dict[str, Any]:
-    manifest = deepcopy(manifest)
+    manifest = _apply_manifest_templates(deepcopy(manifest))
     updates = manifest.get("updates", {})
     if updates is None:
         updates = {}
@@ -247,7 +341,8 @@ def _prepare_manifest(root: Path, manifest: dict[str, Any]) -> dict[str, Any]:
         items = source.get("items") if isinstance(source, dict) else None
         if not isinstance(items, list):
             raise ValueError(f"Piece source has no items array: {source_path}")
-        defaults = {key: value for key, value in pieces.items() if key not in {"source", "extra"}}
+        defaults = {key: value for key, value in pieces.items() if key not in {"source", "extra", "overrides"}}
+        overrides = pieces.get("overrides", {})
         expanded = []
         for index, item in enumerate(items, 1):
             if not isinstance(item, dict):
@@ -257,6 +352,7 @@ def _prepare_manifest(root: Path, manifest: dict[str, Any]) -> dict[str, Any]:
             piece["id"] = name
             piece["label"] = str(piece.get("label") or piece.get("name") or name)
             piece["copies"] = int(piece.get("copies", 1))
+            _apply_piece_property_overrides(piece, overrides)
             if piece.get("front"):
                 piece["front"] = _asset_path(root, source_path.parent, str(piece["front"]))
             if piece.get("back"):

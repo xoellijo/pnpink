@@ -8,6 +8,7 @@ export interface HoverShortcuts {
 
 const registered = new Map<string, HoverShortcuts>();
 let pointer = { x: 0, y: 0 };
+let tenPrefixUntil = 0;
 
 function shortcutsAtPointer(): HoverShortcuts | undefined {
   const hovered = Array.from(document.querySelectorAll(':hover')).reverse();
@@ -54,8 +55,18 @@ export function KeyboardShortcuts() {
       }
       if (/^[0-9]$/.test(event.key) && hovered.selectTop) {
         event.preventDefault();
-        hovered.selectTop(event.key === '0' ? 0 : event.key === '1' ? 10 : Number(event.key));
+        const digit = Number(event.key);
+        const now = performance.now();
+        if (tenPrefixUntil > now) {
+          tenPrefixUntil = 0;
+          hovered.selectTop(10 + digit);
+        } else {
+          tenPrefixUntil = digit === 1 ? now + 800 : 0;
+          hovered.selectTop(digit === 0 ? 0 : digit);
+        }
+        return;
       }
+      tenPrefixUntil = 0;
     };
     const trackPointer = (event: PointerEvent) => {
       pointer = { x: event.clientX, y: event.clientY };

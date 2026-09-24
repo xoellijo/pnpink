@@ -31,6 +31,16 @@ describe('play manifest', () => {
     expect(() => validateManifest(invalid)).toThrow('invalid insert mode');
   });
 
+  it('accepts stack tab configuration and rejects invalid values', () => {
+    const configured = structuredClone(rawManifest) as PlayManifest;
+    configured.areas[0].stackTab = { showCount: false, autoHide: false };
+    expect(validateManifest(configured).areas[0].stackTab).toEqual({ showCount: false, autoHide: false });
+
+    const invalid = structuredClone(rawManifest) as PlayManifest;
+    invalid.areas[0].stackTab = { showCount: 'yes' as unknown as boolean };
+    expect(() => validateManifest(invalid)).toThrow('invalid stackTab.showCount');
+  });
+
   it('rejects invalid pile capabilities', () => {
     const invalid = structuredClone(rawManifest) as PlayManifest;
     invalid.areas[0].allowDeal = 'yes' as unknown as boolean;

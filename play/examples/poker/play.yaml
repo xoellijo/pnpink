@@ -1,10 +1,7 @@
 schema: 1
+extends: trick-game
 name: Poker Table
 description: A 52-card sandbox table for two to eight players.
-
-players: {min: 2, max: 8, panelMode: rotate}
-turns: {mode: trick-assisted, order: right, maxCardsPerPlay: 1, winnerDecider: last}
-board: {aspectRatio: 1.85, background: "#173f35"}
 
 toolboxes:
   - {id: general-tools, label: General tools, scope: shared, side: left}
@@ -15,17 +12,17 @@ areas:
   - {id: shared-markers, extends: shared-supply, label: Markers, toolbox: general-tools}
   - {id: player-chips, extends: player-supply, label: Poker chips, toolbox: player-tools}
   - {id: player-dice, extends: player-supply, label: Dice, toolbox: player-tools, infinite: false}
-  - {id: deck, extends: deck, label: Deck, layout: {shared: {left: 25, top: 58, width: 7, height: 15}}}
-  - {id: table, extends: table, label: Table, layout: {shared: {left: 24, top: 27, width: 52, height: 50}}}
-  - {id: discard, extends: discard, label: Discard, layout: {shared: {left: 68, top: 58, width: 7, height: 15}}}
-  - {id: hand, extends: hand, label: Hand, layout: {owner: {left: 21, top: 9, width: 70, height: 88}, opponent: {left: 3, top: 56, width: 72, height: 41}}}
-  - {id: tricks, extends: tricks, label: Tricks, layout: {owner: {left: 92, top: 23, width: 7, height: 74}, opponent: {left: 77, top: 56, width: 20, height: 41}}}
-  - {id: player-area, extends: tableau, label: Tableau, layout: {owner: {left: 1, top: 9, width: 19, height: 88}, opponent: {left: 3, top: 3, width: 72, height: 50}}}
+  - {id: deck, stackTab: {showCount: true, autoHide: false}}
 
 pieces:
   source: assets/items.json
   extends: card
   initial: {area: deck}
+  overrides:
+    points:
+      "*": 0
+      # "*H": 1
+      # QS: 13
   extra:
     - {id: red-token, extends: token, label: Red token, color: "#d94b4b", initial: {area: shared-tokens}}
     - {id: blue-marker, extends: square-token, label: Blue marker, color: "#4287d9", initial: {area: shared-markers}}

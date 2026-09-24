@@ -94,7 +94,24 @@ const boardzillaDragPlugin = {
         ],
         ['const domElement = useRef(null);', `const domElement = useRef(null);
     const touchDrop = useRef({ active: false, target: undefined });
-    const dragGroupOffsets = useRef(new Map());`],
+    const dragGroupOffsets = useRef(new Map());
+    const fullStackSource = useRef(undefined);
+    const singleDragSelection = useRef(false);`],
+        [
+          `const handleDragStart = useCallback((e, data) => {
+        e.stopPropagation();`,
+          `const handleDragStart = useCallback((e, data) => {
+        e.stopPropagation();
+        const selected = gameStore.getState().selected ?? [];
+        if (!(selected.length > 1 && selected.some(candidate => candidate.branch() === element.branch()))) {
+            gameStore.setState({ selected: [element] });
+            singleDragSelection.current = true;
+        } else {
+            singleDragSelection.current = false;
+        }
+        const fullStackPiece = wrapper.current?.querySelector('[data-pnpink-stack-all-selected="true"]');
+        fullStackSource.current = fullStackPiece ? wrapper.current?.closest('.Space') : undefined;`,
+        ],
         ['if (dragging && styles.transform) {', "if (dragging && styles.top !== undefined && styles.left !== undefined) {"],
         ['if (styles.transform && dragOffset.ref === element._t.ref) {', 'if (dragOffset.ref === element._t.ref) {'],
         ['` + styles.transform', "` + (styles.transform ?? '')"],
@@ -109,9 +126,11 @@ const boardzillaDragPlugin = {
                     const peer = document.getElementById(candidate.name)?.parentElement;
                     if (!peer?.classList.contains('transform-wrapper')) return;
                     const peerRect = peer.getBoundingClientRect();
+                    const depth = Math.min(index + 1, 7);
                     dragGroupOffsets.current.set(candidate.name, {
-                        x: anchorRect.left - peerRect.left + (index + 1) * anchorRect.width * 0.15,
-                        y: anchorRect.top - peerRect.top + (index + 1) * anchorRect.height * 0.04
+                        x: anchorRect.left - peerRect.left + depth * Math.max(1.5, anchorRect.width * 0.04),
+                        y: anchorRect.top - peerRect.top + depth * Math.max(.8, anchorRect.height * 0.02),
+                        z: 99 - depth
                     });
                 });
             }`,
@@ -123,10 +142,12 @@ const boardzillaDragPlugin = {
                     if (selected.branch() === element.branch()) continue;
                     const peer = document.getElementById(selected.name)?.parentElement;
                     if (!peer?.classList.contains('transform-wrapper')) continue;
-                    const offset = dragGroupOffsets.current.get(selected.name) ?? { x: 0, y: 0 };
+                    const offset = dragGroupOffsets.current.get(selected.name) ?? { x: 0, y: 0, z: 98 };
                     peer.classList.add('group-dragging');
                     peer.style.translate = \`\${offset.x - deltaX}px \${offset.y - deltaY}px\`;
+                    peer.style.setProperty('z-index', String(offset.z), 'important');
                 }
+                fullStackSource.current?.classList.add('pnpink-full-stack-drag');
                 const touch = e.touches?.[0] ?? e.changedTouches?.[0];
                 if (touch) {
                     const dropNode = document.elementsFromPoint(touch.clientX, touch.clientY)
@@ -169,7 +190,13 @@ const boardzillaDragPlugin = {
           `if (wrapper.current?.classList.contains('group-dragging')) {
             wrapper.current.classList.remove('group-dragging');
             wrapper.current.style.removeProperty('translate');
+            wrapper.current.style.removeProperty('z-index');
         }
+        if (fullStackSource.current) {
+            fullStackSource.current.classList.remove('pnpink-full-stack-drag');
+            fullStackSource.current = undefined;
+        }
+        dragGroupOffsets.current.clear();
         delete render.mutated;`,
         ],
         [
@@ -178,9 +205,25 @@ const boardzillaDragPlugin = {
                 const peer = document.getElementById(selected.name)?.parentElement;
                 peer?.classList.remove('group-dragging');
                 peer?.style.removeProperty('translate');
+                peer?.style.removeProperty('z-index');
             }
             touchDrop.current = { active: false, target: undefined };
             dragGroupOffsets.current.clear();
+            fullStackSource.current?.classList.remove('pnpink-full-stack-drag');
+            fullStackSource.current = undefined;
+            dragOffset.ref = undefined;
+            dragOffset.x = undefined;
+            dragOffset.y = undefined;
+            if (singleDragSelection.current) {
+                const draggedBranch = element.branch();
+                window.setTimeout(() => {
+                    const selected = gameStore.getState().selected ?? [];
+                    if (selected.length === 1 && selected[0].branch() === draggedBranch) {
+                        gameStore.setState({ selected: undefined });
+                    }
+                }, 650);
+                singleDragSelection.current = false;
+            }
             setDragging(undefined);
             setCurrentDrop(undefined);`,
         ],

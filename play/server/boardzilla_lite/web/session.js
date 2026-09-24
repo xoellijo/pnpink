@@ -106,6 +106,7 @@ function setEnabled(controller, enabled) {
 }
 
 function updateUndo(canUndo) {
+  if (details) details.canUndo = canUndo;
   if (undoButton) undoButton.hidden = !details?.allowUndo || !canUndo;
 }
 
@@ -553,6 +554,21 @@ document.addEventListener('visibilitychange', () => {
   const message = deferredGameUpdate;
   deferredGameUpdate = undefined;
   if (!updateRoomState(message)) send(message);
+});
+
+window.addEventListener('keydown', event => {
+  if ((!event.ctrlKey && !event.metaKey) || event.altKey || event.repeat) return;
+  const target = event.target;
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement
+    || target?.isContentEditable) return;
+  const key = event.key.toLowerCase();
+  if (key === 'z' && details?.allowUndo && details?.canUndo) {
+    event.preventDefault();
+    undoLatestMove();
+  } else if (key === 'y' && details?.administrator && historyData?.canForward) {
+    event.preventDefault();
+    navigateHistory('forward-action');
+  }
 });
 
 start().catch(error => notify(String(error)));

@@ -41,6 +41,20 @@ PnPPlay provides common area types (`deck`, `discard`, `table`, `hand`,
 `square-token`, `chip`, and `die`) from `standard.yaml`. Games use them directly
 with `extends`, so they only describe what is unique to that game.
 
+Whole-game templates use the same vocabulary. `extends: trick-game` supplies a
+standard table, deck, discard, private hands, trick piles, player tableaux,
+seating and the assisted trick flow. Areas with the same `id` merge deeply, so
+a game can override one property without repeating the complete table:
+
+```yaml
+schema: 1
+extends: trick-game
+name: My Card Game
+
+areas:
+  - {id: deck, stackTab: {autoHide: false}}
+```
+
 Named defaults under local `types.areas` and `types.pieces` can add new types or
 override the standard ones. Types may inherit other types or combine several
 using `extends: [type-a, type-b]`. Nested objects such as `layout` and `initial`
@@ -80,12 +94,19 @@ links the complete deck and chooses its initial area without listing every card:
 pieces:
   source: assets/items.json
   initial: {area: deck}
+  overrides:
+    points:
+      "*": 0
+      "*H": 1
+      QS: 13
   extra:
     - {id: red-token, label: Red token, type: token, color: '#d94b4b', initial: {area: tokens}}
 ```
 
 `extra` keeps reusable resources beside a linked card dataset without expanding
-the deck in YAML. Image paths inside `items.json` are relative to that file. See
+the deck in YAML. `overrides` assigns semantic properties by component-ID glob;
+matching patterns run from top to bottom, so specific patterns can replace broad
+defaults. Image paths inside `items.json` are relative to that file. See
 `examples/poker/play.yaml` for a complete 52-card example.
 
 `trick-assisted` advances after each played card, pauses after every player has

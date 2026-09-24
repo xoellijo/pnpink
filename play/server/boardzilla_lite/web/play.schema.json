@@ -3,11 +3,17 @@
   "$id": "https://pnpplay.local/play.schema.json",
   "title": "PnPPlay game",
   "type": "object",
-  "required": ["schema", "name", "board", "areas", "pieces"],
+  "required": ["schema", "name", "pieces"],
+  "anyOf": [
+    {"required": ["extends"]},
+    {"required": ["board", "areas"]}
+  ],
   "properties": {
     "schema": {"type": "integer", "const": 1, "readOnly": true},
     "name": {"type": "string", "title": "Game name", "minLength": 1},
     "description": {"type": "string", "title": "Description"},
+    "extends": {"$ref": "#/$defs/extends"},
+    "templates": {"type": "object", "additionalProperties": {"type": "object"}},
     "updates": {"$ref": "#/$defs/updates"},
     "players": {"$ref": "#/$defs/players"},
     "turns": {"$ref": "#/$defs/turns"},
@@ -134,6 +140,15 @@
         "canHide": {"type": "string", "title": "Can hide", "enum": ["toggle", "sync", "select"]},
         "toolbox": {"type": "string", "title": "Toolbox ID"},
         "infinite": {"type": "boolean", "default": false},
+        "stackTab": {
+          "type": "object",
+          "title": "Stack tab",
+          "description": "Configure the drag handle shown on single-cell stacks.",
+          "properties": {
+            "showCount": {"type": "boolean", "title": "Show item count", "default": true},
+            "autoHide": {"type": "boolean", "title": "Hide until hover", "default": true}
+          }
+        },
         "accepts": {
           "title": "Accepted components",
           "oneOf": [
@@ -194,6 +209,14 @@
       "properties": {
         "source": {"type": "string", "title": "Items JSON"},
         "initial": {"$ref": "#/$defs/initial"},
+        "overrides": {
+          "type": "object",
+          "title": "Properties by component ID",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
         "extra": {"type": "array", "items": {"$ref": "#/$defs/piece"}}
       }
     }
