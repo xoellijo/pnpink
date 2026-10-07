@@ -40,6 +40,11 @@ def test_semantic_headers_become_manifest_fields():
     }
 
 
+def test_has_field_detects_empty_semantic_id_column():
+    assert semantic_metadata.has_field({"$ID": "", "title": "Card"}, "id")
+    assert not semantic_metadata.has_field({"title": "Card"}, "id")
+
+
 def test_empty_and_nonsemantic_columns_are_ignored():
     assert semantic_metadata.from_mapping({"title": "Visible", "$rank": "", "$points": None}) == {}
 

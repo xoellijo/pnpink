@@ -328,7 +328,11 @@ def parse_and_resolve_page(text: str, current_page: PageSpec, doc_page_mm: Tuple
       - "{3}" / "{}" (page breaks) -> keep current_page
     """
     t = (text or "").strip()
-    cmd = DSL.maybe_parse(t if t.startswith('{') else f'Page{{{t}}}')
+    if t.startswith("{") or re.match(r"^(?:Page|P)\s*\{", t, re.I):
+        page_command = t
+    else:
+        page_command = f"Page{{{t}}}"
+    cmd = DSL.maybe_parse(page_command)
     if cmd is None or cmd.name != "Page":
         # "{3}" / "{}" (pagebreak only)
         if re.fullmatch(r"\{\s*\d*\s*\}", t):
@@ -341,10 +345,20 @@ def parse_and_resolve_page(text: str, current_page: PageSpec, doc_page_mm: Tuple
 
     out = PageSpec()
     if getattr(ps, "size", None):
-        out.name = ps.size
-        sz = CONST.get_page_size_preset(ps.size)
-        if sz:
-            out.width_mm, out.height_mm = sz
+        size_text = str(ps.size).strip()
+        custom_size = re.fullmatch(
+            r"(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)(?:\s*mm)?",
+            size_text,
+            re.I,
+        )
+        if custom_size:
+            out.width_mm = float(custom_size.group(1))
+            out.height_mm = float(custom_size.group(2))
+        else:
+            out.name = size_text
+            sz = CONST.get_page_size_preset(size_text)
+            if sz:
+                out.width_mm, out.height_mm = sz
     out.landscape = bool(getattr(ps, "landscape", False))
 
     # We need a base size to interpret % in border.

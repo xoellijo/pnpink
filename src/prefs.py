@@ -42,6 +42,7 @@ _DEFAULTS = {
     "auto_create":        "1",
     "auto_open":          "0",
     "auto_export":        "0",
+    "auto_preview":       "0",
     "export_pdf":         "1",
     "export_png":         "0",
     "export_other_format": "png",
@@ -83,6 +84,7 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     ("auto_create", ("Auto-generate the deck when the window starts. Values: 0 | 1",)),
     ("auto_export", ("Auto-export after generation. Values: 0 | 1",)),
     ("auto_open", ("Open the generated SVG after generation. Values: 0 | 1",)),
+    ("auto_preview", ("Refresh the Deckmaker Web SVG preview automatically. Values: 0 | 1",)),
     ("console_log_level", ("Console log verbosity. Values: none | error | warn | info | debug | trace | all | debug_only | trace_only",)),
     ("file_log_level", ("File log verbosity written to pnpink.log. Values: none | error | warn | info | debug | trace | all | debug_only | trace_only",)),
     ("log_json", ("Write logs as JSON. Values: 0 | 1",)),
@@ -329,6 +331,14 @@ def get_auto_export(default: bool = False) -> bool:
 
 def set_auto_export(flag: bool) -> None:
     set("auto_export", "1" if flag else "0", save=True)
+
+
+def get_auto_preview(default: bool = False) -> bool:
+    return str(get("auto_preview", "1" if default else "0")).strip() == "1"
+
+
+def set_auto_preview(flag: bool) -> None:
+    set("auto_preview", "1" if flag else "0", save=True)
 
 
 def get_export_pdf(default: bool = True) -> bool:

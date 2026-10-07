@@ -25,25 +25,6 @@ def _partition_jobs(items: list[tuple], parts: int) -> list[list[tuple]]:
     return [group for group in groups if group]
 
 
-def _bitmap_size_px(path: Path) -> tuple[int, int] | None:
-    try:
-        from PIL import Image
-
-        with Image.open(str(path)) as im:
-            return int(im.width), int(im.height)
-    except Exception:
-        pass
-
-    try:
-        with open(path, "rb") as fh:
-            header = fh.read(24)
-        if header[:8] == b"\x89PNG\r\n\x1a\n" and header[12:16] == b"IHDR":
-            return int.from_bytes(header[16:20], "big"), int.from_bytes(header[20:24], "big")
-    except Exception:
-        pass
-    return None
-
-
 def _has_svg_filter_reference(node) -> bool:
     try:
         val = str(node.get("filter") or "").strip()
@@ -390,44 +371,6 @@ def _ensure_aux_node_id(node, prefix: str, idx: int, used: set[str]) -> str:
         node.set("id", node_id)
     used.add(node_id)
     return node_id
-
-
-def _adaptive_filter_raster_dpi(
-    node,
-    image_bboxes: dict[str, dict],
-    source_svg_path: str,
-    *,
-    target_dpi: float = 300.0,
-    min_dpi: float = 50.0,
-    max_dpi: float = 600.0,
-) -> int:
-    import svg as SVG
-
-    best_effective = 0.0
-    for image in _iter_rendered_images(node):
-        image_id = str(image.get("id") or "").strip()
-        bbox = image_bboxes.get(image_id) or {}
-        bw = float(bbox.get("width") or 0.0)
-        bh = float(bbox.get("height") or 0.0)
-        if bw <= 0 or bh <= 0:
-            continue
-        href = SVG.get_href(image)
-        absref = image.get(SVG.SODI_ABSREF) or ""
-        img_path = SVG._resolve_image_path(href, absref, source_svg_path)
-        if not img_path:
-            continue
-        px = _bitmap_size_px(Path(img_path))
-        if not px:
-            continue
-        dpi_x = float(px[0]) / (bw / 96.0)
-        dpi_y = float(px[1]) / (bh / 96.0)
-        best_effective = max(best_effective, min(dpi_x, dpi_y))
-
-    if best_effective <= 0:
-        return int(max_dpi)
-    wanted = 2.0 * min(float(target_dpi), best_effective)
-    clamped = max(float(min_dpi), min(float(max_dpi), wanted))
-    return int(max(1, round(clamped)))
 
 
 def _replace_node_with_raster_image(node, raster_path: str, bbox: dict, *, dpi: float) -> None:

@@ -6,6 +6,7 @@ from typing import Dict
 import inkex
 
 import log as LOG
+import dsl as DSL
 import layouts as LYT
 import svg as SVG
 
@@ -53,16 +54,7 @@ def slot_rc_to_index_1based(r1: int, c1: int, plan_obj, layout_obj):
     return int(within0) + 1
 
 
-def excel_col_to_num(s: str):
-    txt = str(s or "").strip().upper()
-    if not txt:
-        return None
-    n = 0
-    for ch in txt:
-        if not ("A" <= ch <= "Z"):
-            return None
-        n = n * 26 + (ord(ch) - 64)
-    return n
+excel_col_to_num = DSL.excel_col_to_num
 
 
 def parse_slot_ref(tok: str):

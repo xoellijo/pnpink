@@ -34,7 +34,7 @@ import render_planner as RPL
 import render_tokens as RTK
 import template_compose as TCOMP
 import semantic_metadata as SEMANTIC
-from typing import Dict, Optional, Tuple
+from typing import Dict
 
 _slot_index_to_rc = RPL.slot_index_to_rc
 _slot_rc_to_index_1based = RPL.slot_rc_to_index_1based
@@ -1519,7 +1519,7 @@ def render_phase(ctx):
                 defs.remove(ch)
         try:
             import text as TXT
-            TXT._normalize_rich_visible_for_all_texts(card_group)
+            TXT.normalize_rich_text(card_group)
         except Exception as ex:
             _l.w(f"[symbols] rich-text normalize failed for '{sid}': {ex}")
         sym = SVG.etree.SubElement(defs, inkex.addNS("symbol", "svg"))
@@ -1923,7 +1923,14 @@ def render_phase(ctx):
                     except Exception:
                         mw = 12
                     mw = max(1, min(mw, 32))
-                    ICON.ensure_icon_symbols_parallel(root, icons, max_workers=mw, uses=icon_uses)
+                    ICON.ensure_icon_symbols_parallel(
+                        root,
+                        icons,
+                        max_workers=mw,
+                        uses=icon_uses,
+                        fast=getattr(SM, "iconify_mode", "normal") == "fast",
+                        offline=getattr(SM, "iconify_mode", "normal") == "offline",
+                    )
             except Exception as ex:
                 _l.w(f"[iconify] preload skipped/failed: {ex}")
         ctx._iconify_preloaded = True
@@ -2193,6 +2200,7 @@ def render_phase(ctx):
             _l.i(f"ROW {row_idx}: {stage}")
 
     for idx, row in enumerate(instances, start=1):
+        LOG.set_context(dataset=ds_idx, row=(row.get('__dm_sheet_row__') or idx))
         _profile_row_t0 = time.perf_counter()
         _profile_phase_t0 = _profile_row_t0
         _log_row_stage(idx, "begin")
@@ -3036,8 +3044,11 @@ def render_phase(ctx):
         card_group.set('data-pnpink-variant-index', str(int(row.get('__dm_variant_index__', 1) or 1)))
         card_group.set('data-pnpink-copy-index', str(int(row.get('__dm_copy_index__', 1) or 1)))
         semantic_metadata = SEMANTIC.from_mapping(row_map)
+        if SEMANTIC.has_field(row_map, 'id'):
+            card_group.set('data-pnpink-has-semantic-id', '1')
         if semantic_metadata:
             card_group.set('data-pnpink-metadata', json.dumps(semantic_metadata, ensure_ascii=False, separators=(',', ':')))
+        TXT.normalize_rich_text(card_group)
         if text_geometry_possible and TXT.scope_needs_text_geometry(card_group):
             _text_prepare_t0 = time.perf_counter()
             TXT.process_text_geometry(
@@ -3048,6 +3059,7 @@ def render_phase(ctx):
                 query_service=text_query_service,
                 defer_apply=True,
                 prepared_geometry=deferred_text_geometry,
+                rich_text_normalized=True,
             )
             _profile["text_prepare_ms"] += (time.perf_counter() - _text_prepare_t0) * 1000.0
         placed += 1
@@ -3342,6 +3354,8 @@ def render_phase(ctx):
                     card_group.set('data-pnpink-variant-index', str(int(back_row.get('__dm_variant_index__', 1) or 1)))
                     card_group.set('data-pnpink-copy-index', str(int(back_row.get('__dm_copy_index__', 1) or 1)))
                     back_metadata = SEMANTIC.from_mapping(back_row_map)
+                    if SEMANTIC.has_field(back_row_map, 'id'):
+                        card_group.set('data-pnpink-has-semantic-id', '1')
                     if back_metadata:
                         card_group.set('data-pnpink-metadata', json.dumps(back_metadata, ensure_ascii=False, separators=(',', ':')))
                     card_group.set('data-pnpink-content-key', hashlib.sha1('\n'.join(back_signature).encode('utf-8')).hexdigest()[:16])
@@ -3473,9 +3487,13 @@ def render_phase(ctx):
             )
     except Exception as ex:
         _l.w(f"[render.profile] failed: {ex}")
+    LOG.set_context(dataset=ds_idx, row=None)
     _l.i(f"[datasets] #{ds_idx}: placed={placed} cards; symbols={symbols_created}; end_page={planner.page_index+1}")
+
     placed_total += placed
     start_page_index = planner.page_index + 1
     ctx.next_n = next_n
     ctx.placed_total = placed_total
     ctx.start_page_index = start_page_index
+
+LOG.clear_context()

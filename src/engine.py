@@ -23,7 +23,6 @@ import marks as MK
 import dataset_header as DHEAD
 
 import dataset as DS
-import gui as PROGRESS
 import render as REN
 
 # --------------------- util / parsing ---------------------
@@ -124,6 +123,7 @@ def run(self, __version__, *, text_query_service=None):
         _l.i("[datasets] using preloaded dataset for output render")
     else:
         datasets = DS.load_datasets(self, _doc_path)
+    self._dm_loaded_datasets = datasets
     if not datasets:
         raise inkex.AbortExtension("Dataset has no valid header.")
     _l.i("[datasets] load_ms=%.1f", (time.perf_counter() - dataset_load_started) * 1000.0)
@@ -237,7 +237,8 @@ def run(self, __version__, *, text_query_service=None):
         except Exception:
             pass
     dm_reset_to_raw = str(dm_directives.get("_DM_reset_to", "") or "").strip()
-    dm_output_raw = str(dm_directives.get("_DM_output", "") or "").strip()
+    dm_output_override = str(getattr(self, "_dm_output_path", "") or "").strip()
+    dm_output_raw = dm_output_override or str(dm_directives.get("_DM_output", "") or "").strip()
     dm_reset_to = None
     if dm_reset_to_raw != "":
         try:
@@ -395,7 +396,14 @@ def run(self, __version__, *, text_query_service=None):
     dm_defs_id = f"{dm_tag}_defs"
     _l.i(f"[dm] run tag={dm_tag}")
 
-    SM = SRC.SourceManager(root, _doc_path, project_root=_runtime_python_dir(), defs_group_id=dm_defs_id)
+    SM = SRC.SourceManager(
+        root,
+        _doc_path,
+        project_root=_runtime_python_dir(),
+        defs_group_id=dm_defs_id,
+        cache_only=bool(getattr(self, "_dm_preview_cache_only", False)),
+        iconify_mode=str(getattr(self, "_dm_iconify_mode", "normal") or "normal"),
+    )
     owns_text_query_service = text_query_service is None
     if owns_text_query_service:
         text_query_service = TXT.TM.TextQueryService()
@@ -592,6 +600,7 @@ def run(self, __version__, *, text_query_service=None):
     # Global page cursor is 0-based (like planner.page_index).
     start_page_index = 0
     for ds_idx, ds0 in enumerate(datasets, start=1):
+        LOG.set_context(dataset=ds_idx, row=None)
         ds_meta = ds0.get("meta", {}) or {}
         headers = ds0.get("headers", []) or []
         rows_data = ds0.get("rows", []) or []
@@ -650,6 +659,10 @@ def run(self, __version__, *, text_query_service=None):
 
         if snip_reg or wkmcc_vars:
             for ridx, row in enumerate(rows_data, start=1):
+                LOG.set_context(
+                    dataset=ds_idx,
+                    row=(row.get('__dm_sheet_row__') if isinstance(row, dict) else ridx),
+                )
                 # Expand snippets in positional cells (and only in known string meta fields).
                 try:
                     cells = row.get('cells') if isinstance(row, dict) else None
@@ -672,6 +685,7 @@ def run(self, __version__, *, text_query_service=None):
                             _l.w(f"[snippets] expand failed row#{ridx} meta '{k}': {ex}")
         else:
             _l.i("[snippets] no definitions; expansion skipped")
+        LOG.set_context(dataset=ds_idx, row=None)
 
         # ---- WEB SOURCES PREFETCH (http/https) ----
         # Schedule downloads in background so render can proceed in parallel.
@@ -1845,6 +1859,7 @@ def run(self, __version__, *, text_query_service=None):
             SM.log_web_summary()
         except Exception:
             pass
+        SM.close()
     try:
         SVG.apply_paste_style_rules(root, root)
     except Exception as ex:

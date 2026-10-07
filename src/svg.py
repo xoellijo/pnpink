@@ -27,7 +27,7 @@ def coerce_margins_mm(mg):
 # ------------------------------------------------------
 __version__ = "v_7.3.0"
 
-import os, sys, re, math, tempfile, subprocess, hashlib, fnmatch
+import os, sys, re, math, tempfile, hashlib, fnmatch
 from copy import deepcopy
 from pathlib import Path
 from urllib.parse import urlparse, unquote
@@ -1779,6 +1779,46 @@ def _forced_group_bbox(node):
     return None
 
 
+def _bbox_ignoring_hidden_ancestors(node):
+    """Measure referenced geometry even when its source layer is hidden."""
+    changed = []
+    current = node
+    while current is not None:
+        original = {
+            "style": current.get("style"),
+            "display": current.get("display"),
+            "visibility": current.get("visibility"),
+        }
+        style = str(original["style"] or "")
+        visible_style = re.sub(
+            r"(^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\s*(?=;|$)",
+            r"\1",
+            style,
+            flags=re.IGNORECASE,
+        ).strip(" ;")
+        if visible_style != style.strip(" ;") or str(original["display"] or "").lower() == "none" or str(original["visibility"] or "").lower() == "hidden":
+            changed.append((current, original))
+            if visible_style:
+                current.set("style", visible_style)
+            else:
+                current.attrib.pop("style", None)
+            current.attrib.pop("display", None)
+            current.attrib.pop("visibility", None)
+        current = current.getparent()
+    try:
+        bbox = node.bounding_box()
+        return float(bbox.left), float(bbox.top), float(bbox.width), float(bbox.height)
+    except Exception:
+        return None
+    finally:
+        for current, original in reversed(changed):
+            for attribute, value in original.items():
+                if value is None:
+                    current.attrib.pop(attribute, None)
+                else:
+                    current.set(attribute, value)
+
+
 def visual_bbox(node):
     # If provided, data-bbox overrides computed bbox (used by array groups).
     try:
@@ -1804,8 +1844,16 @@ def visual_bbox(node):
     try:
         b = node.bounding_box()
         bx, by, bw, bh = float(b.left), float(b.top), float(b.width), float(b.height)
-        return bx, by, bw, bh
+        if bw > 1e-9 and bh > 1e-9:
+            return bx, by, bw, bh
     except Exception:
+        pass
+
+    visible_bbox = _bbox_ignoring_hidden_ancestors(node)
+    if visible_bbox is not None and visible_bbox[2] > 1e-9 and visible_bbox[3] > 1e-9:
+        return visible_bbox
+
+    try:
         # Best-effort geometric fallback for common primitives.
         try:
             ln = node_kind(node)
@@ -1852,8 +1900,11 @@ def visual_bbox(node):
         except Exception:
             pass
 
-        # Give up
-        return (0.0, 0.0, 0.0, 0.0)
+    except Exception:
+        pass
+
+    # Give up
+    return (0.0, 0.0, 0.0, 0.0)
 
 from inkex.paths import Path as SvgPath
 

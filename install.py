@@ -15,8 +15,12 @@ import zipfile
 from pathlib import Path
 from typing import Optional
 
+from pnp_python import PnPPythonError, ensure_project_environment, shared_python_root
+
 
 APP_DIR_NAME = "pnpink"
+PNPINK_REQUIREMENTS: tuple[str, ...] = ()
+PNPINK_IMPORTS: tuple[str, ...] = ()
 
 
 def log(message: str) -> None:
@@ -164,11 +168,18 @@ def main() -> int:
     destination = extensions_dir / APP_DIR_NAME
     log(f"[3] Destination: {destination}")
 
+    log(f"[4] Shared Python runtime: {shared_python_root()}")
+    try:
+        ensure_project_environment("pnpink", PNPINK_REQUIREMENTS, PNPINK_IMPORTS)
+    except (OSError, PnPPythonError) as exc:
+        die(f"Unable to prepare the shared Python runtime: {exc}")
+
     temporary_root = Path(tempfile.mkdtemp(prefix="pnpink_install_"))
     try:
         payload_root = extract_payload(payload_zip, temporary_root)
-        log(f"[4] Replacing previous installation")
+        log("[5] Replacing previous installation")
         replace_install(payload_root, destination)
+        shutil.copy2(Path(__file__).with_name("pnp_python.py"), destination / "pnp_python.py")
     finally:
         shutil.rmtree(temporary_root, ignore_errors=True)
 

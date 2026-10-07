@@ -34,7 +34,16 @@ import prefs
 import gui as GUI
 import deckmaker_runner as RUNNER
 import deckmaker_play as PLAY
-from deckmaker_types import AppRequest, ExportOptions
+from deckmaker_types import (
+    APP_VERSION,
+    CUT_TEMPLATE_FORMATS,
+    OTHER_EXPORT_FORMATS,
+    SOURCE_MODE_LABELS,
+    SOURCE_MODE_LABEL_TO_VALUE,
+    SOURCE_MODE_VALUE_TO_LABEL,
+    AppRequest,
+    ExportOptions,
+)
 import temp_paths as TEMPPATHS
 import text_measure as TM
 
@@ -50,23 +59,8 @@ def _file_mtime_ns(path: str) -> int:
         return 0
 
 
-APP_VERSION = "Deckmaker v0.57"
 DOCS_INTRO_URL = "https://xoellijo.github.io/pnpink/intro/"
 DOCS_GUIDE_URL = "https://xoellijo.github.io/pnpink/quickstart/"
-OTHER_EXPORT_FORMATS = ("png", "jpeg", "jpeg2000", "pdf", "svg", "tiff", "webp", "avif", "ps", "eps", "emf", "wmf")
-CUT_TEMPLATE_FORMATS = {
-    "svg": "svg (vector, cricut)",
-    "dxf": "dxf (vector, cameo)",
-    "png": "png (raster, all)",
-}
-SOURCE_MODE_LABELS = ("(empty)", "local CSV", "google sheet oauth", "google sheet public")
-SOURCE_MODE_LABEL_TO_VALUE = {
-    "(empty)": "",
-    "local CSV": "local_csv",
-    "google sheet oauth": "oauth",
-    "google sheet public": "public",
-}
-SOURCE_MODE_VALUE_TO_LABEL = {value: label for label, value in SOURCE_MODE_LABEL_TO_VALUE.items()}
 
 
 def notify_or_launch(
@@ -868,26 +862,6 @@ class DeckMakerApp:
             return ""
         rate = (float(current) * 60.0) / elapsed
         return f"  {rate:,.0f} records/min"
-
-    def _make_process_output_activity(self, label: str):
-        prefix = str(label or "Process").strip() or "Process"
-        buffer = {"text": ""}
-
-        def on_output(chunk: str):
-            text = str(chunk or "")
-            if not text:
-                return
-            buffer["text"] += text
-            while "\n" in buffer["text"] or "\r" in buffer["text"]:
-                line, sep, rest = buffer["text"].partition("\n")
-                if not sep:
-                    line, _sep, rest = buffer["text"].partition("\r")
-                buffer["text"] = rest
-                item = line.strip()
-                if item:
-                    self._queue_ui_activity(f"{prefix}: {item}")
-
-        return on_output
 
     def _make_final_pdf_output_activity(self, total_pages: int):
         total = max(0, int(total_pages or 0))
@@ -1747,50 +1721,8 @@ class DeckMakerApp:
             f"export={'on' if self.auto_export_var.get() else 'off'}"
         )
 
-    def _log_image_dpi_preflight(self, svg_path_or_report):
-        report = svg_path_or_report if isinstance(svg_path_or_report, dict) else PREFLIGHT.effective_image_dpi_report(str(svg_path_or_report))
-        if not report.get("ok"):
-            self._log(f"Image preflight failed: {report.get('error')}")
-            return
-        rows = list(report.get("rows") or [])
-        if not rows:
-            self._log("Image preflight: no linked bitmap images found")
-            return
-        dpis = [float(r["dpi"]) for r in rows]
-        low = list(report.get("low") or [])
-        high = list(report.get("high") or [])
-        self._log(
-            f"Image preflight: {len(rows)} bitmap(s), effective DPI "
-            f"min={min(dpis):.0f}, median={dpis[len(dpis)//2]:.0f}, max={max(dpis):.0f}"
-        )
-        if low:
-            self._log(f"Image preflight warning: {len(low)} image(s) below 150 dpi")
-            for item in low[:5]:
-                mm = item["placed_mm"]
-                px = item["px"]
-                self._log(
-                    f"  low dpi {item['dpi']:.0f}: {item['file']} "
-                    f"({px[0]}x{px[1]} px at {mm[0]:.1f}x{mm[1]:.1f} mm)"
-                )
-        if high:
-            self._log(f"Image preflight note: {len(high)} image(s) above 900 dpi")
-            for item in high[-5:]:
-                mm = item["placed_mm"]
-                px = item["px"]
-                self._log(
-                    f"  high dpi {item['dpi']:.0f}: {item['file']} "
-                    f"({px[0]}x{px[1]} px at {mm[0]:.1f}x{mm[1]:.1f} mm)"
-                )
-        unresolved = int(report.get("unresolved") or 0)
-        unreadable = int(report.get("unreadable") or 0)
-        if unresolved or unreadable:
-            self._log(f"Image preflight skipped: unresolved={unresolved}, unreadable={unreadable}")
-
     def _output_svg_path(self) -> str:
         return DMPATHS.output_svg(self.template_var.get())
-
-    def _output_pdf_path(self) -> str:
-        return DMPATHS.output_pdf(self.template_var.get())
 
     def _open_path_in_system(self, path: str) -> None:
         target = _normalize_path(path)

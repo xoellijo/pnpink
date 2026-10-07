@@ -72,6 +72,8 @@ In Items mode, use `mydeck*` or simply `mydeck` for every generated item. A sele
 
 Physical copies generated from the same dataset row and iterator variant share one graphic. Their quantity is written as `copies` in the generated `items.json`. When all selected cards share a back, it is exported once as `mydeck_back`; varying backs use names such as `mydeck1_back` and are referenced from the manifest.
 
+For PnPPlay metadata, `$id` is the component's primary key. Without a `$id` column PnPInk generates IDs automatically. When the column exists, blank `$id` rows are omitted. A separately rendered back can be identified as `component-id@back`, or as `common-prefix@back` to share it among every component whose ID starts with that prefix. See [PnPPlay component metadata](pnpplay/component-metadata.md).
+
 Page syntax examples:
 
 | Pages value | Meaning |

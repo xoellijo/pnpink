@@ -138,7 +138,9 @@ def parse_definition_line(line: str) -> Optional[SnippetDef]:
 def load_definitions_from_comments(comment_lines: List[str]) -> Dict[str, SnippetDef]:
     """Build the snippet registry from comment lines.
 
-    Accepts either strings or CSV/Sheet rows and uses the first cell.
+    Accepts strings, multiline strings, or CSV/Sheet rows and uses the first
+    cell. Treating multiline input as separate lines prevents one definition
+    from accidentally absorbing all following comments.
     """
     reg: Dict[str, SnippetDef] = {}
     for raw in (comment_lines or []):
@@ -147,9 +149,10 @@ def load_definitions_from_comments(comment_lines: List[str]) -> Dict[str, Snippe
             raw = raw[0] if raw else ""
         else:
             raw = str(raw)
-        d = parse_definition_line(raw)
-        if d is not None:
-            reg[d.name] = d
+        for line in str(raw).splitlines() or [""]:
+            definition = parse_definition_line(line)
+            if definition is not None:
+                reg[definition.name] = definition
     return reg
 
 # --------------- Call and argument parsing ----------------
@@ -167,14 +170,25 @@ def _find_call_at(text: str, start: int) -> Optional[Tuple[int, int, str, str]]:
     j = m.end()
     par = 1
     start_inner = j
+    quote = ""
     while j < len(text) and par > 0:
         c = text[j]
-        if c == "(":
+        if quote:
+            if c == "\\" and j + 1 < len(text):
+                j += 2
+                continue
+            if c == quote:
+                quote = ""
+            j += 1
+            continue
+        if c in ("'", '"'):
+            quote = c
+        elif c == "(":
             par += 1
         elif c == ")":
             par -= 1
         j += 1
-    if par != 0:
+    if par != 0 or quote:
         return None
     inner = text[start_inner:j-1]
     i1 = j
@@ -252,6 +266,9 @@ def _parse_call_kwargs(tokens: List[str]) -> Tuple[List[str], Dict[str, str]]:
         if i + 2 < len(tokens) and tokens[i + 1] == "=":
             fixed.append(f"{t}={tokens[i + 2]}")
             i += 3
+        elif t.endswith("=") and i + 1 < len(tokens):
+            fixed.append(f"{t}{tokens[i + 1]}")
+            i += 2
         else:
             fixed.append(t)
             i += 1
@@ -259,11 +276,11 @@ def _parse_call_kwargs(tokens: List[str]) -> Tuple[List[str], Dict[str, str]]:
     pos: List[str] = []
     named: Dict[str, str] = {}
     for t in fixed:
-        if "=" in t:
-            k, v = t.split("=", 1)
-            named[k] = v
-        else:
-            pos.append(t)
+        match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", t, re.DOTALL)
+        if match:
+            named[match.group(1)] = match.group(2)
+            continue
+        pos.append(t)
     return pos, named
 
 
@@ -280,6 +297,15 @@ def _apply_args_to_def(defn: SnippetDef, pos: List[str], named: Dict[str, str]) 
         if p not in out and p in defn.defaults:
             out[p] = defn.defaults[p]
     return out
+
+
+def _missing_template_values(template: str, mapping: Dict[str, Any]) -> set[str]:
+    missing = set()
+    for expression in re.findall(r"\$\{([^{}?]+)\}", template):
+        match = IDENT_RE.match(str(expression).strip())
+        if match and match.group(0) not in mapping:
+            missing.add(match.group(0))
+    return missing
 
 
 # --------------- Substitution (includes conditionals) ----------------
@@ -511,9 +537,16 @@ def expand_snippets_in_text(text: str,
 
     expansions = 0
 
+    class _ExpansionDepthExceeded(Exception):
+        pass
+
     def _expand_once(s: str, depth: int) -> str:
         nonlocal expansions
-        if depth <= 0 or expansions >= max_expansions:
+        if depth <= 0:
+            if CALL_LEAD_RE.search(s):
+                raise _ExpansionDepthExceeded
+            return s
+        if expansions >= max_expansions:
             return s
         i = 0
         chunks: List[str] = []
@@ -540,18 +573,21 @@ def expand_snippets_in_text(text: str,
 
             tokens = _split_call_args(inner)
             raw_pos, raw_named = _parse_call_kwargs(tokens)
-            pos = [_expand_once(v, depth - 1) for v in raw_pos]
-            named = {k: _expand_once(v, depth - 1) for k, v in raw_named.items()}
 
             # Single-param snippets take the whole inner content as text.
             if len(defn.params) == 1:
                 only = defn.params[0]
+                named = {k: _expand_once(v, depth - 1) for k, v in raw_named.items()}
                 inner_expanded = _expand_once(inner, depth - 1)
                 if only not in named and (inner_expanded.strip() != ""):
-                    argmap = {only: inner_expanded.strip()}
+                    single_tokens = _split_call_args(inner_expanded)
+                    value = single_tokens[0] if len(single_tokens) == 1 else inner_expanded.strip()
+                    argmap = {only: value}
                 else:
-                    argmap = _apply_args_to_def(defn, pos, named)
+                    argmap = _apply_args_to_def(defn, [], named)
             else:
+                pos = [_expand_once(v, depth - 1) for v in raw_pos]
+                named = {k: _expand_once(v, depth - 1) for k, v in raw_named.items()}
                 argmap = _apply_args_to_def(defn, pos, named)
 
             # 4) substitute template (with conditionals)
@@ -559,8 +595,13 @@ def expand_snippets_in_text(text: str,
             if variables:
                 tpl_mapping.update(variables)
             tpl_mapping.update(argmap)
-            result = _substitute_template(defn.template, tpl_mapping)
-            chunks.append(result)
+            resolved_template = _apply_conditionals(defn.template, tpl_mapping)
+            if _missing_template_values(resolved_template, tpl_mapping):
+                chunks.append(s[i0:i1])
+                i = i1
+                continue
+            result = _substitute_template(resolved_template, tpl_mapping)
+            chunks.append(_expand_once(result, depth - 1))
             i = i1
             expansions += 1
             if expansions >= max_expansions:
@@ -569,12 +610,9 @@ def expand_snippets_in_text(text: str,
 
         return "".join(chunks)
 
-    cur = text
-    for _ in range(max_depth):
-        before = cur
-        cur = _expand_once(cur, max_depth)
-        if cur == before:
-            break
-
+    try:
+        cur = _expand_once(text, max_depth)
+    except _ExpansionDepthExceeded:
+        cur = text
     cur = cur.replace(ESC_MARK, ":")
     return expand_variables_in_text(cur, variables)

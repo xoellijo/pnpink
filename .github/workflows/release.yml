@@ -95,6 +95,7 @@ jobs:
             dist/pnpink_payload_${{ steps.meta.outputs.version }}.zip
             dist/pnpink_payload_latest.zip
             install.py
+            pnp_python.py
             pnpink_install.sh
             pnpink_install.bat
           fail_on_unmatched_files: true

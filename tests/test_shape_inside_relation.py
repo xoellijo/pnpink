@@ -29,6 +29,23 @@ def _document():
     return root, root.find(".//*[@id='card']")
 
 
+def test_normalize_rich_text_materializes_font_size_tspan_without_geometry():
+    raw = b'''<svg xmlns="http://www.w3.org/2000/svg">
+      <g id="card"><text id="title">&lt;tspan font-size='20'&gt;Medusas&lt;/tspan&gt;</text></g>
+    </svg>'''
+    root = inkex.load_svg(io.BytesIO(raw)).getroot()
+    card = root.find(".//*[@id='card']")
+
+    assert not TXT.scope_needs_text_geometry(card)
+    assert TXT.normalize_rich_text(card) == 1
+
+    title = root.find(".//*[@id='title']")
+    tspan = next(iter(title))
+    assert str(tspan.tag).endswith("tspan")
+    assert tspan.get("font-size") == "20"
+    assert tspan.text == "Medusas"
+
+
 def test_shape_inside_relation_parses_in_object_tokens_and_headers():
     assert RTK.parse_object_token("description[shape-inside]~i5") == (
         "description[shape-inside]",

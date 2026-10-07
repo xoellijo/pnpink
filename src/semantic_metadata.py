@@ -14,6 +14,15 @@ def is_semantic_header(header: object) -> bool:
     return str(header or "").strip().startswith(SEMANTIC_PREFIX)
 
 
+def has_field(values: Mapping[str, object], field: str) -> bool:
+    wanted = str(field or "").strip().lower().replace("-", "_")
+    return any(
+        str(header or "").strip()[1:].strip().lower().replace("-", "_") == wanted
+        for header in values
+        if is_semantic_header(header)
+    )
+
+
 def _scalar(value: object) -> Any:
     text = str(value or "").strip()
     if not text:
@@ -97,4 +106,4 @@ def manifest_fields(metadata: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
-__all__ = ["SEMANTIC_PREFIX", "TOP_LEVEL_FIELDS", "from_mapping", "is_semantic_header", "manifest_fields"]
+__all__ = ["SEMANTIC_PREFIX", "TOP_LEVEL_FIELDS", "from_mapping", "has_field", "is_semantic_header", "manifest_fields"]

@@ -26,16 +26,57 @@ class ProbeTask:
     done: threading.Event = field(default_factory=threading.Event)
 
 
+@dataclass
+class ExportTask:
+    svg_path: str
+    png_path: str
+    area: tuple[float, float, float, float] | None
+    dpi: int = 150
+    compression: int = 1
+    node_id: str = ""
+    reload_svg: bool = True
+    error: Exception | None = None
+    done: threading.Event = field(default_factory=threading.Event)
+
+
+@dataclass
+class FileQueryTask:
+    svg_path: str
+    ids: set[str]
+    bboxes: dict = field(default_factory=dict)
+    error: Exception | None = None
+    done: threading.Event = field(default_factory=threading.Event)
+
+
 class TextQueryService:
-    def __init__(self, *, timeout_s: float = 20.0):
+    def __init__(self, *, timeout_s: float = 20.0, profile_stem: str = "automation"):
         self.timeout_s = float(timeout_s)
-        self._queue: queue.Queue[ProbeTask | None] = queue.Queue()
+        self.profile_stem = str(profile_stem or "automation").strip() or "automation"
+        self._queue: queue.Queue[ProbeTask | ExportTask | FileQueryTask | None] = queue.Queue()
         self._thread = threading.Thread(target=self._run, name="pnpink-text-query", daemon=True)
         self._started = time.perf_counter()
         self._closed = False
         self._fatal_error: Exception | None = None
         self._ready = threading.Event()
+        self._shell_lock = threading.Lock()
+        self._shell = None
         self._thread.start()
+
+    def wait_ready(self, timeout_s: float | None = None) -> None:
+        timeout = self.timeout_s if timeout_s is None else float(timeout_s)
+        if not self._ready.wait(timeout=max(0.1, timeout)):
+            raise RuntimeError("Inkscape shell did not become ready")
+        if self._fatal_error is not None:
+            raise RuntimeError(f"Inkscape shell service failed: {self._fatal_error}")
+
+    @property
+    def healthy(self) -> bool:
+        return bool(
+            not self._closed
+            and self._thread.is_alive()
+            and self._ready.is_set()
+            and self._fatal_error is None
+        )
 
     def submit(self, probe_tree, ids, offsets) -> ProbeTask:
         if self._closed:
@@ -51,6 +92,69 @@ class TextQueryService:
         self._queue.put(task)
         return task
 
+    def export_png(
+        self,
+        svg_path: str,
+        png_path: str,
+        area: tuple[float, float, float, float],
+        *,
+        dpi: int = 150,
+        compression: int = 1,
+        reload_svg: bool = True,
+    ) -> str:
+        if self._closed:
+            raise RuntimeError("Inkscape shell service is closed")
+        task = ExportTask(
+            str(svg_path), str(png_path), tuple(area), int(dpi), int(compression),
+            "", bool(reload_svg),
+        )
+        if self._fatal_error is not None:
+            raise RuntimeError(f"Inkscape shell service failed: {self._fatal_error}")
+        self._queue.put(task)
+        if not task.done.wait(timeout=self.timeout_s + 10.0):
+            raise RuntimeError("Timed out waiting for the preview PNG")
+        if task.error is not None:
+            raise RuntimeError(f"Preview PNG export failed: {task.error}")
+        return task.png_path
+
+    def export_id_png(
+        self,
+        svg_path: str,
+        png_path: str,
+        node_id: str,
+        *,
+        dpi: int = 150,
+        compression: int = 1,
+        reload_svg: bool = True,
+    ) -> str:
+        if self._closed:
+            raise RuntimeError("Inkscape shell service is closed")
+        task = ExportTask(
+            str(svg_path), str(png_path), None, int(dpi), int(compression),
+            str(node_id), bool(reload_svg),
+        )
+        if self._fatal_error is not None:
+            raise RuntimeError(f"Inkscape shell service failed: {self._fatal_error}")
+        self._queue.put(task)
+        if not task.done.wait(timeout=self.timeout_s + 10.0):
+            raise RuntimeError("Timed out waiting for the preview PNG")
+        if task.error is not None:
+            raise RuntimeError(f"Preview PNG export failed: {task.error}")
+        return task.png_path
+
+    def query_svg(self, svg_path: str, ids: set[str]) -> dict[str, dict[str, float]]:
+        if self._closed:
+            raise RuntimeError("Inkscape shell service is closed")
+        task = FileQueryTask(str(svg_path), set(ids or set()))
+        if self._fatal_error is not None:
+            raise RuntimeError(f"Inkscape shell service failed: {self._fatal_error}")
+        self._queue.put(task)
+        if not task.done.wait(timeout=self.timeout_s + 5.0):
+            raise RuntimeError("Timed out measuring the preview SVG")
+        if task.error is not None:
+            raise RuntimeError(f"Preview SVG measurement failed: {task.error}")
+        return task.bboxes
+
     def _run(self) -> None:
         fd, temp_svg = tempfile.mkstemp(prefix="pnpink_text_probe_", suffix=".svg")
         os.close(fd)
@@ -60,12 +164,17 @@ class TextQueryService:
             if not exe:
                 raise RuntimeError("Inkscape executable not found")
             shell_exe = INKSCAPE.shell_executable(exe) or exe
-            env = INKSCAPE.clean_launch_env(isolated_profile=True)
+            env = INKSCAPE.clean_launch_env(
+                isolated_profile=True,
+                profile_stem=self.profile_stem,
+            )
             with INKSCAPE.ShellQuerySession(
                 shell_exe,
                 exe_dir=os.path.dirname(exe) or None,
                 env=env,
             ) as shell:
+                with self._shell_lock:
+                    self._shell = shell
                 shell.wait_ready(timeout_s=self.timeout_s)
                 self._ready.set()
                 _l.i(
@@ -79,24 +188,68 @@ class TextQueryService:
                         break
                     started = time.perf_counter()
                     try:
-                        with open(temp_svg, "wb") as handle:
-                            handle.write(current_task.svg_bytes)
-                        current_task.bboxes = shell.query_all(
-                            temp_svg,
-                            current_task.ids,
-                            timeout_s=self.timeout_s,
-                            log_query=False,
-                        )
-                        elapsed_ms = (time.perf_counter() - started) * 1000.0
-                        current_task.query_ms = elapsed_ms
-                        _l.d(
-                            "[text_measure] ids=%d bboxes=%d query_ms=%.1f",
-                            len(current_task.ids),
-                            len(current_task.bboxes),
-                            elapsed_ms,
-                        )
+                        if isinstance(current_task, ExportTask):
+                            if current_task.node_id:
+                                shell.export_id_png(
+                                    current_task.svg_path,
+                                    current_task.png_path,
+                                    current_task.node_id,
+                                    dpi=current_task.dpi,
+                                    compression=current_task.compression,
+                                    reload_svg=current_task.reload_svg,
+                                    timeout_s=self.timeout_s,
+                                )
+                            else:
+                                shell.export_area_png(
+                                    current_task.svg_path,
+                                    current_task.png_path,
+                                    current_task.area,
+                                    dpi=current_task.dpi,
+                                    compression=current_task.compression,
+                                    reload_svg=current_task.reload_svg,
+                                    timeout_s=self.timeout_s,
+                                )
+                            _l.d(
+                                "[inkscape_shell_preview] mode=%s dpi=%d compression=%d export_ms=%.1f",
+                                "id" if current_task.node_id else "area",
+                                current_task.dpi,
+                                current_task.compression,
+                                (time.perf_counter() - started) * 1000.0,
+                            )
+                        elif isinstance(current_task, FileQueryTask):
+                            current_task.bboxes = shell.query_all(
+                                current_task.svg_path,
+                                current_task.ids,
+                                timeout_s=self.timeout_s,
+                                log_query=False,
+                            )
+                            _l.d(
+                                "[inkscape_shell_preview] ids=%d bboxes=%d query_ms=%.1f",
+                                len(current_task.ids),
+                                len(current_task.bboxes),
+                                (time.perf_counter() - started) * 1000.0,
+                            )
+                        else:
+                            with open(temp_svg, "wb") as handle:
+                                handle.write(current_task.svg_bytes)
+                            current_task.bboxes = shell.query_all(
+                                temp_svg,
+                                current_task.ids,
+                                timeout_s=self.timeout_s,
+                                log_query=False,
+                            )
+                            elapsed_ms = (time.perf_counter() - started) * 1000.0
+                            current_task.query_ms = elapsed_ms
+                            _l.d(
+                                "[text_measure] ids=%d bboxes=%d query_ms=%.1f",
+                                len(current_task.ids),
+                                len(current_task.bboxes),
+                                elapsed_ms,
+                            )
                     except Exception as ex:
                         current_task.error = ex
+                        if "shell is not running" in str(ex).lower():
+                            raise
                     finally:
                         current_task.done.set()
                         current_task = None
@@ -117,6 +270,8 @@ class TextQueryService:
                 pending.done.set()
             _l.w("[text_measure] worker_failed: %s", ex)
         finally:
+            with self._shell_lock:
+                self._shell = None
             try:
                 os.unlink(temp_svg)
             except Exception:
@@ -162,8 +317,12 @@ class TextQueryService:
         if self._closed:
             return
         self._closed = True
+        with self._shell_lock:
+            shell = self._shell
+        if shell is not None:
+            shell.close()
         self._queue.put(None)
-        self._thread.join(timeout=self.timeout_s + 5.0)
+        self._thread.join(timeout=3.0)
 
 
 def extend_bbox_map(bboxes, element_id: str, bbox) -> None:

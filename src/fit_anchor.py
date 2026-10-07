@@ -144,18 +144,6 @@ def _bbox_with_transform(T: inkex.Transform, x, y, w, h):
     lx, ly = min(xs), min(ys)
     return lx, ly, max(xs) - lx, max(ys) - ly
 
-def _css_box_shorthand(lst):
-    if not lst:
-        return 0, 0, 0, 0
-    if len(lst) == 1:
-        return lst[0], lst[0], lst[0], lst[0]
-    if len(lst) == 2:
-        return lst[0], lst[1], lst[0], lst[1]
-    if len(lst) == 3:
-        return lst[0], lst[1], lst[2], lst[1]
-    return lst[0], lst[1], lst[2], lst[3]
-
-
 def _clip_def_id_from_shape(kind: str, shape_el) -> str:
     """Build a stable defs id from the effective clip geometry.
 

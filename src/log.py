@@ -8,11 +8,13 @@ import os
 import time
 import inspect
 import atexit
+from contextlib import contextmanager
+import threading
 
 import inkex
 import prefs
 
-__all__ = ['get_logger', 'init', 'Logger', 'd', 'i', 'w', 'e', 't', 'a', 'close', 's', 'add_listener', 'remove_listener']
+__all__ = ['get_logger', 'init', 'Logger', 'd', 'i', 'w', 'e', 't', 'a', 'close', 's', 'silence', 'context', 'set_context', 'clear_context', 'add_listener', 'remove_listener']
 
 # ---------------------------- Levels ----------------------------------------
 _VALID = {"none","error","warn","info","debug","trace",
@@ -54,6 +56,7 @@ class Logger:
         self.file_path     = file_path
         self._t_prev = time.perf_counter()
         self._last_flush = self._t_prev
+        self._lock = threading.RLock()
 
         # Precompute flags one time
         self._console_flags = _sink_flags(self.console_level)
@@ -62,7 +65,7 @@ class Logger:
         # Open file handle once
         self._fh = None
         try:
-            self._fh = open(self.file_path, "w", encoding="utf-8")
+            self._fh = open(self.file_path, "a", encoding="utf-8")
         except Exception as ex:
             inkex.utils.errormsg(f"[{self.tag}] ERROR opening log file: {ex}")
 
@@ -113,6 +116,16 @@ class Logger:
                 parts = [self._ensure_str(a) for a in args]
                 base = base + " " + " ".join(parts)
 
+        if level in ("WARN", "ERROR"):
+            context = dict(getattr(_THREAD_STATE, "context", {}) or {})
+            location = []
+            if context.get("dataset") is not None:
+                location.append(f"dataset {context['dataset']}")
+            if context.get("row") is not None:
+                location.append(f"row {context['row']}")
+            if location:
+                base = f"[{', '.join(location)}] {base}"
+
         line = f"[{level.upper()}: {mod}{dt_part}] {base}"
         return line, self._console_flags, self._file_flags
 
@@ -154,46 +167,88 @@ class Logger:
     i = info; w = warn; e = error; d = debug; t = trace
 
     def _log(self, level, msg, *a):
+        if bool(getattr(_THREAD_STATE, "silent", False)):
+            return
         if (not self._is_enabled(self._console_flags, level)) and (not self._is_enabled(self._file_flags, level)):
             return
-        line, con_flags, file_flags = self._compose(level, msg, *a)
-        self._emit_console(line, con_flags, level)
-        self._emit_file(line, file_flags, level)
-        if _LISTENERS:
-            for fn in list(_LISTENERS):
-                try:
-                    fn(line)
-                except Exception:
-                    pass
+        with self._lock:
+            line, con_flags, file_flags = self._compose(level, msg, *a)
+            self._emit_console(line, con_flags, level)
+            self._emit_file(line, file_flags, level)
+        with _LISTENERS_LOCK:
+            listeners = tuple(_LISTENERS)
+        for fn in listeners:
+            try:
+                fn(line)
+            except Exception:
+                pass
 
     def close(self):
-        try:
-            if self._fh and not self._fh.closed:
-                self._fh.flush()
-                self._fh.close()
-            self._fh = None
-        except Exception:
-            pass
+        with self._lock:
+            try:
+                if self._fh and not self._fh.closed:
+                    self._fh.flush()
+                    self._fh.close()
+                self._fh = None
+            except Exception:
+                pass
 
 # --------------------------- singleton API -----------------------------------
 _LOGGER = None
 _ATEXIT_HOOKED = False
 _LISTENERS = []
+_LISTENERS_LOCK = threading.RLock()
+_THREAD_STATE = threading.local()
+
+
+@contextmanager
+def silence():
+    previous = bool(getattr(_THREAD_STATE, "silent", False))
+    _THREAD_STATE.silent = True
+    try:
+        yield
+    finally:
+        _THREAD_STATE.silent = previous
+
+
+def set_context(**values):
+    current = dict(getattr(_THREAD_STATE, "context", {}) or {})
+    for key, value in values.items():
+        if value is None:
+            current.pop(key, None)
+        else:
+            current[key] = value
+    _THREAD_STATE.context = current
+
+
+def clear_context():
+    _THREAD_STATE.context = {}
+
+
+@contextmanager
+def context(**values):
+    previous = dict(getattr(_THREAD_STATE, "context", {}) or {})
+    set_context(**values)
+    try:
+        yield
+    finally:
+        _THREAD_STATE.context = previous
 
 
 def add_listener(fn):
     if not callable(fn):
         return
-    if fn in _LISTENERS:
-        return
-    _LISTENERS.append(fn)
+    with _LISTENERS_LOCK:
+        if fn not in _LISTENERS:
+            _LISTENERS.append(fn)
 
 
 def remove_listener(fn):
-    try:
-        _LISTENERS.remove(fn)
-    except ValueError:
-        pass
+    with _LISTENERS_LOCK:
+        try:
+            _LISTENERS.remove(fn)
+        except ValueError:
+            pass
 
 
 def _ensure_atexit_hook():

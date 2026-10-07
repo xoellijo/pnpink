@@ -12,7 +12,6 @@ import inkex
 import svg as SVG
 from inkex import Transform
 import svg
-import layouts
 import const as CONST
 import log as LOG
 _l = LOG
@@ -99,30 +98,6 @@ def _ensure_preview_group(svgdoc, selection):
     except Exception:
         g.set('transform', str(Transform()))  # identidad
     return g
-
-# ---------- layout strings (mm) ----------
-def _fmt_pair_mm(x_mm, y_mm): return f"{x_mm:.1f}×{y_mm:.1f}"
-def _fmt_quad_mm(t,l,b,r):    return f"{t:.1f},{l:.1f},{b:.1f},{r:.1f}"
-
-def _layout_strings_mm(rows, cols, tile_w_mm, tile_h_mm, mt, ml, mb, mr, gv, gh):
-    long_s = (".Layout{grid, "
-              f"rows={rows}, cols={cols}, "
-              f"tile={_fmt_pair_mm(tile_w_mm, tile_h_mm)}, "
-              f"margin_top={mt:.1f}mm, margin_left={ml:.1f}mm, "
-              f"margin_bottom={mb:.1f}mm, margin_right={mr:.1f}mm, "
-              f"gap_v={gv:.1f}mm, gap_h={gh:.1f}mm, "
-              "origin=NW, order=LR-TB, shape=rect}")
-    short_s = (".Layout{grid rows=%d cols=%d tile=%s "
-               "mt=%.1fmm ml=%.1fmm mb=%.1fmm mr=%.1fmm gv=%.1fmm gh=%.1fmm NW LR-TB rect}" %
-               (rows, cols, _fmt_pair_mm(tile_w_mm, tile_h_mm),
-                mt, ml, mb, mr, gv, gh))
-    mini_s = (".Layout{%s %s m=%s g=%s NW LR-TB rect}" %
-              (f"{rows}×{cols}",
-               _fmt_pair_mm(tile_w_mm, tile_h_mm),
-               _fmt_quad_mm(mt, ml, mb, mr),
-               _fmt_pair_mm(gv, gh)))
-    return long_s, short_s, mini_s
-
 
 def _parse_mm_token(tok, default=None):
     s = "" if tok is None else str(tok).strip()

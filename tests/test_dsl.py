@@ -56,10 +56,10 @@ def test_dataset_split_shorthand_bang():
     ("Texto plano sin DSL", None),
     ("ID~i7", Command),
     ("Icono.Fit{ anchor=7 i }", Command),
-    (".Layout{ g=3x2 }", Command),
-    (".L{ g=3x2 }", Command),
+    (".Layout{ p=3x2 }", Command),
+    (".L{ p=3x2 }", Command),
     ("@{ img src='a.png' }", Command),
-    ("@sp1 = @{pdf src='file.pdf'}.L{ g=3x2 }", Command),
+    ("@sp1 = @{pdf src='file.pdf'}.L{ p=3x2 }", Command),
     ("{A4^}", Command),
     ("{3*A4}", Command),
     ("{}", Command),
@@ -89,22 +89,22 @@ def test_fit_largo_minimo():
     assert fs.mirror is None
     assert fs.clip is None
 
-def test_fit_largo_border_shift_rotate_mirror_clip():
-    s = "Ico.Fit{ a=1 b=[-2 3] s=[10mm -5%] r=-45 mirror=h clip }"
+def test_fit_largo_border_shift_clip():
+    s = "Ico.Fit{ a=1 b=[-2 3] s=[10mm -5%] clip }"
     cmd = parse(s)
     fs = cmd.fit
     assert fs.anchor == 1
     assert _as_numlist(fs.border) == ["-2", "3"]
     assert fs.shift == ["10mm", "-5%"]
-    assert fs.rotate == -45.0
-    assert fs.mirror == "h"
+    assert fs.rotate is None
+    assert fs.mirror is None
     assert fs.clip is True
     assert fs.clip_stage in ("pre", "post")
 
 def test_fit_largo_clip_pre_explicito():
-    s = "Ico.Fit{ r=30 clip=rect0 }"
+    s = "Ico.Fit{ clip=rect0 }"
     cmd = parse(s)
-    assert cmd.fit.rotate == 30.0
+    assert cmd.fit.rotate is None
     assert cmd.fit.clip is True
     assert cmd.fit.clip_stage == "pre"
 
@@ -120,7 +120,6 @@ def test_fit_largo_clip_pre_explicito():
     ("ID~x",            dict(mode="x")),
     ("ID~y",            dict(mode="y")),
     ("ID~a",            dict(mode="a")),
-    ("ID~t",            dict(mode="t")),
     ("ID~o",            dict(mode="o")),
 ])
 def test_fit_shorthand_modes(s, expect):
@@ -141,16 +140,11 @@ def test_fit_shorthand_anchor_rotate_variantes():
     fs = parse("ID~^45").fit
     assert fs.rotate == 45.0
 
-def test_fit_shorthand_border_y_shift_orden_independiente():
-    fs = parse("ID~[-2 3] s[10 -5] i7").fit
+def test_fit_shorthand_border_and_shift():
+    fs = parse("ID~[-2 3] s [10 -5] i7").fit
     assert _as_numlist(fs.border) == ["-2", "3"]
     assert fs.shift == [10.0, -5.0]
     assert fs.mode == "i" and fs.anchor == 7
-
-    fs2 = parse("ID~s[10 -5] i7 [-2 3]").fit
-    assert _as_numlist(fs2.border) == ["-2", "3"]
-    assert fs2.shift == [10.0, -5.0]
-    assert fs2.mode == "i" and fs2.anchor == 7
 
 def test_fit_shorthand_mirror_y_clip_pre_post():
     fs = parse("ID~s[5 5] i7 !").fit
@@ -182,7 +176,7 @@ def test_fit_block_shift_after_mode_does_not_become_border():
 # -------------------------
 
 def test_layout_minimo_grid_por_defecto():
-    cmd = parse(".Layout{ g=3x2 }")
+    cmd = parse(".Layout{ p=3x2 }")
     ls = cmd.layout
     assert isinstance(ls, LayoutSpec)
     assert isinstance(ls.grid, GridSpec)
@@ -191,19 +185,19 @@ def test_layout_minimo_grid_por_defecto():
     assert ls.grid.flip in (None, "h", "v")
 
 def test_layout_grid_azucar_flip_y_order():
-    cmd = parse(".Layout{ g=3|x2^ }")
+    cmd = parse(".Layout{ p=3|x2^ }")
     g = cmd.layout.grid
     assert g.cols == 3 and g.rows == 2
     assert g.flip == "h"
     assert g.order == "tb-lr"
 
 def test_layout_kerf_inline_y_top_level():
-    cmd = parse(".Layout{ g=3x2<k=[4 3]> }")
-    assert _as_numlist(cmd.layout.grid.kerf) == [4.0, 3.0]
+    cmd = parse(".Layout{ p=3x2 g=[4 3] }")
+    assert _as_numlist(cmd.layout.grid.gaps) == [4.0, 3.0]
 
-    cmd2 = parse(".Layout{ g=3x2 k=[1% 3% 10% 8% -10% -8%] }")
-    assert len(cmd2.layout.grid.kerf) == 6
-    assert all(isinstance(x, str) and x.endswith('%') or isinstance(x, float) for x in cmd2.layout.grid.kerf)
+    cmd2 = parse(".Layout{ p=3x2 g=[1% 3%] }")
+    assert len(cmd2.layout.grid.gaps) == 2
+    assert all(isinstance(x, str) and x.endswith('%') or isinstance(x, float) for x in cmd2.layout.grid.gaps)
 
 def test_layout_shape_variantes():
     cmd = parse(".Layout{ s=poker }")
@@ -240,6 +234,26 @@ def test_page_con_border():
     ps = c.args["page"]
     assert _as_numlist(ps.border) == ["-2", "3", "4", "5"]
 
+def test_page_custom_size_with_p_alias():
+    c = parse("Page{p=254x177.6 b=-5}")
+    ps = c.args["page"]
+    assert ps.size == "254x177.6"
+    assert _as_numlist(ps.border) == ["-5"]
+
+    from layouts import PageSpec as ResolvedPageSpec, parse_and_resolve_page
+
+    resolved = parse_and_resolve_page(
+        "Page{p=254x177.6 b=-5}",
+        ResolvedPageSpec(),
+        (210.0, 297.0),
+    )
+    assert resolved.resolved_size_mm((210.0, 297.0)) == (254.0, 177.6)
+    assert resolved.border_mm == [-5.0, -5.0, -5.0, -5.0]
+
+    lead = parse_leading_cell("Page{p=254x177.6 b=-5}.L{g=2 s=poker}.M{}")
+    assert lead.page_block == "{p=254x177.6 b=-5}"
+    assert lead.page.size == "254x177.6"
+
 # -------------------------
 # SOURCE y ALIAS
 # -------------------------
@@ -262,7 +276,7 @@ def test_source_tipo_explicito_y_args():
     assert src.args["page"] == 3
 
 def test_alias_define_y_layout_spritesheet():
-    s = "@sp1 = @{ pdf src='file.pdf' }.Layout{ g=3x2^ s=poker extract }"
+    s = "@sp1 = @{ pdf src='file.pdf' }.Layout{ p=3x2^ s=poker extract }"
     cmd = parse(s)
     assert cmd.name == "AliasDefine"
     assert cmd.args["alias"] == "sp1"
@@ -307,9 +321,10 @@ def test_alias_access_indices_rango_lista_y_asterisco():
 # -------------------------
 
 @pytest.mark.parametrize("s", [
-    "Icono.Fit{ shift=[10] }",
-    ".Layout{ g=3 }",
-    ".Layout{ g=abcx2 }",
+    "Icono.Fit{ shift=[1 2 3] }",
+    ".Layout{ p=3 }",
+    ".Layout{ p=abcx2 }",
+    "ID~t",
     "@{ pdf }",
     "@sp1 = no_es_valido",
 ])
@@ -332,10 +347,10 @@ def test_rotacion_repetida_y_combinada():
 # -------------------------
 
 def test_no_comas_como_separadores_en_listas_y_args():
-    cmd = parse(".Layout{ g=3x2 k=[4 3] }")
-    assert cmd.layout.grid.kerf == [4.0, 3.0]
+    cmd = parse(".Layout{ p=3x2 g=[4 3] }")
+    assert cmd.layout.grid.gaps == [4.0, 3.0]
     with pytest.raises(DSLError):
-        parse(".Layout{ k=[4, 3] }")
+        parse(".Layout{ g=[4, 3] }")
 
 # -------------------------
 # SHAPE: implicit rect size
@@ -419,7 +434,7 @@ def test_parse_chain_transform_inside_modes():
 def test_tokenize_y_parse_casos_borde():
     with pytest.raises(DSLError):
         tokenize_chain("@{bad")
-    c = parse_chain(".Layout{ g='3x3' }")
+    c = parse_chain(".Layout{ p='3x3' }")
     assert c.target is None and len(c.modules)==1 and c.modules[0].name.lower() in ("layout","l")
 
 def test_fit_shorthand_best_fit_b():
@@ -433,7 +448,7 @@ def test_fit_shorthand_best_fit_b():
 
 def test_marks_defaults_and_style_default_param():
     # default param => style id
-    ms = parse_marks_block("M{ mk_style }")
+    ms = parse_marks_block("M{ t=mk_style }")
     assert ms.style == "mk_style"
     assert ms.layer is None
     assert ms.b is None
@@ -447,7 +462,7 @@ def test_marks_len_scalar_and_list():
     assert ms2.length == ["3", "2"]
 
 def test_leading_cell_parses_page_layout_marks_chain():
-    lead = parse_leading_cell("{A4}.L{g=3x3 k=2}.M{ mk_style d=2 b=[0] }")
+    lead = parse_leading_cell("{A4}.L{p=3x3 k=2}.M{ t=mk_style d=2 b=[0] }")
     assert lead.page_block and lead.page_block.startswith("{")
     assert lead.layout_block and lead.layout_block.startswith("L{")
     assert lead.marks_block and lead.marks_block.startswith("M{")

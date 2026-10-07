@@ -25,16 +25,7 @@ def unquote_iterator_item(value: str) -> tuple[str, bool]:
     return text[1:-1], True
 
 
-def excel_col_to_num(s: str):
-    txt = str(s or "").strip().upper()
-    if not txt:
-        return None
-    n = 0
-    for ch in txt:
-        if not ("A" <= ch <= "Z"):
-            return None
-        n = n * 26 + (ord(ch) - 64)
-    return n
+excel_col_to_num = DSL.excel_col_to_num
 
 
 def cell_ref_to_rc(ref: str):

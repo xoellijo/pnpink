@@ -258,21 +258,6 @@ def _parse_inline_local_source_token(inner: str):
 
 
 
-_ATTR_PAIR_RX = re.compile(r"""(?ix)
-    ([a-z_][\w\-]*)\s*=\s*
-    (?:
-        "([^"]*)" | '([^']*)' | ([^\s,\]]+)
-    )""")
-
-_SCALE_RX = re.compile(r"""(?ix)
-    scale\(\s*
-      ([+\-]?[\d]*\.?[\d]+(?:[eE][+\-]?\d+)?)      
-      (?: [,\s]+
-          ([+\-]?[\d]*\.?[\d]+(?:[eE][+\-]?\d+)?)
-      )?
-    \s*\)
-""")
-
 # --- sanitize unquoted attributes in <tspan ...> ---
 _UNQUOTED_ATTR_RX = re.compile(
     r'(<tspan\b[^>]*?\s)([a-zA-Z_:\-][\w:\-\.]*)(=)([^"\'>\s/][^\s/>]*)',
@@ -431,26 +416,6 @@ def _read_effective_fontsize(el: SVG.etree._Element) -> float:
         cur = cur.getparent()
     return 16.0
 
-def _parse_dy_to_px(dy: Optional[str], H: float) -> float:
-    if not dy: return 0.0
-    s = str(dy).strip().lower()
-    try: return float(s)
-    except Exception: pass
-    if s.endswith("em"):
-        try: return float(s[:-2] or "0") * H
-        except Exception: return 0.0
-    if s.endswith("%"):
-        try: return (float(s[:-1] or "0")/100.0) * H
-        except Exception: return 0.0
-    if s.endswith("px"):
-        try: return float(s[:-2] or "0")
-        except Exception: return 0.0
-    if s.endswith("mm"):
-        try: return float(s[:-2] or "0") * PX_PER_MM
-        except Exception: return 0.0
-    try: return float(s)
-    except Exception: return 0.0
-
 # ----------------- matrices / transforms -----------------
 def _matrix6_from_transform(t):
     if isinstance(t, Transform):
@@ -514,41 +479,19 @@ def _icon_bbox_uu(doc_root: SVG.etree._Element, icon_id: str) -> Dict[str, float
     _l.w("no se pudo medir '%s' — uso 1×1", icon_id)
     return {"x":0.0,"y":0.0,"width":1.0,"height":1.0}
 
-# ------------- parsing y utilidades -------------
-def _parse_token_attrs(s: Optional[str]) -> Dict[str,str]:
-    out: Dict[str,str] = {}
-    if not s: return out
-    for m in _ATTR_PAIR_RX.finditer(s):
-        k = m.group(1).lower()
-        v = m.group(2) or m.group(3) or m.group(4) or ""
-        out[k] = v
-    return out
-
-
-def _extract_scale(tf_raw: Optional[str]) -> Tuple[float,float,Optional[str]]:
-    if not tf_raw: return 1.0, 1.0, None
-    m = _SCALE_RX.search(tf_raw)
-    if not m: return 1.0, 1.0, tf_raw.strip() if tf_raw.strip() else None
-    try:
-        sx = float(m.group(1) or 1.0); sy = float(m.group(2) or sx)
-    except Exception:
-        sx = sy = 1.0
-    rest = (tf_raw[:m.start()] + tf_raw[m.end():]).strip() or None
-    return sx, sy, rest
-
 # ---------- rich-visible → DOM ----------
 def _rich_visible_fragment_nodes(fragment: str, owner_id: Optional[str]) -> Optional[List[SVG.etree._Element]]:
     if "<tspan" not in (fragment or ""):
         return None
     visible_sane = _sanitize_rich_visible(fragment)
     if visible_sane != fragment:
-        _l.w("id=%s â€” se detectaron atributos sin comillas en <tspan> (saneados automÃ¡ticamente)", owner_id)
+        _l.w("id=%s — se detectaron atributos sin comillas en <tspan> (saneados automáticamente)", owner_id)
     visible_sane = _escape_text_nodes_only(visible_sane)
     wrapper = f"<svg xmlns='{NS['svg']}' xmlns:pnp='{NS['pnp']}'><text xmlns='{NS['svg']}'>{visible_sane}</text></svg>"
     try:
         doc = SVG.etree.fromstring(wrapper.encode("utf-8"))
     except Exception as ex:
-        _l.w("id=%s â€” fallo al parsear rich-text: %s", owner_id, ex)
+        _l.w("id=%s — fallo al parsear rich-text: %s", owner_id, ex)
         return None
     new_text = doc.find("{%s}text" % NS['svg'])
     if new_text is None:
@@ -678,7 +621,7 @@ def _maybe_parse_rich_visible_into_dom(text_el: SVG.etree._Element) -> bool:
         _l.w("id=%s — error inesperado en rich-visible parse: %s", text_el.get("id"), ex)
         return False
 
-def _normalize_rich_visible_for_all_texts(root_scope: SVG.etree._Element) -> int:
+def normalize_rich_text(root_scope: SVG.etree._Element) -> int:
     """Aplica rich-visible→DOM a *todos* los <text> del scope, tengan o no :icon:."""
     count = 0
     for t in root_scope.findall(".//svg:text", namespaces={"svg":NS["svg"]}):
@@ -1092,7 +1035,7 @@ def _build_text_probe(tree, ids: Set[str], id_index=None):
 
 
 # ----------------- main -----------------
-def process_text_geometry(root_scope: SVG.etree._Element, show_debug_rects: bool=False, spacer_glyph: Optional[str]=None, *, source_manager: Optional[SRC.SourceManager]=None, doc_path: Optional[str]=None, query_service=None, defer_apply: bool=False, prepared_geometry: Optional[DeferredTextGeometry]=None) -> ProcessResult:
+def process_text_geometry(root_scope: SVG.etree._Element, show_debug_rects: bool=False, spacer_glyph: Optional[str]=None, *, source_manager: Optional[SRC.SourceManager]=None, doc_path: Optional[str]=None, query_service=None, defer_apply: bool=False, prepared_geometry: Optional[DeferredTextGeometry]=None, rich_text_normalized: bool=False) -> ProcessResult:
     spacer_glyph = spacer_glyph or DEFAULT_SPACER_GLYPH
 
     doc_root = root_scope.getroottree().getroot()
@@ -1117,7 +1060,7 @@ def process_text_geometry(root_scope: SVG.etree._Element, show_debug_rects: bool
     _l.d("scope=%s — in-place pipeline (spacer glyph=%r)", root_scope.get('id'), spacer_glyph)
 
     # Normalize rich-visible content to DOM for every <text>.
-    normalized = _normalize_rich_visible_for_all_texts(root_scope)
+    normalized = 0 if rich_text_normalized else normalize_rich_text(root_scope)
     if normalized:
         _l.d("normalized=%d texts (rich-visible→DOM)", normalized)
 

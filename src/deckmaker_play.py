@@ -7,8 +7,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
-import socket
 import subprocess
 import sys
 import time
@@ -17,6 +15,7 @@ import urllib.parse
 import urllib.request
 
 import export_items as EXPORTITEMS
+import play_asset_store as ASSETSTORE
 
 
 PLAY_DPI = 150
@@ -25,18 +24,26 @@ PLAY_DPI = 150
 def _runtime_candidates() -> list[Path]:
     source_dir = Path(__file__).resolve().parent
     project_dir = source_dir.parent
-    configured = str(os.environ.get("PNPINK_PLAY_RUNTIME") or "").strip()
+    configured = str(os.environ.get("PNPPLAY_RUNTIME") or os.environ.get("PNPINK_PLAY_RUNTIME") or "").strip()
     candidates = []
     if configured:
         candidates.append(Path(configured))
-    candidates.extend((source_dir / "play_runtime", project_dir / "play" / "runtime", project_dir / ".artifacts" / "play-runtime"))
+    candidates.extend(
+        (
+            source_dir / "play_runtime",
+            Path.home() / ".pnpplay" / "runtime",
+            project_dir.parent / "pnpplay",
+            project_dir.parent / "pnpplay" / ".artifacts" / "play-runtime",
+            project_dir / ".artifacts" / "play-runtime",
+        )
+    )
     return candidates
 
 
 def find_runtime() -> Path:
     for candidate in _runtime_candidates():
         root = candidate.expanduser().resolve()
-        if (root / "launch.py").is_file() and (root / "vendor" / "aiohttp").is_dir() and (root / "server" / "boardzilla_lite").is_dir():
+        if (root / "launch.py").is_file() and (root / "server" / "boardzilla_lite").is_dir():
             return root
     raise RuntimeError("PnPPlay runtime is not installed")
 
@@ -50,6 +57,10 @@ def _game_id(template: str) -> str:
 def game_project(template: str) -> tuple[Path, str]:
     template_path = Path(template).resolve()
     return template_path.with_suffix(".play"), _game_id(str(template_path))
+
+
+def _asset_pack_id(template: str) -> str:
+    return f"pnpink/{_game_id(template)}"
 
 
 def _write_json(path: Path, value: dict) -> None:
@@ -138,40 +149,95 @@ def _content_address_play_assets(assets_dir: Path, result: dict) -> None:
     os.replace(temporary_manifest, manifest_path)
 
 
+def _convert_play_assets_to_webp(assets_dir: Path, result: dict) -> bool:
+    try:
+        from PIL import Image, features
+    except ImportError:
+        return False
+    if not features.check("webp"):
+        return False
+    converted: dict[str, str] = {}
+    for item in result.get("results", []):
+        for field in ("front", "back"):
+            source_name = item.get(field)
+            if not source_name:
+                continue
+            if source_name in converted:
+                item[field] = converted[source_name]
+                continue
+            source = assets_dir / source_name
+            target = source.with_suffix(".webp")
+            try:
+                with Image.open(source) as image:
+                    image.save(target, format="WEBP", quality=88, method=4)
+                if not target.is_file() or target.stat().st_size <= 0:
+                    return False
+                source.unlink()
+            except (OSError, ValueError):
+                return False
+            converted[source_name] = target.name
+            item[field] = target.name
+    return bool(converted)
+
+
+def _configured_game_roots(runtime: Path) -> list[Path]:
+    roots = [runtime / "games"]
+    configured = str(os.environ.get("PNPPLAY_GAMES") or "").strip()
+    if configured:
+        roots.append(Path(configured).expanduser())
+    development_root = Path(__file__).resolve().parents[2] / "pnpplay" / "games"
+    roots.append(development_root)
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = os.path.normcase(str(root.resolve()))
+        if key not in seen and root.is_dir():
+            seen.add(key)
+            unique.append(root)
+    return unique
+
+
 def _sync_configured_runtime_game(runtime: Path, template_path: Path, source_assets: Path) -> tuple[Path, str] | None:
-    games_root = runtime / "games"
-    for manifest_path in games_root.glob("*/game.json"):
+    for games_root in _configured_game_roots(runtime):
+        for manifest_path in games_root.glob("*/game.json"):
+            result = _sync_configured_game(manifest_path, template_path, source_assets)
+            if result is not None:
+                return result
+    return None
+
+
+def _sync_configured_game(manifest_path: Path, template_path: Path, source_assets: Path) -> tuple[Path, str] | None:
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
-            continue
+            return None
         configured = str(manifest.get("pnpinkTemplate") or "").strip()
         if not configured:
-            continue
+            return None
         configured_path = Path(configured).expanduser()
         matches = configured_path.name.casefold() == template_path.name.casefold()
         if configured_path.is_absolute():
             matches = os.path.normcase(str(configured_path.resolve())) == os.path.normcase(str(template_path))
         if not matches:
-            continue
+            return None
         target_game = manifest_path.parent
-        target_assets = target_game / "assets"
-        target_assets.mkdir(parents=True, exist_ok=True)
-        source_manifest = json.loads((source_assets / "items.json").read_text(encoding="utf-8"))
-        for item in source_manifest.get("items", []):
-            for field in ("front", "back"):
-                name = item.get(field)
-                if name:
-                    source = source_assets / str(name)
-                    target = target_assets / source.name
-                    if not target.exists():
-                        shutil.copy2(source, target)
-        _write_json(target_assets / "items.json", source_manifest)
+        pack_id = str(manifest.get("pnpinkAssetPack") or _asset_pack_id(str(template_path)))
+        ASSETSTORE.publish_local_pack(
+            source_assets,
+            pack_id,
+            name=str(manifest.get("friendlyName") or template_path.stem),
+            source={"template": template_path.name},
+        )
         return target_game, str(manifest["name"])
-    return None
 
 
-def prepare_game(template: str, svg_path: str, runtime: Path) -> tuple[Path, str]:
+def prepare_game(
+    template: str,
+    svg_path: str,
+    runtime: Path,
+    *,
+    cached_pngs: dict[str, str] | None = None,
+) -> tuple[Path, str]:
     template_path = Path(template).resolve()
     game_id = _game_id(str(template_path))
     game_dir = template_path.with_suffix(".play")
@@ -185,31 +251,40 @@ def prepare_game(template: str, svg_path: str, runtime: Path) -> tuple[Path, str
         item_spec=f"{prefix}*",
         export_dpi=PLAY_DPI,
         output_dir=str(assets_dir),
+        cached_pngs=cached_pngs,
     )
     if not ok:
         raise RuntimeError(str(result.get("error") or "Unable to export Play assets"))
+    _convert_play_assets_to_webp(assets_dir, result)
     _content_address_play_assets(assets_dir, result)
+    pack_id = _asset_pack_id(str(template_path))
+    ASSETSTORE.publish_local_pack(
+        assets_dir,
+        pack_id,
+        name=template_path.stem,
+        source={"template": template_path.name},
+    )
 
     if not result.get("results"):
         raise RuntimeError("The generated SVG contains no playable items")
 
     play_manifest = {
         "schema": 1,
+        "extends": "trick-games-template",
         "name": template_path.stem,
         "description": "Immediate tabletop generated by PnPInk",
         "players": {"count": 4},
         "turns": {"mode": "trick-assisted", "order": "clockwise"},
         "board": {"aspectRatio": 1.6, "background": "#173f35"},
-        "updates": {"mode": "versioned", "assets": "live", "components": "new-games", "rules": "pinned"},
         "areas": [
-            {"id": "deck", "label": "Deck", "kind": "stack", "scope": "shared", "visibility": "hidden", "actions": ["draw", "shuffle"], "layout": {"shared": {"left": 7, "top": 36, "width": 11, "height": 28}, "rows": 1, "columns": 1}},
-            {"id": "table", "label": "Table", "kind": "center", "scope": "shared", "visibility": "public", "actions": ["move-from", "move-to"], "layout": {"shared": {"left": 22, "top": 23, "width": 56, "height": 52}, "rows": 3, "columns": 6}},
-            {"id": "discard", "label": "Discard", "kind": "stack", "scope": "shared", "visibility": "public", "actions": ["move-from", "move-to", "discard-to"], "layout": {"shared": {"left": 82, "top": 36, "width": 11, "height": 28}, "rows": 1, "columns": 1}},
-            {"id": "hand", "label": "Hand", "kind": "hand", "scope": "player", "visibility": "owner", "actions": ["move-from", "move-to"], "layout": {"owner": {"left": 22, "top": 78, "width": 56, "height": 19}, "opponent": {"left": 31, "top": 2, "width": 38, "height": 16}, "rows": 1, "columns": 8}},
-            {"id": "tricks", "label": "Tricks", "kind": "stack", "scope": "player", "visibility": "public", "actions": ["move-from", "move-to"], "layout": {"owner": {"left": 90, "top": 76, "width": 8, "height": 20}, "opponent": {"left": 72, "top": 3, "width": 8, "height": 15}, "rows": 1, "columns": 1}},
+            {"id": "deck", "extends": "deck-area", "label": "Deck", "layout": {"shared": {"left": 7, "top": 36, "width": 11, "height": 28}}},
+            {"id": "table", "layout": {"shared": {"left": 22, "top": 23, "width": 56, "height": 52}, "rows": 3, "columns": 6}},
+            {"id": "discard", "extends": "discard-area", "label": "Discard", "layout": {"shared": {"left": 82, "top": 36, "width": 11, "height": 28}}},
+            {"id": "hand", "layout": {"owner": {"left": 22, "top": 78, "width": 56, "height": 19}, "opponent": {"left": 31, "top": 2, "width": 38, "height": 16}, "rows": 1, "columns": 8}},
+            {"id": "tricks", "extends": "trick-area", "label": "Tricks", "layout": {"owner": {"left": 90, "top": 76, "width": 8, "height": 20}, "opponent": {"left": 72, "top": 3, "width": 8, "height": 15}}},
         ],
         "pieces": {
-            "source": "assets/items.json",
+            "source": {"store": "local", "pack": pack_id},
             "initial": {"area": "deck", "faceUp": False},
         },
         "setup": [
@@ -217,14 +292,14 @@ def prepare_game(template: str, svg_path: str, runtime: Path) -> tuple[Path, str
             {"deal": {"from": "deck", "to": "hand", "count": 13}},
         ],
     }
-    runtime_game = runtime / "games" / "pnpink-play-demo"
     game_manifest = {
         "minPlayers": 4,
         "maxPlayers": 4,
         "defaultPlayers": 4,
-        "ui": {"root": str(runtime_game), "outDir": "build/ui"},
-        "game": {"root": str(runtime_game), "out": "build/game/game-interface.js"},
+        "ui": {"root": str(runtime), "outDir": "build/ui"},
+        "game": {"root": str(runtime), "out": "build/game/game-interface.js"},
         "name": game_id,
+        "pnpinkAssetPack": pack_id,
         "friendlyName": f"{template_path.stem} — PnPPlay",
     }
     authoring_manifest = game_dir / "play.yaml"
@@ -243,25 +318,25 @@ def prepare_game(template: str, svg_path: str, runtime: Path) -> tuple[Path, str
     return game_dir, game_id
 
 
-def _free_port(start: int = 8081, stop: int = 8089) -> int:
-    for port in range(start, stop + 1):
-        with socket.socket() as probe:
-            try:
-                probe.bind(("127.0.0.1", port))
-            except OSError:
-                continue
-        return port
-    raise RuntimeError("No free local port available for PnPPlay")
+def _central_database(runtime: Path) -> Path:
+    configured = str(os.environ.get("PNPPLAY_DATABASE") or "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    project_root = Path(__file__).resolve().parent.parent
+    windows_database = project_root / ".artifacts" / "play-runtime" / "data" / "pnpink-play-windows.db"
+    if windows_database.is_file():
+        return windows_database
+    return runtime / "data" / "pnpplay.db"
 
 
-def _request_json(url: str, body: dict | None = None, *, token: str = "") -> dict:
+def _request_json(url: str, body: dict | None = None, *, token: str = "", timeout: float = 5.0) -> dict:
     payload = json.dumps(body).encode("utf-8") if body is not None else None
     headers = {"Content-Type": "application/json"} if payload else {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(url, data=payload, headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=5) as response:
+        with urllib.request.urlopen(request, timeout=max(0.1, float(timeout))) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace").strip()
@@ -278,7 +353,7 @@ class PlayServer:
     @staticmethod
     def _server_has_game(port: int, game_id: str) -> bool:
         try:
-            response = _request_json(f"http://127.0.0.1:{port}/games")
+            response = _request_json(f"http://127.0.0.1:{port}/games", timeout=0.25)
         except Exception:
             return False
         games = response.get("games", response if isinstance(response, list) else [])
@@ -304,6 +379,19 @@ class PlayServer:
                 process.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 process.kill()
+        self.port = 0
+
+    @property
+    def managed(self) -> bool:
+        return self.process is not None and self.process.poll() is None
+
+    @property
+    def running(self) -> bool:
+        try:
+            _request_json("http://127.0.0.1:8080/games", timeout=0.25)
+            return True
+        except Exception:
+            return False
 
     def open_game(self, game_dir: Path, game_id: str, runtime: Path) -> str:
         self.ensure(game_dir, runtime)
@@ -320,28 +408,39 @@ class PlayServer:
         return f"http://127.0.0.1:{self.port}/s/{session['playerAccessToken']}"
 
     def ensure(self, game_dir: Path, runtime: Path) -> None:
-        game_manifest = json.loads((game_dir / "game.json").read_text(encoding="utf-8"))
+        manifest_path = game_dir / "game.json"
+        game_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if str(game_manifest.get("pnpinkAssetPack") or "").startswith("pnpink/"):
+            expected = {
+                "ui": {"root": str(runtime), "outDir": "build/ui"},
+                "game": {"root": str(runtime), "out": "build/game/game-interface.js"},
+            }
+            if game_manifest.get("ui") != expected["ui"] or game_manifest.get("game") != expected["game"]:
+                game_manifest.update(expected)
+                _write_json(manifest_path, game_manifest)
         game_id = str(game_manifest["name"])
-        for _attempt in range(20):
-            if self._server_has_game(8080, game_id):
-                self.close()
-                self.port = 8080
-                self.game_dir = game_dir
-                return
-            time.sleep(0.1)
-        if self.process is None or self.process.poll() is not None or self.game_dir != game_dir:
+        self.port = 8080
+        if self.running:
+            for _attempt in range(20):
+                if self._server_has_game(self.port, game_id):
+                    self.game_dir = game_dir
+                    return
+                time.sleep(0.1)
+            raise RuntimeError(f"PnPPlay is running on port 8080 but game '{game_id}' is not registered")
+        if self.process is None or self.process.poll() is not None:
             self.close()
-            self.port = _free_port()
-            database = game_dir / "play.db"
+            self.port = 8080
+            database = _central_database(runtime)
             database.parent.mkdir(parents=True, exist_ok=True)
             self.log_path = runtime / "data" / "server.log"
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
             command = [
                 sys.executable,
                 "-I",
                 "-S",
                 str(runtime / "launch.py"),
                 "--games",
-                str(game_dir),
+                str(runtime / "games"),
                 "--database",
                 str(database),
                 "--host",
@@ -366,12 +465,17 @@ class PlayServer:
                 if self.process.poll() is not None:
                     raise self._startup_error("PnPPlay server stopped during startup")
                 try:
-                    _request_json(endpoint)
+                    _request_json(endpoint, timeout=0.3)
                     break
                 except Exception:
                     time.sleep(0.15)
             else:
                 raise self._startup_error("PnPPlay server did not start")
+            for _attempt in range(20):
+                if self._server_has_game(self.port, game_id):
+                    return
+                time.sleep(0.1)
+            raise self._startup_error(f"PnPPlay started but game '{game_id}' is not registered")
 
     def lobby_url(self, game_dir: Path, runtime: Path) -> str:
         self.ensure(game_dir, runtime)

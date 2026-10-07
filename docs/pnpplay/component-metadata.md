@@ -8,13 +8,30 @@ Semantic columns begin with `$`. Unlike ordinary headers, they do not target an 
 
 | Header | Purpose | Example |
 |---|---|---|
-| `$id` | Stable component identifier | `king-hearts` |
+| `$id` | Stable component identifier and export key | `king-hearts` |
 | `$type` | Physical component type | `card` |
 | `$name` | Human-readable label | `King of Hearts` |
 | `$role` | One or more reusable behaviours | `playing-card scoring-card` |
 | `$tags` | Free classifications used by filters | `royal fire` |
 
 The initial standard types are `card`, `tile`, `token`, `die`, `pawn`, `meeple`, `cube`, `marker`, `board`, `mat` and `area`. PnPPlay also keeps the existing `chip` and `d6` aliases.
+
+## Component IDs and separate backs
+
+`$id` is the primary key used by PnPPlay. If the dataset has no `$id` column, PnPInk creates stable IDs from the template, dataset row and iterator variant. If the column exists, only generated components whose `$id` cell is not empty are exported. This makes it possible to keep helper or print-only rows in the same dataset.
+
+A back drawn in a separate dataset row uses the component ID followed by `@back`:
+
+<div class="csv-dataset" markdown>
+
+| card_bbox | `$id` | title |
+|---|---|---|
+|  | unit-01 | Unit 01 |
+|  | unit-01@back | Unit back |
+
+</div>
+
+One back can serve a whole family of components by using their common prefix. For example, `unit@back` is assigned to `unit-01`, `unit-02` and every other exported ID beginning with `unit`. An exact `unit-02@back` definition overrides the common back for `unit-02`; otherwise PnPInk chooses the longest matching prefix. Rows ending in `@back` provide artwork only and are not exported as playable components.
 
 `$role` describes what a component does rather than what it physically is. Typical roles include `playing-card`, `action-card`, `resource-card`, `terrain-tile`, `deck`, `discard`, `hand`, `tableau`, `market`, `score-track` and `resource-supply`. Roles are open-ended: modules can introduce more without changing the dataset grammar.
 
