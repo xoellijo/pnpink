@@ -14,7 +14,7 @@ __all__ = [
     "tokenize_chain", "parse_chain", "maybe_parse_chain",
     "is_source_expr", "split_source_token", "normalize_ops_suffix",
     "ops_from_fit_spec", "fit_spec_from_ops", "split_ops_fit_transform",
-    "parse_copies_page_tail", "parse_index_selector_1based", "measure_to_mm",
+    "parse_copies_page_tail", "parse_index_selector_1based", "excel_col_to_num", "measure_to_mm",
     "parse_dataset_decl"
 ]
 
@@ -1379,7 +1379,7 @@ def _parse_page_v2_from_brace(body: str) -> PageSpec:
                 else:
                     ps.border = [v]
                 continue
-            if k in ("pagesize", "size"):
+            if k in ("p", "pagesize", "size"):
                 _consume_size_token(v)
                 continue
             if k == "landscape":
@@ -1678,12 +1678,17 @@ def parse_copies_page_tail(cell0):
     slot_select_mode = None
     rest = s
 
-    # { ... } block (page / breaks)
+    # Page{...} / P{...} or bare {...} block (page / breaks).
     # IMPORTANT: do not capture dataset markers "{{...}}" as a Page block.
-    m_page = re.search(r"(?<![\w\{])\{[^{}]*\}(?!\})", rest)
+    m_page = re.search(r"(?<![\w\{])(?:Page|P)\s*(\{[^{}]*\})(?!\})", rest, re.I)
     if m_page:
-        page_block = m_page.group(0)
+        page_block = m_page.group(1)
         rest = rest[:m_page.start()] + rest[m_page.end():]
+    else:
+        m_page = re.search(r"(?<![\w\{])\{[^{}]*\}(?!\})", rest)
+        if m_page:
+            page_block = m_page.group(0)
+            rest = rest[:m_page.start()] + rest[m_page.end():]
 
     def _looks_like_slot_selector_body(body: str) -> bool:
         bb = str(body or "").strip()
@@ -1811,8 +1816,17 @@ def parse_copies_page_tail(cell0):
     return copies, page_block, layout_block, marks_block
 
 # === PnPInk Phase 3 – public DSL helpers (no semantic changes) ===
-from dataclasses import dataclass
-from typing import Optional, List
+def excel_col_to_num(value: str) -> Optional[int]:
+    text = str(value or "").strip().upper()
+    if not text:
+        return None
+    number = 0
+    for char in text:
+        if not "A" <= char <= "Z":
+            return None
+        number = number * 26 + ord(char) - 64
+    return number
+
 
 def parse_index_selector_1based(sel: str, size: Optional[int] = None) -> List[int]:
     """Parse selector body like '2 4..12 15..?' into 1-based integer indices."""

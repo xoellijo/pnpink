@@ -24,16 +24,21 @@
    inkscape:pageopacity="0.0"
    inkscape:pagecheckerboard="0"
    inkscape:deskcolor="#d1d1d1"
-   inkscape:zoom="22.435241"
-   inkscape:cx="329.92736"
-   inkscape:cy="70.536349"
-   inkscape:window-width="1920"
-   inkscape:window-height="974"
-   inkscape:window-x="-11"
-   inkscape:window-y="-11"
-   inkscape:window-maximized="1" />
+   inkscape:zoom="1.9830139"
+   inkscape:cx="296.51835"
+   inkscape:cy="218.3545"
+   inkscape:window-width="1618"
+   inkscape:window-height="911"
+   inkscape:window-x="100"
+   inkscape:window-y="19"
+   inkscape:window-maximized="0" />
   <defs
-   id="defs1"><linearGradient
+   id="defs1"><rect
+   x="327.65782"
+   y="122.66682"
+   width="50.050078"
+   height="27.231277"
+   id="rect8" /><linearGradient
    id="linearGradient1"
    inkscape:collect="always"><stop
      style="stop-color:#fff81b;stop-opacity:0.74592394;"
@@ -441,7 +446,7 @@
    xml:space="preserve"><tspan
      x="15.150391"
      y="65.848666"
-     id="tspan4">Dynamic medieval text.</tspan></text>
+     id="tspan9">Dynamic medieval text.</tspan></text>
       <rect
    id="lore_frame2"
    x="14.1"
@@ -459,7 +464,7 @@
    xml:space="preserve"><tspan
      x="15.150391"
      y="65.848666"
-     id="tspan5">Rich text and icons.</tspan></text>
+     id="tspan10">Rich text and icons.</tspan></text>
       <rect
    id="lore_frame3"
    x="14.1"
@@ -477,7 +482,7 @@
    xml:space="preserve"><tspan
      x="15.150391"
      y="65.848666"
-     id="tspan6">Measured decorator.</tspan></text>
+     id="tspan11">Measured decorator.</tspan></text>
     </g>
 
     <rect
@@ -867,4 +872,39 @@
    width="6.4159999"
    height="1.1793202"
    x="83.34375"
-   y="19.84375" /></svg>
+   y="19.84375" /><text
+   xml:space="preserve"
+   style="font-weight:bold;font-size:2.11667px;line-height:0.9;font-family:Arial;-inkscape-font-specification:'Arial Bold';text-align:center;letter-spacing:0px;writing-mode:lr-tb;direction:ltr;white-space:pre;inline-size:16.533;display:inline;fill:#000000;stroke:#ffffff;stroke-width:0;stroke-linecap:round;stroke-linejoin:round"
+   x="86.959648"
+   y="26.451475"
+   id="text1"><tspan
+     x="86.959648"
+     y="26.451475"
+     id="tspan12">jashdkjahsd
+</tspan><tspan
+     x="86.959648"
+     y="28.356478"
+     id="tspan13">sdkajsd
+</tspan><tspan
+     x="86.959648"
+     y="30.26148"
+     id="tspan14">sdjh
+</tspan></text><text
+   xml:space="preserve"
+   transform="scale(0.26458333)"
+   id="text8"
+   style="font-weight:bold;font-size:8px;line-height:0.9;font-family:Arial;-inkscape-font-specification:'Arial Bold';text-align:center;letter-spacing:0px;writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect8);display:inline;fill:#000000;stroke:#ffffff;stroke-width:0;stroke-linecap:round;stroke-linejoin:round"><tspan
+     x="328.6709"
+     y="128.47205"
+     id="tspan15">kjhdakjs asd </tspan><tspan
+     x="339.11816"
+     y="135.67205"
+     id="tspan16">lasd as </tspan><tspan
+     x="332.00879"
+     y="142.87204"
+     id="tspan17">ldasdl adal </tspan><tspan
+     x="327.6582"
+     y="155.70447"
+     id="tspan19"><tspan
+       dx="0 4.8867188 4.4492188 4.4492188"
+       id="tspan18">dasl</tspan></tspan></text></svg>

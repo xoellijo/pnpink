@@ -4,6 +4,8 @@ _l = LOG
 import re
 import math
 import time
+import hashlib
+import json
 
 
 # ---------------- spritesheet alias token parsing ----------------
@@ -31,7 +33,8 @@ import render_helpers as RHP
 import render_planner as RPL
 import render_tokens as RTK
 import template_compose as TCOMP
-from typing import Dict, Optional, Tuple
+import semantic_metadata as SEMANTIC
+from typing import Dict
 
 _slot_index_to_rc = RPL.slot_index_to_rc
 _slot_rc_to_index_1based = RPL.slot_rc_to_index_1based
@@ -202,7 +205,8 @@ def render_phase(ctx):
             if not key:
                 continue
             key_s = str(key)
-            hk = parse_header_key_full(key_s)
+            is_semantic = SEMANTIC.is_semantic_header(key_s)
+            hk = None if is_semantic else parse_header_key_full(key_s)
             target_ids = list((hk or {}).get("target_ids") or [])
             fast_text_target = ""
             fast_text_plain = False
@@ -253,6 +257,7 @@ def render_phase(ctx):
                 "hk": hk,
                 "is_clone": key_s.startswith("clone_"),
                 "is_internal": key_s.startswith("__dm_") or key_s.startswith("_"),
+                "is_semantic": is_semantic,
                 "fast_text_target": fast_text_target,
                 "fast_text_plain": fast_text_plain,
             })
@@ -572,6 +577,10 @@ def render_phase(ctx):
             for t in toks:
                 t = (t or "").strip()
                 if not t:
+                    continue
+                t, was_quoted = RTK.unquote_iterator_item(t)
+                if was_quoted:
+                    out.append(t)
                     continue
                 # Group repetition in iterator lists: K*(...)
                 m_rep_grp = re.match(r"^(\d+)\*\((.*)\)$", t)
@@ -1137,6 +1146,9 @@ def render_phase(ctx):
                             r['cells'] = list(r.get('cells') or [])
                         r['_i'] = _i
                         r['__dm_iter_group__'] = int(_group_no)
+                        r['__dm_source_row__'] = int(_group_no)
+                        r['__dm_variant_index__'] = int(_i % max(n_iter, 1)) + 1
+                        r['__dm_copy_index__'] = int(_i // max(n_iter, 1)) + 1
                         r['__dm_target_slot__'] = int(tgt)
                         if _i > 0:
                             _clear_copy_once_meta(r)
@@ -1154,6 +1166,9 @@ def render_phase(ctx):
                             r['cells'] = list(r.get('cells') or [])
                         r['_i'] = _i
                         r['__dm_iter_group__'] = int(_group_no)
+                        r['__dm_source_row__'] = int(_group_no)
+                        r['__dm_variant_index__'] = int(_i % max(n_iter, 1)) + 1
+                        r['__dm_copy_index__'] = int(_i // max(n_iter, 1)) + 1
                         r['__dm_target_slot__'] = int(tgt)
                         if _i == (len(targets) - 1):
                             r['__dm_target_cursor_after__'] = int(cursor_after)
@@ -1172,6 +1187,9 @@ def render_phase(ctx):
                     r['cells'] = list(r.get('cells') or [])
                 r['_i'] = _i
                 r['__dm_iter_group__'] = int(_group_no)
+                r['__dm_source_row__'] = int(_group_no)
+                r['__dm_variant_index__'] = int(_i % max(n_iter, 1)) + 1
+                r['__dm_copy_index__'] = int(_i // max(n_iter, 1)) + 1
                 if _i == 0 and holes_list:
                     r['__dm_holes_before__'] = int(holes_list.count(0))
                 if holes_list:
@@ -1501,7 +1519,7 @@ def render_phase(ctx):
                 defs.remove(ch)
         try:
             import text as TXT
-            TXT._normalize_rich_visible_for_all_texts(card_group)
+            TXT.normalize_rich_text(card_group)
         except Exception as ex:
             _l.w(f"[symbols] rich-text normalize failed for '{sid}': {ex}")
         sym = SVG.etree.SubElement(defs, inkex.addNS("symbol", "svg"))
@@ -1905,7 +1923,14 @@ def render_phase(ctx):
                     except Exception:
                         mw = 12
                     mw = max(1, min(mw, 32))
-                    ICON.ensure_icon_symbols_parallel(root, icons, max_workers=mw, uses=icon_uses)
+                    ICON.ensure_icon_symbols_parallel(
+                        root,
+                        icons,
+                        max_workers=mw,
+                        uses=icon_uses,
+                        fast=getattr(SM, "iconify_mode", "normal") == "fast",
+                        offline=getattr(SM, "iconify_mode", "normal") == "offline",
+                    )
             except Exception as ex:
                 _l.w(f"[iconify] preload skipped/failed: {ex}")
         ctx._iconify_preloaded = True
@@ -1916,7 +1941,10 @@ def render_phase(ctx):
     front_field_indices = _field_indices_between(None, first_back_col)
     compiled_field_specs = _compile_field_specs(headers, front_field_indices)
     compiled_clone_specs = [s for s in compiled_field_specs if s.get("is_clone")]
-    compiled_apply_specs = [s for s in compiled_field_specs if (not s.get("is_clone")) and (not s.get("is_internal"))]
+    compiled_apply_specs = [
+        s for s in compiled_field_specs
+        if (not s.get("is_clone")) and (not s.get("is_internal")) and (not s.get("is_semantic"))
+    ]
     style_targets = {
         str(_tid or "").strip()
         for _spec in compiled_apply_specs
@@ -2172,6 +2200,7 @@ def render_phase(ctx):
             _l.i(f"ROW {row_idx}: {stage}")
 
     for idx, row in enumerate(instances, start=1):
+        LOG.set_context(dataset=ds_idx, row=(row.get('__dm_sheet_row__') or idx))
         _profile_row_t0 = time.perf_counter()
         _profile_phase_t0 = _profile_row_t0
         _log_row_stage(idx, "begin")
@@ -3010,6 +3039,16 @@ def render_phase(ctx):
             unique_name = new_name
         placed_node.set('id', unique_name)
         placed_node.set(inkex.addNS('label','inkscape'), new_name)
+        card_group.set('data-pnpink-item-index', str(int(slot_no)))
+        card_group.set('data-pnpink-source-row', str(int(row.get('__dm_source_row__', idx) or idx)))
+        card_group.set('data-pnpink-variant-index', str(int(row.get('__dm_variant_index__', 1) or 1)))
+        card_group.set('data-pnpink-copy-index', str(int(row.get('__dm_copy_index__', 1) or 1)))
+        semantic_metadata = SEMANTIC.from_mapping(row_map)
+        if SEMANTIC.has_field(row_map, 'id'):
+            card_group.set('data-pnpink-has-semantic-id', '1')
+        if semantic_metadata:
+            card_group.set('data-pnpink-metadata', json.dumps(semantic_metadata, ensure_ascii=False, separators=(',', ':')))
+        TXT.normalize_rich_text(card_group)
         if text_geometry_possible and TXT.scope_needs_text_geometry(card_group):
             _text_prepare_t0 = time.perf_counter()
             TXT.process_text_geometry(
@@ -3020,6 +3059,7 @@ def render_phase(ctx):
                 query_service=text_query_service,
                 defer_apply=True,
                 prepared_geometry=deferred_text_geometry,
+                rich_text_normalized=True,
             )
             _profile["text_prepare_ms"] += (time.perf_counter() - _text_prepare_t0) * 1000.0
         placed += 1
@@ -3249,13 +3289,20 @@ def render_phase(ctx):
                     back_start_col = _template_col_index(bt)
                     back_specs = back_field_specs_by_col.get(int(back_start_col)) if back_start_col is not None else []
                     cells_for_back = _row_cells(back_row)
+                    back_signature = [str(tmpl_root.get('id') or 'card')]
                     for back_spec in back_specs:
                         back_key = str(back_spec.get("key") or "")
-                        if not back_key or back_key.startswith("__dm_") or back_key.startswith("_"):
+                        if (
+                            not back_key
+                            or back_key.startswith("__dm_")
+                            or back_key.startswith("_")
+                            or back_spec.get("is_semantic")
+                        ):
                             continue
                         bi = int(back_spec.get("index") or 0)
                         back_val = cells_for_back[bi] if bi < len(cells_for_back) else ""
                         back_val = "" if back_val is None else str(back_val)
+                        back_signature.append(f"{back_key}={back_val}")
                         apply_field_in_clone(
                             inst, back_key, back_val, back_row_map,
                             root_doc=root, use_jobs=use_jobs, fa_jobs=fa_jobs, path_jobs=path_jobs,
@@ -3302,6 +3349,16 @@ def render_phase(ctx):
                         back_unique_name = back_name
                     card_group.set('id', back_unique_name)
                     card_group.set(inkex.addNS('label', 'inkscape'), back_name)
+                    card_group.set('data-pnpink-item-index', str(int(slot_no)))
+                    card_group.set('data-pnpink-source-row', str(int(back_row.get('__dm_source_row__', idx) or idx)))
+                    card_group.set('data-pnpink-variant-index', str(int(back_row.get('__dm_variant_index__', 1) or 1)))
+                    card_group.set('data-pnpink-copy-index', str(int(back_row.get('__dm_copy_index__', 1) or 1)))
+                    back_metadata = SEMANTIC.from_mapping(back_row_map)
+                    if SEMANTIC.has_field(back_row_map, 'id'):
+                        card_group.set('data-pnpink-has-semantic-id', '1')
+                    if back_metadata:
+                        card_group.set('data-pnpink-metadata', json.dumps(back_metadata, ensure_ascii=False, separators=(',', ':')))
+                    card_group.set('data-pnpink-content-key', hashlib.sha1('\n'.join(back_signature).encode('utf-8')).hexdigest()[:16])
                     back_final_scale = _fit_group_to_slot(card_group, (bx, by, bw, bh), (slot_x, slot_y, slot_w, slot_h), bbid)
 
                     _fa_remove_later = _exec_use_fa_paths(
@@ -3430,9 +3487,13 @@ def render_phase(ctx):
             )
     except Exception as ex:
         _l.w(f"[render.profile] failed: {ex}")
+    LOG.set_context(dataset=ds_idx, row=None)
     _l.i(f"[datasets] #{ds_idx}: placed={placed} cards; symbols={symbols_created}; end_page={planner.page_index+1}")
+
     placed_total += placed
     start_page_index = planner.page_index + 1
     ctx.next_n = next_n
     ctx.placed_total = placed_total
     ctx.start_page_index = start_page_index
+
+LOG.clear_context()

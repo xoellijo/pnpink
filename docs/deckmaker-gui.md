@@ -2,6 +2,33 @@
 
 DeckMaker is the user-facing PnPInk window used to generate decks from an SVG template and a dataset.
 
+PnPInk includes two interfaces over the same rendering and export engine:
+
+- **DeckMaker** opens the classic resident desktop window.
+- **DeckMaker Web** starts a local server and opens a lil-xgui interface in the default browser.
+
+Both entries are available from **Extensions > PnPInk** in Inkscape and receive the current saved SVG plus a temporary snapshot containing unsaved document changes. DeckMaker Web can also run independently: execute `<inkscape-python> <pnpink-extension-dir>/deckmaker_web.py [--template template.svg]`. It remembers the last saved template, so later launches do not require `--template`. A desktop shortcut can execute the same command.
+
+## Runtime and portability
+
+DeckMaker Web starts its resident process with the same `sys.executable` that Inkscape used to run the extension. Official Windows builds therefore reuse Inkscape's bundled Python, and macOS app bundles use their own selected extension interpreter. Linux packages do not universally bundle a private Python; on Linux this may be the system Python selected by the Inkscape package. PnPInk does not switch the resident process to a project virtual environment.
+
+The local HTTP application and its IPC channel use the Python standard library. The preview workers are persistent `inkscape --shell` child processes owned by that resident service. Windows uses `inkscape.com` when available; Linux uses the executable found on `PATH`; macOS additionally detects `Inkscape.app` in `/Applications` and `~/Applications`. Closing the web application ends the resident service and its Inkscape workers after the browser-session grace period.
+
+No Node.js, npm, pywebview, or separate application server is required at runtime. A Chromium-family browser provides the standalone app window when available; other browsers use a normal tab fallback.
+
+The standalone launch uses the saved SVG. Launch from Inkscape only when DeckMaker must capture unsaved document changes or the current SVG selection, for example when preparing a spritesheet. DeckMaker Web listens only on `127.0.0.1`, requires a random session token, and does not require Node, npm, or pywebview. Its `material-symbols-light` icons are loaded from Iconify, so Internet access is used for the icon layer only.
+
+Drop a Google Sheets URL anywhere onto DeckMaker Web to extract its spreadsheet ID and `gid` and link it to the current template automatically. Launch DeckMaker Web once from each SVG in Inkscape to register it. Afterwards, use the template selector and preview in the web menu title to switch between known SVG templates together with their associated datasets.
+
+Only one long-running operation can run at a time. Closing or refreshing the browser does not stop an active generation or export because the work belongs to the resident Python process.
+
+The browser actions execute the same Python generation, Inkscape export, PDF/PDF-X, cutting-template, and PnPPlay pipelines as classic DeckMaker. The lower log keeps recent activity and remains scrollable while jobs run; unavailable actions remain disabled until their template, dataset, or generated output is ready. DeckMaker Web provides `Auto Open` and `Auto Export`; automatic generation remains exclusive to classic DeckMaker.
+
+## Spritesheet editor
+
+Select one image, group, or SVG object in Inkscape and open DeckMaker Web. The **Spritesheet** folder provides a live browser preview with grid, preset-size, and custom-size modes. It supports independent gaps and borders, row-first or column-first ordering, zoom, pan, frame addressing, and copyable `.Layout{...}` and `@alias[cell]` expressions. Reopen DeckMaker Web after changing the Inkscape selection.
+
 The window title shows the running DeckMaker version and the current template file name. The full template path is not shown in the form because the extension is launched from the active Inkscape document.
 
 Before opening DeckMaker for a local project, save the SVG to disk and place a CSV with the same base name beside it. For example, `cards.svg` and `cards.csv` form one automatically discoverable project. Keep the SVG template open when launching the extension; DeckMaker always uses the active document as its visual source.
@@ -26,12 +53,11 @@ For a first run, choose the local/default source, leave the Google fields empty,
 
 | Control | Purpose |
 | --- | --- |
-| Auto checkbox before `Generate` | Starts generation automatically when the GUI opens. |
 | `Generate` | Builds the output SVG from the current template and dataset. |
-| Auto checkbox before `Open SVG` | Opens the generated SVG automatically after generation. |
 | `Open SVG` | Opens the generated SVG through the same Inkscape launch path used by the extension. It does not use the operating system default application. |
-| Auto checkbox before `Export` | Runs export automatically after generation. |
+| Checkbox after `Open SVG` | Opens the generated SVG automatically after generation. |
 | `Export` | Runs the export pipeline configured in the Export tab. |
+| Checkbox after `Export` | Runs export automatically after generation. |
 
 ### Progress and log
 

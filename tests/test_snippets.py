@@ -9,14 +9,21 @@ import snippets as S
 
 def _make_registry_basic():
     blocks = ["""
-# :bold(txt) -> "<b>${txt}</b>"
-# :icon(name size=16) -> "<span class='icon' data-name='${name}' data-size='${size}'/>"
-# :pair(a b="B") -> "${a} + ${b}"
-# :wrap(left="[" right="]" txt="") -> "${left}${txt}${right}"
-# :kv(key value) -> "${key}=${value}"
-# :echo(a) -> "${a}"
-# :need2(a b) -> "${a}-${b}"
-# :hole(a) -> "${a} ${missing}"  # placeholder 'missing' not provided on purpose
+# :bold(txt) = <b>${txt}</b>
+
+# :icon(name size=16) = <span class='icon' data-name='${name}' data-size='${size}'/>
+
+# :pair(a b="B") = ${a} + ${b}
+
+# :wrap(left="[" right="]" txt="") = ${left}${txt}${right}
+
+# :kv(key value) = ${key}=${value}
+
+# :echo(a) = ${a}
+
+# :need2(a b) = ${a}-${b}
+
+# :hole(a) = ${a} ${missing}
 """]
     return S.load_definitions_from_comments(blocks)
 
@@ -37,8 +44,9 @@ class TestDefinitions(unittest.TestCase):
 
     def test_ignores_bad_definition_with_space_before_paren(self):
         blocks = ["""
-# :ok(a) -> "X ${a}"
-# :bad a -> "NO"   # invalid: there is a space between name and "("
+# :ok(a) = X ${a}
+
+# :bad a = NO
 """]
         reg = S.load_definitions_from_comments(blocks)
         self.assertIn("ok", reg)
@@ -46,8 +54,9 @@ class TestDefinitions(unittest.TestCase):
 
     def test_definition_formats_with_spaces_only(self):
         blocks = ["""
-# :A(x y=2) -> "${x}-${y}"
-# :B(text) -> "${text}"
+# :A(x y=2) = ${x}-${y}
+
+# :B(text) = ${text}
 """]
         reg = S.load_definitions_from_comments(blocks)
         self.assertEqual(reg["A"].params, ["x", "y"])
@@ -90,7 +99,7 @@ class TestNestingAndQuotes(unittest.TestCase):
         self.assertEqual(out, "<b>A</b> + <span class='icon' data-name='star' data-size='20'/>")
 
     def test_calls_inside_quotes_are_expanded(self):
-        txt = 'title ":bold(\\"XX\\")" tail'
+        txt = 'title ":bold(\'XX\')" tail'
         out = _expand(txt, self.reg)
         self.assertEqual(out, 'title "<b>XX</b>" tail')
 
@@ -139,11 +148,11 @@ class TestLimits(unittest.TestCase):
         self.reg = _make_registry_basic()
 
     def test_max_depth_abort_literal(self):
-        depth = 20
+        depth = 40
         s = '"X"'
         for _ in range(depth):
             s = f":echo({s})"
-        out = _expand(s, self.reg)  # default max_depth=16
+        out = _expand(s, self.reg)  # default max_depth=32
         self.assertEqual(out, s)
 
         out2 = _expand(s, self.reg, max_depth=64)

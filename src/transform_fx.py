@@ -251,15 +251,6 @@ def _node_world_transform(node):
     return transform
 
 
-def _world_copy(node):
-    out = deepcopy(node)
-    try:
-        out.set("transform", str(_node_world_transform(node)))
-    except Exception:
-        out.set("transform", str(inkex.Transform(node.get("transform") or "")))
-    return out
-
-
 def _point_xy(point):
     try:
         return float(point.x), float(point.y)
@@ -1085,7 +1076,7 @@ def apply_transform_spec(root, node, spec, *, bbox=None) -> bool:
             _l.w(f"[transform] text use expansion failed on id='{node.get('id') or ''}': {ex}")
         try:
             import text as TXT
-            TXT._normalize_rich_visible_for_all_texts(node)
+            TXT.normalize_rich_text(node)
             if _is_text_root(node):
                 TXT._maybe_parse_rich_visible_into_dom(node)
         except Exception:

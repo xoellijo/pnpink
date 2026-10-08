@@ -19,67 +19,8 @@ sys.path.append(os.path.dirname(__file__))
 
 import log as LOG
 _l = LOG
-import inkex
 import svg as SVG
-import prefs
 import paths as PATHS
-
-
-_STROKE_KEYS = (
-    "stroke",
-    "stroke-width",
-    "stroke-dasharray",
-    "opacity",
-    "stroke-opacity",
-    "stroke-linecap",
-    "stroke-linejoin",
-    "stroke-miterlimit",
-)
-
-
-def _parse_style_attr(style: str) -> Dict[str, str]:
-    out: Dict[str, str] = {}
-    if not style:
-        return out
-    for part in str(style).split(';'):
-        part = part.strip()
-        if not part or ':' not in part:
-            continue
-        k, v = part.split(':', 1)
-        k = k.strip()
-        v = v.strip()
-        if k:
-            out[k] = v
-    return out
-
-
-def _style_dict_to_attr(d: Dict[str, str]) -> str:
-    # Stable key order for deterministic output
-    keys = list(d.keys())
-    keys.sort()
-    return ';'.join([f"{k}:{d[k]}" for k in keys if d.get(k) is not None and str(d.get(k)).strip() != ""]) + ';'
-
-
-def _extract_stroke_style(el) -> Dict[str, str]:
-    """Extract stroke-related style from an SVG element.
-
-    We read from both presentation attributes and inline 'style'.
-    """
-    d = _parse_style_attr(el.get('style') or '')
-    out: Dict[str, str] = {}
-    # presentation attributes override style() in Inkscape UI; keep style-based then override.
-    for k in _STROKE_KEYS:
-        if k in d:
-            out[k] = d[k]
-    # presentation attributes
-    for k in _STROKE_KEYS:
-        v = el.get(k)
-        if v is not None and str(v).strip() != "":
-            out[k] = str(v)
-
-    # Ensure marks are not filled
-    out['fill'] = 'none'
-    return out
 
 
 def _resolve_style_layers(root, style_id: Optional[str]):

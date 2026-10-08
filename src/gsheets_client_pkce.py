@@ -37,10 +37,11 @@ import log as LOG
 _l = LOG
 _l.i('gsheets ', __version__)
 
-import base64, hashlib, json, os, random, socket, sys, time, threading, urllib.parse, webbrowser
+import base64, hashlib, json, os, random, socket, time, threading, urllib.parse, webbrowser
 import net as NET
+import app_paths
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Dict, Optional, Tuple, Any
+from typing import Callable, Dict, Optional, Tuple, Any
 
 try:
     import requests  # type: ignore
@@ -73,21 +74,30 @@ AUTH_TIMEOUT_S = int(os.environ.get("PNPINK_GSHEETS_AUTH_TIMEOUT", "120")) # seg
 # ------------------------------------------------------------------
 # Token store — **identical** to the original
 # ------------------------------------------------------------------
-def _legacy_app_dir() -> str:
-    if sys.platform.startswith("win"):
-        base = os.environ.get("APPDATA") or os.path.expanduser("~")
-        return os.path.join(base, "PnPInk", "gsheets")
-    elif sys.platform == "darwin":
-        return os.path.join(os.path.expanduser("~/Library/Application Support"), "PnPInk", "gsheets")
-    else:
-        return os.path.join(os.path.expanduser("~/.pnpink"), "gsheets")
-
-TOKENS_FILE = os.path.join(_legacy_app_dir(), "tokens.json")
+TOKENS_FILE = str(app_paths.data_path("gsheets", "tokens.json"))
+_LEGACY_TOKENS_FILES = [str(path) for path in app_paths.legacy_data_paths("gsheets", "tokens.json")]
 _MEM_ENTRY: Optional[Dict[str, Any]] = None
 _AUTH_LOCK = threading.RLock()
 _HTTP_LOCK = threading.RLock()
 _HTTP_SESSION = None
 _SHEET_TITLES_CACHE: Dict[str, list[str]] = {}
+_SHEET_PROPERTIES_CACHE: Dict[str, list[dict]] = {}
+_AUTHORIZATION_LISTENER: Optional[Callable[[str], None]] = None
+
+
+def set_authorization_listener(listener: Optional[Callable[[str], None]]) -> None:
+    global _AUTHORIZATION_LISTENER
+    _AUTHORIZATION_LISTENER = listener
+
+
+def _notify_authorization(url: str) -> None:
+    listener = _AUTHORIZATION_LISTENER
+    if listener is None:
+        return
+    try:
+        listener(str(url or ""))
+    except Exception:
+        pass
 
 
 def _http_session():
@@ -104,6 +114,7 @@ def close_session() -> None:
         session = _HTTP_SESSION
         _HTTP_SESSION = None
         _SHEET_TITLES_CACHE.clear()
+        _SHEET_PROPERTIES_CACHE.clear()
     if session is not None:
         try:
             session.close()
@@ -111,19 +122,21 @@ def close_session() -> None:
             pass
 
 def _load_store() -> Dict[str, Any]:
-    try:
-        with open(TOKENS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
-    except Exception:
-        return {}
+    for path in (TOKENS_FILE, *_LEGACY_TOKENS_FILES):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f) or {}
+        except Exception:
+            continue
+    return {}
 
 def _save_store(store: Dict[str, Any]) -> None:
     d = os.path.dirname(TOKENS_FILE)
     os.makedirs(d, exist_ok=True)
-    tmp = TOKENS_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
+    temporary = f"{TOKENS_FILE}.{os.getpid()}.tmp"
+    with open(temporary, "w", encoding="utf-8") as f:
         json.dump(store, f, indent=2, sort_keys=True)
-    os.replace(tmp, TOKENS_FILE)
+    os.replace(temporary, TOKENS_FILE)
 
 def _get_entry() -> Dict[str, Any]:
     global _MEM_ENTRY
@@ -137,9 +150,14 @@ def _get_entry() -> Dict[str, Any]:
 def _set_entry(entry: Dict[str, Any]) -> None:
     global _MEM_ENTRY
     _MEM_ENTRY = dict(entry or {})
-    store = _load_store()
-    store["google_sheets_pkce"] = entry
-    _save_store(store)
+    try:
+        store = _load_store()
+        store["google_sheets_pkce"] = entry
+        _save_store(store)
+    except OSError as error:
+        # A refreshed token is already valid in memory. A locked/read-only
+        # token store must not turn a successful refresh into a new OAuth flow.
+        _l.w(f"[gsheets] auth: token refreshed but could not be persisted: {error}")
 
 
 def _clear_entry() -> None:
@@ -150,11 +168,6 @@ def _clear_entry() -> None:
         if "google_sheets_pkce" in store:
             del store["google_sheets_pkce"]
             _save_store(store)
-    except Exception:
-        pass
-    try:
-        if os.path.isfile(TOKENS_FILE):
-            os.remove(TOKENS_FILE)
     except Exception:
         pass
 
@@ -286,6 +299,7 @@ def _authorize_with_pkce(client_id: str) -> Dict[str, Any]:
 
         # 3) Reset state and open the browser *when the server is already live*
         _CodeHandler.code = None; _CodeHandler.err = None
+        _notify_authorization(url)
         _open_browser(url)
 
         # 4) Wait for the code with a hard timeout
@@ -326,6 +340,7 @@ def _authorize_with_pkce(client_id: str) -> Dict[str, Any]:
         }
 
     finally:
+        _notify_authorization("")
         try:
             server.shutdown()
         except Exception:
@@ -364,7 +379,7 @@ def _refresh_with_pkce(client_id: str, refresh_token: str) -> Dict[str, Any]:
         "expiry": _now() + expires,
     }
 
-def _ensure_tokens(client_id: Optional[str] = None) -> Dict[str, Any]:
+def _ensure_tokens(client_id: Optional[str] = None, *, interactive: bool = True) -> Dict[str, Any]:
     with _AUTH_LOCK:
         cid = client_id or CLIENT_ID
         entry = _get_entry()
@@ -384,34 +399,44 @@ def _ensure_tokens(client_id: Optional[str] = None) -> Dict[str, Any]:
                 return entry
             except Exception:
                 import traceback
+                if not interactive:
+                    _l.w("[gsheets] auth: non-interactive refresh failed\n" + traceback.format_exc())
+                    raise
                 _l.w("[gsheets] auth: refresh failed; starting OAuth\n" + traceback.format_exc())
                 _clear_entry()
                 entry = _authorize_with_pkce(cid)
                 _set_entry(entry)
                 return entry
 
+        if not interactive:
+            raise RuntimeError("Google Sheets authorization required")
         _l.i("[gsheets] auth: no token found; starting OAuth")
         entry = _authorize_with_pkce(cid)
         _set_entry(entry)
         return entry
-def warm_session(client_id: Optional[str] = None, spreadsheet_id: Optional[str] = None) -> bool:
+def warm_session(
+    client_id: Optional[str] = None,
+    spreadsheet_id: Optional[str] = None,
+    *,
+    interactive: bool = True,
+) -> bool:
     """Preload auth, HTTPS connection, and optional sheet metadata."""
     try:
-        _ensure_tokens(client_id)
+        _ensure_tokens(client_id, interactive=interactive)
         _http_session()
         if str(spreadsheet_id or "").strip():
-            list_sheet_titles(str(spreadsheet_id).strip(), client_id)
+            list_sheet_titles(str(spreadsheet_id).strip(), client_id, interactive=interactive)
         return True
     except Exception:
         import traceback
         _l.w("[gsheets] auth warmup failed\n" + traceback.format_exc())
         return False
 
-def _auth_header(client_id: Optional[str] = None) -> Dict[str, str]:
-    tok = _ensure_tokens(client_id)
+def _auth_header(client_id: Optional[str] = None, *, interactive: bool = True) -> Dict[str, str]:
+    tok = _ensure_tokens(client_id, interactive=interactive)
     # Re-validate in case we are near the TTL limit
     if _now() >= int(tok.get("expiry") or 0) - 30:
-        tok = _ensure_tokens(client_id)
+        tok = _ensure_tokens(client_id, interactive=interactive)
     return {"Authorization": f"Bearer {tok['access_token']}", "User-Agent": USER_AGENT}
 
 # ------------------------------------------------------------------
@@ -429,11 +454,13 @@ def fetch_sheet(spreadsheet_id: str, range_a1: str, client_id: Optional[str] = N
         f"{urllib.parse.quote(range_a1, safe='!:$')}?{urllib.parse.urlencode(params)}"
     )
     hdr = _auth_header(client_id)
+    hdr.update({"Cache-Control": "no-cache", "Pragma": "no-cache"})
     r = NET.requests_get(url, session=_http_session(), headers=hdr, timeout=30, retries=4, log_prefix="[gsheets]")
     if r.status_code == 401:
         # intentar una vez tras refresh/relogin
         _ensure_tokens(client_id)
         hdr = _auth_header(client_id)
+        hdr.update({"Cache-Control": "no-cache", "Pragma": "no-cache"})
         r = NET.requests_get(url, session=_http_session(), headers=hdr, timeout=30, retries=4, log_prefix="[gsheets]")
     r.raise_for_status()
     data = r.json() or {}
@@ -442,28 +469,36 @@ def fetch_sheet(spreadsheet_id: str, range_a1: str, client_id: Optional[str] = N
     width = max((len(r) for r in values), default=0)
     return [row + [""]*(width-len(row)) for row in values]
 
-def list_sheet_titles(spreadsheet_id: str, client_id: Optional[str] = None):
-    """
-    Devuelve la lista de títulos de pestañas (sheets) del spreadsheet.
-    """
+def list_sheet_titles(spreadsheet_id: str, client_id: Optional[str] = None, *, interactive: bool = True):
+    """Return the titles of every sheet in a spreadsheet."""
+    return [item["title"] for item in list_sheet_properties(spreadsheet_id, client_id, interactive=interactive)]
+
+def list_sheet_properties(spreadsheet_id: str, client_id: Optional[str] = None, *, interactive: bool = True):
+    """Return the title and numeric gid of every sheet in a spreadsheet."""
     cache_key = str(spreadsheet_id or "").strip()
     with _HTTP_LOCK:
-        cached = _SHEET_TITLES_CACHE.get(cache_key)
+        cached = _SHEET_PROPERTIES_CACHE.get(cache_key)
         if cached is not None:
-            return list(cached)
-    url = f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}?fields=sheets(properties(title))"
-    hdr = _auth_header(client_id)
+            return [dict(item) for item in cached]
+    url = f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}?fields=sheets(properties(sheetId,title))"
+    hdr = _auth_header(client_id, interactive=interactive)
     r = NET.requests_get(url, session=_http_session(), headers=hdr, timeout=30, retries=4, log_prefix="[gsheets]")
     if r.status_code == 401:
-        _ensure_tokens(client_id)
-        hdr = _auth_header(client_id)
+        _ensure_tokens(client_id, interactive=interactive)
+        hdr = _auth_header(client_id, interactive=interactive)
         r = NET.requests_get(url, session=_http_session(), headers=hdr, timeout=30, retries=4, log_prefix="[gsheets]")
     r.raise_for_status()
     data = r.json() or {}
-    titles = [s.get("properties", {}).get("title", "") for s in data.get("sheets", []) if isinstance(s, dict)]
+    properties = []
+    for sheet in data.get("sheets", []):
+        raw = sheet.get("properties", {}) if isinstance(sheet, dict) else {}
+        title = str(raw.get("title") or "")
+        if title:
+            properties.append({"title": title, "sheetId": int(raw.get("sheetId") or 0)})
     with _HTTP_LOCK:
-        _SHEET_TITLES_CACHE[cache_key] = list(titles)
-    return titles
+        _SHEET_PROPERTIES_CACHE[cache_key] = [dict(item) for item in properties]
+        _SHEET_TITLES_CACHE[cache_key] = [item["title"] for item in properties]
+    return properties
 
 # ------------------------------------------------------------------
 # Test manual opcional

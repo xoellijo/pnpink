@@ -18,7 +18,6 @@ import os
 import re
 import sys
 import urllib.parse
-import io
 from pathlib import Path
 from dataclasses import dataclass
 from xml.etree import ElementTree as ET
@@ -251,19 +250,6 @@ def _uri_to_local_path(uri_or_path: str) -> str:
     return s
 
 
-def _collect_images_debug(root: ET.Element) -> list[dict]:
-    out: list[dict] = []
-    for el in root.findall(f".//{{{SVG_NS}}}image"):
-        node_id = str(el.get("id") or "").strip()
-        href = str(el.get("href") or el.get(f"{{{XLINK_NS}}}href") or "").strip()
-        x = _as_float(el.get("x"), 0.0)
-        y = _as_float(el.get("y"), 0.0)
-        w = _as_float(el.get("width"), 0.0)
-        h = _as_float(el.get("height"), 0.0)
-        out.append({"id": node_id, "href": href, "x": x, "y": y, "w": w, "h": h})
-    return out
-
-
 def _parse_transform_to_matrix(transform: str) -> tuple[float, float, float, float, float, float]:
     # Cairo matrix components: xx, yx, xy, yy, x0, y0
     m = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
@@ -301,48 +287,6 @@ def _mat_mul(m1: tuple[float, float, float, float, float, float], m2: tuple[floa
         a1 * e2 + c1 * f2 + e1,
         b1 * e2 + d1 * f2 + f1,
     )
-
-
-def _set_surface_dedup_mime(surface: object, *, unique_id: str, png_bytes: bytes | None) -> None:
-    mime_uid = getattr(cairo, "MIME_TYPE_UNIQUE_ID", None)
-    mime_png = getattr(cairo, "MIME_TYPE_PNG", None)
-    if mime_uid:
-        try:
-            surface.set_mime_data(mime_uid, unique_id.encode("utf-8"))
-        except Exception:
-            pass
-    if mime_png and png_bytes:
-        try:
-            surface.set_mime_data(mime_png, png_bytes)
-        except Exception:
-            pass
-
-
-def _load_png_surface_from_href(href: str, *, svg_dir: str, cache: dict[str, object]) -> object | None:
-    key = str(href or "")
-    if key in cache:
-        return cache[key]
-    try:
-        if key.startswith("data:image/png;base64,"):
-            raw = base64.b64decode(key.split(",", 1)[1])
-            surf = cairo.ImageSurface.create_from_png(io.BytesIO(raw))
-            _set_surface_dedup_mime(surf, unique_id=f"pnpink:{hash(key)}", png_bytes=raw)
-            cache[key] = surf
-            return surf
-        local = _uri_to_local_path(key)
-        if not os.path.isabs(local):
-            local = os.path.abspath(os.path.join(svg_dir, local))
-        if os.path.isfile(local) and local.lower().endswith(".png"):
-            with open(local, "rb") as fh:
-                raw = fh.read()
-            surf = cairo.ImageSurface.create_from_png(local)
-            _set_surface_dedup_mime(surf, unique_id=f"pnpink:{os.path.normcase(local)}", png_bytes=raw)
-            cache[key] = surf
-            return surf
-    except Exception:
-        pass
-    cache[key] = None
-    return None
 
 
 def _iter_images_with_transform(node: ET.Element, parent_m: tuple[float, float, float, float, float, float]):
@@ -425,18 +369,6 @@ def _load_rsvg_handle(svg_bytes: bytes, *, base_path: str | None = None):
             pass
     stream = Gio.MemoryInputStream.new_from_bytes(GLib.Bytes.new(svg_bytes))
     return Rsvg.Handle.new_from_stream_sync(stream, base_file, Rsvg.HandleFlags.FLAGS_NONE, None)
-
-
-def _bbox_intersects_page(x: float, y: float, w: float, h: float, box: PageBox) -> bool:
-    if w <= 0.0 or h <= 0.0:
-        return False
-    x2 = x + w
-    y2 = y + h
-    px1 = box.x
-    py1 = box.y
-    px2 = box.x + box.w
-    py2 = box.y + box.h
-    return (x < px2) and (x2 > px1) and (y < py2) and (y2 > py1)
 
 
 def convert_svg_pages_to_pdf(svg_path: str, pdf_path: str, *, inline_images: bool = False) -> tuple[int, int]:

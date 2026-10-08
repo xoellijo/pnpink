@@ -11,8 +11,10 @@ import sys
 import threading
 import time
 import re
+from pathlib import Path
 
 import log as LOG
+import process_io as PROCESS_IO
 import temp_paths as TEMPPATHS
 
 _l = LOG
@@ -53,6 +55,11 @@ def find_executable() -> str | None:
         os.path.join(os.path.dirname(bin_dir), "inkscape"),
         os.path.join(os.path.dirname(bin_dir), "bin", "inkscape"),
     ]
+    if sys.platform == "darwin":
+        candidates.extend(
+            str(root / "Inkscape.app" / "Contents" / "MacOS" / "inkscape")
+            for root in (Path("/Applications"), Path.home() / "Applications")
+        )
     for cand in candidates:
         if cand and os.path.isfile(cand):
             return cand
@@ -73,7 +80,7 @@ def shell_executable(exe: str | None) -> str | None:
     return path or None
 
 
-def clean_launch_env(*, isolated_profile: bool = True) -> dict[str, str]:
+def clean_launch_env(*, isolated_profile: bool = True, profile_stem: str = "automation") -> dict[str, str]:
     env = dict(os.environ)
     exact_keys = {
         "SELF_CALL",
@@ -96,30 +103,31 @@ def clean_launch_env(*, isolated_profile: bool = True) -> dict[str, str]:
         if sk in exact_keys or any(sk.startswith(prefix) for prefix in prefix_keys):
             env.pop(sk, None)
     if isolated_profile:
+        stem = str(profile_stem or "automation").strip() or "automation"
         try:
-            profile_dir = TEMPPATHS.named_dir("inkscape_profile", stem="automation")
+            profile_dir = TEMPPATHS.named_dir("inkscape_profile", stem=stem)
             env["INKSCAPE_PROFILE_DIR"] = profile_dir
         except Exception:
             profile_dir = ""
         try:
-            env["XDG_CONFIG_HOME"] = TEMPPATHS.named_dir("xdg_config", stem="automation")
+            env["XDG_CONFIG_HOME"] = TEMPPATHS.named_dir("xdg_config", stem=stem)
         except Exception:
             pass
         try:
-            env["XDG_CACHE_HOME"] = TEMPPATHS.named_dir("xdg_cache", stem="automation")
+            env["XDG_CACHE_HOME"] = TEMPPATHS.named_dir("xdg_cache", stem=stem)
         except Exception:
             pass
         try:
             # GTK writes recently-used.xbel under XDG_DATA_HOME; isolate it for automation runs.
-            xdg_data = TEMPPATHS.named_dir("xdg_data", stem="automation")
+            xdg_data = TEMPPATHS.named_dir("xdg_data", stem=stem)
             env["XDG_DATA_HOME"] = xdg_data
             env["GTK_RECENT_FILES"] = os.path.join(xdg_data, "recently-used.xbel")
         except Exception:
             pass
         if os.name == "nt":
             try:
-                appdata = TEMPPATHS.named_dir("win_appdata", stem="automation")
-                local_appdata = TEMPPATHS.named_dir("win_localappdata", stem="automation")
+                appdata = TEMPPATHS.named_dir("win_appdata", stem=stem)
+                local_appdata = TEMPPATHS.named_dir("win_localappdata", stem=stem)
                 env["APPDATA"] = appdata
                 env["LOCALAPPDATA"] = local_appdata
             except Exception:
@@ -213,10 +221,7 @@ def run(
 
         def _reader(stream):
             try:
-                while True:
-                    chunk = stream.read(1)
-                    if not chunk:
-                        break
+                for chunk in PROCESS_IO.iter_text_chunks(stream):
                     output_q.put(chunk)
             except Exception:
                 pass
@@ -292,10 +297,7 @@ def run_shell_commands(
 
     def _reader(stream):
         try:
-            while True:
-                chunk = stream.read(1)
-                if not chunk:
-                    break
+            for chunk in PROCESS_IO.iter_text_chunks(stream):
                 output_q.put(chunk)
         except Exception:
             pass
@@ -442,10 +444,7 @@ class ShellQuerySession:
 
         def _reader(stream):
             try:
-                while True:
-                    chunk = stream.read(1)
-                    if not chunk:
-                        break
+                for chunk in PROCESS_IO.iter_text_chunks(stream):
                     self.output_q.put(chunk)
             except Exception:
                 pass
@@ -512,25 +511,6 @@ class ShellQuerySession:
             raise RuntimeError(f"Inkscape shell action timed out: {command}")
         return output
 
-    def _read_until_bboxes(self, ids: set[str], *, timeout_s: float) -> tuple[dict[str, dict[str, float]], str]:
-        deadline = time.perf_counter() + max(0.1, float(timeout_s))
-        chunks: list[str] = []
-        bbs: dict[str, dict[str, float]] = {}
-        while time.perf_counter() < deadline:
-            if self.proc is not None and self.proc.poll() is not None:
-                break
-            try:
-                chunk = self.output_q.get(timeout=0.05)
-            except queue.Empty:
-                continue
-            chunks.append(chunk)
-            text = "".join(chunks)
-            bbs = _parse_query_all(text, ids)
-            if ids and ids.issubset(set(bbs.keys())):
-                return bbs, text
-        text = "".join(chunks)
-        return _parse_query_all(text, ids), text
-
     def query_all(
         self,
         svg_path: str,
@@ -557,6 +537,72 @@ class ShellQuerySession:
         if not bbs and out:
             _l.w("[inkscape_shell_query] no bboxes; output=%s", out[:1000])
         return bbs
+
+    def export_area_png(
+        self,
+        svg_path: str,
+        png_path: str,
+        area: tuple[float, float, float, float],
+        *,
+        dpi: int = 150,
+        compression: int = 1,
+        background_color: str = "#ffffff",
+        background_opacity: str = "255",
+        reload_svg: bool = True,
+        timeout_s: float = 20.0,
+    ) -> None:
+        """Export one SVG area through this already-running shell."""
+        x0, y0, x1, y1 = (float(value) for value in area)
+        commands = []
+        if reload_svg:
+            commands.append(f"file-open:{svg_path}")
+        commands.extend([
+            "export-type:png",
+            f"export-dpi:{int(dpi)}",
+            f"export-png-compression:{max(0, min(9, int(compression)))}",
+            f"export-area:{x0:.6f}:{y0:.6f}:{x1:.6f}:{y1:.6f}",
+            f"export-background:{background_color}",
+            f"export-background-opacity:{background_opacity}",
+            f"export-filename:{png_path}",
+            "export-do",
+        ])
+        for command in commands:
+            self._action(command, timeout_s=timeout_s)
+        if not os.path.isfile(png_path) or os.path.getsize(png_path) <= 16:
+            raise RuntimeError("Inkscape shell did not create the preview PNG")
+
+    def export_id_png(
+        self,
+        svg_path: str,
+        png_path: str,
+        node_id: str,
+        *,
+        dpi: int = 150,
+        compression: int = 1,
+        background_color: str = "#ffffff",
+        background_opacity: str = "255",
+        reload_svg: bool = True,
+        timeout_s: float = 20.0,
+    ) -> None:
+        """Export one SVG element through this already-running shell."""
+        commands = []
+        if reload_svg:
+            commands.append(f"file-open:{svg_path}")
+        commands.extend([
+            "export-type:png",
+            f"export-dpi:{int(dpi)}",
+            f"export-png-compression:{max(0, min(9, int(compression)))}",
+            f"export-id:{node_id}",
+            "export-id-only:true",
+            f"export-background:{background_color}",
+            f"export-background-opacity:{background_opacity}",
+            f"export-filename:{png_path}",
+            "export-do",
+        ])
+        for command in commands:
+            self._action(command, timeout_s=timeout_s)
+        if not os.path.isfile(png_path) or os.path.getsize(png_path) <= 16:
+            raise RuntimeError("Inkscape shell did not create the preview PNG")
 
     def close(self) -> None:
         proc = self.proc

@@ -26,13 +26,24 @@ import image_preflight as PREFLIGHT
 import deckmaker_paths as DMPATHS
 import deckmaker_ipc as IPC
 import export as EXPORT
+import export_items as EXPORTITEMS
 import export_cut as EXPORTCUT
 import export_pdf as EXPORTPDF
 import inkscape_cli as INKSCAPE
 import prefs
 import gui as GUI
 import deckmaker_runner as RUNNER
-from deckmaker_types import AppRequest, ExportOptions
+import deckmaker_play as PLAY
+from deckmaker_types import (
+    APP_VERSION,
+    CUT_TEMPLATE_FORMATS,
+    OTHER_EXPORT_FORMATS,
+    SOURCE_MODE_LABELS,
+    SOURCE_MODE_LABEL_TO_VALUE,
+    SOURCE_MODE_VALUE_TO_LABEL,
+    AppRequest,
+    ExportOptions,
+)
 import temp_paths as TEMPPATHS
 import text_measure as TM
 
@@ -48,23 +59,8 @@ def _file_mtime_ns(path: str) -> int:
         return 0
 
 
-APP_VERSION = "Deckmaker v0.57"
 DOCS_INTRO_URL = "https://xoellijo.github.io/pnpink/intro/"
 DOCS_GUIDE_URL = "https://xoellijo.github.io/pnpink/quickstart/"
-OTHER_EXPORT_FORMATS = ("png", "jpeg", "jpeg2000", "pdf", "svg", "tiff", "webp", "avif", "ps", "eps", "emf", "wmf")
-CUT_TEMPLATE_FORMATS = {
-    "svg": "svg (vector, cricut)",
-    "dxf": "dxf (vector, cameo)",
-    "png": "png (raster, all)",
-}
-SOURCE_MODE_LABELS = ("(empty)", "local CSV", "google sheet oauth", "google sheet public")
-SOURCE_MODE_LABEL_TO_VALUE = {
-    "(empty)": "",
-    "local CSV": "local_csv",
-    "google sheet oauth": "oauth",
-    "google sheet public": "public",
-}
-SOURCE_MODE_VALUE_TO_LABEL = {value: label for label, value in SOURCE_MODE_LABEL_TO_VALUE.items()}
 
 
 def notify_or_launch(
@@ -106,6 +102,7 @@ class DeckMakerApp:
         self._server_stop = threading.Event()
         self._render_thread: Optional[threading.Thread] = None
         self._text_query_service = TM.TextQueryService()
+        self._play_server = PLAY.PlayServer()
         self._activity_listener = None
         self._progress_listener = None
         self._live_activity_text = ""
@@ -129,6 +126,7 @@ class DeckMakerApp:
         self.export_pdfx_var = tk.BooleanVar(value=prefs.get_export_pdfx())
         self.export_png_var = tk.BooleanVar(value=prefs.get_export_png())
         self.other_export_format_var = tk.StringVar(value=prefs.get_export_other_format())
+        self.other_export_unit_var = tk.StringVar(value=prefs.get_export_other_unit().title())
         self.other_export_pages_var = tk.StringVar(value=prefs.get_export_other_pages())
         self.export_cut_template_var = tk.BooleanVar(value=prefs.get_export_cut_template())
         self.cut_template_format_var = tk.StringVar(value=self._cut_format_label_from_value(prefs.get_export_cut_template_format()))
@@ -163,6 +161,7 @@ class DeckMakerApp:
         self._source_change_after_id = None
         self._suppress_source_change = False
         self._generated_output_ready = False
+        self._pending_play_sync = False
         self._dataset_source_invalid = False
         self._snapshot_path = _normalize_path(initial.snapshot_path) if initial and initial.snapshot_path else ""
         self._snapshot_template_mtime_ns = 0
@@ -269,7 +268,7 @@ class DeckMakerApp:
 
         buttons = ttk.LabelFrame(frame, text="Actions:", padding=8)
         buttons.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-        buttons.columnconfigure(6, weight=1)
+        buttons.columnconfigure(7, weight=1)
         auto_create_cb = ttk.Checkbutton(buttons, text="", variable=self.auto_create_var, command=self._on_auto_prefs_changed)
         auto_create_cb.grid(row=0, column=0, sticky="w", padx=(0, 2))
         self.run_btn = ttk.Button(buttons, text="Generate", command=self._run_clicked)
@@ -282,10 +281,20 @@ class DeckMakerApp:
         auto_export_cb = ttk.Checkbutton(buttons, text="", variable=self.auto_export_var, command=self._on_auto_prefs_changed)
         auto_export_cb.grid(row=0, column=4, sticky="w", padx=(0, 2))
         self.pdf_btn = ttk.Button(buttons, text="Export", command=self._export_clicked)
-        self.pdf_btn.grid(row=0, column=5, sticky="w")
+        self.pdf_btn.grid(row=0, column=5, sticky="w", padx=(0, 12))
+        self.play_btn = ttk.Menubutton(buttons, text="PnPPlay")
+        play_menu = tk.Menu(self.play_btn, tearoff=False)
+        play_menu.add_command(label="Regenerate, sync & open Game Designer", command=self._play_clicked)
+        play_menu.add_separator()
+        play_menu.add_command(label="Open Game Designer", command=lambda: self._open_play_page("designer"))
+        play_menu.add_command(label="Open Lobby", command=lambda: self._open_play_page("lobby"))
+        play_menu.add_command(label="Create New Room", command=lambda: self._open_play_page("room"))
+        self.play_btn.configure(menu=play_menu)
+        self.play_btn.grid(row=0, column=6, sticky="w")
         GUI.attach_tooltip(auto_create_cb, "Auto-start generate")
         GUI.attach_tooltip(auto_open_cb, "Auto-start Open SVG")
         GUI.attach_tooltip(auto_export_cb, "Auto-start export")
+        GUI.attach_tooltip(self.play_btn, "Synchronize generated components with PnPPlay\nOpen the web Game Designer or lobby\nCreate a persistent room")
         self.log_text = scrolledtext.ScrolledText(deck_tab, height=13, wrap="word", state="disabled", font=log_font)
         self.log_text.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
         try:
@@ -383,22 +392,32 @@ class DeckMakerApp:
         )
         format_box = ttk.LabelFrame(formats_row, labelwidget=other_toggle, padding=8)
         format_box.grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        format_box.columnconfigure(3, weight=1)
+        format_box.columnconfigure(5, weight=1)
         ttk.Label(format_box, text="Format").grid(row=0, column=0, sticky="w", padx=(0, 8))
         other_format_combo = ttk.Combobox(
             format_box,
             textvariable=self.other_export_format_var,
             values=list(EXPORT.available_other_export_formats(OTHER_EXPORT_FORMATS)),
             state="readonly",
-            width=12,
+            width=9,
         )
         other_format_combo.grid(row=0, column=1, sticky="w")
         other_format_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_export_format_prefs_changed())
-        pages_label = ttk.Label(format_box, text="#Pages/IDs")
-        pages_label.grid(row=0, column=2, sticky="w", padx=(12, 8))
-        GUI.attach_tooltip(pages_label, "e.g. 1,5,group2,card6,8-9 (empty = all pages)")
-        pages_entry = ttk.Entry(format_box, textvariable=self.other_export_pages_var, width=42)
-        pages_entry.grid(row=0, column=3, sticky="ew")
+        unit_combo = ttk.Combobox(
+            format_box,
+            textvariable=self.other_export_unit_var,
+            values=("Pages", "Items", "IDs"),
+            state="readonly",
+            width=7,
+        )
+        unit_combo.grid(row=0, column=2, sticky="w", padx=(8, 0))
+        unit_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_export_format_prefs_changed())
+        GUI.attach_tooltip(unit_combo, "Pages: page numbers or ranges, e.g. 1,3-5.\nItems: output prefix plus selection, e.g. card_[1-3] or mydeck*.\nIDs: exact SVG object IDs separated by commas.")
+        pages_label = ttk.Label(format_box, text="#")
+        pages_label.grid(row=0, column=3, sticky="w", padx=(8, 4))
+        GUI.attach_tooltip(pages_label, "Pages: page numbers or ranges, e.g. 1,3-5.\nItems: output prefix plus selection, e.g. card_[1-3] or mydeck*.\nIDs: exact SVG object IDs separated by commas.")
+        pages_entry = ttk.Entry(format_box, textvariable=self.other_export_pages_var, width=28)
+        pages_entry.grid(row=0, column=4, columnspan=2, sticky="ew")
         pages_entry.bind("<FocusOut>", lambda _e: self._on_export_format_prefs_changed())
         pages_entry.bind("<Return>", lambda _e: self._on_export_format_prefs_changed())
 
@@ -843,26 +862,6 @@ class DeckMakerApp:
             return ""
         rate = (float(current) * 60.0) / elapsed
         return f"  {rate:,.0f} records/min"
-
-    def _make_process_output_activity(self, label: str):
-        prefix = str(label or "Process").strip() or "Process"
-        buffer = {"text": ""}
-
-        def on_output(chunk: str):
-            text = str(chunk or "")
-            if not text:
-                return
-            buffer["text"] += text
-            while "\n" in buffer["text"] or "\r" in buffer["text"]:
-                line, sep, rest = buffer["text"].partition("\n")
-                if not sep:
-                    line, _sep, rest = buffer["text"].partition("\r")
-                buffer["text"] = rest
-                item = line.strip()
-                if item:
-                    self._queue_ui_activity(f"{prefix}: {item}")
-
-        return on_output
 
     def _make_final_pdf_output_activity(self, total_pages: int):
         total = max(0, int(total_pages or 0))
@@ -1473,10 +1472,12 @@ class DeckMakerApp:
         can_generate = (not busy) and self._can_generate(template)
         can_open = (not busy) and self._can_open_output(template)
         can_export = (not busy) and self._template_exists(template) and bool(self._selected_export_outputs())
+        can_play = (not busy) and self._can_generate(template)
         try:
             self.run_btn.configure(state="normal" if can_generate else "disabled")
             self.open_btn.configure(state="normal" if can_open else "disabled")
             self.pdf_btn.configure(state="normal" if can_export else "disabled")
+            self.play_btn.configure(state="normal" if can_play else "disabled")
         except Exception:
             pass
 
@@ -1681,6 +1682,7 @@ class DeckMakerApp:
             export_dpi=self._export_dpi_value(),
             jpeg_quality=self._export_jpeg_quality_value(),
             other_format=str(self.other_export_format_var.get() or "png").strip().lower(),
+            other_unit=str(self.other_export_unit_var.get() or "Pages").strip().lower(),
             other_pages=str(self.other_export_pages_var.get() or "").strip(),
             export_cut_template=bool(self.export_cut_template_var.get()),
             cut_template_format=self._cut_format_value_from_label(self.cut_template_format_var.get()),
@@ -1692,6 +1694,7 @@ class DeckMakerApp:
         prefs.set_export_png(bool(self.export_png_var.get()))
         prefs.set_pdfx_version(self._pdfx_value_from_label(self.pdfx_version_var.get()))
         prefs.set_export_other_format(self.other_export_format_var.get())
+        prefs.set_export_other_unit(self.other_export_unit_var.get())
         prefs.set_export_other_pages(self.other_export_pages_var.get())
         prefs.set_export_cut_template(bool(self.export_cut_template_var.get()))
         prefs.set_export_cut_template_format(self._cut_format_value_from_label(self.cut_template_format_var.get()))
@@ -1718,50 +1721,8 @@ class DeckMakerApp:
             f"export={'on' if self.auto_export_var.get() else 'off'}"
         )
 
-    def _log_image_dpi_preflight(self, svg_path_or_report):
-        report = svg_path_or_report if isinstance(svg_path_or_report, dict) else PREFLIGHT.effective_image_dpi_report(str(svg_path_or_report))
-        if not report.get("ok"):
-            self._log(f"Image preflight failed: {report.get('error')}")
-            return
-        rows = list(report.get("rows") or [])
-        if not rows:
-            self._log("Image preflight: no linked bitmap images found")
-            return
-        dpis = [float(r["dpi"]) for r in rows]
-        low = list(report.get("low") or [])
-        high = list(report.get("high") or [])
-        self._log(
-            f"Image preflight: {len(rows)} bitmap(s), effective DPI "
-            f"min={min(dpis):.0f}, median={dpis[len(dpis)//2]:.0f}, max={max(dpis):.0f}"
-        )
-        if low:
-            self._log(f"Image preflight warning: {len(low)} image(s) below 150 dpi")
-            for item in low[:5]:
-                mm = item["placed_mm"]
-                px = item["px"]
-                self._log(
-                    f"  low dpi {item['dpi']:.0f}: {item['file']} "
-                    f"({px[0]}x{px[1]} px at {mm[0]:.1f}x{mm[1]:.1f} mm)"
-                )
-        if high:
-            self._log(f"Image preflight note: {len(high)} image(s) above 900 dpi")
-            for item in high[-5:]:
-                mm = item["placed_mm"]
-                px = item["px"]
-                self._log(
-                    f"  high dpi {item['dpi']:.0f}: {item['file']} "
-                    f"({px[0]}x{px[1]} px at {mm[0]:.1f}x{mm[1]:.1f} mm)"
-                )
-        unresolved = int(report.get("unresolved") or 0)
-        unreadable = int(report.get("unreadable") or 0)
-        if unresolved or unreadable:
-            self._log(f"Image preflight skipped: unresolved={unresolved}, unreadable={unreadable}")
-
     def _output_svg_path(self) -> str:
         return DMPATHS.output_svg(self.template_var.get())
-
-    def _output_pdf_path(self) -> str:
-        return DMPATHS.output_pdf(self.template_var.get())
 
     def _open_path_in_system(self, path: str) -> None:
         target = _normalize_path(path)
@@ -2017,6 +1978,7 @@ class DeckMakerApp:
         self._render_thread.start()
 
     def _render_worker(self, req: AppRequest):
+        succeeded = False
         try:
             import dataset_state as DSTATE
             import engine as ENG
@@ -2045,11 +2007,13 @@ class DeckMakerApp:
                 PREFLIGHT.write_text_report(DMPATHS.output_svg(req.template))
             elapsed = (time.perf_counter() - self._run_started_at) if self._run_started_at else 0.0
             self._generated_output_ready = os.path.isfile(DMPATHS.output_svg(req.template))
+            succeeded = self._generated_output_ready
             self.root.after(0, lambda: self._render_done(f"Done ({elapsed:.2f}s)"))
             self.root.after(0, self._after_create_success)
         except Exception as ex:
             self._generated_output_ready = False
             self._dataset_source_invalid = True
+            self._pending_play_sync = False
             _l.w("[deckmaker_app] render failed:\n" + traceback.format_exc())
             self.root.after(0, lambda: self._render_done(f"Error: {ex}"))
         finally:
@@ -2057,6 +2021,8 @@ class DeckMakerApp:
             self._stop_web_activity_monitor()
             self._render_thread = None
             self.root.after(0, self._refresh_action_button_state)
+            if succeeded and self._pending_play_sync:
+                self.root.after(0, self._sync_play_assets)
 
     def _render_done(self, status: str):
         self.progress.stop()
@@ -2110,6 +2076,7 @@ class DeckMakerApp:
         self.run_btn.configure(state="disabled")
         self.open_btn.configure(state="disabled")
         self.pdf_btn.configure(state="disabled")
+        self.play_btn.configure(state="disabled")
         self.progress.start(10)
         formats = list(options.formats)
         output_labels = list(formats)
@@ -2132,7 +2099,7 @@ class DeckMakerApp:
             f"pdf_raster_mode={options.pdf_raster_mode}, "
             f"dpi={int(options.export_dpi)}, "
             f"jpeg_quality={int(options.jpeg_quality)}, "
-            f"other_format={options.other_format}, pages_or_ids={options.other_pages or 'all pages'}, "
+            f"other_format={options.other_format}, unit={options.other_unit}, selection={options.other_pages or 'all'}, "
             f"cut_template={'on' if options.export_cut_template else 'off'}:{options.cut_template_format}"
         )
 
@@ -2153,6 +2120,89 @@ class DeckMakerApp:
         options = self._export_options_snapshot()
         self._begin_export_ui(options)
         threading.Thread(target=self._export_worker, args=(template, options), daemon=True).start()
+
+    def _play_clicked(self):
+        if self._render_thread and self._render_thread.is_alive():
+            self._log("Wait for render to finish before starting Play")
+            return
+        template = _normalize_path(self.template_var.get())
+        if not template or not self._can_generate(template):
+            self._set_base_status("Choose a valid template and dataset before starting Play")
+            self._log("PnPPlay synchronization requires a valid template and dataset")
+            return
+        self._pending_play_sync = True
+        self._log("PnPPlay sync started: regenerating the deck from its current dataset")
+        self._run_clicked()
+
+    def _sync_play_assets(self):
+        self._pending_play_sync = False
+        template = _normalize_path(self.template_var.get())
+        svg_path = DMPATHS.output_svg(template) if template else ""
+        if not template or not os.path.isfile(svg_path):
+            self._set_base_status("PnPPlay sync failed: generated output SVG not found")
+            self._refresh_action_button_state()
+            return
+        self._post_create_busy = True
+        self._refresh_action_button_state()
+        self.progress.start(10)
+        self._set_base_status("Preparing Play...")
+        self._set_activity("Exporting playable assets at 150 dpi...")
+        self._log("Play started: exporting all generated items")
+
+        def worker():
+            try:
+                runtime = PLAY.find_runtime()
+                game_dir, game_id = PLAY.prepare_game(template, svg_path, runtime)
+                self._queue_ui_activity("Opening PnPPlay Game Designer...")
+                url = self._play_server.designer_url(game_dir, game_id, runtime)
+                self.root.after(0, lambda: self._open_url_in_system(url))
+                self.root.after(0, lambda: self._render_done(f"PnPPlay synchronized: {game_dir}"))
+            except Exception as ex:
+                _l.w("[play] failed %s\n%s", str(ex), traceback.format_exc())
+                self.root.after(0, lambda ex=ex: self._render_done(f"Play failed: {ex}"))
+            finally:
+                self._post_create_busy = False
+                self.root.after(0, self._refresh_action_button_state)
+
+        threading.Thread(target=worker, name="pnpink-play", daemon=True).start()
+
+    def _open_play_page(self, target: str):
+        if self._render_thread and self._render_thread.is_alive():
+            self._log("Wait for render to finish before opening PnPPlay")
+            return
+        template = _normalize_path(self.template_var.get())
+        if not template:
+            self._set_base_status("Open a template before starting PnPPlay")
+            return
+        game_dir, game_id = PLAY.game_project(template)
+        if not (game_dir / "game.json").is_file():
+            self._set_base_status("Synchronize this project with PnPPlay first")
+            self._log("Use PnPPlay > Sync & open Game Designer first")
+            return
+        self._post_create_busy = True
+        self._refresh_action_button_state()
+        self.progress.start(10)
+        self._set_base_status("Opening PnPPlay...")
+
+        def worker():
+            try:
+                runtime = PLAY.find_runtime()
+                if target == "designer":
+                    url = self._play_server.designer_url(game_dir, game_id, runtime)
+                elif target == "lobby":
+                    url = self._play_server.lobby_url(game_dir, runtime)
+                else:
+                    url = self._play_server.open_game(game_dir, game_id, runtime)
+                self.root.after(0, lambda: self._open_url_in_system(url))
+                self.root.after(0, lambda: self._render_done("PnPPlay ready"))
+            except Exception as ex:
+                _l.w("[play] failed %s\n%s", str(ex), traceback.format_exc())
+                self.root.after(0, lambda ex=ex: self._render_done(f"Play failed: {ex}"))
+            finally:
+                self._post_create_busy = False
+                self.root.after(0, self._refresh_action_button_state)
+
+        threading.Thread(target=worker, name="pnpink-play-open", daemon=True).start()
 
     def _export_worker(self, template: str, options: ExportOptions):
         try:
@@ -2270,20 +2320,45 @@ class DeckMakerApp:
                         f"Created ID {label}: {node_id} -> {os.path.basename(path)}"
                     ))
 
-                ok, info = EXPORT.export_other_pages_via_inkscape(
-                    svg_path,
-                    out_path,
-                    export_type=export_type,
-                    page_spec=options.other_pages,
-                    export_dpi=int(options.export_dpi or 300),
-                    jpeg_quality=int(options.jpeg_quality or 90),
-                    on_page_created=_page_other_created,
-                    on_id_created=_id_other_created,
-                )
+                if options.other_unit == "items":
+                    ok, info = EXPORTITEMS.export_items_via_inkscape(
+                        svg_path,
+                        out_path,
+                        export_type=export_type,
+                        item_spec=options.other_pages,
+                        export_dpi=int(options.export_dpi or 300),
+                        on_item_created=_id_other_created,
+                    )
+                elif options.other_unit == "ids":
+                    ok, info = EXPORT.export_other_ids_via_inkscape(
+                        svg_path,
+                        out_path,
+                        export_type=export_type,
+                        id_spec=options.other_pages,
+                        export_dpi=int(options.export_dpi or 300),
+                        jpeg_quality=int(options.jpeg_quality or 90),
+                        on_id_created=_id_other_created,
+                    )
+                else:
+                    ok, info = EXPORT.export_other_pages_via_inkscape(
+                        svg_path,
+                        out_path,
+                        export_type=export_type,
+                        page_spec=options.other_pages,
+                        export_dpi=int(options.export_dpi or 300),
+                        jpeg_quality=int(options.jpeg_quality or 90),
+                        on_page_created=_page_other_created,
+                    )
                 if ok:
                     elapsed = float((info or {}).get("elapsed_s") or 0.0)
                     used_chunks = int((info or {}).get("chunk_count") or 1)
-                    if int((info or {}).get("id_count") or 0) > 0:
+                    if int((info or {}).get("item_count") or 0) > 0:
+                        item_count = int((info or {}).get("item_count") or 0)
+                        physical_count = int((info or {}).get("physical_count") or item_count)
+                        self.root.after(0, lambda elapsed=elapsed, item_count=item_count, physical_count=physical_count, export_type=export_type: self._log(
+                            f"{export_type.upper()} item export done in {elapsed:.2f}s: {item_count} file(s), {physical_count} physical item(s)"
+                        ))
+                    elif int((info or {}).get("id_count") or 0) > 0:
                         id_count = int((info or {}).get("id_count") or 0)
                         self.root.after(0, lambda elapsed=elapsed, id_count=id_count, used_chunks=used_chunks, export_type=export_type: self._log(
                             f"{export_type.upper()} export done in {elapsed:.2f}s across {id_count} id(s) using {used_chunks} SVG part(s)"
@@ -2353,6 +2428,7 @@ class DeckMakerApp:
         self._server_stop.set()
         self._stop_web_activity_monitor()
         self._text_query_service.close()
+        self._play_server.close()
         try:
             import gsheets_client_pkce as GS
             GS.close_session()

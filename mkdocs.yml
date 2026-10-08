@@ -36,6 +36,9 @@ nav:
       - Gradients (Experimental): dsl/gradients.md
       - Advanced: dsl/advanced.md
   - Export: export.md
+  - PnPPlay Integration:
+      - Component Metadata: pnpplay/component-metadata.md
+      - Asset Stores: pnpplay/asset-stores.md
   - Extensions and Tools: extensions.md
   - Snippets: snippets.md
   - Presets: presets.md

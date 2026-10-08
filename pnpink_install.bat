@@ -51,6 +51,7 @@ where tar.exe >nul 2>nul || (
 
 mkdir "!TEMP_DIR!" >nul 2>nul || goto fail
 set "INSTALLER=!TEMP_DIR!\install.py"
+set "PYTHON_BOOTSTRAP=!TEMP_DIR!\pnp_python.py"
 set "PAYLOAD=!TEMP_DIR!\pnpink_payload.zip"
 
 if /I "!VERSION!"=="latest" (
@@ -62,6 +63,7 @@ if /I "!VERSION!"=="latest" (
 )
 
 call :download "!BASE_URL!/install.py" "!INSTALLER!" || goto fail
+call :download_optional "!BASE_URL!/pnp_python.py" "!PYTHON_BOOTSTRAP!"
 call :download "!BASE_URL!/!PAYLOAD_NAME!" "!PAYLOAD!" || goto fail
 
 if "!SKIP_GHOSTSCRIPT!"=="0" call :install_ghostscript || goto fail
@@ -82,6 +84,15 @@ exit /b 0
 echo Downloading %~1
 curl.exe -fL --retry 3 --connect-timeout 20 -o "%~2" "%~1"
 exit /b %ERRORLEVEL%
+
+:download_optional
+echo Downloading %~1
+curl.exe -fL --retry 3 --connect-timeout 20 -o "%~2" "%~1"
+if errorlevel 1 (
+  del /q "%~2" >nul 2>nul
+  echo Shared Python bootstrap is not included in this older release.
+)
+exit /b 0
 
 :find_inkscape
 set "INKSCAPE_EXE="

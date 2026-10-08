@@ -47,9 +47,14 @@ def _row_is_eof_comment(cells: List[str]) -> bool:
 
 def _apply_block_comments(matrix):
     """Remove ####...#### blocks; an unmatched #### keeps the old EOF behavior."""
+    return [row for _row_num, row in _apply_block_comments_indexed(matrix)]
+
+
+def _apply_block_comments_indexed(matrix, source_row_start: int = 1):
+    """Remove #### blocks while preserving each row's physical source number."""
     out = []
     in_block = False
-    for r in (matrix or []):
+    for row_num, r in enumerate((matrix or []), start=max(1, int(source_row_start or 1))):
         cells = ["" if c is None else str(c) for c in (r or [])]
         if _row_is_eof_comment(cells):
             if in_block:
@@ -59,7 +64,7 @@ def _apply_block_comments(matrix):
             continue
         if in_block:
             continue
-        out.append(r)
+        out.append((row_num, r))
     return out
 
 
@@ -107,34 +112,6 @@ def _apply_inline_row_comments(cells: List[str]) -> List[str]:
     return out
 
 parse_template_header_cell = DH.parse_template_header_cell
-
-
-def _is_nontext_dataset_field(header_key: str) -> bool:
-    """Minimal heuristic to decide if a dataset cell can use '##' as a comment.
-
-    Goal: avoid collisions of '#' inside real content (especially text).
-    Therefore, **by default** we do NOT interpret '#' in data cells. We only
-    allow it for fields that are clearly "non-text" (DSL / internal controls).
-
-    Current rule:
-      - Always: column A (leading cell) is commentable.
-      - Dataset columns (B..): only if the header is internal/control.
-        * internal keys "__dm_..." (includes template cols "__dm_tcol__...")
-        * headers starting with '.' (convention: DSL inline)
-
-    If in the future we want to detect "text" by actual SVG element type,
-    it must be done in render (when we already have the node) and NOT here.
-    """
-    h = str(header_key or "")
-    if not h:
-        return False
-    if h.startswith("__dm_"):
-        return True
-    if h.startswith("."):
-        return True
-    return False
-
-
 
 
 def _apply_header_disabling(headers_raw):
@@ -220,7 +197,7 @@ def _decl_split_enabled(decl: dict) -> bool:
     return True
 
 
-def _matrix_to_datasets(matrix):
+def _matrix_to_datasets(matrix, source_row_start: int = 1):
     """
     Convert matrix into 1+ datasets using the *modern* dataset format only.
 
@@ -239,7 +216,9 @@ def _matrix_to_datasets(matrix):
       - This function intentionally drops the old legacy-v1 dataset layout where
         column A was part of the header/data. User has opted out of that format.
     """
-    matrix = _apply_block_comments(matrix)
+    indexed_matrix = _apply_block_comments_indexed(matrix, source_row_start)
+    matrix = [row for _row_num, row in indexed_matrix]
+    source_rows = [row_num for row_num, _row in indexed_matrix]
 
     def _norm_cell(c):
         return "" if c is None else str(c)
@@ -253,15 +232,16 @@ def _matrix_to_datasets(matrix):
             return ""
         return s
 
-    def _parse_lead_to_meta(lead_text: str):
+    def _parse_lead_to_meta(lead_text: str, source_row: Optional[int] = None):
         """Parse lead cell (column A in data rows): copies/page/layout/marks/holes."""
+        row_tag = f" row {source_row}" if source_row is not None else ""
         symbol_id = _symbol_id_from_lead(lead_text)
         if symbol_id:
             lead_text = ""
         try:
             lead = DSL.parse_leading_cell(lead_text)
         except Exception as ex:
-            _l.w(f"parse_leading_cell failed on '{lead_text}': {ex}")
+            _l.w(f"[datasets]{row_tag}: parse_leading_cell failed on '{lead_text}': {ex}")
             lead = None
 
         copies = 1
@@ -290,7 +270,7 @@ def _matrix_to_datasets(matrix):
                 try:
                     DSL.parse_page_block(page_preset)
                 except Exception:
-                    _l.w(f"dataset.row_cell0: ignoring invalid page block '{page_preset}'")
+                    _l.w(f"[datasets]{row_tag}: ignoring invalid page block '{page_preset}'")
                     page_preset = None
 
         _l.d(
@@ -336,11 +316,12 @@ def _matrix_to_datasets(matrix):
         # directive rows inside active datasets to current.comments.
         pending_comments: List[List[str]] = []
         for i, r in enumerate(matrix or []):
+            source_row = source_rows[i]
             if r is None or len(r) == 0:
                 continue
             raw_cells = [_norm_cell(c) for c in r]
             if _row_is_hard_comment(raw_cells):
-                _warn_commented_source_row(raw_cells, i + 1)
+                _warn_commented_source_row(raw_cells, source_row)
                 continue
             if _row_is_comment(raw_cells):
                 rc = _apply_inline_row_comments(raw_cells)
@@ -360,6 +341,7 @@ def _matrix_to_datasets(matrix):
                     base['__dm_copies__'] = 1
                     base['__dm_copies_explicit__'] = False
                     base['__dm_holes__'] = []
+                    base['__dm_sheet_row__'] = source_row
                     current['rows'].append(base)
                 continue
             c0 = str(cells[0]).strip()
@@ -435,7 +417,7 @@ def _matrix_to_datasets(matrix):
                 cells[j] = _strip_cell_trailing_comment(cells[j], enable=True, marker="##")
 
             lead_text = cells[0]
-            copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail, slot_select, slot_select_mode, symbol_id = _parse_lead_to_meta(lead_text)
+            copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail, slot_select, slot_select_mode, symbol_id = _parse_lead_to_meta(lead_text, source_row)
             if _copies_skip_row(copies):
                 _l.i("row skipped due to copies <= 0")
                 continue
@@ -446,6 +428,7 @@ def _matrix_to_datasets(matrix):
             base["__dm_copies_explicit__"] = bool(copies_explicit)
             base["__dm_holes__"] = holes
             base["__dm_iter_select__"] = iter_select
+            base["__dm_sheet_row__"] = source_row
             if symbol_id:
                 base["__dm_symbol_id__"] = symbol_id
             if slot_select:
@@ -472,11 +455,12 @@ def _matrix_to_datasets(matrix):
     header_idx = None
     comments_shorthand: List[List[str]] = []
     for i, r in enumerate(matrix or []):
+        source_row = source_rows[i]
         if r is None:
             continue
         raw_cells = [_norm_cell(c) for c in r]
         if _row_is_hard_comment(raw_cells):
-            _warn_commented_source_row(raw_cells, i + 1)
+            _warn_commented_source_row(raw_cells, source_row)
             continue
         if _row_is_comment(raw_cells):
             rc = _apply_inline_row_comments(raw_cells)
@@ -537,7 +521,7 @@ def _matrix_to_datasets(matrix):
     }
 
     # Parse data rows after header
-    for row_num, r in enumerate((matrix or [])[header_idx + 1:], start=header_idx + 2):
+    for row_num, r in indexed_matrix[header_idx + 1:]:
         if r is None or len(r) == 0:
             continue
         raw_cells = [_norm_cell(c) for c in r]
@@ -555,6 +539,7 @@ def _matrix_to_datasets(matrix):
             base['__dm_copies__'] = 1
             base['__dm_copies_explicit__'] = False
             base['__dm_holes__'] = []
+            base['__dm_sheet_row__'] = row_num
             ds.setdefault('rows', []).append(base)
             continue
         cells = _normalize_row_cells_for_headers(cells, len(headers), active_idx)
@@ -565,7 +550,7 @@ def _matrix_to_datasets(matrix):
             cells[j] = _strip_cell_trailing_comment(cells[j], enable=True, marker="##")
 
         lead_text = cells[0]
-        copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail, slot_select, slot_select_mode, symbol_id = _parse_lead_to_meta(lead_text)
+        copies, copies_explicit, holes, iter_select, page_preset, layout_tail, marks_tail, slot_select, slot_select_mode, symbol_id = _parse_lead_to_meta(lead_text, row_num)
         if _copies_skip_row(copies):
             _l.i("row skipped due to copies <= 0")
             continue
@@ -576,6 +561,7 @@ def _matrix_to_datasets(matrix):
         base["__dm_copies_explicit__"] = bool(copies_explicit)
         base["__dm_holes__"] = holes
         base["__dm_iter_select__"] = iter_select
+        base["__dm_sheet_row__"] = row_num
         if symbol_id:
             base["__dm_symbol_id__"] = symbol_id
         if slot_select:
@@ -660,6 +646,13 @@ def _sheet_range(sheet_name: str, cells: str = "") -> str:
     return f"{sh}!{cc}" if cc else sh
 
 
+def _a1_start_row(range_a1: str) -> int:
+    """Return the first physical row addressed by a Sheet/A1 range."""
+    cells = str(range_a1 or "").rsplit("!", 1)[-1].strip()
+    match = re.match(r"^\$?[A-Za-z]+\$?(\d+)(?::|$)", cells)
+    return max(1, int(match.group(1))) if match else 1
+
+
 def _choose_sheet_and_range(effect, sheet_id: str, selector: Optional[str]) -> str:
     kind, val = _split_selector(selector)
     if kind == "range":
@@ -667,7 +660,10 @@ def _choose_sheet_and_range(effect, sheet_id: str, selector: Optional[str]) -> s
         return _sheet_range(sh, cells)
     if kind == "sheet":
         return _sheet_range(val)
-    # gid / empty -> OAuth uses SVG name, else first sheet.
+    # Numeric gid is only meaningful to the public CSV endpoint. OAuth keeps
+    # the classic behavior: SVG name first, otherwise the first sheet.
+    if kind == "gid":
+        _l.i(f"[datasets.source] numeric gid={val} applies only to public CSV; OAuth selects by SVG/sheet name")
     doc_path = effect._document_path_or_abort()
     svg_stem = os.path.splitext(os.path.basename(doc_path))[0]
     titles = _gs.list_sheet_titles(sheet_id)
@@ -708,6 +704,7 @@ def _fetch_gsheet_matrix_public(effect, sheet_id: str, selector: Optional[str]) 
     urls = []
     if kind == "gid":
         urls.append(f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid={val}")
+        urls.append(f"https://docs.google.com/spreadsheets/d/{sid}/gviz/tq?tqx=out:csv&gid={val}")
     elif kind == "":
         # Requested behavior: public + blank selector => gid=0.
         urls.append(f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid=0")
@@ -734,6 +731,8 @@ def _fetch_gsheet_matrix_public(effect, sheet_id: str, selector: Optional[str]) 
                 headers={
                     "User-Agent": "PnPInk/gsheet-public",
                     "Accept": "text/csv,*/*;q=0.8",
+                    "Cache-Control": "no-cache",
+                    "Pragma": "no-cache",
                 },
                 timeout=12,
                 retries=3,
@@ -772,6 +771,7 @@ def _fetch_gsheet_matrix(
                 m = _fetch_gsheet_matrix_public(effect, sheet_id, selector)
                 if m is not None:
                     return m, "public"
+                _l.i("[datasets.source] public access unavailable; trying OAuth")
                 continue
             m = _fetch_gsheet_matrix_oauth(effect, sheet_id, selector, client_id_env)
             return m, "oauth"
@@ -802,7 +802,7 @@ def resolve_csv(options, base_dir: str, svg_stem: str) -> str:
     p = (getattr(options, 'csv_path', '') or '').strip()
     return p if os.path.isabs(p) else os.path.join(base_dir, (p or f"{svg_stem}.csv"))
 
-def load_datasets(effect, doc_path: Optional[str] = None):
+def load_datasets(effect, doc_path: Optional[str] = None, *, validate: bool = True):
     """Compatibility wrapper: behavior extracted from DeckMaker._load_dataset().
 
     `pnpink_ini.csv` is loaded in this order:
@@ -856,7 +856,7 @@ def load_datasets(effect, doc_path: Optional[str] = None):
             f"sheet_id='{sheet_id}' selector='{range_a1 or ''}'"
         )
         try:
-            if not access_hint and doc_path:
+            if not access_hint and mode_hint != "auto" and doc_path:
                 rec = DSTATE.get_gsheet_for_svg(doc_path) or {}
                 sid0 = str(rec.get("sheet_id") or "").strip()
                 if sid0 and sid0 == sheet_id:
@@ -916,7 +916,11 @@ def load_datasets(effect, doc_path: Optional[str] = None):
         return []
 
     # 2) Normalize into datasets
-    datasets = _matrix_to_datasets(matrix)
+    source_row_start = 1
+    if sheet_id:
+        effective_range = str(getattr(options, "_dataset_effective_range", "") or range_a1 or "")
+        source_row_start = _a1_start_row(effective_range)
+    datasets = _matrix_to_datasets(matrix, source_row_start=source_row_start)
     if not datasets:
         return []
 
@@ -929,6 +933,9 @@ def load_datasets(effect, doc_path: Optional[str] = None):
             main_comments = datasets[0].get("comments", []) or []
             datasets[0]["comments"] = ini_comments + main_comments
             _l.i(f"[datasets] merged {len(ini_comments)} default comment lines from pnpink_ini.csv")
+
+    if not validate:
+        return datasets
 
     # 4) Validate datasets (normal datasets need headers; split marker-only datasets do not).
     valid = [

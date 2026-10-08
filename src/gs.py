@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 import log as LOG
+import process_io as PROCESS_IO
 
 _l = LOG
 
@@ -60,13 +61,6 @@ def _existing_file(path: str | os.PathLike[str] | None) -> str | None:
 
 
 def _slash_value(value: str | None) -> str | None:
-    s = str(value or "").strip()
-    if not s:
-        return None
-    return s if s.startswith("/") else f"/{s}"
-
-
-def _device_name(value: str | None) -> str | None:
     s = str(value or "").strip()
     if not s:
         return None
@@ -438,10 +432,7 @@ def merge_pdfs(
 
         def _reader(stream):
             try:
-                while True:
-                    chunk = stream.read(1)
-                    if not chunk:
-                        break
+                for chunk in PROCESS_IO.iter_text_chunks(stream):
                     output_q.put(chunk)
             except Exception:
                 pass

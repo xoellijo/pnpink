@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-sources_web.py â€” Web source resolvers (Wikimedia Commons, Pixabay, Openclipart)
+sources_web.py — Web source resolvers (Wikimedia Commons, Pixabay, Openclipart)
 """
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from typing import Optional, Tuple, List, Dict
-import json, hashlib, urllib.parse, os, re, sys, math
+import json, hashlib, urllib.parse, os, re, math
 from pathlib import Path
 
 import log as LOG
@@ -14,6 +14,7 @@ _l = LOG
 import net as NET
 import osm as OSM
 import gui as GUI
+import app_paths
 
 PNP_ASSETS_INDEX_URL = "https://xoellijo.github.io/pnpink-assets/assets-index.json"
 
@@ -839,25 +840,26 @@ class WebSources:
         if k:
             return str(k).strip()
         # Then user-scoped key file (same pattern as gsheets tokens)
-        kf = WebSources._pixabay_keyfile_path()
-        if kf and os.path.isfile(kf):
+        for kf in WebSources._pixabay_keyfile_paths():
+            if not os.path.isfile(kf):
+                continue
             try:
                 with open(kf, "r", encoding="utf-8") as f:
                     return str(f.read() or "").strip()
             except Exception:
-                return ""
+                continue
         return ""
 
     @staticmethod
     def _pixabay_keyfile_path() -> Optional[str]:
-        # mirrors gsheets_client_pkce.py location pattern
-        if sys.platform.startswith("win"):
-            base = os.environ.get("APPDATA") or os.path.expanduser("~")
-            return os.path.join(base, "PnPInk", "pixabay", "key.txt")
-        elif sys.platform == "darwin":
-            return os.path.join(os.path.expanduser("~/Library/Application Support"), "PnPInk", "pixabay", "key.txt")
-        else:
-            return os.path.join(os.path.expanduser("~/.pnpink"), "pixabay", "key.txt")
+        return str(app_paths.data_path("pixabay", "key.txt"))
+
+    @staticmethod
+    def _pixabay_keyfile_paths() -> list[str]:
+        return [
+            WebSources._pixabay_keyfile_path(),
+            *(str(path) for path in app_paths.legacy_data_paths("pixabay", "key.txt")),
+        ]
 
     def _pxby_fetch_urls(self, query: str, size: str) -> List[str]:
         key = self._pixabay_key()

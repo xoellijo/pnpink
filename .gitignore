@@ -36,5 +36,14 @@ src/docs/*.pdf
 site/
 chat_package_stage/
 
+# Local Deckmaker/PnPPlay runtime state
+.tmp-deckmaker-state.json
+data/
+*.mp4
+
+# Generated example output and downloaded source caches
+src/examples/**/*_output.svg
+src/examples/**/assets/
+
 # old branches
 .git_old/

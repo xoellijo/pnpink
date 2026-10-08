@@ -1,0 +1,543 @@
+:root {
+  color-scheme: dark;
+  --page: #070707;
+  --panel: #050505;
+  --line: #ffffff20;
+  --text: #f7f7f5;
+  --muted: #a5a5a2;
+  --accent: #ffffff;
+  --console-height: clamp(150px, 28vh, 260px);
+}
+
+* { box-sizing: border-box; }
+
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+
+body {
+  background: radial-gradient(circle at 15% 0%, #242424 0, var(--page) 42%);
+  color: var(--text);
+  font: 14px/1.35 "Avenir Next", Avenir, "Segoe UI", sans-serif;
+}
+
+body.url-drop-active .gsheet-editor::after {
+  content: "Drop Google Sheets URL";
+  position: absolute;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  border: 2px dashed #ffffff99;
+  border-radius: 10px;
+  color: #fff;
+  background: #050505c4;
+  font-size: 18px;
+  font-weight: 700;
+  pointer-events: none;
+  backdrop-filter: blur(7px);
+}
+body.image-drop-active .preview-panel::after {
+  content: "Drop image to create a spritesheet";
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  border: 2px dashed #efbd73;
+  border-radius: 7px;
+  color: #fff;
+  background: #050505a8;
+  font-size: 18px;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+}
+
+main { --deckmaker-pane-height: 320px; position: relative; width: 100%; height: 100%; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(60px, var(--deckmaker-pane-height)) 8px minmax(0, 1fr); padding: 2px; }
+#gui {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  z-index: 100;
+  width: min(328px, calc(100vw - 4px));
+  height: calc(var(--deckmaker-pane-height) - 4px);
+  max-height: none;
+  overflow: visible;
+  pointer-events: none;
+}
+#gui > .lil-gui { pointer-events: auto; }
+.preview-panel {
+  position: relative;
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #ffffff20;
+  border-radius: 7px;
+  background: #fff;
+  box-shadow: 0 8px 24px #0006;
+  backdrop-filter: blur(7px);
+}
+.preview-viewport {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  outline: none;
+  cursor: grab;
+  touch-action: none;
+  --preview-grid-size: 40px;
+  --preview-grid-x: 0px;
+  --preview-grid-y: 0px;
+  background-color: #fff;
+  background-image: linear-gradient(to right, #1b355022 1px, transparent 1px), linear-gradient(to bottom, #1b355022 1px, transparent 1px);
+  background-position: var(--preview-grid-x) var(--preview-grid-y);
+  background-size: var(--preview-grid-size) var(--preview-grid-size);
+}
+.preview-viewport.dragging { cursor: grabbing; }
+.preview-viewport:focus-visible { box-shadow: inset 0 0 0 1px #efbd73; }
+.preview-stage {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  transform-origin: center;
+  will-change: transform;
+}
+.preview-stage > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  user-select: none;
+  pointer-events: none;
+}
+.preview-stage > img[hidden] { display: none; }
+.preview-spritesheet-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.preview-spritesheet-overlay[hidden] { display: none; }
+.preview-spritesheet-overlay .sprite-cell { cursor: grab; outline: none; pointer-events: auto; user-select: none; }
+.preview-spritesheet-overlay .sprite-cell rect { fill: #ef343409; stroke: #ef3434; stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
+.preview-spritesheet-overlay .sprite-cell:hover rect,
+.preview-spritesheet-overlay .sprite-cell:focus rect { fill: #ef343426; stroke: #ff8b8b; stroke-width: 2px; }
+.preview-spritesheet-overlay .sprite-cell.selected rect { fill: #ffc85738; stroke: #ffc857; stroke-width: 2.5px; }
+.deckmaker-row-label { flex: 0 0 auto; align-self: center; min-width: 34px; color: #ddd; font-size: 11px; }
+.preview-message {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: #666;
+  text-align: center;
+}
+.preview-message[hidden] { display: none; }
+.preview-message code { color: #efbd73; }
+.preview-scale {
+  --preview-scale-width: 40px;
+  position: absolute;
+  right: 9px;
+  bottom: 7px;
+  z-index: 3;
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+  color: #21364ca6;
+  font: 9px/1 "Avenir Next", Avenir, "Segoe UI", sans-serif;
+  pointer-events: none;
+}
+.preview-scale[hidden] { display: none; }
+.preview-scale i {
+  width: var(--preview-scale-width);
+  height: 5px;
+  border-right: 1px solid #21364c99;
+  border-bottom: 1px solid #21364c99;
+  border-left: 1px solid #21364c99;
+}
+.workspace-splitter {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  position: relative;
+  z-index: 90;
+  width: 100%;
+  cursor: row-resize;
+  touch-action: none;
+}
+.workspace-splitter::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: #ffffff38;
+}
+.workspace-splitter:hover::before,
+.workspace-splitter:focus-visible::before { background: #efbd73; }
+.workspace-splitter::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 0;
+  width: 30%;
+  height: 2px;
+  border-radius: 2px;
+  background: #4fd36b;
+  opacity: 0;
+  transform: translateX(-110%);
+  pointer-events: none;
+}
+.workspace-splitter.preview-busy::after {
+  opacity: 1;
+  animation: deckmaker-preview-progress 1s ease-in-out infinite;
+}
+@keyframes deckmaker-preview-progress {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(370%); }
+}
+#gui > .lil-gui.deckmaker-menu,
+#gui > .lil-gui.deckmaker-menu .lil-gui {
+  --background-color: #070707b8;
+  --text-color: #f7f7f5;
+  --title-background-color: #050505c4;
+  --title-text-color: #fff;
+  --widget-color: #151515c4;
+  --hover-color: #292929dc;
+  --focus-color: #343434dc;
+  --number-color: #fff;
+  --string-color: #fff;
+  --font-size: 12px;
+  --input-font-size: 12px;
+  --font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+  --padding: 3px;
+  --spacing: 2px;
+  --widget-height: 24px;
+  --title-height: 27px;
+  --icon-size: 16px;
+  --folder-indent: 13px;
+  color: #f7f7f5;
+  background: #070707b8;
+  font-weight: 400;
+}
+#gui > .lil-gui.deckmaker-menu {
+  width: 100% !important;
+  max-height: calc(var(--deckmaker-pane-height) - 4px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: auto;
+  border: 1px solid #ffffff20;
+  border-radius: 7px;
+  box-shadow: 0 8px 24px #0008;
+  backdrop-filter: blur(7px);
+}
+#gui .deckmaker-menu > .title,
+#gui .deckmaker-menu .lil-gui > .title { color: #fff; background: #050505c4; font-weight: 400; }
+#gui .deckmaker-menu .children { background: #070707b8; }
+#gui .deckmaker-menu .controller { border-color: #ffffff0d; }
+#gui .deckmaker-menu .controller button { color: #fff; background: #151515d9; }
+#gui .deckmaker-menu .controller button:hover { background: #292929; }
+#gui .deckmaker-menu > .title::before,
+#gui .deckmaker-menu .lil-gui > .title::before {
+  display: inline-block !important;
+  flex: 0 0 11px;
+  width: 11px;
+  padding-right: 2px !important;
+  font-family: lil-gui !important;
+  color: #bdbdbd;
+}
+#gui .deckmaker-menu .title > .remove-bar::before { display: none !important; content: none !important; }
+#gui .deckmaker-menu .title { gap: 3px; padding-left: 5px; }
+#gui .deckmaker-menu .title > .remove-bar { min-width: 0; padding: 0 3px 0 0; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+#gui .deckmaker-menu.root > .title { display: flex; align-items: center; }
+#gui .deckmaker-menu.root > .title > .deckmaker-root-toggle { width: 0; min-width: 0; flex: 1 1 0; color: #fff; background: transparent; }
+#gui .deckmaker-menu .title .iconify { flex: 0 0 auto; margin-right: 2px !important; color: #fff !important; }
+#gui .deckmaker-menu .title > .deckmaker-dataset-open {
+  width: auto;
+  min-width: 0;
+  flex: 0 0 auto;
+  margin: 0 2px 0 auto;
+  padding: 0;
+}
+#gui .deckmaker-menu .title > .deckmaker-dataset-open .widget { min-height: 21px; }
+#gui .deckmaker-menu .title > .deckmaker-dataset-open button {
+  width: auto;
+  height: 21px;
+  padding: 0 5px;
+}
+#gui .deckmaker-menu .title > .deckmaker-dataset-open .name {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  padding: 0;
+  line-height: 21px;
+  white-space: nowrap;
+}
+#gui .deckmaker-menu.root > .title .deckmaker-template-name { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#gui .deckmaker-template-picker { position: relative; width: 22px; height: 21px; flex: 0 0 22px; display: grid; place-items: center; border: 1px solid #ffffff22; border-radius: 4px; background: #171717d9; }
+#gui .deckmaker-template-picker > .iconify { margin: 0 !important; pointer-events: none; }
+#gui .deckmaker-template-select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  opacity: .01;
+  cursor: pointer;
+}
+#gui .deckmaker-template-select:disabled {
+  color: #fff;
+  -webkit-text-fill-color: #fff;
+  opacity: .82;
+}
+#gui .deckmaker-template-select option {
+  color: #fff;
+  background: #171717;
+}
+#gui .deckmaker-preview-asset-select {
+  min-width: 0;
+  height: 21px;
+  flex: 0 1 78px;
+  width: 78px;
+  border: 1px solid #ffffff22;
+  border-radius: 4px;
+  padding: 0 17px 0 4px;
+  overflow: hidden;
+  color: #fff;
+  background: #171717d9;
+  color-scheme: dark;
+  font: inherit;
+  font-weight: 400;
+  text-overflow: ellipsis;
+}
+#gui .deckmaker-title-button {
+  width: 22px;
+  height: 21px;
+  flex: 0 0 22px;
+  border: 1px solid #ffffff30;
+  border-radius: 3px;
+  padding: 0;
+  color: #fff;
+  background: #171717d9;
+  font: inherit;
+  line-height: 19px;
+  text-align: center;
+}
+#gui .deckmaker-title-button:hover { background: #343434; }
+#gui .deckmaker-title-button .iconify { margin: 0 !important; }
+#gui .deckmaker-title-button:disabled,
+#gui .deckmaker-preview-asset-select:disabled { opacity: .45; }
+#gui .deckmaker-drop-target > .title {
+  color: #17120a !important;
+  background: #efbd73 !important;
+  box-shadow: inset 0 0 0 1px #fff4d0, 0 0 12px #efbd7399;
+}
+#gui .deckmaker-menu .lil-gui > .children {
+  margin-left: var(--folder-indent);
+  border-left: 1px solid #ffffff20;
+}
+#gui .deckmaker-menu .lil-gui.closed > .title .iconify { opacity: .68; }
+#gui .deckmaker-menu .controller.option .display::after { content: "\2195" !important; font-family: inherit !important; }
+#gui .deckmaker-menu input[type="checkbox"]:checked::before { content: "\2713" !important; font-family: inherit !important; }
+#gui .deckmaker-menu input[type="checkbox"] {
+  appearance: none;
+  flex: 0 0 var(--checkbox-size);
+  width: var(--checkbox-size) !important;
+  min-width: var(--checkbox-size) !important;
+  height: var(--checkbox-size) !important;
+  border: 1px solid #c7c7c7 !important;
+  border-radius: var(--widget-border-radius);
+  background-color: #777 !important;
+  box-shadow: inset 0 0 0 1px #ffffff30;
+}
+#gui .deckmaker-menu input[type="checkbox"]:checked {
+  color: #050505;
+  border-color: #efbd73 !important;
+  background-color: #ededeb !important;
+  box-shadow: 0 0 0 1px #efbd73, inset 0 0 0 1px #fff;
+}
+#gui .lil-gui.root { max-height: none; }
+
+@media (hover: hover) {
+  #gui .deckmaker-menu input[type="checkbox"]:hover {
+    border-color: #fff !important;
+    background-color: #929292 !important;
+    box-shadow: inset 0 0 0 1px #fff;
+  }
+  #gui .deckmaker-menu input[type="checkbox"]:checked:hover { background-color: #fff !important; }
+}
+
+.deckmaker-row { display: flex; align-items: stretch; gap: 2px !important; padding: 2px 3px; }
+.deckmaker-row > .controller { width: 0 !important; min-width: 0; flex: 1 1 0 !important; margin: 0 !important; padding: 0 !important; }
+.deckmaker-row > .controller .widget,
+.deckmaker-row > .controller button,
+.deckmaker-row > .controller input { min-width: 0; width: 100%; }
+.deckmaker-row > .controller .name { display: flex; min-width: 0; align-items: center; padding: 0 2px; overflow: hidden; line-height: var(--widget-height); text-overflow: ellipsis; white-space: nowrap; }
+.deckmaker-row > .controller .iconify { flex: 0 0 auto; margin-right: 2px !important; color: #fff !important; }
+.deckmaker-controller-icon { width: 16px; height: 16px; flex: 0 0 16px; margin-right: 2px; object-fit: contain; }
+.deckmaker-primary-actions > .controller button { font-weight: 400; }
+.deckmaker-main-actions > .deckmaker-action-button { flex: 1 1 0 !important; }
+.deckmaker-main-actions > .deckmaker-action-button button { padding: 0 2px; font-size: 10.5px; font-weight: 400; }
+.deckmaker-main-actions > .deckmaker-action-button .name { padding: 0 1px; }
+.deckmaker-icon-row > .controller,
+.deckmaker-profile-row > .controller { flex-basis: 28px !important; }
+.deckmaker-row > .deckmaker-icon-only .name { min-width: 22px; justify-content: center; padding: 0; }
+.deckmaker-row > .deckmaker-icon-only .iconify { margin: 0 !important; }
+.deckmaker-fields > .controller { flex: 1 1 50% !important; }
+.deckmaker-fields > .controller:last-child { flex-grow: 1.4 !important; }
+.deckmaker-fields .name { flex: 0 0 24px !important; width: 24px; }
+.deckmaker-fields .widget { width: calc(100% - 24px) !important; }
+.deckmaker-number-row > .controller .name { flex: 0 0 auto; min-width: 52px; }
+.deckmaker-sprite-compact-row { gap: 1px !important; }
+.deckmaker-sprite-compact-row > .controller .name {
+  flex: 0 0 19px !important;
+  width: 19px;
+  min-width: 19px;
+  padding: 0 !important;
+  justify-content: center;
+}
+.deckmaker-sprite-compact-row > .controller .iconify { margin: 0 !important; }
+.deckmaker-sprite-compact-row > .controller.number.hasSlider input {
+  flex: 0 0 34px;
+  width: 34px;
+  min-width: 34px;
+  margin-left: 1px;
+  padding-left: 2px;
+}
+.deckmaker-sprite-compact-row > .controller.number .slider { min-width: 24px; }
+.deckmaker-sprite-compact-row > .deckmaker-row-label { min-width: 28px; font-size: 10px; }
+.deckmaker-auto-row > .controller .name,
+.deckmaker-output-row > .controller .name { flex: 1 1 auto; }
+.deckmaker-auto-row > .controller .widget,
+.deckmaker-output-row > .controller .widget,
+.deckmaker-profile-row > .controller .widget { flex: 0 0 auto; width: auto; }
+.deckmaker-menu .controller.disabled { opacity: .62; }
+
+.console-panel {
+  position: fixed;
+  top: 2px;
+  left: 2px;
+  width: min(760px, calc(100vw - 4px));
+  z-index: 130;
+  height: var(--console-height);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #050505df;
+  box-shadow: 0 8px 24px #0008;
+  backdrop-filter: blur(7px);
+}
+.console-panel[hidden] { display: none; }
+.console-header { flex: 0 0 28px; display: flex; align-items: center; gap: 8px; padding: 0 5px 0 10px; border-bottom: 1px solid var(--line); color: #fff; }
+.console-header span { font-size: 12px; font-weight: 700; }
+.console-header small { color: var(--muted); font-size: 10px; }
+.console-header button { margin-left: auto; width: 24px; height: 22px; border: 0; border-radius: 4px; color: #fff; background: transparent; font: 18px/1 sans-serif; cursor: pointer; }
+.console-header button:hover { background: #ffffff20; }
+#log { min-height: 0; flex: 1; margin: 0; padding: 9px 11px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: #ccd2db; font: 11px/1.42 "Cascadia Mono", Consolas, monospace; scrollbar-gutter: stable; }
+#toast { position: fixed; right: 18px; bottom: 18px; max-width: 420px; padding: 10px 14px; border-radius: 7px; color: white; background: #7b2e2e; opacity: 0; pointer-events: none; transition: opacity .18s; }
+#toast.visible { opacity: 1; }
+
+.gsheet-editor {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  position: relative;
+  z-index: 20;
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #050505df;
+  box-shadow: 0 8px 24px #0008;
+}
+.gsheet-editor[hidden] { display: none; }
+.gsheet-editor.empty { border-style: dashed; background: #0d0d0dd9; }
+.gsheet-editor iframe {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  border: 0;
+  background: #fff;
+}
+.gsheet-editor iframe[hidden] { display: none; }
+.gsheet-editor-message { min-height: 0; flex: 1 1 auto; display: grid; place-items: center; color: var(--muted); }
+.gsheet-editor-message[hidden] { display: none; }
+
+.job-status {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  z-index: 110;
+  width: min(520px, calc(100vw - 24px));
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: #fff;
+  background: #050505d9;
+  box-shadow: 0 8px 24px #0008;
+  backdrop-filter: blur(7px);
+}
+body.log-visible .job-status { bottom: 12px; }
+.job-status:not(.active) { display: none; }
+.job-status.error { border-color: #d96b78; background: rgba(77, 20, 29, .96); }
+.job-copy { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.job-copy strong, .job-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-copy strong { flex: 0 0 auto; font-size: 12px; }
+.job-copy span { min-width: 0; color: #c9c9c6; font-size: 11px; }
+.job-copy a { flex: 0 0 auto; color: #19130a; background: #efbd73; border-radius: 4px; padding: 3px 7px; font-size: 11px; font-weight: 600; text-decoration: none; }
+.job-copy a:hover { background: #ffd28d; }
+.job-copy a[hidden] { display: none; }
+.job-spinner { width: 15px; height: 15px; border: 2px solid #ffffff35; border-top-color: #fff; border-radius: 50%; animation: deckmaker-spin .7s linear infinite; }
+.job-spinner[hidden] { display: none !important; }
+.job-status progress { grid-column: 1 / -1; width: 100%; height: 3px; border: 0; accent-color: #efbd73; }
+@keyframes deckmaker-spin { to { transform: rotate(360deg); } }
+
+.spritesheet-panel { position: fixed; inset: 0; z-index: 150; min-width: 0; min-height: 0; display: grid; grid-template-rows: 42px minmax(0, 1fr) 42px; background: #050505c4; }
+.spritesheet-panel[hidden] { display: none; }
+.spritesheet-toolbar, .spritesheet-footer { min-width: 0; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.spritesheet-toolbar strong { flex: 0 0 auto; font-size: 13px; }
+.spritesheet-toolbar span { min-width: 0; flex: 1 1 auto; overflow: hidden; color: #cfcfcb; font: 11px/1.2 "Cascadia Mono", Consolas, monospace; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.spritesheet-toolbar button, .spritesheet-footer button { min-height: 27px; padding: 0 9px; border: 1px solid var(--line); border-radius: 5px; color: #fff; background: #151515d9; cursor: pointer; }
+.spritesheet-toolbar button:hover, .spritesheet-footer button:hover { background: #292929; }
+.spritesheet-viewport { position: relative; min-width: 0; min-height: 0; overflow: hidden; background-color: #161616; background-image: linear-gradient(45deg, #202020 25%, transparent 25%), linear-gradient(-45deg, #202020 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #202020 75%), linear-gradient(-45deg, transparent 75%, #202020 75%); background-position: 0 0, 0 8px, 8px -8px, -8px 0; background-size: 16px 16px; cursor: grab; touch-action: none; }
+.spritesheet-viewport:active { cursor: grabbing; }
+.spritesheet-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; background: #fff; box-shadow: 0 8px 40px #000c; }
+.spritesheet-stage img, .spritesheet-stage svg { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.spritesheet-stage img { object-fit: fill; }
+.spritesheet-stage svg { overflow: visible; }
+.sprite-cell { cursor: pointer; outline: none; }
+.sprite-cell rect { fill: #1a73e812; stroke: #53a3ff; stroke-width: 1.2px; vector-effect: non-scaling-stroke; }
+.sprite-cell:hover rect, .sprite-cell:focus rect { fill: #1a73e833; stroke: #fff; stroke-width: 2px; }
+.sprite-cell.selected rect { fill: #ffc85738; stroke: #ffc857; stroke-width: 2.5px; }
+.sprite-cell text { fill: #fff; paint-order: stroke; stroke: #000; stroke-width: .7px; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.spritesheet-message { position: absolute; inset: 0; display: grid; place-items: center; padding: 30px; color: #ddd; background: #090909d9; text-align: center; }
+.spritesheet-footer { border-top: 1px solid var(--line); border-bottom: 0; }
+.spritesheet-footer > span { color: var(--muted); font-size: 11px; }
+.spritesheet-footer code { color: #fff0ae; font-size: 12px; }
+.spritesheet-footer small { min-width: 0; flex: 1; overflow: hidden; color: var(--muted); text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 760px) {
+  main { padding: 2px; }
+  #gui { top: 2px; left: 2px; width: calc(100vw - 4px); height: calc(var(--deckmaker-pane-height) - 4px); }
+  #gui { width: 100%; }
+}

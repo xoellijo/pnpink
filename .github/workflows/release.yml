@@ -34,6 +34,13 @@ jobs:
           fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          if [[ "${VERSION}" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "latest_name=pnpink_payload_beta_latest.zip" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "latest_name=pnpink_payload_latest.zip" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build payload ZIPs
         id: package
@@ -56,8 +63,8 @@ jobs:
               raise SystemExit("No src/inx/*.inx files found; aborting release.")
 
           expected_app_version = f'APP_VERSION = "Deckmaker v{version}"'
-          if expected_app_version not in (src / "deckmaker_app.py").read_text(encoding="utf-8"):
-              raise SystemExit(f"src/deckmaker_app.py is not versioned as {version}.")
+          if expected_app_version not in (src / "deckmaker_types.py").read_text(encoding="utf-8"):
+              raise SystemExit(f"src/deckmaker_types.py is not versioned as {version}.")
 
           expected_inx_name = f"<_name>DeckMaker v{version}</_name>"
           if not any(expected_inx_name in path.read_text(encoding="utf-8") for path in inx_files):
@@ -72,7 +79,7 @@ jobs:
                           continue
                       zf.write(p, p.relative_to(root).as_posix())
 
-          latest_name = "pnpink_payload_latest.zip"
+          latest_name = os.environ["LATEST_NAME"]
           latest_path = dist / latest_name
           latest_path.write_bytes(payload_path.read_bytes())
 
@@ -80,21 +87,22 @@ jobs:
           print(f"latest_name={latest_name}")
           PY
 
-          LATEST_NAME="pnpink_payload_latest.zip"
           test -f "dist/${LATEST_NAME}"
         env:
           VERSION: ${{ steps.meta.outputs.version }}
+          LATEST_NAME: ${{ steps.meta.outputs.latest_name }}
 
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: PnPInk ${{ steps.meta.outputs.tag }}
-          prerelease: false
+          prerelease: ${{ steps.meta.outputs.prerelease }}
           files: |
             dist/pnpink_payload_${{ steps.meta.outputs.version }}.zip
-            dist/pnpink_payload_latest.zip
+            dist/${{ steps.meta.outputs.latest_name }}
             install.py
+            pnp_python.py
             pnpink_install.sh
             pnpink_install.bat
           fail_on_unmatched_files: true

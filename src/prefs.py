@@ -8,16 +8,20 @@ Adds:
   - log_json (0/1)
 """
 import os, configparser
+from pathlib import Path
 from typing import Any, Optional
 import builtins as BI
+from app_paths import data_path
 _bi = BI
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_INI_PATH = os.path.join(_BASE_DIR, "preferences.ini")
+_DEFAULT_INI_PATH = Path(_BASE_DIR) / "preferences.ini"
+_INI_PATH = data_path("preferences.ini")
 _SECTION  = "prefs"
 
 _CACHE_LOADED = False
 _CACHE: dict[str, str] = {}
+_BUNDLED_DEFAULTS: dict[str, str] = {}
 
 _DEFAULTS = {
     "console_log_level": "warn",  # none|error|warn|info|debug|trace|all|debug_only|trace_only
@@ -42,10 +46,12 @@ _DEFAULTS = {
     "auto_create":        "1",
     "auto_open":          "0",
     "auto_export":        "0",
+    "auto_preview":       "0",
     "export_pdf":         "1",
     "export_png":         "0",
     "export_other_format": "png",
     "export_other_pages": "",
+    "export_other_unit": "pages",
     "export_other_ids": "",
     "export_cut_template": "0",
     "export_cut_template_format": "svg",
@@ -75,6 +81,7 @@ _DEFAULTS = {
     "inline_icons_extra_ratio": "0.00",
     "template_engine": "composed",
     "web_user_agent": "github.com/xoellijo/pnpink",
+    "deckmaker_web_browser": "system",
 
 }
 
@@ -82,6 +89,7 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     ("auto_create", ("Auto-generate the deck when the window starts. Values: 0 | 1",)),
     ("auto_export", ("Auto-export after generation. Values: 0 | 1",)),
     ("auto_open", ("Open the generated SVG after generation. Values: 0 | 1",)),
+    ("auto_preview", ("Refresh the Deckmaker Web SVG preview automatically. Values: 0 | 1",)),
     ("console_log_level", ("Console log verbosity. Values: none | error | warn | info | debug | trace | all | debug_only | trace_only",)),
     ("file_log_level", ("File log verbosity written to pnpink.log. Values: none | error | warn | info | debug | trace | all | debug_only | trace_only",)),
     ("log_json", ("Write logs as JSON. Values: 0 | 1",)),
@@ -101,7 +109,8 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     )),
     ("export_png", ("Enable additional non-PDF export. Values: 0 | 1",)),
     ("export_other_format", ("Additional output format. Values: png | jpeg | jpeg2000 | pdf | svg | tiff | webp | avif | ps | eps | emf | wmf",)),
-    ("export_other_pages", ("Optional pages for additional output. Examples: 1,3-5,8. Empty = all pages",)),
+    ("export_other_unit", ("Additional export unit. Values: pages | items | ids",)),
+    ("export_other_pages", ("Page range, item selector, or object IDs according to export_other_unit",)),
     ("export_other_ids", ("Optional object IDs for additional output. Comma-separated ids. If set, page selection is ignored and one file per ID is exported.",)),
     ("export_cut_template", ("Export plotter cut templates from generated instance bboxes. Values: 0 | 1",)),
     ("export_cut_template_format", ("Cut template output format. Values: svg | png | dxf",)),
@@ -124,6 +133,7 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     ("inline_icons_extra_ratio", ("Extra inline icon text advance as a fraction of text height. Negative values bring surrounding text closer without resizing the icon. Default: 0.00",)),
     ("template_engine", ("Template instantiation engine. Values: legacy | composed | composed-instance", "composed is the default; unsupported individual templates fall back to legacy.")),
     ("web_user_agent", ("User-Agent used for Wikimedia/direct web asset downloads. Empty = github.com/xoellijo/pnpink",)),
+    ("deckmaker_web_browser", ("Browser used by Deckmaker Web. Values: system | edge | chrome | chromium | firefox | safari",)),
     ("split_svg_output", ("Split DM_output into SVG parts. Values: 0 | 1",)),
     ("split_svg_mode", ("SVG split mode. Values: parts | limits",)),
     ("split_svg_parts", ("Split SVG into this number of parts when split_svg_mode=parts. Empty = disabled.",)),
@@ -154,29 +164,38 @@ def get_marks_style_dict() -> dict[str, str]:
         "fill": "none",
     }
 
-def ini_path() -> str: return _INI_PATH
+def ini_path() -> str: return str(_INI_PATH)
+
+
+def defaults_ini_path() -> str: return str(_DEFAULT_INI_PATH)
+
+
+def _read_section(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    cfg = configparser.ConfigParser()
+    try:
+        with path.open("r", encoding="utf-8") as stream:
+            cfg.read_file(stream)
+    except (OSError, configparser.Error):
+        return {}
+    return dict(cfg.items(_SECTION)) if cfg.has_section(_SECTION) else {}
 
 def _ensure_loaded() -> None:
-    global _CACHE_LOADED, _CACHE
+    global _CACHE_LOADED, _CACHE, _BUNDLED_DEFAULTS
     if _CACHE_LOADED: return
-    _CACHE = {}
-    cfg = configparser.ConfigParser()
-    if os.path.isfile(_INI_PATH):
-        try:
-            with open(_INI_PATH, "r", encoding="utf-8") as f:
-                cfg.read_file(f)
-            if cfg.has_section(_SECTION):
-                for k, v in cfg.items(_SECTION): _CACHE[k] = v
-        except Exception: _CACHE = {}
+    _BUNDLED_DEFAULTS = _read_section(_DEFAULT_INI_PATH)
+    _CACHE = _read_section(_INI_PATH)
     _CACHE_LOADED = True
 
 def reload() -> None:
-    global _CACHE_LOADED, _CACHE
-    _CACHE_LOADED = False; _CACHE = {}; _ensure_loaded()
+    global _CACHE_LOADED, _CACHE, _BUNDLED_DEFAULTS
+    _CACHE_LOADED = False; _CACHE = {}; _BUNDLED_DEFAULTS = {}; _ensure_loaded()
 
 def get(name: str, default: Optional[Any]=None) -> Any:
     _ensure_loaded()
     if name in _CACHE: return _CACHE[name]
+    if name in _BUNDLED_DEFAULTS: return _BUNDLED_DEFAULTS[name]
     if name in _DEFAULTS: return _DEFAULTS[name] if default is None else default
     return default
 
@@ -186,19 +205,19 @@ def set(name: str, value: Any, save: bool=True) -> None:
     if save: _save_ini()
 
 def _save_ini() -> None:
-    keys = _bi.set(_DEFAULTS.keys()) | _bi.set(_CACHE.keys())
+    keys = _bi.set(_CACHE.keys())
     documented = [key for key, _doc in _PREF_DOCS if key in keys]
     documented_set = _bi.set(documented)
     doc_by_key = dict(_PREF_DOCS)
     extra = sorted(key for key in keys if key not in documented_set)
-    os.makedirs(os.path.dirname(_INI_PATH), exist_ok=True)
-    with open(_INI_PATH, "w", encoding="utf-8") as fh:
+    _INI_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with _INI_PATH.open("w", encoding="utf-8") as fh:
         fh.write(f"[{_SECTION}]\n")
         for key in documented + extra:
             fh.write("\n")
             for line in doc_by_key.get(key, ("Custom/unknown preference.",)):
                 fh.write(f"# {line}\n")
-            v = _CACHE.get(key, _DEFAULTS.get(key, ""))
+            v = _CACHE.get(key, "")
             fh.write(f"{key} = {'' if v is None else str(v)}\n")
 
 # Convenience getters/setters
@@ -230,6 +249,18 @@ def get_web_user_agent(default: str = "github.com/xoellijo/pnpink") -> str:
 
 def set_web_user_agent(value: str) -> None:
     set("web_user_agent", str(value or "").strip(), save=True)
+
+
+def get_deckmaker_web_browser(default: str = "system") -> str:
+    valid = {"system", "edge", "chrome", "chromium", "firefox", "safari"}
+    value = str(get("deckmaker_web_browser", default) or default).strip().lower()
+    return value if value in valid else "system"
+
+
+def set_deckmaker_web_browser(value: str) -> None:
+    valid = {"system", "edge", "chrome", "chromium", "firefox", "safari"}
+    browser = str(value or "system").strip().lower()
+    set("deckmaker_web_browser", browser if browser in valid else "system", save=True)
 
 
 def get_pdf_profiles(default: str = "default") -> list[str]:
@@ -329,6 +360,14 @@ def set_auto_export(flag: bool) -> None:
     set("auto_export", "1" if flag else "0", save=True)
 
 
+def get_auto_preview(default: bool = False) -> bool:
+    return str(get("auto_preview", "1" if default else "0")).strip() == "1"
+
+
+def set_auto_preview(flag: bool) -> None:
+    set("auto_preview", "1" if flag else "0", save=True)
+
+
 def get_export_pdf(default: bool = True) -> bool:
     return str(get("export_pdf", "1" if default else "0")).strip() == "1"
 
@@ -371,6 +410,16 @@ def get_export_other_pages(default: str = "") -> str:
 
 def set_export_other_pages(value: str) -> None:
     set("export_other_pages", str(value or "").strip(), save=True)
+
+
+def get_export_other_unit(default: str = "pages") -> str:
+    value = str(get("export_other_unit", default) or default).strip().lower()
+    return value if value in {"pages", "items", "ids"} else "pages"
+
+
+def set_export_other_unit(value: str) -> None:
+    item = str(value or "pages").strip().lower()
+    set("export_other_unit", item if item in {"pages", "items", "ids"} else "pages", save=True)
 
 
 def get_export_other_ids(default: str = "") -> str:

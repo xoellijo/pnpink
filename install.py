@@ -15,8 +15,12 @@ import zipfile
 from pathlib import Path
 from typing import Optional
 
+from pnp_python import PnPPythonError, ensure_project_environment, shared_python_root
+
 
 APP_DIR_NAME = "pnpink"
+PNPINK_REQUIREMENTS: tuple[str, ...] = ()
+PNPINK_IMPORTS: tuple[str, ...] = ()
 
 
 def log(message: str) -> None:
@@ -143,6 +147,28 @@ def replace_install(payload_root: Path, destination: Path) -> None:
     shutil.copytree(payload_root, destination)
 
 
+def user_preferences_path() -> Path:
+    system = platform.system().lower()
+    if system == "windows":
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        root = Path(base) / "PnPInk" if base else Path.home() / "AppData" / "Local" / "PnPInk"
+    elif system == "darwin":
+        root = Path.home() / "Library" / "Application Support" / "PnPInk"
+    else:
+        base = os.environ.get("XDG_DATA_HOME")
+        root = (Path(base).expanduser() if base else Path.home() / ".local" / "share") / "PnPInk"
+    return root / "preferences.ini"
+
+
+def migrate_legacy_preferences(destination: Path) -> None:
+    legacy = destination / "preferences.ini"
+    target = user_preferences_path()
+    if legacy.is_file() and not target.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(legacy, target)
+        log(f"[5] Migrated user preferences: {target}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Install a PnPInk release payload")
     parser.add_argument("payload", type=Path, help="Downloaded pnpink_payload_*.zip")
@@ -164,11 +190,19 @@ def main() -> int:
     destination = extensions_dir / APP_DIR_NAME
     log(f"[3] Destination: {destination}")
 
+    log(f"[4] Shared Python runtime: {shared_python_root()}")
+    try:
+        ensure_project_environment("pnpink", PNPINK_REQUIREMENTS, PNPINK_IMPORTS)
+    except (OSError, PnPPythonError) as exc:
+        die(f"Unable to prepare the shared Python runtime: {exc}")
+
     temporary_root = Path(tempfile.mkdtemp(prefix="pnpink_install_"))
     try:
         payload_root = extract_payload(payload_zip, temporary_root)
-        log(f"[4] Replacing previous installation")
+        migrate_legacy_preferences(destination)
+        log("[6] Replacing previous installation")
         replace_install(payload_root, destination)
+        shutil.copy2(Path(__file__).with_name("pnp_python.py"), destination / "pnp_python.py")
     finally:
         shutil.rmtree(temporary_root, ignore_errors=True)
 

@@ -173,7 +173,17 @@ Download just one launcher from the [latest release](https://github.com/xoellijo
 - Windows: run `pnpink_install.bat`. It installs a private portable Ghostscript only when none is available; use `--no-ghostscript` to skip this check.
 - macOS/Linux: run `chmod +x pnpink_install.sh && ./pnpink_install.sh`.
 
+The installer also prepares a shared dependency runtime for PnPInk and
+PnPPlay. On Windows it lives in `%LOCALAPPDATA%\PnPInk\python`, beside
+`iccprofiles`; it does not modify Inkscape's bundled Python. The downloaded
+`pip.pyz`, package cache, project requirement manifests, and interpreter-specific
+`site-packages` environments all remain in that single directory. The equivalent
+root is `~/Library/Application Support/PnPInk/python` on macOS and
+`${XDG_DATA_HOME:-~/.local/share}/PnPInk/python` on Linux.
+
 The launchers remain stable and download the latest PnPInk release by default. To install a specific release using the new packaging scheme (`0.55` or newer), pass its version, for example `pnpink_install.bat 0.59`, `pnpink_install.bat --version 0.59`, or `./pnpink_install.sh 0.59`.
+
+Beta releases are published separately and never replace the stable `latest` package. Install a beta explicitly, for example with `pnpink_install.bat --version 0.74.0-beta.1` or `./pnpink_install.sh --version 0.74.0-beta.1`.
 
 Restart Inkscape, then open `Extensions > PnPInk`.
 

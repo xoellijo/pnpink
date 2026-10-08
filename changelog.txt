@@ -1,3 +1,22 @@
+[0.74.0-beta.1]
+- Publish the current development line as an isolated beta without changing the stable branch.
+- Separate bundled defaults from per-user preferences so local paths and settings are never written into the installed source tree.
+- Preserve existing user preferences when upgrading from installations that stored them beside the extension.
+- Add a dedicated prerelease payload channel that does not replace the stable `latest` package.
+
+[0.73]
+- This is a major development jump with extensive internal and workflow changes. Although existing behavior is intended to remain compatible, regressions may appear in features that worked in previous versions; please report them.
+- Add Deckmaker Web as a lightweight browser interface alongside the existing Tkinter application, with embedded Google Sheets editing, fast item previews, template navigation, live logs, and compact export and PnPPlay controls.
+- Add an interactive spritesheet inspector to Deckmaker Web, including image drag-and-drop, live grid, gap and border controls, zoom, pan, rotation, and copyable PnPInk definitions and frame references.
+- Add persistent preview caches, warm Inkscape workers, dependency-aware dataset invalidation, background pre-rendering, and focused Google Sheets polling to reduce preview latency.
+- Split PnPPlay into its own project while preserving PnPInk integration through the shared asset store and local server/designer controls.
+- Add a shared per-user Python dependency runtime under `PnPInk/python`, bootstrapped with `pip.pyz`, isolated from Inkscape, atomically versioned per interpreter, and reusable by PnPInk and PnPPlay.
+- Simplify PnPPlay publishing around stable `$id` values: packs update live while image blobs remain content-addressed and deduplicated.
+- Publish generated PnPPlay components as immutable, versioned asset packs in a shared content-addressed local store, reusing unchanged fronts and backs across packs and versions.
+- Add `Pages`, `Items`, and `IDs` units to additional-format export, including compact item selectors, exact card-bbox crops without page marks, copy deduplication, shared or per-card backs, and an `items.json` manifest for playable packages.
+- Add semantic PnPPlay component metadata to generated item manifests and content-address exported assets for reliable synchronization.
+- Integrate Deckmaker with PnPPlay through regeneration and asset synchronization, linked runtime games, Game Designer, lobby, and new-room actions.
+
 [0.57]
 - Fix rectangle text decorators with user-space fill gradients by normalizing the copied gradient from the style rect's original bbox before fitting it to the measured text.
 - Give text decorators 1 pt of default padding on all four sides while preserving explicit border values, including zero.

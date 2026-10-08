@@ -19,7 +19,7 @@ __version__ = "v0.1"
 
 from dataclasses import dataclass
 from typing import Optional, Dict, Tuple, List, Set
-import os, re, hashlib, threading, shutil, mimetypes, fnmatch, time
+import os, re, hashlib, threading, mimetypes, fnmatch, time
 from concurrent.futures import ThreadPoolExecutor, Future
 from pathlib import Path
 from urllib.parse import urlparse, unquote, urlunparse, urlencode, parse_qs
@@ -538,13 +538,17 @@ class SourceManager:
                  default_dpi: float = SVG.DPI,
                  relaxed_case: bool = (os.name == "nt"),
                  resolve_strict: bool = False,
-                 defs_group_id: Optional[str] = None):
+                 defs_group_id: Optional[str] = None,
+                 cache_only: bool = False,
+                 iconify_mode: str = "normal"):
         self.root = svg_root
         self.svg_real_path = svg_real_path
         self.project_root = project_root
         self.default_dpi = float(default_dpi or SVG.DPI)
         self.resolver = PathResolver(svg_real_path, project_root, relaxed_case)
         self.resolve_strict = bool(resolve_strict)
+        self.cache_only = bool(cache_only)
+        self.iconify_mode = str(iconify_mode or "normal").strip().lower()
         self.defs_root = SVG.ensure_defs(svg_root)
         self.defs = self.defs_root
         if defs_group_id:
@@ -608,6 +612,7 @@ class SourceManager:
         # If they later resolve with cache present, they still count as downloaded
         # for this run because the cache was created during the same execution.
         self._wkmc_prefetch_miss_keys: Set[str] = set()
+        self._closed = False
 
         # doc unit conversion helpers
         try:
@@ -616,6 +621,28 @@ class SourceManager:
             # fallback: assume 96 dpi and mm user units if unknown
             self._uu_per_px = 25.4/96.0
         _l.d(f"[sources] uu_per_px={self._uu_per_px:.8f} (doc user units per px)")
+
+    def close(self) -> None:
+        if getattr(self, "_closed", True):
+            return
+        self._closed = True
+        for name in ("_dl_pool", "_wkmc_pool", "_gdrive_pool"):
+            pool = getattr(self, name, None)
+            if pool is None:
+                continue
+            try:
+                pool.shutdown(wait=True, cancel_futures=False)
+            except Exception:
+                pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self.close()
+
+    def __del__(self):
+        self.close()
 
         # spritesheets
         self._spritesheets: Dict[str, SpriteSheetDef] = {}
@@ -792,6 +819,8 @@ class SourceManager:
         cached = self._gdrive_file_meta_cache.get(fid)
         if cached:
             return dict(cached)
+        if self.cache_only:
+            return None
         params = {"fields": "id,name,mimeType,modifiedTime,size"}
         if resource_key:
             params["resourceKey"] = resource_key
@@ -841,10 +870,38 @@ class SourceManager:
         except Exception as ex:
             _l.d(f"[sources] gdrive cache cleanup skipped id='{file_id}': {ex}")
 
+    def _find_gdrive_cached_file(self, file_id: str) -> Optional[Path]:
+        token = f"_{self._gdrive_cache_id_digest(file_id)}_"
+        try:
+            matches = [
+                path for path in self.assets_dir.glob("gdrive_*")
+                if path.is_file() and token in path.stem and not path.name.lower().endswith(".part")
+            ]
+            if matches:
+                return max(matches, key=lambda path: path.stat().st_mtime).resolve()
+        except Exception:
+            pass
+        return None
+
+    def _find_gdrive_cached_name(self, name: str) -> Optional[Path]:
+        stem = _safe_cache_name(Path(str(name or "")).stem, "gdrive")
+        try:
+            matches = [
+                path for path in self.assets_dir.glob(f"gdrive_{stem}_*")
+                if path.is_file() and not path.name.lower().endswith(".part")
+            ]
+            if matches:
+                return max(matches, key=lambda path: path.stat().st_mtime).resolve()
+        except Exception:
+            pass
+        return None
+
     def _download_gdrive_file_to_cache(self, file_id: str, resource_key: str = "") -> Optional[Path]:
         fid = str(file_id or "").strip()
         if not fid:
             return None
+        if self.cache_only:
+            return self._find_gdrive_cached_file(fid)
         meta = self._gdrive_file_metadata(fid, resource_key) or {}
         name = str(meta.get("name") or fid).strip()
         out = self._gdrive_cache_path(
@@ -922,6 +979,8 @@ class SourceManager:
         fid = str(file_id or "").strip()
         if not fid:
             return None
+        if self.cache_only:
+            return self._find_gdrive_cached_file(fid)
         meta = self._gdrive_file_metadata(fid, resource_key) or {}
         name = str(meta.get("name") or fid).strip()
         out = self._gdrive_cache_path(
@@ -972,6 +1031,8 @@ class SourceManager:
         cache_key = (fid, rk)
         with self._dl_lock:
             refresh_for_generation = cache_key not in self._gdrive_generation_folders
+            if self.cache_only:
+                refresh_for_generation = False
             if refresh_for_generation:
                 self._gdrive_generation_folders.add(cache_key)
                 self._gdrive_folder_cache.pop(cache_key, None)
@@ -990,6 +1051,8 @@ class SourceManager:
                     if item_id:
                         self._gdrive_file_meta_cache[item_id] = dict(item)
                 return list(shared)
+            if self.cache_only:
+                return []
             loading = _GDRIVE_FOLDER_LOADING.get(cache_key)
             owns_fetch = loading is None
             if owns_fetch:
@@ -1072,6 +1135,12 @@ class SourceManager:
             rk = ref.get("resource_key", "")
             suffix = f"?resourcekey={rk}" if rk else ""
             return [f"gdrive://file/{fid}{suffix}"]
+        if self.cache_only:
+            cached = self._find_gdrive_cached_name(Path(ref.get("pattern", "")).name)
+            if cached is not None:
+                return [str(cached)]
+            _l.w(f"[sources] preview cache miss -> {ref.get('pattern') or expr}")
+            return []
         if not self._gdrive_api_key():
             _l.w("[sources] gdrive folder listing requires preferences.ini:gdrive_api_key")
             return []
@@ -1264,6 +1333,8 @@ class SourceManager:
             with self._dl_lock:
                 self._web_stats["download_cached"] = int(self._web_stats.get("download_cached") or 0) + 1
             return p_any
+        if self.cache_only:
+            return None
 
         f = self._ensure_http_future(u, wkmc_download=wkmc_download)
         if not wait:
@@ -1425,6 +1496,9 @@ class SourceManager:
             return f
 
     def prefetch_dataset_rows(self, rows: List[dict]) -> int:
+        if self.cache_only:
+            _l.i("[sources.progress] preview cache-only; remote prefetch skipped")
+            return 0
         urls: Set[str] = set()
         virtuals: Set[str] = set()
         for row in (rows or []):
@@ -1683,7 +1757,13 @@ class SourceManager:
             self._cache_misses += 1
 
             try:
-                sym, sym_id = ICON.ensure_icon_symbol(self.root, prefix, name)
+                sym, sym_id = ICON.ensure_icon_symbol(
+                    self.root,
+                    prefix,
+                    name,
+                    fast=self.iconify_mode == "fast",
+                    offline=self.iconify_mode == "offline",
+                )
                 # intrinsic from viewBox (ya normalizado a cuadrado)
                 vb = (sym.get("viewBox") or "").strip()
                 parts = vb.replace(",", " ").split()
@@ -2348,9 +2428,6 @@ class SourceManager:
         return SourceRef(symbol_id=sid, content_type="svg", intrinsic_box=(float(w), float(h)),
                          preserve_aspect="xMidYMid meet", canonical_key=None)
 
-    def _create_symbol_from_svg_document_text(self, svg_text: str, *, key_hint: str = "inline-svg") -> SourceRef:
-        return self._create_svg_container_from_text(svg_text, key_hint=key_hint, as_symbol=True, force_deep=False)
-
     def _create_group_from_svg_document_text(self, svg_text: str, *, key_hint: str = "inline-svg") -> SourceRef:
         return self._create_svg_container_from_text(svg_text, key_hint=key_hint, as_symbol=False, force_deep=True)
 
@@ -2739,41 +2816,6 @@ class SourceManager:
         else:
             _l.i("[spritesheets] no defs")
         return out
-
-    def _ensure_spritesheet_base_symbol(self, ss: SpriteSheetDef) -> str:
-        """Create or reuse the base bitmap <symbol> sized to the sheet geometry."""
-        if ss.base_symbol_id:
-            return ss.base_symbol_id
-        if ss.abspath is None:
-            sid, _wh = _make_placeholder_symbol(self.defs, ss.src_raw, "spritesheet src not found")
-            ss.base_symbol_id = sid
-            return sid
-
-        key = SourceKey(
-            scheme='logical',
-            path=f"spritesheet:{ss.alias}:{_normcase_path(ss.abspath)}:{ss.sheet_w_px:.3f}x{ss.sheet_h_px:.3f}",
-            mtime=_stat_mtime(ss.abspath),
-            fragment="",
-            page=0
-        )
-        if key in self._cache:
-            self._cache_hits += 1
-            ref = self._cache[key]
-            ss.base_symbol_id = ref.symbol_id
-            return ref.symbol_id
-        self._cache_misses += 1
-
-        ref = self._create_symbol_from_bitmap_path(
-            ss.abspath,
-            dpi=self.default_dpi
-        )
-        ref.canonical_key = key
-        self._cache[key] = ref
-        ss.base_symbol_id = ref.symbol_id
-        _l.i(f"[spritesheet] base symbol created id={ref.symbol_id} for @{ss.alias} size_u={ss.sheet_w_px:.2f}x{ss.sheet_h_px:.2f}")
-        _l.d(f"[spritesheets] base symbol '{ref.symbol_id}' sized {ss.sheet_w_px:.2f}x{ss.sheet_h_px:.2f}px for @{ss.alias}")
-        return ref.symbol_id
-
 
     def _ensure_spritesheet_base_image(self, ss: SpriteSheetDef) -> str:
         """Ensure a single <image> exists in <defs> for this spritesheet.

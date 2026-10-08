@@ -1,0 +1,24 @@
+{
+  "name": "PnPInk Deckmaker",
+  "short_name": "Deckmaker",
+  "description": "Generate and export tabletop game components with PnPInk.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#070707",
+  "theme_color": "#050505",
+  "icons": [
+    {
+      "src": "/shared-assets/deckmaker_icon.png?v=073",
+      "sizes": "256x256",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/shared-assets/pnpink_logo.png",
+      "sizes": "713x713",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

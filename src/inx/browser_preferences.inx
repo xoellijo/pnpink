@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+  <_name>Preferences...</_name>
+  <id>pnpink.browser_preferences</id>
+  <effect needs-live-preview="false" implements-custom-gui="true">
+    <object-type>all</object-type>
+    <effects-menu>
+      <submenu _name="PnPInk"/>
+    </effects-menu>
+    <menu-tip>Select the browser used by Deckmaker Web.</menu-tip>
+  </effect>
+  <script>
+    <command reldir="extensions" interpreter="python">pnpink/browser_preferences.py</command>
+  </script>
+</inkscape-extension>

@@ -45,6 +45,23 @@ download() {
   exit 1
 }
 
+download_optional() {
+  url=$1
+  destination=$2
+  echo "Downloading $url"
+  if command -v curl >/dev/null 2>&1; then
+    if curl -fL --retry 3 --connect-timeout 20 -o "$destination" "$url"; then
+      return
+    fi
+  elif command -v wget >/dev/null 2>&1; then
+    if wget -O "$destination" "$url"; then
+      return
+    fi
+  fi
+  rm -f "$destination"
+  echo "Shared Python bootstrap is not included in this older release."
+}
+
 if [ "$VERSION" = "latest" ]; then
   BASE_URL="https://github.com/$REPOSITORY/releases/latest/download"
   PAYLOAD_NAME="pnpink_payload_latest.zip"
@@ -54,8 +71,10 @@ else
 fi
 
 INSTALLER="$TEMP_DIR/install.py"
+PYTHON_BOOTSTRAP="$TEMP_DIR/pnp_python.py"
 PAYLOAD="$TEMP_DIR/$PAYLOAD_NAME"
 download "$BASE_URL/install.py" "$INSTALLER"
+download_optional "$BASE_URL/pnp_python.py" "$PYTHON_BOOTSTRAP"
 download "$BASE_URL/$PAYLOAD_NAME" "$PAYLOAD"
 
 if [ -n "${PNPINK_PYTHON:-}" ]; then

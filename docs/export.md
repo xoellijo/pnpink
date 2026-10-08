@@ -52,7 +52,7 @@ The rasterization DPI is derived from the export DPI.
 
 ## Other formats
 
-Enable `Other formats` to export page-based output in a non-PDF format.
+Enable `Other formats` to export pages, generated items, or individual SVG IDs in a non-PDF format.
 
 Supported formats:
 
@@ -60,7 +60,21 @@ Supported formats:
 
 `avif` is shown only when the installed Pillow runtime can write AVIF files.
 
-Use the `Pages` field to restrict export to specific pages. Syntax examples:
+Choose the export unit beside the format:
+
+| Unit | Selection (`#`) | Result |
+| --- | --- | --- |
+| `Pages` | `1,3-5` | Exports complete output pages. Empty means every page. |
+| `Items` | `card_[1-3]` | Exports generated items 1-3 as `card_1`, `card_2`, and `card_3`. |
+| `IDs` | `group2,card6` | Exports the listed SVG object IDs. |
+
+In Items mode, use `mydeck*` or simply `mydeck` for every generated item. A selector such as `mydeck[23-12,2,6,43]` preserves that order and names the first exported graphic `mydeck1`. Items use their final card bbox, without page marks or neighboring cards.
+
+Physical copies generated from the same dataset row and iterator variant share one graphic. Their quantity is written as `copies` in the generated `items.json`. When all selected cards share a back, it is exported once as `mydeck_back`; varying backs use names such as `mydeck1_back` and are referenced from the manifest.
+
+For PnPPlay metadata, `$id` is the component's primary key. Without a `$id` column PnPInk generates IDs automatically. When the column exists, blank `$id` rows are omitted. A separately rendered back can be identified as `component-id@back`, or as `common-prefix@back` to share it among every component whose ID starts with that prefix. See [PnPPlay component metadata](pnpplay/component-metadata.md).
+
+Page syntax examples:
 
 | Pages value | Meaning |
 | --- | --- |
@@ -134,7 +148,8 @@ The main export preferences are stored in `src/preferences.ini`.
 | `pdf_raster_mode` | `png`, `jpeg`, `png_alpha`, `inkscape`, `none` | Filter rasterization strategy. |
 | `export_png` | `0`, `1` | Enables additional non-PDF export. |
 | `export_other_format` | supported format name | Format used by `Other formats`. |
-| `export_other_pages` | page list | Page filter for additional exports. Empty means all pages. |
+| `export_other_unit` | `pages`, `items`, `ids` | Selects what the additional exporter treats as one output. |
+| `export_other_pages` | selector | Page range, item selector, or ID list according to `export_other_unit`. |
 | `export_dpi` | integer >= 1 | Inkscape export DPI. |
 | `export_jpeg_quality` | 70-95 | JPEG quality. |
 | `split_svg_output` | `0`, `1` | Enables generated SVG parts. |

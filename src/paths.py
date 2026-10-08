@@ -28,14 +28,6 @@ _SIDE_POINTS = {
 }
 
 
-def _is_g(node) -> bool:
-    try:
-        t = node.tag
-    except Exception:
-        return False
-    return isinstance(t, str) and t.endswith('g')
-
-
 def _is_path(node) -> bool:
     try:
         t = node.tag

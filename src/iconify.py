@@ -8,7 +8,7 @@
 #
 # Notes:
 # - Does NOT use /collection?info=true.
-# - Does NOT cache.
+# - Persists downloaded SVG icons across previews, generations and sessions.
 # - Downloads SVGs in parallel (A').
 # - Robust SVG parser: etree.fromstring() of full document, then copies children.
 # - SVG namespace is always correct.
@@ -17,18 +17,20 @@
 
 from __future__ import annotations
 
-import os, re, warnings
-from typing import Optional, Tuple, Set, Dict, List
+import re
+import os
+from pathlib import Path
+from typing import Optional, Tuple, Dict, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 import inkex
 
-import prefs
 import svg as SVG
 import log as LOG
 _l = LOG
 import net as NET
+import app_paths as APPPATHS
 
 try:
     import urllib3
@@ -53,16 +55,28 @@ def _suppress_insecure_request_warnings_once() -> None:
 def url_svg(prefix: str, name: str) -> str:
     return f"{API_BASE}/{prefix}/{name}.svg"
 
-def _http_get(url: str, *, session: Optional[requests.Session] = None, timeout_s: int = 15) -> requests.Response:
+def _http_get(
+    url: str,
+    *,
+    session: Optional[requests.Session] = None,
+    timeout_s: int = 15,
+    retries: int = 4,
+) -> requests.Response:
     try:
-        return NET.requests_get(url, session=session, timeout=timeout_s, retries=4, log_prefix="[iconify]")
+        return NET.requests_get(url, session=session, timeout=timeout_s, retries=retries, log_prefix="[iconify]")
     except requests.exceptions.SSLError:
         # Keep old warning-suppression behavior for requests/urllib3 users.
         _suppress_insecure_request_warnings_once()
-        return NET.requests_get(url, session=session, timeout=timeout_s, retries=4, verify=False, log_prefix="[iconify]")
+        return NET.requests_get(url, session=session, timeout=timeout_s, retries=retries, verify=False, log_prefix="[iconify]")
 
-def open_url_bytes(url: str, *, session: Optional[requests.Session] = None, timeout_s: int = 15) -> bytes:
-    r = _http_get(url, session=session, timeout_s=timeout_s)
+def open_url_bytes(
+    url: str,
+    *,
+    session: Optional[requests.Session] = None,
+    timeout_s: int = 15,
+    retries: int = 4,
+) -> bytes:
+    r = _http_get(url, session=session, timeout_s=timeout_s, retries=retries)
     try:
         content = r.content or b""
         if r.status_code != 200:
@@ -73,6 +87,43 @@ def open_url_bytes(url: str, *, session: Optional[requests.Session] = None, time
             r.close()
         except Exception:
             pass
+
+
+def _cache_path(prefix: str, name: str) -> Path:
+    return APPPATHS.data_path("cache", "iconify", prefix.lower(), f"{name}.svg")
+
+
+def _icon_bytes(
+    prefix: str,
+    name: str,
+    *,
+    session: Optional[requests.Session] = None,
+    fast: bool = False,
+    offline: bool = False,
+) -> bytes:
+    cache = _cache_path(prefix, name)
+    try:
+        payload = cache.read_bytes()
+        if payload:
+            return payload
+    except OSError:
+        pass
+    if offline:
+        raise FileNotFoundError(f"Iconify cache miss: {prefix}/{name}")
+    payload = open_url_bytes(
+        url_svg(prefix, name),
+        session=session,
+        timeout_s=3 if fast else 15,
+        retries=0 if fast else 4,
+    )
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        temporary = cache.with_suffix(cache.suffix + ".tmp")
+        temporary.write_bytes(payload)
+        os.replace(temporary, cache)
+    except OSError:
+        pass
+    return payload
 
 def _parse_svg_document(svg_text: str):
     # Parse full <svg ...> document
@@ -158,7 +209,9 @@ def _normalize_to_square(symbol, *, add_rect: bool = True):
 def ensure_icon_symbol(svgdoc, prefix: str, name: str, *,
                        add_rect: bool = True,
                        session: Optional[requests.Session] = None,
-                       skip_if_exists: bool = True):
+                       skip_if_exists: bool = True,
+                       fast: bool = False,
+                       offline: bool = False):
     prefix = (prefix or "").strip().lower()
     name = (name or "").strip()
     defs = SVG.ensure_defs(svgdoc)
@@ -169,9 +222,8 @@ def ensure_icon_symbol(svgdoc, prefix: str, name: str, *,
         if hit:
             return hit[0], sym_id
 
-    url = url_svg(prefix, name)
     try:
-        svg_bytes = open_url_bytes(url, session=session)
+        svg_bytes = _icon_bytes(prefix, name, session=session, fast=fast, offline=offline)
         svg_text = svg_bytes.decode("utf-8", errors="replace")
 
         svg_root = _parse_svg_document(svg_text)
@@ -190,6 +242,8 @@ def ensure_icon_symbol(svgdoc, prefix: str, name: str, *,
         defs.append(symbol)
         return symbol, sym_id
     except Exception as e:
+        if fast or offline:
+            raise
         symbol = _ensure_svg_symbol(sym_id, title=f"{prefix}:{name}")
         symbol.set("viewBox", "0 0 1 1")
         defs.append(symbol)
@@ -202,7 +256,9 @@ def ensure_icon_symbols_parallel(svgdoc,
                                  add_rect: bool = True,
                                  max_workers: int = 12,
                                  uses: Optional[int] = None,
-                                 session: Optional[requests.Session] = None) -> Dict[str, str]:
+                                 session: Optional[requests.Session] = None,
+                                 fast: bool = False,
+                                 offline: bool = False) -> Dict[str, str]:
     if not icons:
         return {"ok": "0", "placeholder": "0", "skip": "0", "uses": str(int(uses or 0)), "workers": str(max_workers)}
 
@@ -234,9 +290,8 @@ def ensure_icon_symbols_parallel(svgdoc,
         return {"ok": "0", "placeholder": "0", "skip": str(skipped), "uses": str(int(uses or len(icons))), "workers": str(max_workers)}
 
     def _worker(p: str, n: str, sid: str):
-        url = url_svg(p, n)
         try:
-            b = open_url_bytes(url, session=session)
+            b = _icon_bytes(p, n, session=session, fast=fast, offline=offline)
             return (sid, p, n, b, None)
         except Exception as e:
             return (sid, p, n, None, e)
@@ -267,6 +322,8 @@ def ensure_icon_symbols_parallel(svgdoc,
                     placeholder += 1
                     _l.w("[iconify] placeholder parse %s/%s (%s)", p, n, str(e))
             else:
+                if fast or offline:
+                    raise RuntimeError(f"Iconify unavailable for {p}/{n}: {err}") from err
                 symbol = _ensure_svg_symbol(sid, title=f"{p}:{n}")
                 symbol.set("viewBox", "0 0 1 1")
                 placeholder += 1

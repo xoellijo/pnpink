@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-import header_flags as HF
+import dataset_header as HF
 
 
 def test_parse_template_header_cell_basic():

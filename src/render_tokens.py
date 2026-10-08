@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from typing import Optional, Tuple
 
 import log as LOG
@@ -11,16 +12,20 @@ import transform_fx as TFX
 _l = LOG
 
 
-def excel_col_to_num(s: str):
-    txt = str(s or "").strip().upper()
-    if not txt:
-        return None
-    n = 0
-    for ch in txt:
-        if not ("A" <= ch <= "Z"):
-            return None
-        n = n * 26 + (ord(ch) - 64)
-    return n
+def unquote_iterator_item(value: str) -> tuple[str, bool]:
+    text = str(value or "").strip()
+    if len(text) < 2 or text[0] not in ('"', "'") or text[-1] != text[0]:
+        return text, False
+    try:
+        parsed = shlex.split(text, posix=True)
+        if len(parsed) == 1:
+            return parsed[0], True
+    except ValueError:
+        pass
+    return text[1:-1], True
+
+
+excel_col_to_num = DSL.excel_col_to_num
 
 
 def cell_ref_to_rc(ref: str):

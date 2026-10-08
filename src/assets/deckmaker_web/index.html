@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#050505">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>DeckMaker Web</title>
+  <link rel="manifest" href="manifest.webmanifest?v=073">
+  <link rel="icon" href="/shared-assets/deckmaker_icon.png?v=073" sizes="256x256" type="image/png">
+  <link rel="shortcut icon" href="/shared-assets/deckmaker_icon.png?v=073" sizes="256x256" type="image/png">
+  <link rel="apple-touch-icon" href="/shared-assets/deckmaker_icon.png?v=073" sizes="256x256">
+  <link rel="stylesheet" href="vendor/lil-gui.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <aside id="gui"></aside>
+    <section id="preview-panel" class="preview-panel">
+      <div id="preview-viewport" class="preview-viewport" tabindex="0" aria-label="SVG preview">
+        <div id="preview-stage" class="preview-stage">
+          <img id="preview-image" alt="Generated SVG preview" hidden draggable="false">
+          <svg id="sprite-grid-overlay" class="preview-spritesheet-overlay" hidden></svg>
+        </div>
+        <div id="preview-message" class="preview-message">Preparing preview...</div>
+        <div id="preview-scale" class="preview-scale" aria-hidden="true" hidden><i></i><span>10 mm</span></div>
+      </div>
+    </section>
+    <div id="workspace-splitter" class="workspace-splitter" role="separator" aria-orientation="horizontal" aria-label="Resize DeckMaker and Google Sheets" tabindex="0"></div>
+    <section id="console-panel" class="console-panel" hidden>
+      <header class="console-header">
+        <span>Log</span>
+        <small>Live Deckmaker activity</small>
+        <button id="log-close" type="button" title="Close live log" aria-label="Close live log">&times;</button>
+      </header>
+      <pre id="log" aria-live="polite"></pre>
+    </section>
+    <section id="spritesheet-panel" class="spritesheet-panel" hidden>
+      <div class="spritesheet-toolbar">
+        <strong>Spritesheet preview</strong>
+        <span id="spritesheet-layout"></span>
+        <button id="spritesheet-copy-layout" type="button" title="Copy Layout expression">Copy layout</button>
+        <button id="spritesheet-fit" type="button" title="Fit preview">Fit</button>
+        <button id="spritesheet-close" type="button" title="Close preview">Close</button>
+      </div>
+      <div id="spritesheet-viewport" class="spritesheet-viewport">
+        <div id="spritesheet-stage" class="spritesheet-stage">
+          <img id="spritesheet-image" alt="Selected spritesheet source">
+          <svg id="spritesheet-overlay"></svg>
+        </div>
+        <div id="spritesheet-message" class="spritesheet-message"></div>
+      </div>
+      <div class="spritesheet-footer">
+        <span>Selected frame</span>
+        <code id="spritesheet-frame">@sprites[*]</code>
+        <button id="spritesheet-copy-frame" type="button">Copy reference</button>
+        <small>Wheel to zoom · drag the background to pan · click a frame to address it</small>
+      </div>
+    </section>
+    <section id="gsheet-editor" class="gsheet-editor" hidden>
+      <div id="gsheet-editor-message" class="gsheet-editor-message">Resolving sheet tab&hellip;</div>
+      <iframe id="gsheet-editor-frame" title="Google Sheets Editor" hidden></iframe>
+    </section>
+  </main>
+  <section id="job-status" class="job-status" aria-live="polite">
+    <span id="job-spinner" class="job-spinner" aria-hidden="true"></span>
+    <div class="job-copy">
+      <strong id="job-title">Ready</strong>
+      <span id="job-activity"></span>
+      <a id="google-auth-link" href="#" target="_blank" rel="noopener" hidden>Authorize Google Sheets</a>
+    </div>
+    <progress id="job-progress" max="100" value="0"></progress>
+  </section>
+  <div id="toast" role="status"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
