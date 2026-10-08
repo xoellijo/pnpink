@@ -1,3 +1,6 @@
+[0.74.0-beta.3]
+- Restore compatibility with Inkscape 1.2, where `inkex.etree` is not exported, through a shared lxml-backed compatibility adapter.
+
 [0.74.0-beta.2]
 - Keep Deckmaker Web alive while its Chrome app window is hidden or minimized, and recover browser sessions from subsequent authenticated activity.
 - Add an explicit client heartbeat so preview refresh and asset navigation cannot be left connected to a closed backend.

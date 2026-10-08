@@ -48,10 +48,7 @@ NSS.setdefault('inkscape', getattr(CONST, 'NS_INKSCAPE', 'http://www.inkscape.or
 NSS.setdefault('sodipodi', getattr(CONST, 'NS_SODIPODI', 'http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd'))
 NSS.setdefault('xml', getattr(CONST, 'NS_XML', 'http://www.w3.org/XML/1998/namespace'))
 NSS.setdefault('pnp', getattr(CONST, 'NS_PNP', 'https://pnpink.org/namespaces/pnpink'))
-try:
-    from inkex import etree
-except ImportError:
-    from lxml import etree
+from inkex_compat import etree
 from collections import namedtuple
 
 

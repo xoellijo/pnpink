@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict, Iterable, Optional
 
 import inkex
+from inkex_compat import etree
 import gsheets_client_pkce as GS
 import dataset_state as DSTATE
 import sources as SRC
@@ -41,7 +42,7 @@ class PackageInfo:
 
 
 def _as_bytes(svg_root) -> bytes:
-    return inkex.etree.tostring(svg_root, encoding="utf-8", xml_declaration=True)
+    return etree.tostring(svg_root, encoding="utf-8", xml_declaration=True)
 
 
 def _get_doc_path(ext) -> Optional[Path]:
@@ -506,7 +507,7 @@ def export_package(ext, stream, *, kind: str) -> None:
 
     # Work on a clone so we can rewrite hrefs for portable package layout.
     try:
-        svg_clone = inkex.etree.fromstring(_as_bytes(svg_root))
+        svg_clone = etree.fromstring(_as_bytes(svg_root))
     except Exception:
         svg_clone = svg_root
 
@@ -641,7 +642,7 @@ def import_package(ext, stream, *, kind: str):
     try:
         doc = inkex.load_svg(str(info.svg_abs))
     except Exception:
-        doc = inkex.etree.parse(str(info.svg_abs))
+        doc = etree.parse(str(info.svg_abs))
     root = doc.getroot()
 
     if kind == "pnp":

@@ -183,7 +183,7 @@ root is `~/Library/Application Support/PnPInk/python` on macOS and
 
 The launchers remain stable and download the latest PnPInk release by default. To install a specific release using the new packaging scheme (`0.55` or newer), pass its version, for example `pnpink_install.bat 0.59`, `pnpink_install.bat --version 0.59`, or `./pnpink_install.sh 0.59`.
 
-Beta releases are published separately and never replace the stable `latest` package. Install a beta explicitly, for example with `pnpink_install.bat --version 0.74.0-beta.2` or `./pnpink_install.sh --version 0.74.0-beta.2`.
+Beta releases are published separately and never replace the stable `latest` package. Install a beta explicitly, for example with `pnpink_install.bat --version 0.74.0-beta.3` or `./pnpink_install.sh --version 0.74.0-beta.3`.
 
 Restart Inkscape, then open `Extensions > PnPInk`.
 

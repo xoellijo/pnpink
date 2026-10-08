@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 import inkex
+from inkex_compat import etree
 
 import svg as SVG
 import log as LOG
@@ -128,16 +129,16 @@ def _icon_bytes(
 def _parse_svg_document(svg_text: str):
     # Parse full <svg ...> document
     try:
-        root = inkex.etree.fromstring(svg_text.encode("utf-8"))
+        root = etree.fromstring(svg_text.encode("utf-8"))
         return root
     except Exception as e:
         raise ValueError(f"invalid SVG XML: {e}") from e
 
 def _ensure_svg_symbol(symbol_id: str, *, title: Optional[str] = None):
-    sym = inkex.etree.Element(inkex.addNS("symbol", "svg"))
+    sym = etree.Element(inkex.addNS("symbol", "svg"))
     sym.set("id", symbol_id)
     if title:
-        t = inkex.etree.Element(inkex.addNS("title", "svg"))
+        t = etree.Element(inkex.addNS("title", "svg"))
         t.text = title
         sym.append(t)
     return sym
@@ -175,7 +176,7 @@ def _normalize_to_square(symbol, *, add_rect: bool = True):
     symbol.set("viewBox", f"0 0 {S:g} {S:g}")
 
     # Wrap non-title children into a <g> translated to origin if needed
-    g = inkex.etree.Element(inkex.addNS("g", "svg"))
+    g = etree.Element(inkex.addNS("g", "svg"))
     if x != 0.0 or y != 0.0:
         g.set("transform", f"translate({-x:g},{-y:g})")
 
@@ -195,7 +196,7 @@ def _normalize_to_square(symbol, *, add_rect: bool = True):
 
     if add_rect:
         # invisible geometry to keep bbox deterministic in Inkscape
-        r = inkex.etree.Element(inkex.addNS("rect", "svg"))
+        r = etree.Element(inkex.addNS("rect", "svg"))
         r.set("x","0"); r.set("y","0"); r.set("width", f"{S:g}"); r.set("height", f"{S:g}")
         r.set("fill","#000"); r.set("fill-opacity","0")
         r.set("stroke","none"); r.set("stroke-opacity","0")

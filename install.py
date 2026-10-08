@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import platform
 import shutil
@@ -14,9 +15,6 @@ import time
 import zipfile
 from pathlib import Path
 from typing import Optional
-
-from pnp_python import PnPPythonError, ensure_project_environment, shared_python_root
-
 
 APP_DIR_NAME = "pnpink"
 PNPINK_REQUIREMENTS: tuple[str, ...] = ()
@@ -139,6 +137,22 @@ def extract_payload(payload_zip: Path, destination: Path) -> Path:
     die("Invalid payload: expected src/inx/*.inx")
 
 
+def load_pnp_python(payload_root: Path):
+    candidates = (
+        Path(__file__).with_name("pnp_python.py"),
+        payload_root / "pnp_python.py",
+    )
+    source = next((path for path in candidates if path.is_file()), None)
+    if source is None:
+        die("Invalid release: pnp_python.py is missing from both the launcher and payload")
+    spec = importlib.util.spec_from_file_location("pnp_python", source)
+    if spec is None or spec.loader is None:
+        die(f"Unable to load shared Python bootstrap: {source}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def replace_install(payload_root: Path, destination: Path) -> None:
     if destination.is_symlink() or destination.is_file():
         destination.unlink()
@@ -190,19 +204,19 @@ def main() -> int:
     destination = extensions_dir / APP_DIR_NAME
     log(f"[3] Destination: {destination}")
 
-    log(f"[4] Shared Python runtime: {shared_python_root()}")
-    try:
-        ensure_project_environment("pnpink", PNPINK_REQUIREMENTS, PNPINK_IMPORTS)
-    except (OSError, PnPPythonError) as exc:
-        die(f"Unable to prepare the shared Python runtime: {exc}")
-
     temporary_root = Path(tempfile.mkdtemp(prefix="pnpink_install_"))
     try:
         payload_root = extract_payload(payload_zip, temporary_root)
+        runtime = load_pnp_python(payload_root)
+        log(f"[4] Shared Python runtime: {runtime.shared_python_root()}")
+        try:
+            runtime.ensure_project_environment("pnpink", PNPINK_REQUIREMENTS, PNPINK_IMPORTS)
+        except (OSError, runtime.PnPPythonError) as exc:
+            die(f"Unable to prepare the shared Python runtime: {exc}")
         migrate_legacy_preferences(destination)
         log("[6] Replacing previous installation")
         replace_install(payload_root, destination)
-        shutil.copy2(Path(__file__).with_name("pnp_python.py"), destination / "pnp_python.py")
+        shutil.copy2(Path(runtime.__file__), destination / "pnp_python.py")
     finally:
         shutil.rmtree(temporary_root, ignore_errors=True)
 

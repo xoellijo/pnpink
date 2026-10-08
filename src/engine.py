@@ -10,6 +10,7 @@ from typing import List
 sys.path.append(os.path.dirname(__file__))
 
 import inkex
+from inkex_compat import etree
 import const as CONST
 import prefs
 import svg as SVG
@@ -80,7 +81,7 @@ def _write_svg_atomic(doc, out_path: str) -> None:
     except Exception:
         pass
     try:
-        raw = inkex.etree.tostring(doc.getroot(), encoding="UTF-8", xml_declaration=True)
+        raw = etree.tostring(doc.getroot(), encoding="UTF-8", xml_declaration=True)
         raw = re.sub(br'\s+ns\d+:xlink="http://www\.w3\.org/1999/xlink"', b"", raw)
         raw = re.sub(br'\s+xmlns:ns\d+="xmlns"', b"", raw)
         with open(tmp, "wb") as fh:
@@ -260,7 +261,7 @@ def run(self, __version__, *, text_query_service=None):
                 out_dir = os.path.dirname(out_path)
                 if out_dir:
                     os.makedirs(out_dir, exist_ok=True)
-                raw_svg = inkex.etree.tostring(self.document)
+                raw_svg = etree.tostring(self.document)
                 clone_doc = inkex.load_svg(raw_svg)
                 old_doc = self.document
                 old_svg = self.svg
@@ -326,7 +327,7 @@ def run(self, __version__, *, text_query_service=None):
                     )
                     if use_chunk_output:
                         try:
-                            full_doc = inkex.load_svg(inkex.etree.tostring(clone_doc.getroot()))
+                            full_doc = inkex.load_svg(etree.tostring(clone_doc.getroot()))
                             full_info = SVGCHUNKS.prepare_full_output_doc(full_doc, source_svg_path=_doc_path, absolutize_images=False)
                             _write_svg_atomic(full_doc, out_path)
                             _l.i(

@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 
 import inkex
+from inkex_compat import etree
 
 import dataset_state as DSTATE
 from deckmaker_types import AppRequest
@@ -24,7 +25,7 @@ def current_document_snapshot(extension: inkex.EffectExtension, document_path: s
     snapshot = os.path.join(directory, "current.svg")
     temporary = snapshot + ".tmp"
     with open(temporary, "wb") as handle:
-        handle.write(inkex.etree.tostring(extension.document))
+        handle.write(etree.tostring(extension.document))
     os.replace(temporary, snapshot)
     return os.path.normpath(snapshot)
 
