@@ -72,7 +72,7 @@ class LocalThreadingHTTPServer(ThreadingHTTPServer):
 
 
 class DeckMakerWebHost:
-    SESSION_TIMEOUT = 15.0
+    SESSION_TIMEOUT = 60.0
     CLOSE_GRACE = 2.0
     STARTUP_TIMEOUT = 30.0
 
@@ -111,8 +111,17 @@ class DeckMakerWebHost:
             return
         with self._session_lock:
             session = self._sessions.get(session_id)
-            if session is not None:
-                session["seen_at"] = time.monotonic()
+            now = time.monotonic()
+            if session is None:
+                self._sessions[session_id] = {
+                    "seen_at": now,
+                    "visible": True,
+                    "hidden_since": None,
+                }
+                self._had_session = True
+                self._empty_since = None
+            else:
+                session["seen_at"] = now
 
     def browser_visibility(self, session_id: str, visible: bool) -> None:
         session_id = str(session_id or "").strip()
@@ -120,9 +129,16 @@ class DeckMakerWebHost:
             return
         with self._session_lock:
             session = self._sessions.get(session_id)
-            if session is None:
-                return
             now = time.monotonic()
+            if session is None:
+                session = {
+                    "seen_at": now,
+                    "visible": bool(visible),
+                    "hidden_since": None if visible else now,
+                }
+                self._sessions[session_id] = session
+                self._had_session = True
+                self._empty_since = None
             session["seen_at"] = now
             session["visible"] = bool(visible)
             session["hidden_since"] = None if visible else (session.get("hidden_since") or now)
@@ -148,14 +164,7 @@ class DeckMakerWebHost:
         with self._session_lock:
             expired = [
                 key for key, session in self._sessions.items()
-                if (
-                    bool(session.get("visible"))
-                    and now - float(session.get("seen_at") or 0.0) >= self.SESSION_TIMEOUT
-                ) or (
-                    not bool(session.get("visible"))
-                    and now - float(session.get("hidden_since") or session.get("seen_at") or 0.0)
-                    >= self.SESSION_TIMEOUT
-                )
+                if now - float(session.get("seen_at") or 0.0) >= self.SESSION_TIMEOUT
             ]
             for key in expired:
                 self._sessions.pop(key, None)

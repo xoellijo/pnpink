@@ -190,14 +190,22 @@ function closeBrowserSession() {
 window.addEventListener('pagehide', closeBrowserSession);
 
 function reportBrowserVisibility() {
-  api('/api/session/activity', {
+  return api('/api/session/activity', {
     method: 'POST',
     body: JSON.stringify({ visible: document.visibilityState === 'visible' }),
-  }).catch(() => {});
+  });
 }
 
-document.addEventListener('visibilitychange', reportBrowserVisibility);
-window.addEventListener('pageshow', reportBrowserVisibility);
+function openBrowserSession() {
+  return api('/api/session/open', {
+    method: 'POST',
+    body: JSON.stringify({ visible: document.visibilityState === 'visible' }),
+  });
+}
+
+document.addEventListener('visibilitychange', () => reportBrowserVisibility().catch(() => {}));
+window.addEventListener('pageshow', () => openBrowserSession().catch(() => {}));
+setInterval(() => reportBrowserVisibility().catch(() => {}), 5000);
 
 function updateLogVisibility(busy = Boolean(latestState.busy)) {
   const previewJob = String(latestState.job || '') === 'preview';
@@ -1023,10 +1031,7 @@ window.addEventListener('drop', async event => {
 });
 
 try {
-  await api('/api/session/open', {
-    method: 'POST',
-    body: JSON.stringify({ visible: document.visibilityState === 'visible' }),
-  });
+  await openBrowserSession();
   const initialState = await api('/api/state');
   applyState(initialState);
   const canAutoPreview = Boolean(

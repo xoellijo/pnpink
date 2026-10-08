@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
-  <_name>DeckMaker Web v0.74.0-beta.1</_name>
+  <_name>DeckMaker Web v0.74.0-beta.2</_name>
   <id>pnpink.deckmaker_web</id>
   <effect needs-live-preview="false" implements-custom-gui="true">
     <object-type>all</object-type>

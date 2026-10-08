@@ -1,3 +1,7 @@
+[0.74.0-beta.2]
+- Keep Deckmaker Web alive while its Chrome app window is hidden or minimized, and recover browser sessions from subsequent authenticated activity.
+- Add an explicit client heartbeat so preview refresh and asset navigation cannot be left connected to a closed backend.
+
 [0.74.0-beta.1]
 - Publish the current development line as an isolated beta without changing the stable branch.
 - Separate bundled defaults from per-user preferences so local paths and settings are never written into the installed source tree.

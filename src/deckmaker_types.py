@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-APP_VERSION = "Deckmaker v0.74.0-beta.1"
+APP_VERSION = "Deckmaker v0.74.0-beta.2"
 OTHER_EXPORT_FORMATS = ("png", "jpeg", "jpeg2000", "pdf", "svg", "tiff", "webp", "avif", "ps", "eps", "emf", "wmf")
 CUT_TEMPLATE_FORMATS = {
     "svg": "svg (vector, cricut)",
