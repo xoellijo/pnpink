@@ -36,6 +36,7 @@ class TemplatePlan:
     dynamic_roots: int
     static_source_mode: str = "defs"
     instance_static_ready: bool = False
+    container_transform: str = ""
 
 
 class UnsupportedComposedTemplate(RuntimeError):
@@ -144,7 +145,16 @@ def build_plan(
     if not dyn:
         raise UnsupportedComposedTemplate("composed template requires at least one dynamic field")
 
-    children = [ch for ch in list(proto_root) if hasattr(ch, "tag") and isinstance(ch.tag, str)]
+    content_root = proto_root
+    root_children = [ch for ch in list(proto_root) if hasattr(ch, "tag") and isinstance(ch.tag, str)]
+    container_transform = ""
+    if (
+        len(root_children) == 1
+        and root_children[0].get("data-dm-template-transform-wrapper") == "1"
+    ):
+        content_root = root_children[0]
+        container_transform = str(content_root.get("transform") or "").strip()
+    children = [ch for ch in list(content_root) if hasattr(ch, "tag") and isinstance(ch.tag, str)]
     if not children:
         raise UnsupportedComposedTemplate("composed template requires direct child nodes")
 
@@ -186,26 +196,34 @@ def build_plan(
         static_blocks=static_count,
         dynamic_roots=dynamic_count,
         static_source_mode=mode,
+        container_transform=container_transform,
     )
 
 
 def instantiate_plan(plan: TemplatePlan, suffix: str, *, root_doc) -> tuple[inkex.Group, dict]:
     group = inkex.Group()
+    instance_parent = group
+    if plan.container_transform:
+        container = inkex.Group()
+        container.set("transform", plan.container_transform)
+        container.set("data-dm-template-transform-wrapper", "1")
+        group.append(container)
+        instance_parent = container
     target_index = {}
     materialize_static = plan.static_source_mode == "first_instance" and not plan.instance_static_ready
     for item in plan.items:
         if item.kind == "static":
             if materialize_static:
-                group.append(_make_static_block_group(list(item.node or []), str(item.ref or "")))
+                instance_parent.append(_make_static_block_group(list(item.node or []), str(item.ref or "")))
             else:
                 use = etree.Element(inkex.addNS("use", "svg"))
                 SVG.set_href(use, f"#{item.ref}", touch_plain=True)
-                group.append(use)
+                instance_parent.append(use)
             continue
         if item.kind == "dynamic":
             cp = deepcopy(item.node)
             idx = SVG.uniquify_ids_and_build_target_index(cp, suffix, getattr(root_doc, "get_unique_id", None))
-            group.append(cp)
+            instance_parent.append(cp)
             target_index.update(idx)
             continue
         raise RuntimeError(f"unknown composed plan item kind: {item.kind}")

@@ -19,6 +19,7 @@ import deckmaker_play as PLAY
 import deckmaker_preview as PREVIEW
 import deckmaker_runner as RUNNER
 import deckmaker_spritesheet as SPRITESHEET
+import dataset as DATASET
 from deckmaker_types import APP_VERSION, OTHER_EXPORT_FORMATS, AppRequest, ExportOptions
 import const as CONST
 import gui as PROGRESS
@@ -28,10 +29,12 @@ import inkscape_cli as INKSCAPE
 import log as LOG
 import prefs
 import temp_paths as TEMPPATHS
+import template_headers as TEMPLATE_HEADERS
 import text_measure as TM
 
 
 SOURCE_MODES = ("auto", "local_csv", "oauth", "public")
+PREVIEW_PREFETCH_IDLE_DELAY_S = 0.4
 
 
 class DeckMakerService:
@@ -156,6 +159,14 @@ class DeckMakerService:
             replacement = self._preview_prefetch_service
         replacement.wait_ready(timeout_s=60)
         return replacement
+
+    def _cancel_preview_prefetch(self) -> None:
+        with self._lock:
+            self._preview_prefetch_generation += 1
+            service = self._preview_prefetch_service
+            self._preview_prefetch_service = None
+        if service is not None:
+            service.close()
 
     def _on_log_line(self, line: str) -> None:
         text = str(line or "").rstrip()
@@ -317,6 +328,9 @@ class DeckMakerService:
         target = known.get(os.path.normcase(DMPATHS.normalize(template)))
         if not target or not os.path.isfile(target):
             raise ValueError("Unknown SVG template; launch DeckMaker Web from that document in Inkscape first")
+        if os.path.normcase(DMPATHS.normalize(target)) == os.path.normcase(DMPATHS.normalize(current.template)):
+            self.refresh_previews()
+            return self.state()
         self.open_request(AppRequest(template=target, log_level=current.log_level))
         return self.state()
 
@@ -526,6 +540,17 @@ class DeckMakerService:
     def state(self, *, include_logs: bool = True) -> dict:
         with self._lock:
             request = self._request
+            has_dataset = self._has_dataset_source(request.template, request.sheet_id)
+            if self._busy and self._job == "preview":
+                preview_message = "Rendering preview..."
+            elif not request.template:
+                preview_message = "Missing template..."
+            elif not has_dataset:
+                preview_message = "Missing dataset..."
+            elif not self._preview_entries:
+                preview_message = "No assets available to preview."
+            else:
+                preview_message = "Choose an asset to render its preview."
             dataset_path = os.path.splitext(request.template)[0] + ".csv" if request.template else ""
             dataset_name = os.path.basename(dataset_path) if dataset_path else "No dataset"
             dataset_display = dataset_name
@@ -562,6 +587,7 @@ class DeckMakerService:
                 "canExport": self._can_export(),
                 "preview": {
                     "available": bool(self._preview_path and os.path.isfile(self._preview_path)),
+                    "message": preview_message,
                     "revision": self._preview_revision,
                     "label": self._preview_label,
                     "quality": self._preview_quality,
@@ -733,7 +759,13 @@ class DeckMakerService:
         if dataset_source_changed:
             self._warm_google_session()
         if preview_asset:
-            self.preview(force=False, refresh=True, asset_key=preview_asset)
+            with self._lock:
+                has_cached_dataset = bool(self._preview_datasets)
+            self.preview(
+                force=False,
+                refresh=not has_cached_dataset,
+                asset_key=preview_asset,
+            )
         return self.state()
 
     def set_sheet_editor_activity(self, active: bool) -> dict:
@@ -827,12 +859,22 @@ class DeckMakerService:
         return accepted
 
     @staticmethod
-    def _preview_effect(request: AppRequest, snapshot_path: str = ""):
+    def _preview_effect(request: AppRequest, symbol_base_path: str = ""):
         sheet_id = "" if request.dataset_source_mode == "local_csv" else request.sheet_id
-        return RUNNER.EngineEffect(
+        snapshot_path = str(request.snapshot_path or "").strip()
+        if snapshot_path and os.path.isfile(snapshot_path) and os.path.isfile(request.template):
+            try:
+                if os.stat(request.template).st_mtime_ns > os.stat(snapshot_path).st_mtime_ns:
+                    snapshot_path = ""
+            except OSError:
+                pass
+        effect = RUNNER.EngineEffect(
             request.template, sheet_id, request.sheet_range, request.log_level,
-            request.dataset_source_mode, snapshot_path=snapshot_path or request.snapshot_path,
+            request.dataset_source_mode, snapshot_path=snapshot_path,
         )
+        if symbol_base_path:
+            PREVIEW.merge_symbol_base(effect, symbol_base_path)
+        return effect
 
     def _preview_asset_lock(self, signature: str) -> threading.Lock:
         with self._lock:
@@ -841,7 +883,7 @@ class DeckMakerService:
     def _ensure_preview_base(self, effect, datasets: list[dict]) -> tuple[str, str]:
         base = PREVIEW.symbol_base(effect, datasets)
         if not base["count"]:
-            return str(self._request.snapshot_path or ""), ""
+            return "", ""
         path = str(base["path"])
         if not os.path.isfile(path):
             LOG.i(
@@ -919,6 +961,10 @@ class DeckMakerService:
             return
 
         def worker():
+            time.sleep(PREVIEW_PREFETCH_IDLE_DELAY_S)
+            with self._lock:
+                if self._closed or generation != self._preview_prefetch_generation:
+                    return
             for key in keys:
                 with self._lock:
                     if self._closed or generation != self._preview_prefetch_generation:
@@ -1041,12 +1087,12 @@ class DeckMakerService:
             self._set_status("Choose CSV or Google Sheet source")
             return False
 
+        self._cancel_preview_prefetch()
+
         with self._lock:
             cached_datasets = self._preview_datasets
             cached_entries = list(self._preview_entries)
             previous_key = self._preview_asset_key
-            cached_base_path = self._preview_base_path
-            cached_base_signature = self._preview_base_signature
             cached_asset_signatures = dict(self._preview_asset_signatures)
         if not refresh and not cached_datasets:
             self._set_status("Choose an asset to load the dataset first")
@@ -1089,10 +1135,7 @@ class DeckMakerService:
             )
             phase("load-dataset")
             datasets = source_prepared["source_datasets"]
-            if refresh or not cached_base_path or not os.path.isfile(cached_base_path):
-                base_path, base_signature = self._ensure_preview_base(source_effect, datasets)
-            else:
-                base_path, base_signature = cached_base_path, cached_base_signature
+            base_path, base_signature = self._ensure_preview_base(source_effect, datasets)
             phase("resolve-symbol-cache")
 
             effect = self._preview_effect(request, base_path)
@@ -1144,10 +1187,12 @@ class DeckMakerService:
                         )
                         phase("render-svg")
                         self.activity("Rendering quick preview...")
+                        preview_svg_loaded = False
                         if force or not os.path.isfile(paths["quick"]):
                             quick_path = self._export_preview_png(
                                 text_query_service, result, result["quick_png_path"], 96,
                             )
+                            preview_svg_loaded = True
                             with self._lock:
                                 self._preview_path = quick_path
                                 self._preview_label = f'{result["label"]} · {result["count"]} item(s)'
@@ -1161,7 +1206,7 @@ class DeckMakerService:
                             result,
                             result["png_path"],
                             600,
-                            reload_svg=False,
+                            reload_svg=not preview_svg_loaded,
                         )
                         phase("export-600dpi")
 
@@ -1193,6 +1238,26 @@ class DeckMakerService:
             )
 
         return self._begin("preview", "Rendering preview...", worker)
+
+    def refresh_previews(self) -> bool:
+        if not self._can_generate():
+            self._set_status("Choose CSV or Google Sheet source")
+            return False
+        with self._lock:
+            if self._busy:
+                return False
+            request = self._request
+            current_key = self._preview_asset_key
+            self._preview_prefetch_generation += 1
+            self._preview_datasets = None
+            self._preview_entries = []
+            self._preview_base_path = ""
+            self._preview_base_signature = ""
+            self._preview_asset_signatures = {}
+            self._preview_dataset_signature = ""
+        removed = PREVIEW.clear_cache(self._preview_effect(request))
+        LOG.i("[deckmaker.preview] full cache refresh removed=%d template=%s", removed, request.template)
+        return self.preview(force=True, refresh=True, asset_key=current_key)
 
     def _selected_export_outputs(self) -> list[str]:
         values = []
@@ -1370,11 +1435,27 @@ class DeckMakerService:
             return True
         return False
 
+    def template_headers(self) -> dict:
+        with self._lock:
+            request = self._request
+            datasets = self._preview_datasets
+        if not request.template or not os.path.isfile(request.template):
+            raise RuntimeError("Save/open an SVG template first")
+        effect = self._preview_effect(request)
+        if not datasets:
+            try:
+                datasets = DATASET.load_datasets(effect, effect.document_path(), validate=False)
+            except Exception as error:
+                LOG.w("[deckmaker.web] dataset unavailable while copying template headers; using SVG bbox fallback: %s", error)
+                datasets = []
+        return TEMPLATE_HEADERS.template_headers(effect.document.getroot(), datasets)
+
     def command(self, name: str) -> bool:
         commands = {
             "generate": self.generate,
             "preview": self.preview,
             "preview-initial": lambda: self.preview(force=False, refresh=True),
+            "preview-refresh": self.refresh_previews,
             "preview-previous": lambda: self.preview(force=False, refresh=False, movement=-1),
             "preview-next": lambda: self.preview(force=False, refresh=False, movement=1),
             "open-output": self.open_output,

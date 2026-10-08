@@ -19,8 +19,8 @@ import snippets as SNIPPETS
 import temp_paths as TEMPPATHS
 
 
-PREVIEW_CACHE_VERSION = 9
-SYMBOL_CACHE_VERSION = 3
+PREVIEW_CACHE_VERSION = 11
+SYMBOL_CACHE_VERSION = 4
 
 
 def _isolate_generated_output(effect) -> None:
@@ -63,6 +63,20 @@ def _persistent_cache_dir(effect) -> str:
     )
     directory.mkdir(parents=True, exist_ok=True)
     return os.path.normpath(str(directory))
+
+
+def clear_cache(effect) -> int:
+    """Remove every generated preview for the active template."""
+    directory = Path(_persistent_cache_dir(effect))
+    removed = 0
+    for pattern in ("asset-*.svg", "asset-*.png", "symbol-base-*.svg"):
+        for path in directory.glob(pattern):
+            try:
+                path.unlink()
+                removed += 1
+            except FileNotFoundError:
+                pass
+    return removed
 
 
 def datasets_signature(datasets: list[dict]) -> str:
@@ -466,6 +480,58 @@ def render_symbol_base(effect, version: str, prepared: dict, *, text_query_servi
     SVG.absolutize_all_linked_images(effect.document, effect.document_path(), prefer="fileuri")
     ENGINE._write_svg_atomic(effect.document, prepared["path"])
     return prepared["path"]
+
+
+def merge_symbol_base(effect, symbol_base_path: str) -> int:
+    """Merge cached generated symbols into the current template document."""
+    import inkex
+    from lxml import etree
+
+    import svg as SVG
+
+    path = str(symbol_base_path or "").strip()
+    if not path or not os.path.isfile(path):
+        return 0
+
+    with open(path, "rb") as source:
+        cached_document = inkex.load_svg(source.read())
+    cached_root = cached_document.getroot()
+    current_root = effect.document.getroot()
+    current_defs = SVG.ensure_defs(current_root)
+    cached_defs = next(
+        (
+            child for child in list(cached_root)
+            if etree.QName(child).localname == "defs"
+        ),
+        None,
+    )
+    if cached_defs is None:
+        return 0
+
+    current_by_id = {
+        str(node.get("id")): node
+        for node in current_root.iter()
+        if str(node.get("id") or "").strip()
+    }
+    merged = 0
+    for cached_node in list(cached_defs):
+        node_id = str(cached_node.get("id") or "").strip()
+        generated_symbol = cached_node.get("data-pnpink-symbol-row") == "1"
+        if generated_symbol:
+            existing = current_by_id.get(node_id)
+            if existing is not None and existing.getparent() is not None:
+                existing.getparent().remove(existing)
+            copy = deepcopy(cached_node)
+            current_defs.append(copy)
+            if node_id:
+                current_by_id[node_id] = copy
+            merged += 1
+        elif node_id and node_id not in current_by_id:
+            copy = deepcopy(cached_node)
+            current_defs.append(copy)
+            current_by_id[node_id] = copy
+
+    return merged
 
 
 def cache_paths(effect, signature: str) -> dict:

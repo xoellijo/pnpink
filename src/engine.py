@@ -1154,16 +1154,31 @@ def run(self, __version__, *, text_query_service=None):
         try:
             _seen_tpl_roots = set()
             _prep_flatten = 0
+            _prep_wrapped = 0
             _prep_absolutize = 0
             for _tr in _tpl_roots:
                 _oid = id(_tr)
                 if _oid in _seen_tpl_roots:
                     continue
                 _seen_tpl_roots.add(_oid)
-                REN._flatten_group_transform(_tr)
+                _preserve_text_hierarchy = any(
+                    isinstance(getattr(_node, "tag", None), str)
+                    and str(_node.tag).endswith("text")
+                    for _node in _tr.iter()
+                )
+                _root_transform = str(_tr.get("transform") or "").strip()
+                REN._flatten_group_transform(
+                    _tr,
+                    preserve_hierarchy=_preserve_text_hierarchy,
+                )
                 _prep_flatten += 1
+                if _preserve_text_hierarchy and _root_transform:
+                    _prep_wrapped += 1
                 _prep_absolutize += int(SVG.absolutize_all_linked_images(_tr, _doc_path, prefer="fileuri") or 0)
-            _l.i(f"[templates] prepared template roots={_prep_flatten} absolutized_images={_prep_absolutize}")
+            _l.i(
+                f"[templates] prepared template roots={_prep_flatten} "
+                f"wrapped_transforms={_prep_wrapped} absolutized_images={_prep_absolutize}"
+            )
         except Exception as _ex:
             _l.w(f"[templates] template preparation failed: {_ex}")
         # Measure base card/template size.

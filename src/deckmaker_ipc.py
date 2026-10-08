@@ -50,18 +50,19 @@ def candidate_python_launchers() -> list[str]:
     if exe:
         out.append(exe)
         base = os.path.dirname(exe)
-        if base:
+        if os.name == "nt" and base:
             out.append(os.path.join(base, "pythonw.exe"))
             out.append(os.path.join(base, "python.exe"))
-    # Common Inkscape portable layout used by this project.
-    out.append(os.path.expandvars(r"%USERPROFILE%\inkscape\bin\pythonw.exe"))
-    out.append(os.path.expandvars(r"%USERPROFILE%\inkscape\bin\python.exe"))
+    if os.name == "nt":
+        # Common Inkscape portable layout used by this project.
+        out.append(os.path.expandvars(r"%USERPROFILE%\inkscape\bin\pythonw.exe"))
+        out.append(os.path.expandvars(r"%USERPROFILE%\inkscape\bin\python.exe"))
 
     seen = set()
     good = []
     for path in out:
         norm = os.path.normpath(path)
-        key = norm.lower()
+        key = os.path.normcase(norm)
         if key in seen:
             continue
         seen.add(key)
@@ -126,16 +127,20 @@ def notify_or_launch(
     last_error = None
     for py in candidate_python_launchers():
         try:
-            proc = subprocess.Popen(
-                [py] + args_tail,
-                cwd=os.path.dirname(script),
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                close_fds=True,
-                creationflags=flags,
-            )
+            kwargs = {
+                "args": [py] + args_tail,
+                "cwd": os.path.dirname(script),
+                "env": env,
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
+                "close_fds": True,
+            }
+            if os.name == "nt":
+                kwargs["creationflags"] = flags
+            else:
+                kwargs["start_new_session"] = True
+            proc = subprocess.Popen(**kwargs)
             # Avoid ResourceWarning in Inkscape's extension runner; we intentionally detach.
             proc.returncode = 0
             _l.i(f"[deckmaker_app] launched resident app python='{py}' template='{req.template}'")

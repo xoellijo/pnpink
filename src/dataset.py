@@ -802,7 +802,7 @@ def resolve_csv(options, base_dir: str, svg_stem: str) -> str:
     p = (getattr(options, 'csv_path', '') or '').strip()
     return p if os.path.isabs(p) else os.path.join(base_dir, (p or f"{svg_stem}.csv"))
 
-def load_datasets(effect, doc_path: Optional[str] = None):
+def load_datasets(effect, doc_path: Optional[str] = None, *, validate: bool = True):
     """Compatibility wrapper: behavior extracted from DeckMaker._load_dataset().
 
     `pnpink_ini.csv` is loaded in this order:
@@ -933,6 +933,9 @@ def load_datasets(effect, doc_path: Optional[str] = None):
             main_comments = datasets[0].get("comments", []) or []
             datasets[0]["comments"] = ini_comments + main_comments
             _l.i(f"[datasets] merged {len(ini_comments)} default comment lines from pnpink_ini.csv")
+
+    if not validate:
+        return datasets
 
     # 4) Validate datasets (normal datasets need headers; split marker-only datasets do not).
     valid = [

@@ -236,7 +236,7 @@ main { --deckmaker-pane-height: 320px; position: relative; width: 100%; height: 
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  scrollbar-gutter: auto;
   border: 1px solid #ffffff20;
   border-radius: 7px;
   box-shadow: 0 8px 24px #0008;
@@ -263,6 +263,27 @@ main { --deckmaker-pane-height: 320px; position: relative; width: 100%; height: 
 #gui .deckmaker-menu.root > .title { display: flex; align-items: center; }
 #gui .deckmaker-menu.root > .title > .deckmaker-root-toggle { width: 0; min-width: 0; flex: 1 1 0; color: #fff; background: transparent; }
 #gui .deckmaker-menu .title .iconify { flex: 0 0 auto; margin-right: 2px !important; color: #fff !important; }
+#gui .deckmaker-menu .title > .deckmaker-dataset-open {
+  width: auto;
+  min-width: 0;
+  flex: 0 0 auto;
+  margin: 0 2px 0 auto;
+  padding: 0;
+}
+#gui .deckmaker-menu .title > .deckmaker-dataset-open .widget { min-height: 21px; }
+#gui .deckmaker-menu .title > .deckmaker-dataset-open button {
+  width: auto;
+  height: 21px;
+  padding: 0 5px;
+}
+#gui .deckmaker-menu .title > .deckmaker-dataset-open .name {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  padding: 0;
+  line-height: 21px;
+  white-space: nowrap;
+}
 #gui .deckmaker-menu.root > .title .deckmaker-template-name { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #gui .deckmaker-template-picker { position: relative; width: 22px; height: 21px; flex: 0 0 22px; display: grid; place-items: center; border: 1px solid #ffffff22; border-radius: 4px; background: #171717d9; }
 #gui .deckmaker-template-picker > .iconify { margin: 0 !important; pointer-events: none; }
@@ -287,8 +308,8 @@ main { --deckmaker-pane-height: 320px; position: relative; width: 100%; height: 
 #gui .deckmaker-preview-asset-select {
   min-width: 0;
   height: 21px;
-  flex: 0 1 82px;
-  width: 82px;
+  flex: 0 1 78px;
+  width: 78px;
   border: 1px solid #ffffff22;
   border-radius: 4px;
   padding: 0 17px 0 4px;

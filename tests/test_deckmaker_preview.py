@@ -213,3 +213,32 @@ def test_document_digest_detects_rendering_changes(tmp_path):
     ) != deckmaker_preview._document_digest(
         _PreviewEffect(second, tmp_path / "cards.svg")
     )
+
+
+def test_merge_symbol_base_keeps_current_template_and_imports_cached_symbols(tmp_path):
+    import inkex
+
+    current = inkex.load_svg(b"""<svg xmlns='http://www.w3.org/2000/svg'>
+        <defs><linearGradient id='current-gradient'/></defs>
+        <g id='template' transform='translate(20,30)'/>
+    </svg>""")
+    cached = b"""<svg xmlns='http://www.w3.org/2000/svg'>
+        <defs>
+            <linearGradient id='current-gradient'><stop offset='1'/></linearGradient>
+            <linearGradient id='symbol-gradient'/>
+            <symbol id='cached-card' data-pnpink-symbol-row='1'><rect width='10' height='20'/></symbol>
+        </defs>
+        <g id='template' transform='translate(1,2)'/>
+    </svg>"""
+    cache_path = tmp_path / "symbol-base.svg"
+    cache_path.write_bytes(cached)
+    effect = _PreviewEffect(current, tmp_path / "cards.svg")
+
+    merged = deckmaker_preview.merge_symbol_base(effect, str(cache_path))
+
+    root = effect.document.getroot()
+    assert merged == 1
+    assert root.xpath("//*[@id='template']")[0].get("transform") == "translate(20, 30)"
+    assert len(root.xpath("//*[@id='cached-card']")) == 1
+    assert len(root.xpath("//*[@id='symbol-gradient']")) == 1
+    assert len(root.xpath("//*[@id='current-gradient']/*")) == 0

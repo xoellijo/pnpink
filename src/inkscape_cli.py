@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import re
+from pathlib import Path
 
 import log as LOG
 import process_io as PROCESS_IO
@@ -54,6 +55,11 @@ def find_executable() -> str | None:
         os.path.join(os.path.dirname(bin_dir), "inkscape"),
         os.path.join(os.path.dirname(bin_dir), "bin", "inkscape"),
     ]
+    if sys.platform == "darwin":
+        candidates.extend(
+            str(root / "Inkscape.app" / "Contents" / "MacOS" / "inkscape")
+            for root in (Path("/Applications"), Path.home() / "Applications")
+        )
     for cand in candidates:
         if cand and os.path.isfile(cand):
             return cand

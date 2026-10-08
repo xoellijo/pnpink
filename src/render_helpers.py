@@ -18,11 +18,22 @@ def is_rect_elem(e):
         return False
 
 
-def flatten_group_transform(g):
+def flatten_group_transform(g, *, preserve_hierarchy: bool = False):
     if not isinstance(g, inkex.Group):
         return
     gT = inkex.Transform(g.get("transform") or "")
     if gT == inkex.Transform():
+        return
+    if preserve_hierarchy:
+        wrapper = inkex.Group()
+        wrapper.set("transform", str(gT))
+        wrapper.set("data-dm-template-transform-wrapper", "1")
+        for child in list(g):
+            g.remove(child)
+            wrapper.append(child)
+        g.append(wrapper)
+        if "transform" in g.attrib:
+            del g.attrib["transform"]
         return
     for ch in list(g):
         cT = inkex.Transform(ch.get("transform") or "")

@@ -38,7 +38,12 @@ ASSET_DIR = Path(__file__).resolve().parent / "assets" / "deckmaker_web"
 
 
 def _open_browser(url: str) -> bool:
-    return open_web_app(url)
+    prefs.reload()
+    separator = "&" if "?" in url else "?"
+    return open_web_app(
+        f"{url}{separator}launch={time.time_ns()}",
+        preferred_browser=prefs.get_deckmaker_web_browser(),
+    )
 
 
 def _wait_until_listening(timeout: float = 3.0) -> bool:
@@ -62,13 +67,8 @@ def _browser_window_active() -> bool:
         return False
 
 
-class ExclusiveThreadingHTTPServer(ThreadingHTTPServer):
-    allow_reuse_address = False
-
-    def server_bind(self) -> None:
-        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        super().server_bind()
+class LocalThreadingHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
 
 
 class DeckMakerWebHost:
@@ -79,7 +79,7 @@ class DeckMakerWebHost:
     def __init__(self, initial: AppRequest | None = None):
         self.token = os.environ.get("PNPINK_DECKMAKER_WEB_TOKEN") or secrets.token_urlsafe(24)
         self._session_lock = threading.Lock()
-        self._sessions: dict[str, float] = {}
+        self._sessions: dict[str, dict[str, object]] = {}
         self._started_at = time.monotonic()
         self._browser_expected_until = self._started_at + self.STARTUP_TIMEOUT
         self._empty_since: float | None = None
@@ -87,19 +87,47 @@ class DeckMakerWebHost:
         self.service = DeckMakerService(initial)
         self.requests: queue.Queue[AppRequest] = queue.Queue()
         self.stop_event = threading.Event()
-        self.httpd = ExclusiveThreadingHTTPServer((HTTP_HOST, HTTP_PORT), self._handler_type())
+        self.httpd = LocalThreadingHTTPServer((HTTP_HOST, HTTP_PORT), self._handler_type())
         self.ipc_thread = IPC.start_server(self.requests, self.stop_event, port=IPC.WEB_PORT)
 
-    def browser_seen(self, session_id: str) -> None:
+    def browser_opened(self, session_id: str, *, visible: bool = True) -> None:
         session_id = str(session_id or "").strip()
         if not session_id:
             return
         with self._session_lock:
             now = time.monotonic()
-            self._sessions[session_id] = now
+            self._sessions[session_id] = {
+                "seen_at": now,
+                "visible": bool(visible),
+                "hidden_since": None if visible else now,
+            }
             self._browser_expected_until = now
             self._empty_since = None
             self._had_session = True
+
+    def browser_touched(self, session_id: str) -> None:
+        session_id = str(session_id or "").strip()
+        if not session_id:
+            return
+        with self._session_lock:
+            session = self._sessions.get(session_id)
+            if session is not None:
+                session["seen_at"] = time.monotonic()
+
+    def browser_visibility(self, session_id: str, visible: bool) -> None:
+        session_id = str(session_id or "").strip()
+        if not session_id:
+            return
+        with self._session_lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return
+            now = time.monotonic()
+            session["seen_at"] = now
+            session["visible"] = bool(visible)
+            session["hidden_since"] = None if visible else (session.get("hidden_since") or now)
+            if visible:
+                self._empty_since = None
 
     def browser_closed(self, session_id: str) -> None:
         session_id = str(session_id or "").strip()
@@ -118,11 +146,26 @@ class DeckMakerWebHost:
     def browser_active(self) -> bool:
         now = time.monotonic()
         with self._session_lock:
-            expired = [key for key, seen_at in self._sessions.items() if now - seen_at >= self.SESSION_TIMEOUT]
+            expired = [
+                key for key, session in self._sessions.items()
+                if (
+                    bool(session.get("visible"))
+                    and now - float(session.get("seen_at") or 0.0) >= self.SESSION_TIMEOUT
+                ) or (
+                    not bool(session.get("visible"))
+                    and now - float(session.get("hidden_since") or session.get("seen_at") or 0.0)
+                    >= self.SESSION_TIMEOUT
+                )
+            ]
             for key in expired:
                 self._sessions.pop(key, None)
             if self._had_session and not self._sessions and self._empty_since is None:
                 self._empty_since = now
+            return any(bool(session.get("visible")) for session in self._sessions.values())
+
+    def browser_present(self) -> bool:
+        self.browser_active()
+        with self._session_lock:
             return bool(self._sessions)
 
     def _session_id(self, handler) -> str:
@@ -209,7 +252,7 @@ class DeckMakerWebHost:
                     self._json({"error": "Unauthorized"}, HTTPStatus.UNAUTHORIZED)
                     return
                 if parsed.path.startswith("/api/"):
-                    host.browser_seen(host._session_id(self))
+                    host.browser_touched(host._session_id(self))
                 if parsed.path == "/api/state":
                     self._json(host.service.state())
                     return
@@ -236,6 +279,9 @@ class DeckMakerWebHost:
                         self._file(host.service.template_preview(), "image/svg+xml")
                     except Exception as error:
                         self.send_error(HTTPStatus.BAD_REQUEST, str(error))
+                    return
+                if parsed.path == "/api/template/headers":
+                    self._json(host.service.template_headers())
                     return
                 if parsed.path in {"", "/"}:
                     if not self._authorized():
@@ -270,14 +316,18 @@ class DeckMakerWebHost:
                     body = self._body()
                     session_id = host._session_id(self)
                     if parsed.path == "/api/session/open":
-                        host.browser_seen(session_id)
+                        host.browser_opened(session_id, visible=bool(body.get("visible", True)))
                         self._json({"ok": True})
                         return
                     if parsed.path == "/api/session/close":
                         host.browser_closed(session_id)
                         self._json({"ok": True})
                         return
-                    host.browser_seen(session_id)
+                    if parsed.path == "/api/session/activity":
+                        host.browser_visibility(session_id, bool(body.get("visible")))
+                        self._json({"ok": True})
+                        return
+                    host.browser_touched(session_id)
                     if parsed.path == "/api/settings":
                         self._json(host.service.update(body))
                         return
@@ -307,7 +357,7 @@ class DeckMakerWebHost:
 
     def _watch_browser_sessions(self) -> None:
         while not self.stop_event.wait(0.5):
-            active = self.browser_active()
+            present = self.browser_present()
             now = time.monotonic()
             with self._session_lock:
                 empty_since = self._empty_since
@@ -315,7 +365,7 @@ class DeckMakerWebHost:
                 browser_expected_until = self._browser_expected_until
             should_stop = (
                 had_session
-                and not active
+                and not present
                 and empty_since is not None
                 and now >= browser_expected_until
                 and now - empty_since >= self.CLOSE_GRACE

@@ -51,7 +51,7 @@ export class PreviewViewer {
       this.revision = Number(preview?.revision ?? -1);
       this.elements.image.hidden = true;
       this.elements.image.removeAttribute('src');
-      this.showMessage('Choose an asset to render its preview.');
+      this.showMessage(preview?.message || 'Choose an asset to render its preview.');
       return;
     }
     const revision = Number(preview.revision || 0);
