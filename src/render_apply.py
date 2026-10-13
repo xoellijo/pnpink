@@ -154,7 +154,7 @@ def _resolve_array_item(root_doc, inst_node, item_id: str, sm=None, ss_registry=
     s = (item_id or '').strip()
     if not s:
         return None
-    s, _normalized, _symbol_id = _normalize_source_token(s, sm=sm, ss_registry=ss_registry)
+    s, normalized_source, _symbol_id = _normalize_source_token(s, sm=sm, ss_registry=ss_registry)
     if s.startswith('['):
         try:
             arr = _parse_array_token(s)
@@ -173,7 +173,7 @@ def _resolve_array_item(root_doc, inst_node, item_id: str, sm=None, ss_registry=
     )
     if relation and base is None:
         _l.w(f"[array] related target not found: '{s}'")
-    return base
+    return base, not normalized_source
 
 
 def _array_anchor_from_ops(ops: str) -> int:
@@ -213,7 +213,9 @@ def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, ss_r
         item_id = (it.get("id") if isinstance(it, dict) else None) or ""
         item_ops = (it.get("ops") if isinstance(it, dict) else "") or ""
         item_transform = it.get("transform") if isinstance(it, dict) else None
-        base = _resolve_array_item(root_doc, inst_node, item_id, sm=sm, ss_registry=ss_registry)
+        base, is_doc_id = _resolve_array_item(
+            root_doc, inst_node, item_id, sm=sm, ss_registry=ss_registry
+        )
         if base is None:
             _l.w(f"[array] target not found: '{item_id}'")
             resolved.append(None)
@@ -222,7 +224,7 @@ def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, ss_r
             bx, by, bw, bh = SVG.visual_bbox(base)
         except Exception:
             bx = by = 0.0; bw = bh = 0.0
-        resolved.append((base, bx, by, bw, bh, item_ops, item_transform))
+        resolved.append((base, bx, by, bw, bh, item_ops, item_transform, is_doc_id))
         if ref_w <= 0.0 and bw > 0.0:
             ref_w = float(bw)
             ref_h = float(bh)
@@ -306,7 +308,7 @@ def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, ss_r
             continue
         if idx >= len(slots):
             break
-        base, _bx, _by, _bw, _bh, item_ops, item_transform = entry
+        base, _bx, _by, _bw, _bh, item_ops, item_transform, is_doc_id = entry
         sx, sy, sw, sh = slots[idx]
         try:
             rect = SVG.etree.Element(inkex.addNS('rect', 'svg'))
@@ -320,10 +322,11 @@ def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, ss_r
                 base.get('id') or '',
                 "",
                 ops_full,
-                place_mode="clone",
+                place_mode="copy" if is_doc_id else "clone",
                 rect_elem=rect,
                 parent_elem=g,
                 transform_spec=item_transform,
+                ignore_source_ancestors=is_doc_id,
             )
             if placed is not None and dynamic_inside:
                 placed.set('data-dm-array-item', str(idx))
@@ -370,6 +373,9 @@ def _has_fa_signature(raw_token: str, *, compact_ops_present: bool) -> bool:
 def _append_inserted_use(parent, tgt, u, transform_spec, use_jobs, raw_paths_spec, path_jobs, layout_obj) -> bool:
     if parent is None:
         return False
+    source_field = str(tgt.get('data-field') or tgt.get('data-origid') or '').strip()
+    if source_field:
+        u.set('data-field', source_field)
     parent.insert(parent.index(tgt) + 1, u)
     use_jobs.append((tgt, u, transform_spec))
     _queue_paths_for_target(tgt, raw_paths_spec, path_jobs, layout_obj)
@@ -924,6 +930,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
     tgt = SVG.find_target_exact_in(inst, target_id, target_index=target_index)
     if tgt is None:
         return 0, "miss"
+    tgt.set('data-field', target_id)
     related_owner = None
     related_text = None
     related_kind = ""

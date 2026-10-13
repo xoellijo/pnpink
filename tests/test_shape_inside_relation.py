@@ -189,6 +189,32 @@ def test_array_build_resolves_items_in_detached_instance():
     assert len(group) == 1
 
 
+def test_array_document_items_ignore_template_ancestor_position():
+    raw = b'''<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200">
+      <g id="library" transform="translate(100,50)">
+        <g id="keyword" transform="translate(10,5)">
+          <rect width="10" height="10"/>
+        </g>
+      </g>
+      <g id="card"/>
+    </svg>'''
+    root = inkex.load_svg(io.BytesIO(raw)).getroot()
+    card = root.getElementById("card")
+
+    group, _group_id = RAP._build_array_group(
+        card,
+        root,
+        [{"id": "keyword", "ops": "", "transform": None}],
+        "1x1",
+    )
+
+    placed = group[0]
+    assert not str(placed.tag).endswith("use")
+    origin = inkex.Transform(placed.get("transform") or "").apply_to_point((0, 0))
+    assert abs(origin.x) < 1e-6
+    assert abs(origin.y) < 1e-6
+
+
 def test_text_probe_keeps_shape_owner_and_drops_unrelated_art():
     raw = b'''<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">
       <defs>

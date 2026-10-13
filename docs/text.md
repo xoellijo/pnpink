@@ -162,6 +162,26 @@ This creates a shield and places a crown above it, reduced to 30% of the hole an
 
 </div>
 
+The compact `:reference:` form remains suitable for one SVG ID or one Source. For a composition of several pieces, wrap the complete expression in `:(...):`. The explicit parentheses delimit the complete icon, so URI colons inside Sources cannot terminate it early:
+
+<div class="csv-dataset" markdown>
+
+| description |
+| --- |
+| :(@{icon://wood}~2 @{icon://white-circle}~[50%]i3 @{icon://plus}~[35%]i3): |
+
+</div>
+
+Document IDs and Sources can be mixed in the same composition, and every piece may carry its own Fit-Anchor or Transform suffix:
+
+<div class="csv-dataset" markdown>
+
+| description |
+| --- |
+| :(shield @{icon://plus}~[30%]3[-5% 0]): |
+
+</div>
+
 There is no need to build and save a new permanent SVG group for every combination. A dataset cell can assemble the required icon from reusable pieces for that record only.
 
 ### Transform the Result

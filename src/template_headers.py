@@ -16,13 +16,6 @@ def _local_name(node) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
-def _child_text(node, name: str) -> str:
-    for child in list(node) if node is not None else []:
-        if _local_name(child) == name:
-            return str(child.text or "").strip()
-    return ""
-
-
 def _bbox_reference(datasets: list[dict]) -> str:
     for dataset in datasets or []:
         references = list((dataset.get("meta") or {}).get("templates_bbox_ids") or [])
@@ -42,15 +35,12 @@ def _find_reference(root, reference: str):
     for node in nodes:
         if str(node.get(INKSCAPE_LABEL) or "").strip() == wanted:
             return node
-    for node in nodes:
-        if _child_text(node, "title") == wanted or _child_text(node, "desc") == wanted:
-            return node
     return None
 
 
 def _fallback_bbox(root):
     for node in root.iter():
-        if _child_text(node, "desc").casefold().startswith("bbox"):
+        if str(node.get(INKSCAPE_LABEL) or "").strip().casefold().startswith("bbox"):
             return node
     return None
 
@@ -80,7 +70,7 @@ def template_headers(root, datasets: list[dict]) -> dict:
     if bbox is None:
         if reference:
             raise ValueError(f"Dataset bbox '{reference}' was not found in the SVG template")
-        raise ValueError("No dataset bbox is configured and no SVG description starts with 'bbox'")
+        raise ValueError("No dataset bbox is configured and no Inkscape label starts with 'bbox'")
 
     template = _template_root(root, bbox)
     if template is None:

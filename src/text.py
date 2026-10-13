@@ -59,6 +59,7 @@ NS = SVG.NSS
 INLINE_START = ":@{"
 INLINE_START_S = ":S{"
 INLINE_START_SOURCE = ":Source{"
+INLINE_GROUP_START = ":("
 _INLINE_ID_RX = re.compile(r"^[A-Za-z_][\w\-.]*$")
 _INLINE_LOCAL_SOURCE_RX = re.compile(
     r'^\s*(?P<sigil>@)?(?P<path>[^\s\[\]~]+?\.(?:png|jpe?g|gif|bmp|webp|svgz?|pdf|tiff?))\s*'
@@ -81,12 +82,20 @@ def _bal_find(s: str, i_open: int, ch_open: str, ch_close: str) -> int:
         i += 1
     return -1
 
+
 def _find_inline_token(s: str, pos: int) -> Optional[Tuple[int,int,str]]:
-    """Find next :@{...}...: token starting at pos.
-    Returns (start_idx, end_idx_exclusive, inner_expr) where inner_expr starts with '@{'
-    and excludes the surrounding ':'.
-    """
-    # 1) full source token :@{...}...:
+    """Find the next inline icon or explicit ``:(...):`` composition."""
+    # 1) explicit composition :(...):
+    j_group = s.find(INLINE_GROUP_START, pos)
+    group_hit = None
+    if j_group >= 0:
+        end_group = s.find("):", j_group + len(INLINE_GROUP_START))
+        if end_group >= 0:
+            inner = s[j_group + 2:end_group].strip()
+            if _parse_inline_multi_token(inner) is not None:
+                group_hit = (j_group, end_group + 2, inner)
+
+    # 2) single full source token :@{...}...:
     j_src = s.find(INLINE_START, pos)
     src_hit = None
     if j_src >= 0:
@@ -94,13 +103,12 @@ def _find_inline_token(s: str, pos: int) -> Optional[Tuple[int,int,str]]:
         i_brace = j_src + 2  # points to '{'
         k = _bal_find(s, i_brace, '{', '}')
         if k >= 0:
-            # token ends at the next ':' after the closing brace (suffix allowed between)
-            end_colon = s.find(':', k+1)
+            end_colon = s.find(':', k + 1)
             if end_colon >= 0:
                 inner = s[j_src+1:end_colon]  # starts with "@{"
                 src_hit = (j_src, end_colon+1, inner)
 
-    # 2) source token :S{...}...: or :Source{...}...:
+    # 3) single source token :S{...}...: or :Source{...}...:
     src2_hit = None
     candidates = []
     j_s = s.find(INLINE_START_S, pos)
@@ -119,7 +127,7 @@ def _find_inline_token(s: str, pos: int) -> Optional[Tuple[int,int,str]]:
                 inner2 = s[j2 + 1:end_colon2]  # starts with "S{" or "Source{"
                 src2_hit = (j2, end_colon2 + 1, inner2)
 
-    # 3) id token :id:
+    # 4) id token :id:
     j_id = s.find(":", pos)
     id_hit = None
     while j_id >= 0:
@@ -130,12 +138,12 @@ def _find_inline_token(s: str, pos: int) -> Optional[Tuple[int,int,str]]:
         if end_colon < 0:
             break
         inner = (s[j_id+1:end_colon] or "").strip()
-        if _parse_inline_multi_id_token(inner) is not None:
+        if _parse_inline_multi_token(inner) is not None:
             id_hit = (j_id, end_colon+1, inner)
             break
         j_id = s.find(":", j_id + 1)
 
-    hits = [h for h in (src_hit, src2_hit, id_hit) if h is not None]
+    hits = [h for h in (group_hit, src_hit, src2_hit, id_hit) if h is not None]
     if not hits:
         return None
     return sorted(hits, key=lambda h: h[0])[0]
@@ -194,13 +202,6 @@ def _parse_inline_id_token(inner: str):
         suffix = DSL.SourceSuffix(kind="none")
     return (m.group("id") or "").strip(), suffix, tr
 
-def _parse_inline_multi_id_token(inner: str):
-    parts = RTK.split_multivalue(inner)
-    if not parts:
-        return None
-    parsed = [_parse_inline_id_token(part) for part in parts]
-    return parsed if all(item is not None for item in parsed) else None
-
 def _parse_source_inner_token(inner: str):
     """Parse inline source inner token (@{...} / S{...} / Source{...}) into (src_uri, suffix)."""
     s = (inner or "").strip()
@@ -257,6 +258,38 @@ def _parse_inline_local_source_token(inner: str):
     return src_uri, DSL.SourceSuffix(kind="none")
 
 
+def _parse_inline_component_token(token: str):
+    s = (token or "").strip()
+    if not s:
+        return None
+    if s.startswith("@{") or s.lower().startswith(("s{", "source{")):
+        try:
+            src_uri, suffix = _parse_source_inner_token(s)
+        except Exception:
+            return None
+        return src_uri, suffix, None, False
+    try:
+        local_source = _parse_inline_local_source_token(s)
+    except Exception:
+        local_source = None
+    if local_source:
+        src_uri, suffix = local_source
+        return src_uri, suffix, None, False
+    parsed_id = _parse_inline_id_token(s)
+    if parsed_id is None:
+        return None
+    src_uri, suffix, parsed_transform = parsed_id
+    return src_uri, suffix, parsed_transform, True
+
+
+def _parse_inline_multi_token(inner: str):
+    parts = RTK.split_multivalue(inner)
+    if not parts:
+        return None
+    parsed = [_parse_inline_component_token(part) for part in parts]
+    return parsed if all(item is not None for item in parsed) else None
+
+
 
 # --- sanitize unquoted attributes in <tspan ...> ---
 _UNQUOTED_ATTR_RX = re.compile(
@@ -281,6 +314,7 @@ class InlineIconItem:
     src_uri: str
     suffix: "DSL.SourceSuffix"
     parsed_transform: Optional["DSL.TransformSpec"] = None
+    is_doc_id: bool = False
     symbol_id: Optional[str] = None
     intrinsic_wh: Optional[Tuple[float,float]] = None
 
@@ -675,56 +709,22 @@ def _process_text_fragment(
         # Literal text before the token.
         acc += s[pos:t0]
 
-        # try parsing :@{...}: / :S{...}: / :Source{...}:  or :id:
-        extra_icons = None
-        if inner.startswith("@{") or inner.lower().startswith("s{") or inner.lower().startswith("source{"):
-            try:
-                src_uri, suffix = _parse_source_inner_token(inner)
-                parsed_transform = None
-            except Exception as ex:
-                # Malformed token: keep the literal text for better UX.
-                acc += s[t0:t1]
-                _l.w(f"[inline_icons] invalid token kept as literal: {s[t0:t1]!r}  ({ex})")
-                pos = t1
-                continue
+        parsed_icons = _parse_inline_multi_token(inner)
+        if parsed_icons is None:
+            acc += s[t0:t1]
+            _l.w(f"[inline_icons] invalid token kept as literal: {s[t0:t1]!r}")
+            pos = t1
+            continue
+        if callable(source_exists) and any(not source_exists(icon[0]) for icon in parsed_icons):
+            acc += s[t0:t1]
+            pos = t1
+            continue
 
-            if not src_uri:
-                acc += s[t0:t1]
-                _l.w(f"[inline_icons] token sin src (se deja literal): {s[t0:t1]!r}")
-                pos = t1
-                continue
-            is_doc_id = False
-        else:
-            try:
-                parsed_local = _parse_inline_local_source_token(inner)
-            except Exception:
-                parsed_local = None
-            if parsed_local:
-                src_uri, suffix = parsed_local
-                parsed_transform = None
-                if callable(source_exists) and (not source_exists(src_uri)):
-                    acc += s[t0:t1]
-                    pos = t1
-                    continue
-                is_doc_id = False
-            else:
-                parsed_ids = _parse_inline_multi_id_token(inner)
-                if parsed_ids is None:
-                    acc += s[t0:t1]
-                    _l.w(f"[inline_icons] invalid token kept as literal: {s[t0:t1]!r}")
-                    pos = t1
-                    continue
-                if callable(source_exists) and any(not source_exists(icon_id) for icon_id, _suffix, _transform in parsed_ids):
-                    acc += s[t0:t1]
-                    pos = t1
-                    continue
-                src_uri, suffix, parsed_transform = parsed_ids[0]
-                if len(parsed_ids) > 1:
-                    extra_icons = [
-                        InlineIconItem(icon_id, icon_suffix, icon_transform)
-                        for icon_id, icon_suffix, icon_transform in parsed_ids[1:]
-                    ]
-                is_doc_id = True
+        src_uri, suffix, parsed_transform, is_doc_id = parsed_icons[0]
+        extra_icons = [
+            InlineIconItem(icon_uri, icon_suffix, icon_transform, icon_is_doc_id)
+            for icon_uri, icon_suffix, icon_transform, icon_is_doc_id in parsed_icons[1:]
+        ] or None
 
         # volcar acc al atributo actual y “cerrar”
         setattr(node, attr_name, acc)
@@ -1202,6 +1202,23 @@ def process_text_geometry(root_scope: SVG.etree._Element, show_debug_rects: bool
         probe_tree, _probe_texts, probe_offsets = _build_text_probe(tree, ids, id_index)
         query_tasks.append(query_service.submit(probe_tree, ids, probe_offsets))
 
+    def _resolve_icon(icon) -> None:
+        nonlocal placeholder_count
+        if icon.is_doc_id:
+            icon.symbol_id = icon.src_uri
+            bb = _icon_bbox_uu(doc_root, icon.symbol_id)
+            icon.intrinsic_wh = (float(bb.get("width", 1.0)), float(bb.get("height", 1.0)))
+            return
+        try:
+            ref = source_manager.register(icon.src_uri)
+        except Exception as ex:
+            _l.w(f"[inline_icons] source_manager.register failed for {icon.src_uri!r}: {ex}")
+            ref = source_manager.register("")
+        icon.symbol_id = ref.symbol_id
+        if ref.symbol_id and str(ref.symbol_id).startswith("src_missing_"):
+            placeholder_count += 1
+        icon.intrinsic_wh = tuple(ref.intrinsic_box or (DEFAULT_H, DEFAULT_H))
+
     for it in all_items:
         shared_hole = bool(it.extra_icons)
         if shared_hole:
@@ -1215,25 +1232,9 @@ def process_text_geometry(root_scope: SVG.etree._Element, show_debug_rects: bool
         hole_fs = it.hole_fit
 
         # 3) resolver source → symbol_id + intrinsic size
-        if it.is_doc_id:
-            it.symbol_id = it.src_uri
-            bb = _icon_bbox_uu(doc_root, it.symbol_id)
-            it.intrinsic_wh = (float(bb.get("width", 1.0)), float(bb.get("height", 1.0)))
-        else:
-            try:
-                ref = source_manager.register(it.src_uri)
-            except Exception as ex:
-                _l.w(f"[inline_icons] source_manager.register failed for {it.src_uri!r}: {ex}")
-                ref = source_manager.register("")  # placeholder seguro
-            it.symbol_id = ref.symbol_id
-            if ref.symbol_id and str(ref.symbol_id).startswith("src_missing_"):
-                placeholder_count += 1
-            it.intrinsic_wh = tuple(ref.intrinsic_box or (DEFAULT_H, DEFAULT_H))
-
+        _resolve_icon(it)
         for icon in (it.extra_icons or []):
-            icon.symbol_id = icon.src_uri
-            bb = _icon_bbox_uu(doc_root, icon.symbol_id)
-            icon.intrinsic_wh = (float(bb.get("width", 1.0)), float(bb.get("height", 1.0)))
+            _resolve_icon(icon)
 
         intrinsic_sizes = [it.intrinsic_wh] + [icon.intrinsic_wh for icon in (it.extra_icons or [])]
         ratios = []
@@ -1509,7 +1510,7 @@ def process_text_geometry(root_scope: SVG.etree._Element, show_debug_rects: bool
             icons_to_place = [
                 (it.src_uri, it.symbol_id, _inline_placement_ops(it.suffix), it.parsed_transform, it.is_doc_id),
                 *[
-                    (icon.src_uri, icon.symbol_id, _inline_placement_ops(icon.suffix), icon.parsed_transform, True)
+                    (icon.src_uri, icon.symbol_id, _inline_placement_ops(icon.suffix), icon.parsed_transform, icon.is_doc_id)
                     for icon in it.extra_icons
                 ],
             ]

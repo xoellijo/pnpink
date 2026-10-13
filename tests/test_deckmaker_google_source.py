@@ -25,6 +25,17 @@ def test_local_csv_remains_the_default_without_sheet(tmp_path: Path):
     assert service._detect_source_mode(str(template), "", "") == "local_csv"
 
 
+def test_explicit_local_csv_does_not_fall_back_to_configured_google_sheet(tmp_path: Path):
+    template = tmp_path / "cards.svg"
+    template.write_text("<svg/>", encoding="utf-8")
+
+    assert not DeckMakerService._has_dataset_source(str(template), "sheet-id", "local_csv")
+
+    template.with_suffix(".csv").write_text("id\n1\n", encoding="utf-8")
+
+    assert DeckMakerService._has_dataset_source(str(template), "sheet-id", "local_csv")
+
+
 def test_auto_google_access_checks_public_before_oauth(monkeypatch):
     calls = []
     monkeypatch.setattr(dataset, "_fetch_gsheet_matrix_public", lambda *_args: calls.append("public") or None)
@@ -116,3 +127,29 @@ def test_resolved_embed_gid_is_persisted_only_for_matching_sheet(monkeypatch, tm
 
     dataset_state.set_gsheet_for_svg(str(template), "sheet-a", "Other", "oauth")
     assert dataset_state.get_gsheet_for_svg(str(template))["sheet_gid"] == ""
+
+
+def test_dataset_source_mode_is_persisted_per_template(monkeypatch, tmp_path: Path):
+    state_file = tmp_path / "dataset_state.json"
+    template = tmp_path / "cards.svg"
+    template.write_text("<svg/>", encoding="utf-8")
+    monkeypatch.setattr(dataset_state, "STATE_FILE", str(state_file))
+    monkeypatch.setattr(dataset_state, "_LEGACY_STATE_FILES", [])
+
+    dataset_state.set_dataset_source_for_svg(
+        str(template), "auto", "sheet-a", "Cards!A1:Z99"
+    )
+    assert dataset_state.get_dataset_source_for_svg(str(template)) == {
+        "kind": "gsheet",
+        "source_mode": "auto",
+        "sheet_id": "sheet-a",
+        "sheet_range": "Cards!A1:Z99",
+        "access_mode": "auto",
+        "sheet_gid": "",
+    }
+
+    dataset_state.set_dataset_source_for_svg(str(template), "local_csv")
+    source = dataset_state.get_dataset_source_for_svg(str(template))
+    assert source["kind"] == "local_csv"
+    assert source["source_mode"] == "local_csv"
+    assert source["sheet_id"] == "sheet-a"

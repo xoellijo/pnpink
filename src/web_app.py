@@ -5,11 +5,15 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import json
 import shutil
 import subprocess
 import sys
+import threading
 import urllib.parse
 import webbrowser
+
+import app_paths
 
 
 BROWSER_LABELS = {
@@ -20,6 +24,57 @@ BROWSER_LABELS = {
     "firefox": "Mozilla Firefox",
     "safari": "Safari",
 }
+
+WINDOW_GEOMETRY_FILE = app_paths.data_path("deckmaker_web_window.json")
+_WINDOW_GEOMETRY_LOCK = threading.Lock()
+
+
+def normalize_window_geometry(value) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    try:
+        geometry = {
+            "x": int(value["x"]),
+            "y": int(value["y"]),
+            "width": int(value["width"]),
+            "height": int(value["height"]),
+        }
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return {}
+    if not (320 <= geometry["width"] <= 16384 and 240 <= geometry["height"] <= 16384):
+        return {}
+    if not (-10000 <= geometry["x"] <= 10000 and -10000 <= geometry["y"] <= 10000):
+        return {}
+    return geometry
+
+
+def load_window_geometry() -> dict[str, int]:
+    with _WINDOW_GEOMETRY_LOCK:
+        try:
+            payload = json.loads(WINDOW_GEOMETRY_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return {}
+    return normalize_window_geometry(payload.get("geometry") if isinstance(payload, dict) else None)
+
+
+def save_window_geometry(value) -> bool:
+    geometry = normalize_window_geometry(value)
+    if not geometry:
+        return False
+    payload = json.dumps({"version": 1, "geometry": geometry}, indent=2) + "\n"
+    with _WINDOW_GEOMETRY_LOCK:
+        WINDOW_GEOMETRY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temporary = WINDOW_GEOMETRY_FILE.with_suffix(WINDOW_GEOMETRY_FILE.suffix + ".tmp")
+        try:
+            temporary.write_text(payload, encoding="utf-8")
+            os.replace(temporary, WINDOW_GEOMETRY_FILE)
+        finally:
+            try:
+                if temporary.exists():
+                    temporary.unlink()
+            except OSError:
+                pass
+    return True
 
 
 def normalize_browser(value: str, default: str = "system") -> str:
@@ -113,7 +168,17 @@ def open_web_app(url: str, preferred_browser: str = "system") -> bool:
     if paths:
         chromium = browser in {"edge", "chrome", "chromium"}
         target = _with_query(url, shell="app") if chromium else url
-        args = [f"--app={target}"] if chromium else [target]
+        args = []
+        if chromium:
+            geometry = load_window_geometry()
+            if geometry:
+                args.extend([
+                    f"--window-position={geometry['x']},{geometry['y']}",
+                    f"--window-size={geometry['width']},{geometry['height']}",
+                ])
+            args.append(f"--app={target}")
+        else:
+            args.append(target)
         if _launch(paths[0], args):
             return True
     try:

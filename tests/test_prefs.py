@@ -18,11 +18,15 @@ def test_user_preferences_override_bundled_defaults(monkeypatch, tmp_path: Path)
 
     assert prefs.get_gdrive_api_key() == "public-key"
     assert prefs.get_deckmaker_web_browser() == "system"
+    assert prefs.get_deckmaker_preview_backend() == "browser"
 
     prefs.set_deckmaker_web_browser("chrome")
+    prefs.set_deckmaker_preview_backend("inkscape")
     prefs.reload()
 
     assert prefs.get_gdrive_api_key() == "public-key"
     assert prefs.get_deckmaker_web_browser() == "chrome"
+    assert prefs.get_deckmaker_preview_backend() == "inkscape"
     assert "gdrive_api_key" not in user.read_text(encoding="utf-8")
     assert "deckmaker_web_browser = chrome" in user.read_text(encoding="utf-8")
+    assert "deckmaker_preview_backend = inkscape" in user.read_text(encoding="utf-8")

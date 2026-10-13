@@ -3,13 +3,16 @@ import { googleSheetFromDataTransfer } from './gsheet-drop.js';
 import { SpritesheetEditor } from './spritesheet-editor.js';
 import { appShell } from './app-shell.js';
 import { PreviewViewer } from './preview-viewer.js';
+import { DatasetTable } from './dataset-table.js';
 
 const materialIcon = name => `material-symbols-light:${name}`;
 const ENABLE_SPRITESHEETS = true;
+const PREVIEW_SYNC_MODES = ['Off', 'Dataset → Preview', 'Two-way'];
 
 const query = new URLSearchParams(location.search);
 const token = query.get('token') || sessionStorage.getItem('deckmaker-token') || '';
 if (token) sessionStorage.setItem('deckmaker-token', token);
+const managedAppWindow = query.get('shell') === 'app';
 const browserSession = globalThis.crypto?.randomUUID?.()
   || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
@@ -20,6 +23,7 @@ const elements = {
   sheetEditor: document.querySelector('#gsheet-editor'),
   sheetEditorFrame: document.querySelector('#gsheet-editor-frame'),
   sheetEditorMessage: document.querySelector('#gsheet-editor-message'),
+  datasetTable: document.querySelector('#dataset-table'),
   previewViewport: document.querySelector('#preview-viewport'),
   previewStage: document.querySelector('#preview-stage'),
   previewImage: document.querySelector('#preview-image'),
@@ -38,6 +42,7 @@ const elements = {
 };
 
 const model = {
+  previewSelectionSync: localStorage.getItem('deckmaker-preview-selection-sync') || 'Off',
   spriteSource: 'No selection',
   spriteMode: 'Grid',
   spriteOrder: 'Rows first',
@@ -65,13 +70,28 @@ const previewViewer = new PreviewViewer({
   scale: elements.previewScale,
   overlays: [elements.spriteGridOverlay],
 }, token);
+const datasetTable = new DatasetTable({
+  container: elements.datasetTable,
+  message: elements.sheetEditorMessage,
+  reportError: message => toast(message),
+  reportStatus: message => toast(message),
+}, path => api(path), values => api('/api/dataset/cells', {
+  method: 'POST',
+  body: JSON.stringify(values),
+}), values => api('/api/dataset/structure', {
+  method: 'POST',
+  body: JSON.stringify(values),
+}), selection => schedulePreviewCellSync(selection));
 const controllers = [];
 const actionControllers = [];
 let sequence = 0;
 let built = false;
 let spriteEditor;
 let gui;
-let datasetFolder;
+let datasetGui;
+let datasetDockController;
+let datasetTitleLabel;
+let datasetDock = 'bottom';
 let toolsFolder;
 let spritesFolder;
 let templateSelect;
@@ -90,10 +110,19 @@ let installController;
 let fullscreenController;
 let playServerController;
 let openSheetController;
+let googleSheetToCsvController;
 let sheetEditorActive = false;
 let sheetActivitySentAt = 0;
 let sheetActivityChain = Promise.resolve();
 let sheetViewMode = 'minimal';
+let toastTimer = 0;
+let lastWindowGeometry = '';
+let geometryTimer = 0;
+let windowGeometryReady = !managedAppWindow;
+let windowGeometryRestored = false;
+let previewCellSyncTimer = 0;
+let previewSelectionPolling = false;
+let lastPreviewSelection = '';
 
 function leaveSpritesheet() {
   spriteEditor?.deactivate();
@@ -115,10 +144,52 @@ async function api(path, options = {}) {
 }
 
 function toast(message) {
+  clearTimeout(toastTimer);
   elements.toast.textContent = message;
   elements.toast.classList.add('visible');
-  setTimeout(() => elements.toast.classList.remove('visible'), 3200);
+  toastTimer = setTimeout(() => elements.toast.classList.remove('visible'), 3200);
 }
+
+function schedulePreviewCellSync(selection) {
+  if (model.previewSelectionSync === 'Off') return;
+  clearTimeout(previewCellSyncTimer);
+  previewCellSyncTimer = setTimeout(async () => {
+    try {
+      const result = await api('/api/preview/sync', {
+        method: 'POST',
+        body: JSON.stringify(selection),
+      });
+      const synced = result.selection;
+      if (synced) {
+        lastPreviewSelection = `${synced.asset}:${synced.row}:${synced.column}`;
+      }
+    } catch (error) {
+      toast(error.message);
+    }
+  }, 80);
+}
+
+async function pollInkscapeSelection() {
+  if (previewSelectionPolling || document.hidden || document.hasFocus()
+      || model.previewSelectionSync !== 'Two-way'
+      || latestState.preview?.backend !== 'inkscape' || latestState.datasetEditor?.kind !== 'csv') return;
+  previewSelectionPolling = true;
+  try {
+    const result = await api('/api/preview/selection');
+    const selection = result.selection;
+    if (!selection) return;
+    const signature = `${selection.asset}:${selection.row}:${selection.column}`;
+    if (signature === lastPreviewSelection) return;
+    lastPreviewSelection = signature;
+    await datasetTable.selectCell(selection.row, selection.column);
+  } catch (_error) {
+    // The preview window may be closing or reloading; the next poll will retry.
+  } finally {
+    previewSelectionPolling = false;
+  }
+}
+
+setInterval(pollInkscapeSelection, 400);
 
 async function copyText(text) {
   if (navigator.clipboard?.writeText) {
@@ -172,9 +243,67 @@ setInterval(() => updateSheetActivity(), 250);
 window.addEventListener('focus', () => setTimeout(() => updateSheetActivity(true), 0));
 window.addEventListener('blur', () => setTimeout(() => updateSheetActivity(true), 0));
 document.addEventListener('visibilitychange', () => updateSheetActivity(true));
+
+function currentWindowGeometry() {
+  if (!managedAppWindow || !windowGeometryReady) return null;
+  const geometry = {
+    x: Math.round(window.screenX),
+    y: Math.round(window.screenY),
+    width: Math.round(window.outerWidth),
+    height: Math.round(window.outerHeight),
+  };
+  return Object.values(geometry).every(Number.isFinite) ? geometry : null;
+}
+
+function restoreWindowGeometry(geometry) {
+  if (!managedAppWindow || windowGeometryRestored) return;
+  windowGeometryRestored = true;
+  const values = ['x', 'y', 'width', 'height'].map(key => Number(geometry?.[key]));
+  if (values.every(Number.isFinite) && values[2] >= 320 && values[3] >= 240) {
+    try {
+      window.moveTo(values[0], values[1]);
+      window.resizeTo(values[2], values[3]);
+    } catch (_error) {
+      // Chromium may apply the launch geometry itself or reject script-driven placement.
+    }
+  }
+  setTimeout(() => {
+    windowGeometryReady = true;
+    reportWindowGeometry(true);
+  }, 350);
+}
+
+function reportWindowGeometry(force = false) {
+  const geometry = currentWindowGeometry();
+  if (!geometry) return;
+  const signature = JSON.stringify(geometry);
+  if (!force && signature === lastWindowGeometry) return;
+  lastWindowGeometry = signature;
+  api('/api/window-geometry', {
+    method: 'POST',
+    body: JSON.stringify({ geometry }),
+  }).catch(() => {});
+}
+
+function scheduleWindowGeometryReport() {
+  clearTimeout(geometryTimer);
+  geometryTimer = setTimeout(() => reportWindowGeometry(), 200);
+}
+
+if (managedAppWindow) {
+  setInterval(() => reportWindowGeometry(), 1000);
+  window.addEventListener('resize', scheduleWindowGeometryReport);
+  window.addEventListener('focus', () => reportWindowGeometry());
+}
+
+let browserSessionClosed = false;
+
 function closeBrowserSession() {
+  if (browserSessionClosed) return;
+  browserSessionClosed = true;
   const params = new URLSearchParams({ token, session: browserSession });
-  if (navigator.sendBeacon?.(`/api/session/close?${params}`, new Blob(['{}'], { type: 'application/json' }))) return;
+  const body = JSON.stringify({ geometry: currentWindowGeometry() });
+  if (navigator.sendBeacon?.(`/api/session/close?${params}`, new Blob([body], { type: 'application/json' }))) return;
   fetch('/api/session/close', {
     method: 'POST',
     headers: {
@@ -182,12 +311,13 @@ function closeBrowserSession() {
       'X-DeckMaker-Token': token,
       'X-DeckMaker-Session': browserSession,
     },
-    body: '{}',
+    body,
     keepalive: true,
   }).catch(() => {});
 }
 
 window.addEventListener('pagehide', closeBrowserSession);
+window.addEventListener('beforeunload', closeBrowserSession);
 
 function reportBrowserVisibility() {
   return api('/api/session/activity', {
@@ -204,12 +334,18 @@ function openBrowserSession() {
 }
 
 document.addEventListener('visibilitychange', () => reportBrowserVisibility().catch(() => {}));
-window.addEventListener('pageshow', () => openBrowserSession().catch(() => {}));
+window.addEventListener('pageshow', () => {
+  openBrowserSession()
+    .then(result => restoreWindowGeometry(result.geometry))
+    .catch(() => {
+      windowGeometryReady = true;
+    });
+});
 setInterval(() => reportBrowserVisibility().catch(() => {}), 5000);
 
 function updateLogVisibility(busy = Boolean(latestState.busy)) {
-  const previewJob = String(latestState.job || '') === 'preview';
-  const visible = logDisplayMode === 'open' || (logDisplayMode === 'auto' && busy && !previewJob);
+  const quietJob = ['preview', 'gsheet-to-csv'].includes(String(latestState.job || ''));
+  const visible = logDisplayMode === 'open' || (logDisplayMode === 'auto' && busy && !quietJob);
   elements.consolePanel.hidden = !visible;
   document.body.classList.toggle('log-visible', visible);
 }
@@ -231,7 +367,47 @@ function setDeckMakerPaneHeight(value, remember = true) {
   elements.workspace.style.setProperty('--deckmaker-pane-height', `${height}px`);
   elements.splitter.setAttribute('aria-valuenow', String(height));
   if (remember) localStorage.setItem('deckmaker-pane-height', String(height));
-  updateSheetViewMode(height <= window.innerHeight * .15 ? 'demo' : 'minimal');
+  updateSheetViewMode(datasetDock === 'bottom' && height <= window.innerHeight * .15 ? 'demo' : 'minimal');
+  datasetTable.redraw();
+}
+
+function setDeckMakerPaneWidth(value, remember = true) {
+  const minimum = Math.max(240, window.innerWidth * .2);
+  const maximum = Math.max(minimum, window.innerWidth - 100);
+  const width = Math.round(Math.max(minimum, Math.min(maximum, Number(value) || minimum)));
+  elements.workspace.style.setProperty('--deckmaker-dataset-width', `${width}px`);
+  elements.splitter.setAttribute('aria-valuenow', String(width));
+  if (remember) localStorage.setItem('deckmaker-dataset-width', String(width));
+  updateSheetViewMode('minimal');
+  datasetTable.redraw();
+}
+
+function updateDatasetDockButton() {
+  if (!datasetDockController || !gui) return;
+  const moveRight = datasetDock === 'bottom';
+  const tooltip = moveRight ? 'Move dataset to the right' : 'Move dataset to the bottom';
+  const buttonContent = datasetDockController.$name || datasetDockController;
+  const buttonElement = datasetDockController.domElement || datasetDockController;
+  buttonContent.replaceChildren(gui._createIcon(materialIcon(moveRight ? 'dock-to-right' : 'dock-to-bottom')));
+  buttonElement.title = tooltip;
+  buttonElement.setAttribute('aria-label', tooltip);
+}
+
+function setDatasetDock(value, remember = true) {
+  datasetDock = value === 'right' ? 'right' : 'bottom';
+  elements.workspace.classList.toggle('dataset-dock-bottom', datasetDock === 'bottom');
+  elements.workspace.classList.toggle('dataset-dock-right', datasetDock === 'right');
+  elements.splitter.setAttribute('aria-orientation', datasetDock === 'right' ? 'vertical' : 'horizontal');
+  elements.splitter.setAttribute('aria-label', `Resize preview and ${datasetDock === 'right' ? 'right' : 'bottom'} dataset`);
+  if (remember) localStorage.setItem('deckmaker-dataset-dock', datasetDock);
+  updateDatasetDockButton();
+  if (datasetDock === 'right') {
+    const remembered = Number(localStorage.getItem('deckmaker-dataset-width'));
+    setDeckMakerPaneWidth(remembered || Math.min(620, window.innerWidth * .45), false);
+  } else {
+    const current = parseFloat(getComputedStyle(elements.workspace).getPropertyValue('--deckmaker-pane-height'));
+    setDeckMakerPaneHeight(current || Math.min(320, window.innerHeight * .42), false);
+  }
 }
 
 function sheetEditorUrl(state = latestState, mode = sheetViewMode) {
@@ -265,36 +441,62 @@ function updateSheetViewMode(mode) {
   if (sheetViewMode === next) return;
   sheetViewMode = next;
   const sheetId = String(latestState.sheetId || '').trim();
-  if (!sheetId) return;
+  if (!sheetId || latestState.datasetEditor?.kind !== 'gsheet') return;
   const sheetGid = String(latestState.sheetGid ?? '').trim();
   const sheetKey = `${sheetId}:${sheetGid}:${sheetViewMode}`;
   elements.sheetEditorFrame.dataset.sheetKey = sheetKey;
   elements.sheetEditorFrame.src = sheetEditorUrl();
 }
 
+function showMissingDatasetGuide() {
+  const title = document.createElement('strong');
+  title.textContent = 'This template has no dataset yet';
+  const explanation = document.createElement('span');
+  explanation.textContent = 'Create a starter CSV from the SVG fields, or drag a Google Sheets URL from your browser onto this area.';
+  const create = document.createElement('button');
+  create.type = 'button';
+  create.className = 'deckmaker-create-dataset';
+  create.textContent = 'Create starter CSV';
+  create.title = 'Create a commented local CSV with headers inferred from the template bbox and its fields';
+  create.disabled = !latestState.canCreateDataset || Boolean(latestState.busy);
+  create.addEventListener('click', () => command('create-starter-csv'));
+  elements.sheetEditorMessage.replaceChildren(title, explanation, create);
+}
+
 function initializeSplitter(hasSheet) {
   if (splitterReady) {
     if (!sheetConfigured && hasSheet) {
-      const remembered = Number(localStorage.getItem('deckmaker-pane-height'));
-      setDeckMakerPaneHeight(remembered || Math.min(320, window.innerHeight * .42), false);
+      if (datasetDock === 'right') {
+        const remembered = Number(localStorage.getItem('deckmaker-dataset-width'));
+        setDeckMakerPaneWidth(remembered || Math.min(620, window.innerWidth * .45), false);
+      } else {
+        const remembered = Number(localStorage.getItem('deckmaker-pane-height'));
+        setDeckMakerPaneHeight(remembered || Math.min(320, window.innerHeight * .42), false);
+      }
     }
     sheetConfigured = hasSheet;
     return;
   }
   splitterReady = true;
   sheetConfigured = hasSheet;
+  datasetDock = localStorage.getItem('deckmaker-dataset-dock') === 'right' ? 'right' : 'bottom';
   const remembered = Number(localStorage.getItem('deckmaker-pane-height'));
   const initial = hasSheet
     ? (remembered || Math.min(320, window.innerHeight * .42))
     : window.innerHeight - 145;
   setDeckMakerPaneHeight(initial, false);
+  setDatasetDock(datasetDock, false);
 }
 
 elements.splitter.addEventListener('pointerdown', event => {
   if (event.button !== 0) return;
   event.preventDefault();
   elements.splitter.setPointerCapture?.(event.pointerId);
-  const move = moveEvent => setDeckMakerPaneHeight(moveEvent.clientY - elements.workspace.getBoundingClientRect().top);
+  const move = moveEvent => {
+    const bounds = elements.workspace.getBoundingClientRect();
+    if (datasetDock === 'right') setDeckMakerPaneWidth(bounds.right - moveEvent.clientX);
+    else setDeckMakerPaneHeight(moveEvent.clientY - bounds.top);
+  };
   const finish = () => {
     elements.splitter.removeEventListener('pointermove', move);
     elements.splitter.removeEventListener('pointerup', finish);
@@ -306,6 +508,13 @@ elements.splitter.addEventListener('pointerdown', event => {
 });
 
 elements.splitter.addEventListener('keydown', event => {
+  if (datasetDock === 'right') {
+    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    event.preventDefault();
+    const current = parseFloat(getComputedStyle(elements.workspace).getPropertyValue('--deckmaker-dataset-width')) || 500;
+    setDeckMakerPaneWidth(current + (event.key === 'ArrowLeft' ? 16 : -16));
+    return;
+  }
   if (!['ArrowUp', 'ArrowDown'].includes(event.key)) return;
   event.preventDefault();
   const current = parseFloat(getComputedStyle(elements.workspace).getPropertyValue('--deckmaker-pane-height')) || 300;
@@ -314,18 +523,30 @@ elements.splitter.addEventListener('keydown', event => {
 
 elements.splitter.addEventListener('dblclick', event => {
   event.preventDefault();
+  if (datasetDock === 'right') {
+    const current = parseFloat(getComputedStyle(elements.workspace).getPropertyValue('--deckmaker-dataset-width'))
+      || window.innerWidth * .5;
+    setDeckMakerPaneWidth(window.innerWidth * (current > window.innerWidth * .5 ? .1 : .9));
+    return;
+  }
   const current = parseFloat(getComputedStyle(elements.workspace).getPropertyValue('--deckmaker-pane-height'))
     || window.innerHeight * .5;
   setDeckMakerPaneHeight(window.innerHeight * (current > window.innerHeight * .5 ? .1 : .9));
 });
 
 window.addEventListener('resize', () => {
-  const current = parseFloat(getComputedStyle(elements.workspace).getPropertyValue('--deckmaker-pane-height'));
-  if (current) setDeckMakerPaneHeight(current, false);
+  if (datasetDock === 'right') {
+    const current = parseFloat(getComputedStyle(elements.workspace).getPropertyValue('--deckmaker-dataset-width'));
+    if (current) setDeckMakerPaneWidth(current, false);
+  } else {
+    const current = parseFloat(getComputedStyle(elements.workspace).getPropertyValue('--deckmaker-pane-height'));
+    if (current) setDeckMakerPaneHeight(current, false);
+  }
 });
 
 async function save(key, value) {
   try {
+    if (key === 'sourceMode') await datasetTable.flushEdits();
     applyState(await api('/api/settings', { method: 'POST', body: JSON.stringify({ [key]: value }) }));
   } catch (error) {
     toast(error.message);
@@ -373,36 +594,39 @@ function menuTitle(state) {
 }
 
 function datasetTitle(state) {
-  return 'Dataset options';
-}
-
-function setGuiTitle(target, title, tooltip = '') {
-  if (target?.$title) {
-    target._title = title;
-    let label = target.$title.querySelector(':scope > .deckmaker-title-text');
-    if (!label) {
-      [...target.$title.childNodes]
-        .filter(node => node.nodeType === Node.TEXT_NODE)
-        .forEach(node => node.remove());
-      label = document.createElement('span');
-      label.className = 'deckmaker-title-text';
-      target.$title.append(label);
-    }
-    label.textContent = title;
-    target.$title.title = tooltip;
-    if (target.$multi) target.$multi.title = tooltip;
+  const editorKind = String(state.datasetEditor?.kind || '').toLowerCase();
+  const sourceMode = String(state.sourceMode || '').toLowerCase();
+  if (editorKind === 'csv' || sourceMode.includes('csv') || sourceMode === 'local') return 'Dataset [CSV]';
+  if (editorKind === 'gsheet' || sourceMode.includes('google') || sourceMode.includes('oauth') || sourceMode.includes('public')) {
+    return 'Dataset [GSheet]';
   }
+  return 'Dataset';
 }
 
 function updateMenuIdentity(state) {
   updateTemplateTitle(state);
+  updatePreviewNavigation(state);
+  if (datasetGui?.$title) {
+    if (datasetTitleLabel) datasetTitleLabel.textContent = datasetTitle(state);
+    datasetGui.$title.title = `${state.datasetPath || 'No dataset'}\n\nDrag a Google Sheets URL here to link it automatically.`;
+  }
   const title = `${menuTitle(state)} [${state.templateName || 'No template'}]`;
-  setGuiTitle(
-    datasetFolder,
-    datasetTitle(state),
-    `${state.datasetPath || 'No dataset'}\n\nDrag a Google Sheets URL here to link it automatically.`,
-  );
   document.title = title;
+}
+
+function titleButton(titleBar, className, text, tooltip, handler) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `deckmaker-title-button ${className}`;
+  button.textContent = text;
+  button.title = tooltip;
+  button.addEventListener('pointerdown', event => event.stopPropagation());
+  button.addEventListener('click', event => {
+    event.stopPropagation();
+    handler();
+  });
+  titleBar.append(button);
+  return button;
 }
 
 function updateTemplateTitle(state) {
@@ -432,21 +656,8 @@ function updateTemplateTitle(state) {
     });
     picker.append(templateSelect);
     titleBar.append(picker);
-    const titleButton = (className, text, tooltip, handler) => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = `deckmaker-title-button ${className}`;
-      button.textContent = text;
-      button.title = tooltip;
-      button.addEventListener('pointerdown', event => event.stopPropagation());
-      button.addEventListener('click', event => {
-        event.stopPropagation();
-        handler();
-      });
-      titleBar.append(button);
-      return button;
-    };
     templateRefresh = titleButton(
+      titleBar,
       'deckmaker-template-refresh',
       '',
       'Reload the current template and rebuild all dataset previews',
@@ -456,25 +667,6 @@ function updateTemplateTitle(state) {
       },
     );
     templateRefresh.append(gui._createIcon(materialIcon('refresh')));
-    previewPrevious = titleButton('deckmaker-preview-previous', '<', 'Previous cached asset', () => {
-      leaveSpritesheet();
-      command('preview-previous');
-    });
-    previewAssetSelect = document.createElement('select');
-    previewAssetSelect.className = 'deckmaker-preview-asset-select';
-    previewAssetSelect.title = 'Preview the selected asset from the synchronized dataset';
-    previewAssetSelect.addEventListener('click', event => event.stopPropagation());
-    previewAssetSelect.addEventListener('pointerdown', event => event.stopPropagation());
-    previewAssetSelect.addEventListener('change', event => {
-      event.stopPropagation();
-      leaveSpritesheet();
-      save('previewAsset', previewAssetSelect.value);
-    });
-    titleBar.append(previewAssetSelect);
-    previewNext = titleButton('deckmaker-preview-next', '>', 'Next cached asset', () => {
-      leaveSpritesheet();
-      command('preview-next');
-    });
   }
   templateName.textContent = state.templateName || 'No template';
   const records = Array.isArray(state.templates) ? state.templates : [];
@@ -492,6 +684,11 @@ function updateTemplateTitle(state) {
   templateSelect.value = state.template || '';
   templateSelect.disabled = !records.length || Boolean(state.busy);
   templateRefresh.disabled = !state.canGenerate || Boolean(state.busy);
+  gui.$title.title = state.template || '';
+}
+
+function updatePreviewNavigation(state) {
+  if (!previewAssetSelect) return;
   const preview = state.preview || {};
   const assets = Array.isArray(preview.assets) ? preview.assets : [];
   const assetSignature = assets.map(asset => `${asset.value}\u0000${asset.label}`).join('\u0001');
@@ -509,7 +706,6 @@ function updateTemplateTitle(state) {
   previewAssetSelect.disabled = !assets.length || Boolean(state.busy);
   previewPrevious.disabled = !assets.length || Boolean(state.busy);
   previewNext.disabled = !assets.length || Boolean(state.busy);
-  gui.$title.title = state.template || '';
 }
 
 function settingRow(folder, items, className = '') {
@@ -522,7 +718,8 @@ function settingRow(folder, items, className = '') {
       ? first.append(model, item.key, ...args)
       : folder.add(model, item.key, ...args);
     decorate(controller, item);
-    const callback = item.local ? () => spriteEditor?.requestUpdate() : value => save(item.key, value);
+    const callback = item.onChange
+      || (item.local ? () => spriteEditor?.requestUpdate() : value => save(item.key, value));
     (item.live ? controller.onChange(callback) : controller.onFinishChange(callback));
     if (item.local && typeof model[item.key] === 'number') enableSliderWheel(controller, item.args);
     controllers.push(controller);
@@ -598,6 +795,103 @@ function mainActionRow(folder) {
   ], 'deckmaker-main-actions');
 }
 
+function buildDatasetGui(state, options) {
+  datasetGui = gui.addFolder(datasetTitle(state));
+  datasetGui.icon(materialIcon('dataset'));
+  datasetGui.domElement.classList.add('deckmaker-dataset-folder');
+  [...datasetGui.$title.childNodes]
+    .filter(node => node.nodeType === Node.TEXT_NODE)
+    .forEach(node => node.remove());
+  datasetTitleLabel = document.createElement('span');
+  datasetTitleLabel.className = 'deckmaker-folder-title-label';
+  datasetTitleLabel.textContent = datasetTitle(state);
+  datasetGui.$title.append(datasetTitleLabel);
+
+  datasetDockController = titleButton(
+    datasetGui.$multi,
+    'deckmaker-dataset-dock',
+    '',
+    'Move dataset to the right',
+    () => setDatasetDock(datasetDock === 'bottom' ? 'right' : 'bottom'),
+  );
+
+  const sourceController = settingRow(datasetGui, [
+    {
+      key: 'sourceMode', args: [options.sourceModes], label: 'Source', icon: 'database',
+      tooltip: 'Select the dataset source used by this template.',
+    },
+  ], 'deckmaker-dataset-source-row');
+  const googleSheetToCsvAction = { googleSheetToCsvAction: () => command('gsheet-to-csv') };
+  googleSheetToCsvController = sourceController.append(googleSheetToCsvAction, 'googleSheetToCsvAction');
+  decorate(googleSheetToCsvController, {
+    label: 'GS->CSV',
+    icon: 'cloud-download',
+    tooltip: 'Copy the current Google Sheet to the local CSV and switch to it. The existing CSV will be replaced and preserved as .csv.old for emergency manual recovery.',
+    className: 'deckmaker-gsheet-to-csv',
+  });
+  settingRow(datasetGui, [
+    { key: 'sheetId', label: '', icon: 'dataset', tooltip: 'Google Sheets spreadsheet ID', iconOnly: true, inputType: 'text', attributes: { placeholder: 'Spreadsheet ID', autocomplete: 'off', spellcheck: 'false' } },
+    { key: 'sheetRange', label: '', icon: 'table-rows', tooltip: 'Sheet range, title or gid', iconOnly: true, inputType: 'text', attributes: { placeholder: 'Range or gid', autocomplete: 'off', spellcheck: 'false' } },
+  ], 'deckmaker-fields');
+  const openSheetAction = { openGoogleSheetAction: openGoogleSheet };
+  openSheetController = datasetGui.add(openSheetAction, 'openGoogleSheetAction');
+  decorate(openSheetController, {
+    label: 'Open GSheet',
+    icon: 'open-in-new',
+    tooltip: 'Open the linked spreadsheet directly in browser',
+    className: 'deckmaker-dataset-open',
+  });
+  finishRow(openSheetController, 'deckmaker-dataset-actions');
+  updateDatasetDockButton();
+  actionControllers.push({ controller: openSheetController, command: 'open-google-sheet' });
+  actionControllers.push({ controller: googleSheetToCsvController, command: 'gsheet-to-csv' });
+  datasetGui.close();
+}
+
+function buildPreviewGui(state, options) {
+  const preview = gui.addFolder('Preview');
+  preview.icon(materialIcon('preview'));
+  preview.domElement.classList.add('deckmaker-preview-folder');
+  previewAssetSelect = document.createElement('select');
+  previewAssetSelect.className = 'deckmaker-preview-asset-select';
+  previewAssetSelect.title = 'Preview the selected asset from the synchronized dataset';
+  previewAssetSelect.addEventListener('click', event => event.stopPropagation());
+  previewAssetSelect.addEventListener('pointerdown', event => event.stopPropagation());
+  previewAssetSelect.addEventListener('change', () => {
+    leaveSpritesheet();
+    save('previewAsset', previewAssetSelect.value);
+  });
+  preview.$multi.append(previewAssetSelect);
+  previewPrevious = titleButton(preview.$multi, 'deckmaker-preview-previous', '<', 'Previous cached asset', () => {
+    leaveSpritesheet();
+    command('preview-previous');
+  });
+  previewNext = titleButton(preview.$multi, 'deckmaker-preview-next', '>', 'Next cached asset', () => {
+    leaveSpritesheet();
+    command('preview-next');
+  });
+  settingRow(preview, [
+    {
+      key: 'previewBackend', args: [options.previewBackends], label: 'Viewer', icon: 'visibility',
+      tooltip: 'Browser renders 96/600 DPI PNGs. Inkscape opens the generated SVG in an isolated persistent viewer.',
+    },
+  ]);
+  settingRow(preview, [
+    {
+      key: 'previewSelectionSync', args: [PREVIEW_SYNC_MODES], label: 'Selection sync', icon: 'sync-alt',
+      tooltip: 'Keep the selected dataset cell and preview asset synchronized. Two-way also follows selections made in the Inkscape viewer.',
+      onChange: value => {
+        model.previewSelectionSync = PREVIEW_SYNC_MODES.includes(value) ? value : 'Off';
+        localStorage.setItem('deckmaker-preview-selection-sync', model.previewSelectionSync);
+        lastPreviewSelection = '';
+      },
+    },
+  ], 'deckmaker-preview-sync-row');
+  updatePreviewNavigation(state);
+  preview.close();
+  return preview;
+}
+
 function build(state) {
   if (gui) {
     built = true;
@@ -611,10 +905,10 @@ function build(state) {
     title: menuTitle(state),
     container,
     autoPlace: false,
-    width: 328,
+    width: 275,
   });
   gui.domElement.classList.add('deckmaker-menu');
-  updateMenuIdentity(state);
+  gui.icon(materialIcon('view-quilt'));
 
   if (ENABLE_SPRITESHEETS) {
     spriteEditor = new SpritesheetEditor({
@@ -626,10 +920,13 @@ function build(state) {
     });
   }
 
-  mainActionRow(gui);
+  buildDatasetGui(state, options);
+  buildPreviewGui(state, options);
+  updateMenuIdentity(state);
 
   toolsFolder = gui.addFolder('Tools');
   toolsFolder.icon(materialIcon('construction'));
+  mainActionRow(toolsFolder);
   actionRow(toolsFolder, [
     {
       key: 'copyTemplateHeadersAction', label: 'Copy template headers', icon: 'content-copy',
@@ -641,27 +938,6 @@ function build(state) {
   const configuration = gui.addFolder('Configuration');
   configuration.icon(materialIcon('settings'));
 
-  datasetFolder = configuration.addFolder(datasetTitle(state));
-  datasetFolder.icon(materialIcon('database'));
-  const datasetTooltip = 'Dataset source. Drag a Google Sheets URL anywhere onto this window to link it automatically.';
-  datasetFolder.$title.title = datasetTooltip;
-  datasetFolder.$multi.title = datasetTooltip;
-  settingRow(datasetFolder, [
-    { key: 'sourceMode', args: [options.sourceModes], label: 'Source', icon: 'database', tooltip: datasetTooltip },
-  ]);
-  settingRow(datasetFolder, [
-    { key: 'sheetId', label: '', icon: 'dataset', tooltip: 'Google Sheets spreadsheet ID', iconOnly: true, inputType: 'text', attributes: { placeholder: 'Spreadsheet ID', autocomplete: 'off', spellcheck: 'false' } },
-    { key: 'sheetRange', label: '', icon: 'table-rows', tooltip: 'Sheet range, title or gid', iconOnly: true, inputType: 'text', attributes: { placeholder: 'Range or gid', autocomplete: 'off', spellcheck: 'false' } },
-  ], 'deckmaker-fields');
-  const openSheetAction = { openGoogleSheetAction: openGoogleSheet };
-  openSheetController = datasetFolder.append(openSheetAction, 'openGoogleSheetAction');
-  decorate(openSheetController, {
-    label: 'Open GSheet',
-    icon: 'open-in-new',
-    tooltip: 'Open the linked spreadsheet directly in browser',
-    className: 'deckmaker-dataset-open',
-  });
-  actionControllers.push({ controller: openSheetController, command: 'open-google-sheet' });
   const exportFolder = configuration.addFolder('Export options');
   exportFolder.icon(materialIcon('file-export'));
   const play = configuration.addFolder('PnPPlay');
@@ -824,7 +1100,7 @@ function build(state) {
     installController?._show(shell.canInstall);
     fullscreenController?.name(shell.fullscreen ? 'Exit full screen' : 'Full screen');
   });
-  [datasetFolder, exportFolder, sprites, toolsFolder, play, advanced, configuration, help].filter(Boolean).forEach(folder => folder.close());
+  [exportFolder, sprites, toolsFolder, play, advanced, configuration, help].filter(Boolean).forEach(folder => folder.close());
   gui.close();
 }
 
@@ -841,26 +1117,35 @@ function applyState(state) {
     : 'Drop an image on the canvas';
   if (!built) build(state);
   updateMenuIdentity(state);
+  const datasetEditor = state.datasetEditor || {};
+  const editorKind = String(datasetEditor.kind || '');
   const sheetId = String(state.sheetId || '').trim();
   const sheetGid = String(state.sheetGid ?? '').trim();
   const sheetUrl = sheetEditorUrl(state);
   const sheetKey = `${sheetId}:${sheetGid}:${sheetViewMode}`;
-  if (elements.sheetEditorFrame.dataset.sheetKey !== sheetKey) {
+  if (editorKind === 'gsheet' && elements.sheetEditorFrame.dataset.sheetKey !== sheetKey) {
     elements.sheetEditorFrame.dataset.sheetKey = sheetKey;
     elements.sheetEditorFrame.src = sheetUrl || 'about:blank';
   }
-  initializeSplitter(Boolean(sheetId));
+  initializeSplitter(Boolean(editorKind));
   if (!spriteEditor?.active) previewViewer.setPreview(state.preview);
   elements.sheetEditor.hidden = false;
-  elements.sheetEditor.classList.toggle('empty', !sheetId);
-  elements.sheetEditorFrame.hidden = !sheetId;
-  elements.sheetEditorMessage.hidden = Boolean(sheetId);
-  const sheetStatus = String(state.sheetStatus || '');
-  elements.sheetEditorMessage.textContent = !sheetId
-    ? 'Drag and drop a Google Sheets URL here'
-    : sheetStatus === 'error'
-      ? 'Could not resolve the Google Sheets tab. Check access or select a numeric gid.'
-      : 'Resolving sheet tab…';
+  elements.sheetEditor.classList.toggle('empty', !editorKind);
+  elements.sheetEditorFrame.hidden = editorKind !== 'gsheet';
+  if (editorKind === 'csv') {
+    datasetTable.show(datasetEditor);
+  } else {
+    datasetTable.hide();
+    elements.sheetEditorMessage.hidden = Boolean(editorKind);
+    const sheetStatus = String(state.sheetStatus || '');
+    if (!editorKind) {
+      showMissingDatasetGuide();
+    } else {
+      elements.sheetEditorMessage.textContent = sheetStatus === 'error'
+        ? 'Could not resolve the Google Sheets tab. Check access or select a numeric gid.'
+        : 'Resolving sheet tab...';
+    }
+  }
   spriteEditor?.setPresets(state.options?.cardPresets || {});
   spriteEditor?.setMetadata(state.spritesheet);
   controllers.forEach(controller => controller.updateDisplay());
@@ -873,6 +1158,8 @@ function applyState(state) {
     'play-server': Boolean(state.template),
     'play-designer': Boolean(state.template),
     'open-google-sheet': Boolean(state.sheetId),
+    'gsheet-to-csv': Boolean(state.sheetId) && state.sourceMode !== 'local_csv',
+    'create-starter-csv': Boolean(state.canCreateDataset),
   };
   actionControllers.forEach(({ controller, command: action }) => {
     const available = !(action in availability) || availability[action];
@@ -898,7 +1185,7 @@ function applyState(state) {
   const failed = /^Error:/i.test(state.status || '');
   const busy = Boolean(state.busy);
   const previewBusy = busy && state.job === 'preview';
-  if (busy && !wasBusy && state.job !== 'preview') logDisplayMode = 'auto';
+  if (busy && !wasBusy && !['preview', 'gsheet-to-csv'].includes(state.job)) logDisplayMode = 'auto';
   updateLogVisibility(busy);
   wasBusy = busy;
   elements.splitter.classList.toggle('preview-busy', previewBusy);
@@ -936,12 +1223,19 @@ function appendEventLogs(events) {
   if (followsTail) elements.log.scrollTop = elements.log.scrollHeight;
 }
 
+function handleHostEvents(events) {
+  if (!(events || []).some(event => event?.kind === 'activate')) return;
+  window.focus();
+  document.documentElement.focus?.({ preventScroll: true });
+}
+
 async function poll() {
   while (true) {
     try {
       const data = await api(`/api/events?after=${sequence}&timeout=5`);
       sequence = Math.max(sequence, Number(data.seq || 0));
       appendEventLogs(data.events);
+      handleHostEvents(data.events);
       if (data.state) applyState(data.state);
     } catch (error) {
       toast(error.message);
@@ -966,7 +1260,7 @@ function isCanvasImageDrag(event) {
 
 function clearDropFeedback() {
   document.body.classList.remove('url-drop-active', 'image-drop-active');
-  datasetFolder?.domElement.classList.remove('deckmaker-drop-target');
+  datasetGui?.domElement.classList.remove('deckmaker-drop-target');
 }
 
 window.addEventListener('dragenter', event => {
@@ -975,7 +1269,7 @@ window.addEventListener('dragenter', event => {
   if (isCanvasImageDrag(event)) document.body.classList.add('image-drop-active');
   else {
     document.body.classList.add('url-drop-active');
-    datasetFolder?.domElement.classList.add('deckmaker-drop-target');
+    datasetGui?.domElement.classList.add('deckmaker-drop-target');
   }
 });
 
@@ -1014,11 +1308,7 @@ window.addEventListener('drop', async event => {
   });
   openSheetController?.enable();
   controllers.forEach(controller => controller.updateDisplay());
-  setGuiTitle(
-    datasetFolder,
-    `Dataset [gsheet://${sheet.sheetId.slice(0, 10)}${sheet.sheetId.length > 10 ? '...' : ''}]`,
-    sheet.url,
-  );
+  if (datasetGui?.$title) datasetGui.$title.title = sheet.url;
   try {
     applyState(await api('/api/settings', {
       method: 'POST',
@@ -1031,7 +1321,8 @@ window.addEventListener('drop', async event => {
 });
 
 try {
-  await openBrowserSession();
+  const browserSessionState = await openBrowserSession();
+  restoreWindowGeometry(browserSessionState.geometry);
   const initialState = await api('/api/state');
   applyState(initialState);
   const canAutoPreview = Boolean(

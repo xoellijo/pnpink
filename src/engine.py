@@ -1486,12 +1486,16 @@ def run(self, __version__, *, text_query_service=None):
                 # Full gaps6 (gx,gy,w1,h1,w2,h2) in px. Layouts owns the semantics and unit handling.
                 gaps_px6 = LYT.gaps6_to_px(LYT.layout_gaps_tokens(resolved.layout), cw_px, ch_px, px_per_mm)
 
+            plan_layout = resolved.layout
+            if bool(getattr(self, "_dm_preview_center_single", False)):
+                plan_layout = LYT.LayoutSpec(cols=1, rows=1)
+
             plan = LYT.plan_grid(
                 page_w_px, page_h_px,
                 cw_px, ch_px,
                 gaps_px=(gh_px, gv_px),
                 gaps_px6=gaps_px6,
-                layout=resolved.layout,
+                layout=plan_layout,
                 content_origin_px=(cx, cy),
                 content_wh_px=(cw, ch)
             )

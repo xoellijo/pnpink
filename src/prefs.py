@@ -82,6 +82,7 @@ _DEFAULTS = {
     "template_engine": "composed",
     "web_user_agent": "github.com/xoellijo/pnpink",
     "deckmaker_web_browser": "system",
+    "deckmaker_preview_backend": "browser",
 
 }
 
@@ -134,6 +135,7 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     ("template_engine", ("Template instantiation engine. Values: legacy | composed | composed-instance", "composed is the default; unsupported individual templates fall back to legacy.")),
     ("web_user_agent", ("User-Agent used for Wikimedia/direct web asset downloads. Empty = github.com/xoellijo/pnpink",)),
     ("deckmaker_web_browser", ("Browser used by Deckmaker Web. Values: system | edge | chrome | chromium | firefox | safari",)),
+    ("deckmaker_preview_backend", ("Deckmaker Web preview backend. Values: browser | inkscape",)),
     ("split_svg_output", ("Split DM_output into SVG parts. Values: 0 | 1",)),
     ("split_svg_mode", ("SVG split mode. Values: parts | limits",)),
     ("split_svg_parts", ("Split SVG into this number of parts when split_svg_mode=parts. Empty = disabled.",)),
@@ -261,6 +263,17 @@ def set_deckmaker_web_browser(value: str) -> None:
     valid = {"system", "edge", "chrome", "chromium", "firefox", "safari"}
     browser = str(value or "system").strip().lower()
     set("deckmaker_web_browser", browser if browser in valid else "system", save=True)
+
+
+def get_deckmaker_preview_backend(default: str = "browser") -> str:
+    valid = {"browser", "inkscape"}
+    value = str(get("deckmaker_preview_backend", default) or default).strip().lower()
+    return value if value in valid else "browser"
+
+
+def set_deckmaker_preview_backend(value: str) -> None:
+    backend = str(value or "browser").strip().lower()
+    set("deckmaker_preview_backend", backend if backend in {"browser", "inkscape"} else "browser", save=True)
 
 
 def get_pdf_profiles(default: str = "default") -> list[str]:

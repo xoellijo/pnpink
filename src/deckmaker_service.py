@@ -5,7 +5,9 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import replace
+import csv
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -26,6 +28,7 @@ import gui as PROGRESS
 import icc_profiles as ICC
 import image_preflight as PREFLIGHT
 import inkscape_cli as INKSCAPE
+from inkscape_previewer import InkscapePreviewer
 import log as LOG
 import prefs
 import temp_paths as TEMPPATHS
@@ -75,9 +78,14 @@ class DeckMakerService:
         self._preview_asset_locks = {}
         self._preview_asset_signatures = {}
         self._preview_dataset_signature = ""
+        self._preview_template_revision = ""
         self._preview_monitor_stop = threading.Event()
         self._preview_monitor_wake = threading.Event()
         self._preview_monitor_error = ""
+        self._preview_dataset_check_requested = False
+        self._preview_cell_selection: dict[str, object] = {}
+        self._pending_preview_refresh: dict[str, str] | None = None
+        self._local_dataset_revision = ""
         self._sheet_editor_active_until = 0.0
         self._sheet_editor_final_poll = False
         self._templates = []
@@ -91,6 +99,7 @@ class DeckMakerService:
         )
         self._text_query_generation = 0
         self._play_server = PLAY.PlayServer()
+        self._inkscape_previewer = InkscapePreviewer()
         self._static_options = self._build_static_options()
         LOG.add_listener(self._on_log_line)
         try:
@@ -215,6 +224,14 @@ class DeckMakerService:
         except Exception:
             return 0
 
+    @staticmethod
+    def _file_revision(path: str) -> str:
+        try:
+            stat = os.stat(DMPATHS.normalize(path))
+            return f"{stat.st_mtime_ns}:{stat.st_size}"
+        except Exception:
+            return ""
+
     def open_request(self, request: AppRequest) -> None:
         template = DMPATHS.normalize(request.template)
         if template:
@@ -242,13 +259,13 @@ class DeckMakerService:
             except Exception:
                 pass
             try:
-                record = DSTATE.get_gsheet_for_svg(template) or {}
+                record = DSTATE.get_dataset_source_for_svg(template) or {}
             except Exception:
                 pass
         if not sheet_id:
             sheet_id = str(record.get("sheet_id") or "").strip()
             sheet_range = str(record.get("sheet_range") or "").strip()
-            source_mode = source_mode or str(record.get("access_mode") or "").strip().lower()
+            source_mode = source_mode or str(record.get("source_mode") or "").strip().lower()
         if (
             str(record.get("sheet_id") or "").strip() == sheet_id
             and str(record.get("sheet_range") or "").strip() == sheet_range
@@ -293,16 +310,22 @@ class DeckMakerService:
             self._preview_base_signature = ""
             self._preview_asset_signatures = {}
             self._preview_dataset_signature = ""
+            self._preview_template_revision = ""
+            self._preview_dataset_check_requested = False
+            self._preview_cell_selection = {}
+            self._local_dataset_revision = ""
             self._preview_prefetch_generation += 1
             self._preview_revision += 1
             self._sheet_editor_active_until = 0.0
             self._sheet_editor_final_poll = False
             self._dataset_source_invalid = False
-            self._generated_output_ready = self._has_dataset_source(template, sheet_id) and os.path.isfile(DMPATHS.output_svg(template))
-            self._status = "Template received" if self._has_dataset_source(template, sheet_id) else "Choose CSV or Google Sheet source"
+            has_dataset = self._has_dataset_source(template, sheet_id, source_mode)
+            self._generated_output_ready = has_dataset and os.path.isfile(DMPATHS.output_svg(template))
+            self._status = "Template received" if has_dataset else "Choose CSV or Google Sheet source"
         self.log(f"Template: {os.path.basename(template)}")
         if snapshot and os.path.isfile(snapshot):
             self.log("Using current unsaved Inkscape document snapshot")
+        self._emit("activate")
         self._emit("state")
         if request.autorun:
             self.generate()
@@ -332,6 +355,7 @@ class DeckMakerService:
             self.refresh_previews()
             return self.state()
         self.open_request(AppRequest(template=target, log_level=current.log_level))
+        self.preview(force=False, refresh=True)
         return self.state()
 
     def template_preview(self) -> str:
@@ -428,11 +452,11 @@ class DeckMakerService:
             try:
                 import dataset_state as DSTATE
 
-                record = DSTATE.get_gsheet_for_svg(template) or {}
+                record = DSTATE.get_dataset_source_for_svg(template) or {}
                 if str(record.get("sheet_id") or "").strip() == sheet_id:
-                    access_mode = str(record.get("access_mode") or "").strip().lower()
-                    if access_mode in {"oauth", "public"}:
-                        return access_mode
+                    saved_mode = str(record.get("source_mode") or "").strip().lower()
+                    if saved_mode in {"auto", "oauth", "public"}:
+                        return saved_mode
             except Exception:
                 pass
             return ""
@@ -446,10 +470,13 @@ class DeckMakerService:
             if current.sheet_id != request.sheet_id or current.sheet_range != request.sheet_range:
                 return False
             current_gid = self._sheet_embed_gid
-            self._request = replace(current, dataset_source_mode=mode)
+            configured_mode = current.dataset_source_mode if current.dataset_source_mode == "auto" else mode
+            self._request = replace(current, dataset_source_mode=configured_mode)
         try:
             import dataset_state as DSTATE
-            DSTATE.set_gsheet_for_svg(request.template, request.sheet_id, request.sheet_range, mode)
+            DSTATE.set_dataset_source_for_svg(
+                request.template, configured_mode, request.sheet_id, request.sheet_range,
+            )
         except Exception:
             pass
         with self._lock:
@@ -461,15 +488,267 @@ class DeckMakerService:
         return True
 
     @staticmethod
-    def _has_dataset_source(template: str, sheet_id: str) -> bool:
-        return bool(str(sheet_id or "").strip() or os.path.isfile(os.path.splitext(template)[0] + ".csv"))
+    def _has_dataset_source(template: str, sheet_id: str, source_mode: str = "") -> bool:
+        local_csv = os.path.isfile(os.path.splitext(template)[0] + ".csv")
+        if str(source_mode or "").strip().lower() == "local_csv":
+            return local_csv
+        return bool(str(sheet_id or "").strip() or local_csv)
+
+    def local_dataset_path(self) -> str:
+        with self._lock:
+            request = self._request
+            path = os.path.splitext(request.template)[0] + ".csv" if request.template else ""
+            uses_google_sheet = bool(
+                request.sheet_id and request.dataset_source_mode != "local_csv"
+            )
+        if uses_google_sheet or not path or not os.path.isfile(path):
+            raise FileNotFoundError("No local CSV dataset is active")
+        return path
+
+    @staticmethod
+    def _dataset_revision(path: str) -> str:
+        dataset_stat = os.stat(path)
+        return f"{dataset_stat.st_mtime_ns}-{dataset_stat.st_size}"
+
+    @staticmethod
+    def _spreadsheet_column_name(index: int) -> str:
+        value = int(index) + 1
+        name = ""
+        while value > 0:
+            value, remainder = divmod(value - 1, 26)
+            name = chr(65 + remainder) + name
+        return name
+
+    def local_dataset_table(self) -> dict:
+        path = self.local_dataset_path()
+        matrix = DATASET.read_csv_matrix(path)
+        row_kinds = DATASET.classify_csv_rows(matrix)
+        commented_columns = DATASET.classify_csv_commented_columns(matrix)
+        source_width = max((len(row) for row in matrix), default=0)
+        width = max(26, source_width + 5)
+        height = max(100, len(matrix) + 20)
+        columns = [
+            {
+                "title": self._spreadsheet_column_name(index),
+                "field": f"column_{index}",
+                "column": index,
+            }
+            for index in range(width)
+        ]
+        rows = [
+            {
+                "__csv_row__": row_number,
+                "__kind__": row_kinds[row_number - 1] if row_number <= len(row_kinds) else "blank",
+                "__commented_columns__": commented_columns[row_number - 1] if row_number <= len(commented_columns) else [],
+                **{
+                    f"column_{index}": str(
+                        matrix[row_number - 1][index]
+                        if row_number <= len(matrix) and index < len(matrix[row_number - 1])
+                        else ""
+                    )
+                    for index in range(width)
+                },
+            }
+            for row_number in range(1, height + 1)
+        ]
+        revision = self._dataset_revision(path)
+        with self._lock:
+            self._local_dataset_revision = revision
+        return {
+            "columns": columns,
+            "rows": rows,
+            "revision": revision,
+            "sourceRows": len(matrix),
+            "sourceColumns": source_width,
+        }
+
+    def local_dataset_revision(self) -> dict:
+        path = self.local_dataset_path()
+        revision = self._dataset_revision(path)
+        with self._lock:
+            changed = bool(self._local_dataset_revision and self._local_dataset_revision != revision)
+            self._local_dataset_revision = revision
+        if changed:
+            self._request_preview_dataset_check()
+        return {"revision": revision}
+
+    def _request_preview_dataset_check(self) -> None:
+        with self._lock:
+            self._preview_dataset_check_requested = True
+        self._preview_monitor_wake.set()
+
+    @staticmethod
+    def _write_csv_matrix(path: str, matrix: list[list[str]]) -> None:
+        temporary = f"{path}.tmp-{os.getpid()}-{threading.get_ident()}"
+        try:
+            with open(temporary, "w", encoding="utf-8", newline="") as output:
+                csv.writer(output, lineterminator="\n").writerows(matrix)
+            os.replace(temporary, path)
+        finally:
+            try:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+            except OSError:
+                pass
+
+    @classmethod
+    def _replace_csv_from_google(cls, path: str, csv_data: bytes) -> str:
+        """Atomically replace a local CSV and retain its previous version as .old."""
+        staged = f"{path}.gsheet-{os.getpid()}-{threading.get_ident()}"
+        backup = f"{path}.old"
+        backup_staged = f"{backup}.tmp-{os.getpid()}-{threading.get_ident()}"
+        try:
+            with open(staged, "wb") as output:
+                output.write(csv_data)
+            if os.path.isfile(path):
+                shutil.copy2(path, backup_staged)
+                os.replace(backup_staged, backup)
+            os.replace(staged, path)
+            return backup if os.path.isfile(backup) else ""
+        finally:
+            for temporary in (staged, backup_staged):
+                try:
+                    if os.path.exists(temporary):
+                        os.unlink(temporary)
+                except OSError:
+                    pass
+
+    def update_local_dataset_cells(
+        self,
+        updates: list[dict],
+        expected_revision: str,
+    ) -> dict:
+        normalized = []
+        for update in updates:
+            row = int(update.get("row") or 0)
+            column = int(update.get("column") or 0)
+            if row < 1 or row > 100000 or column < 0 or column > 18277:
+                raise ValueError("Dataset cell is outside the supported range")
+            raw_value = update.get("value")
+            normalized.append((row, column, "" if raw_value is None else str(raw_value)))
+        if not normalized:
+            path = self.local_dataset_path()
+            return {
+                "revision": self._dataset_revision(path),
+                "rowKinds": {},
+                "commentedColumns": {},
+            }
+        with self._lock:
+            path = self.local_dataset_path()
+            current_revision = self._dataset_revision(path)
+            if expected_revision and expected_revision != current_revision:
+                raise RuntimeError("The CSV dataset changed; reload it before editing")
+            matrix = DATASET.read_csv_matrix(path)
+            previous_row_kinds = DATASET.classify_csv_rows(matrix)
+            previous_commented_columns = DATASET.classify_csv_commented_columns(matrix)
+            changed_rows = set()
+            for row, column, value in normalized:
+                if row > len(matrix) and not value:
+                    continue
+                while len(matrix) < row:
+                    matrix.append([])
+                while len(matrix[row - 1]) <= column:
+                    matrix[row - 1].append("")
+                matrix[row - 1][column] = value
+                changed_rows.add(row)
+            if not changed_rows:
+                return {
+                    "revision": current_revision,
+                    "rowKinds": {},
+                    "commentedColumns": {},
+                }
+            self._write_csv_matrix(path, matrix)
+            revision = self._dataset_revision(path)
+            self._local_dataset_revision = revision
+            row_kinds = DATASET.classify_csv_rows(matrix)
+            commented_columns = DATASET.classify_csv_commented_columns(matrix)
+            affected_rows = {
+                row
+                for row in range(
+                    1,
+                    max(
+                        len(previous_row_kinds), len(row_kinds),
+                        len(previous_commented_columns), len(commented_columns),
+                    ) + 1,
+                )
+                if (previous_row_kinds[row - 1] if row <= len(previous_row_kinds) else "blank")
+                != (row_kinds[row - 1] if row <= len(row_kinds) else "blank")
+                or (
+                    previous_commented_columns[row - 1]
+                    if row <= len(previous_commented_columns) else []
+                ) != (
+                    commented_columns[row - 1]
+                    if row <= len(commented_columns) else []
+                )
+            }
+        self._request_preview_dataset_check()
+        return {
+            "revision": revision,
+            "rowKinds": {
+                str(row): row_kinds[row - 1] if row <= len(row_kinds) else "blank"
+                for row in affected_rows
+            },
+            "commentedColumns": {
+                str(row): commented_columns[row - 1] if row <= len(commented_columns) else []
+                for row in affected_rows
+            },
+        }
+
+    def update_local_dataset_structure(
+        self,
+        action: str,
+        index: int,
+        expected_revision: str,
+    ) -> dict:
+        action = str(action)
+        index = int(index)
+        if action not in {"insert-row-before", "insert-row-after", "delete-row",
+                          "insert-column-before", "insert-column-after", "delete-column"}:
+            raise ValueError("Unknown dataset structure operation")
+        with self._lock:
+            path = self.local_dataset_path()
+            current_revision = self._dataset_revision(path)
+            if expected_revision and expected_revision != current_revision:
+                raise RuntimeError("The CSV dataset changed; reload it before editing")
+            matrix = DATASET.read_csv_matrix(path)
+            if "row" in action:
+                if index < 1 or index > 100000:
+                    raise ValueError("Dataset row is outside the supported range")
+                position = index - 1 + (action == "insert-row-after")
+                if action == "delete-row":
+                    if index > len(matrix):
+                        return {"revision": current_revision}
+                    matrix.pop(index - 1)
+                else:
+                    while len(matrix) < position:
+                        matrix.append([])
+                    matrix.insert(position, [])
+            else:
+                if index < 0 or index > 18277:
+                    raise ValueError("Dataset column is outside the supported range")
+                position = index + (action == "insert-column-after")
+                for row in matrix:
+                    if action == "delete-column":
+                        if index < len(row):
+                            row.pop(index)
+                    else:
+                        while len(row) < position:
+                            row.append("")
+                        row.insert(position, "")
+            self._write_csv_matrix(path, matrix)
+            revision = self._dataset_revision(path)
+            self._local_dataset_revision = revision
+        self._request_preview_dataset_check()
+        return {"revision": revision}
 
     def _can_generate(self) -> bool:
         request = self._request
         return bool(
             request.template and os.path.isfile(request.template)
             and not self._dataset_source_invalid
-            and self._has_dataset_source(request.template, request.sheet_id)
+            and self._has_dataset_source(
+                request.template, request.sheet_id, request.dataset_source_mode,
+            )
         )
 
     def _can_open_output(self) -> bool:
@@ -517,6 +796,7 @@ class DeckMakerService:
             "consoleLog": prefs.get_console_level(),
             "fileLog": prefs.get_file_level(),
             "imagePreflight": prefs.get_image_preflight(),
+            "previewBackend": prefs.get_deckmaker_preview_backend(),
         }
 
     @staticmethod
@@ -530,6 +810,7 @@ class DeckMakerService:
             "pdfxVersions": ["1a", "3", "4"],
             "cutFormats": ["svg", "dxf", "png"],
             "templateEngines": ["legacy", "composed", "composed-instance"],
+            "previewBackends": ["browser", "inkscape"],
             "logLevels": ["trace", "debug", "info", "warn", "error", "none", "global"],
             "cardPresets": {
                 name: {"width": size[0], "height": size[1]}
@@ -540,13 +821,19 @@ class DeckMakerService:
     def state(self, *, include_logs: bool = True) -> dict:
         with self._lock:
             request = self._request
-            has_dataset = self._has_dataset_source(request.template, request.sheet_id)
+            has_dataset = self._has_dataset_source(
+                request.template, request.sheet_id, request.dataset_source_mode,
+            )
             if self._busy and self._job == "preview":
                 preview_message = "Rendering preview..."
             elif not request.template:
                 preview_message = "Missing template..."
             elif not has_dataset:
                 preview_message = "Missing dataset..."
+            elif self._status.startswith("Error:"):
+                preview_message = self._status
+            elif prefs.get_deckmaker_preview_backend() == "inkscape" and self._preview_asset_key:
+                preview_message = "Preview is open in Inkscape."
             elif not self._preview_entries:
                 preview_message = "No assets available to preview."
             else:
@@ -554,7 +841,21 @@ class DeckMakerService:
             dataset_path = os.path.splitext(request.template)[0] + ".csv" if request.template else ""
             dataset_name = os.path.basename(dataset_path) if dataset_path else "No dataset"
             dataset_display = dataset_name
-            if request.sheet_id and request.dataset_source_mode != "local_csv":
+            google_dataset = bool(
+                request.sheet_id and request.dataset_source_mode != "local_csv"
+            )
+            local_dataset = bool(
+                dataset_path
+                and os.path.isfile(dataset_path)
+                and not google_dataset
+            )
+            dataset_revision = ""
+            if local_dataset:
+                try:
+                    dataset_revision = self._dataset_revision(dataset_path)
+                except FileNotFoundError:
+                    local_dataset = False
+            if google_dataset:
                 dataset_path = f"https://docs.google.com/spreadsheets/d/{request.sheet_id}/edit"
                 if request.sheet_range.isdigit():
                     dataset_path += f"#gid={request.sheet_range}"
@@ -570,6 +871,11 @@ class DeckMakerService:
                 "datasetName": dataset_name,
                 "datasetDisplay": dataset_display,
                 "datasetPath": dataset_path,
+                "datasetEditor": {
+                    "kind": "csv" if local_dataset else ("gsheet" if google_dataset else ""),
+                    "revision": dataset_revision,
+                    "url": f"/api/dataset/table?rev={dataset_revision}" if local_dataset else "",
+                },
                 "snapshot": request.snapshot_path,
                 "sheetId": request.sheet_id,
                 "sheetRange": request.sheet_range,
@@ -583,18 +889,28 @@ class DeckMakerService:
                 "busy": self._busy,
                 "job": self._job,
                 "canGenerate": self._can_generate(),
+                "canCreateDataset": bool(request.template and not has_dataset),
                 "canOpenOutput": self._can_open_output(),
                 "canExport": self._can_export(),
                 "preview": {
-                    "available": bool(self._preview_path and os.path.isfile(self._preview_path)),
+                    "available": bool(
+                        prefs.get_deckmaker_preview_backend() == "browser"
+                        and self._preview_path
+                        and os.path.isfile(self._preview_path)
+                    ),
                     "message": preview_message,
+                    "backend": prefs.get_deckmaker_preview_backend(),
                     "revision": self._preview_revision,
                     "label": self._preview_label,
                     "quality": self._preview_quality,
                     "url": f"/api/preview/image?rev={self._preview_runtime_revision}-{self._preview_revision}",
                     "asset": self._preview_asset_key,
                     "assets": [
-                        {"value": entry["key"], "label": entry["label"]}
+                        {
+                            "value": entry["key"],
+                            "label": entry["label"],
+                            "sheetRow": entry.get("sheetRow", 0),
+                        }
                         for entry in self._preview_entries
                     ],
                     "index": next(
@@ -666,8 +982,11 @@ class DeckMakerService:
             if not values:
                 return selected
         dataset_source_changed = any(key in values for key in ("sheetId", "sheetRange", "sourceMode"))
+        preview_backend_changed = "previewBackend" in values
+        source_preview_asset = ""
         with self._lock:
             request = self._request
+            source_preview_asset = self._preview_asset_key
             current_gid = self._sheet_embed_gid
             source_mode = str(values.get("sourceMode", request.dataset_source_mode) or "").strip().lower()
             sheet_id = str(values.get("sheetId", request.sheet_id) or "").strip()
@@ -699,9 +1018,12 @@ class DeckMakerService:
                 self._preview_base_signature = ""
                 self._preview_asset_signatures = {}
                 self._preview_dataset_signature = ""
+                self._preview_cell_selection = {}
                 self._preview_prefetch_generation += 1
                 self._preview_revision += 1
-                self._status = "Ready" if self._has_dataset_source(self._request.template, sheet_id) else "Choose CSV or Google Sheet source"
+                self._status = "Ready" if self._has_dataset_source(
+                    self._request.template, sheet_id, self._request.dataset_source_mode,
+                ) else "Choose CSV or Google Sheet source"
                 self._activity = ""
         setters = {
             "autoOpen": prefs.set_auto_open,
@@ -729,10 +1051,13 @@ class DeckMakerService:
             "consoleLog": prefs.set_console_level,
             "fileLog": prefs.set_file_level,
             "imagePreflight": prefs.set_image_preflight,
+            "previewBackend": prefs.set_deckmaker_preview_backend,
         }
         for key, setter in setters.items():
             if key in values:
                 setter(values[key])
+        if "previewBackend" in values and prefs.get_deckmaker_preview_backend() != "inkscape":
+            self._inkscape_previewer.close()
         profile_keys = {
             "pdfDefault": "default", "pdfScreen": "screen", "pdfEbook": "ebook",
             "pdfPrinter": "printer", "pdfPrepress": "prepress",
@@ -746,18 +1071,32 @@ class DeckMakerService:
             engine = str(values["templateEngine"] or "composed").strip().lower()
             prefs.set("template_engine", engine if engine in {"legacy", "composed", "composed-instance"} else "composed", save=True)
         preview_asset = str(values.get("previewAsset") or "").strip() if "previewAsset" in values else ""
+        if preview_asset:
+            with self._lock:
+                self._preview_cell_selection = {}
         try:
-            if self._request.sheet_id:
+            if dataset_source_changed:
                 import dataset_state as DSTATE
-                DSTATE.set_gsheet_for_svg(
-                    self._request.template, self._request.sheet_id, self._request.sheet_range,
-                    self._request.dataset_source_mode,
+                DSTATE.set_dataset_source_for_svg(
+                    self._request.template, self._request.dataset_source_mode,
+                    self._request.sheet_id, self._request.sheet_range,
                 )
         except Exception:
             pass
         self._emit("state")
         if dataset_source_changed:
             self._warm_google_session()
+            if self._can_generate():
+                with self._lock:
+                    source_busy = self._busy
+                    if source_busy:
+                        self._pending_preview_refresh = {"asset": source_preview_asset}
+                if not source_busy:
+                    self.preview(
+                        force=False,
+                        refresh=True,
+                        asset_key=source_preview_asset,
+                    )
         if preview_asset:
             with self._lock:
                 has_cached_dataset = bool(self._preview_datasets)
@@ -766,6 +1105,12 @@ class DeckMakerService:
                 refresh=not has_cached_dataset,
                 asset_key=preview_asset,
             )
+        elif preview_backend_changed:
+            with self._lock:
+                has_cached_dataset = bool(self._preview_datasets)
+                current_asset = self._preview_asset_key
+            if current_asset:
+                self.preview(force=False, refresh=not has_cached_dataset, asset_key=current_asset)
         return self.state()
 
     def set_sheet_editor_activity(self, active: bool) -> dict:
@@ -793,8 +1138,9 @@ class DeckMakerService:
         return True
 
     def _run_job(self, target) -> None:
+        follow_up = None
         try:
-            target()
+            follow_up = target()
         except Exception as error:
             LOG.w("[deckmaker.web] job failed: %s\n%s", str(error), traceback.format_exc())
             self._set_status(f"Error: {error}")
@@ -804,7 +1150,21 @@ class DeckMakerService:
                 self._busy = False
                 self._job = ""
                 self._activity = ""
+                pending_preview = self._pending_preview_refresh
+                self._pending_preview_refresh = None
             self._emit("state")
+        if pending_preview is not None and self._can_generate():
+            self.preview(
+                force=False,
+                refresh=True,
+                asset_key=str(pending_preview.get("asset") or ""),
+            )
+        elif callable(follow_up):
+            try:
+                follow_up()
+            except Exception as error:
+                LOG.w("[deckmaker.web] follow-up job failed: %s\n%s", str(error), traceback.format_exc())
+                self._set_status(f"Error: {error}")
 
     def generate(self, *, play_after: bool = False) -> bool:
         if not self._can_generate():
@@ -838,7 +1198,9 @@ class DeckMakerService:
                     access_mode = str(getattr(effect.options, "_dataset_access_mode", "") or "").strip().lower()
                     if access_mode in {"public", "oauth"}:
                         self._set_google_mode(request, access_mode)
-                    DSTATE.set_gsheet_for_svg(request.template, sheet_id, request.sheet_range, access_mode)
+                    DSTATE.set_dataset_source_for_svg(
+                        request.template, request.dataset_source_mode, sheet_id, request.sheet_range,
+                    )
             except Exception:
                 pass
             if prefs.get_image_preflight(False):
@@ -1002,11 +1364,15 @@ class DeckMakerService:
         threading.Thread(target=worker, name="deckmaker-preview-prefetch", daemon=True).start()
 
     def _preview_monitor(self) -> None:
-        """Refresh dataset values while preview is active, without occupying Inkscape."""
+        """Refresh changed template or dataset sources while preview is active."""
         while not self._preview_monitor_stop.is_set():
             with self._lock:
                 sheet_active = time.monotonic() < self._sheet_editor_active_until
-            self._preview_monitor_wake.wait(1.0 if sheet_active else None)
+                dataset_check_requested = self._preview_dataset_check_requested
+                preview_active = bool(self._preview_datasets and self._preview_asset_key)
+            self._preview_monitor_wake.wait(
+                1.0 if preview_active or sheet_active or dataset_check_requested else None
+            )
             self._preview_monitor_wake.clear()
             if self._preview_monitor_stop.is_set():
                 break
@@ -1014,11 +1380,31 @@ class DeckMakerService:
                 sheet_active = time.monotonic() < self._sheet_editor_active_until
                 final_poll = self._sheet_editor_final_poll
                 self._sheet_editor_final_poll = False
-                if not sheet_active and not final_poll:
-                    continue
-                if self._busy or not self._preview_datasets or not self._preview_asset_key:
+                dataset_check_requested = self._preview_dataset_check_requested
+                if self._busy:
                     continue
                 request = self._request
+                preview_active = bool(self._preview_datasets and self._preview_asset_key)
+                known_template_revision = self._preview_template_revision
+                current_template_revision = self._file_revision(request.template)
+                if (
+                    preview_active
+                    and known_template_revision
+                    and current_template_revision
+                    and current_template_revision != known_template_revision
+                ):
+                    LOG.i(
+                        "[deckmaker.preview.poll] template changed; refreshing previews path=%s",
+                        request.template,
+                    )
+                    self.refresh_previews()
+                    continue
+                if not sheet_active and not final_poll and not dataset_check_requested:
+                    continue
+                if not self._preview_datasets or not self._preview_asset_key:
+                    self._preview_dataset_check_requested = False
+                    continue
+                self._preview_dataset_check_requested = False
                 known_signature = self._preview_dataset_signature
                 current_key = self._preview_asset_key
                 known_base_signature = self._preview_base_signature
@@ -1077,6 +1463,9 @@ class DeckMakerService:
                         asset_keys=changed_keys,
                     )
             except Exception as error:
+                if dataset_check_requested:
+                    with self._lock:
+                        self._preview_dataset_check_requested = True
                 message = str(error)
                 if message != self._preview_monitor_error:
                     self._preview_monitor_error = message
@@ -1094,6 +1483,9 @@ class DeckMakerService:
             cached_entries = list(self._preview_entries)
             previous_key = self._preview_asset_key
             cached_asset_signatures = dict(self._preview_asset_signatures)
+            cached_dataset_signature = self._preview_dataset_signature
+            cached_base_path = self._preview_base_path
+            cached_base_signature = self._preview_base_signature
         if not refresh and not cached_datasets:
             self._set_status("Choose an asset to load the dataset first")
             return False
@@ -1108,6 +1500,7 @@ class DeckMakerService:
 
         def worker():
             started = time.perf_counter()
+            template_revision = self._file_revision(self._request.template)
             phase_started = started
             phase_timings: list[tuple[str, float]] = []
 
@@ -1135,7 +1528,15 @@ class DeckMakerService:
             )
             phase("load-dataset")
             datasets = source_prepared["source_datasets"]
-            base_path, base_signature = self._ensure_preview_base(source_effect, datasets)
+            if (
+                not refresh
+                and cached_base_path
+                and cached_base_signature
+                and os.path.isfile(cached_base_path)
+            ):
+                base_path, base_signature = cached_base_path, cached_base_signature
+            else:
+                base_path, base_signature = self._ensure_preview_base(source_effect, datasets)
             phase("resolve-symbol-cache")
 
             effect = self._preview_effect(request, base_path)
@@ -1157,15 +1558,21 @@ class DeckMakerService:
             phase("index-assets")
             with self._lock:
                 self._preview_datasets = datasets
-                self._preview_dataset_signature = PREVIEW.datasets_signature(datasets)
+                self._preview_dataset_signature = (
+                    cached_dataset_signature
+                    if not refresh and cached_dataset_signature
+                    else PREVIEW.datasets_signature(datasets)
+                )
                 self._preview_asset_signatures = asset_signatures
                 self._preview_entries = entries
                 self._preview_asset_key = current_key
                 self._preview_direction = direction
 
-            cache_hit = (not force) and os.path.isfile(paths["high"])
+            preview_backend = prefs.get_deckmaker_preview_backend()
+            cache_target = paths["svg"] if preview_backend == "inkscape" else paths["high"]
+            cache_hit = (not force) and os.path.isfile(cache_target)
             result = None
-            if not cache_hit:
+            if preview_backend == "browser" and not cache_hit:
                 if (not force) and os.path.isfile(paths["quick"]):
                     with self._lock:
                         self._preview_path = paths["quick"]
@@ -1210,13 +1617,41 @@ class DeckMakerService:
                         )
                         phase("export-600dpi")
 
+            if preview_backend == "inkscape":
+                if not cache_hit:
+                    with self._preview_asset_lock(prepared["signature"]):
+                        cache_hit = (not force) and os.path.isfile(paths["svg"])
+                        if not cache_hit:
+                            text_query_service = self._ensure_text_query_service()
+                            phase("prepare-inkscape")
+                            self.activity("Rendering SVG preview...")
+                            result = PREVIEW.render(
+                                effect, APP_VERSION,
+                                text_query_service=text_query_service,
+                                prepared=prepared,
+                                force=force,
+                            )
+                            phase("render-svg")
+                self.activity("Updating Inkscape preview...")
+                with self._lock:
+                    cell_selection = dict(self._preview_cell_selection)
+                selected_fields = (
+                    list(cell_selection.get("targets") or [])
+                    if cell_selection.get("asset") == current_key
+                    else None
+                )
+                self._inkscape_previewer.show(paths["svg"], selected_fields=selected_fields)
+                phase("show-inkscape")
+
             with self._lock:
-                self._preview_path = paths["high"]
+                self._preview_path = paths["high"] if preview_backend == "browser" else ""
                 self._preview_label = f'{prepared["label"]} · 1 item'
-                self._preview_quality = "high"
+                self._preview_quality = "high" if preview_backend == "browser" else "inkscape"
                 self._preview_signature = prepared["signature"]
+                self._preview_template_revision = template_revision
                 self._preview_revision += 1
             self._emit("state")
+            self._preview_monitor_wake.set()
             phase("publish")
             LOG.i(
                 "[deckmaker.preview.timing] asset=%s %s total=%.1fms cached=%s",
@@ -1230,14 +1665,65 @@ class DeckMakerService:
                 current_key,
                 (time.perf_counter() - started) * 1000.0,
                 cache_hit,
-                os.path.getsize(paths["high"]),
+                os.path.getsize(cache_target),
             )
             self._set_status("Preview ready (cached)" if cache_hit else "Preview ready")
-            self._schedule_preview_prefetch(
-                request, datasets, entries, current_key, base_path, base_signature, direction,
-            )
+            if preview_backend == "browser":
+                self._schedule_preview_prefetch(
+                    request, datasets, entries, current_key, base_path, base_signature, direction,
+                )
+            with self._lock:
+                requested_key = str(self._preview_cell_selection.get("asset") or "")
+            if requested_key and requested_key != current_key:
+                return lambda: self.preview(
+                    force=False, refresh=False, asset_key=requested_key,
+                )
 
         return self._begin("preview", "Rendering preview...", worker)
+
+    def sync_preview_cell(self, sheet_row: int, source_column: int) -> dict:
+        with self._lock:
+            datasets = self._preview_datasets
+            current_key = self._preview_asset_key
+        if not datasets:
+            return {"accepted": False, "reason": "Preview dataset is not loaded"}
+        selection = PREVIEW.cell_selection(datasets, sheet_row, source_column, current_key)
+        if not selection:
+            return {"accepted": False, "reason": "The selected row has no preview asset"}
+        entry = selection["entry"]
+        value = {
+            "row": int(entry["sheetRow"]),
+            "column": int(source_column),
+            "header": str(selection.get("header") or ""),
+            "targets": list(selection.get("targets") or []),
+            "asset": str(entry["key"]),
+        }
+        with self._lock:
+            self._preview_cell_selection = value
+            busy = self._busy
+        if value["asset"] == current_key:
+            if self._inkscape_previewer.running:
+                self._inkscape_previewer.select_fields(value["targets"])
+            return {"accepted": True, "selection": value}
+        accepted = True if busy else self.preview(
+            force=False, refresh=False, asset_key=value["asset"],
+        )
+        return {"accepted": bool(accepted), "selection": value}
+
+    def preview_selected_cell(self) -> dict:
+        with self._lock:
+            datasets = self._preview_datasets
+            asset_key = self._preview_asset_key
+        if not datasets or not asset_key or not self._inkscape_previewer.running:
+            return {"selection": None}
+        fields = self._inkscape_previewer.selected_fields()
+        selection = PREVIEW.selected_cell(datasets, asset_key, fields) if fields else None
+        return {"selection": selection}
+
+    def navigate_preview(self, movement: int) -> bool:
+        with self._lock:
+            self._preview_cell_selection = {}
+        return self.preview(force=False, refresh=False, movement=movement)
 
     def refresh_previews(self) -> bool:
         if not self._can_generate():
@@ -1255,6 +1741,8 @@ class DeckMakerService:
             self._preview_base_signature = ""
             self._preview_asset_signatures = {}
             self._preview_dataset_signature = ""
+            self._preview_template_revision = ""
+            self._preview_cell_selection = {}
         removed = PREVIEW.clear_cache(self._preview_effect(request))
         LOG.i("[deckmaker.preview] full cache refresh removed=%d template=%s", removed, request.template)
         return self.preview(force=True, refresh=True, asset_key=current_key)
@@ -1450,14 +1938,96 @@ class DeckMakerService:
                 datasets = []
         return TEMPLATE_HEADERS.template_headers(effect.document.getroot(), datasets)
 
+    def create_starter_csv(self) -> bool:
+        with self._lock:
+            request = self._request
+        if not request.template or not os.path.isfile(request.template):
+            raise RuntimeError("Save/open an SVG template first")
+        csv_path = os.path.splitext(request.template)[0] + ".csv"
+        if os.path.exists(csv_path):
+            raise RuntimeError(f"The local dataset already exists: {csv_path}")
+
+        effect = self._preview_effect(request)
+        header_info = TEMPLATE_HEADERS.template_headers(effect.document.getroot(), [])
+        headers = list(header_info["headers"])
+        comments = [
+            "## PnPInk starter dataset",
+            "## Each row below the header creates one item from this SVG template.",
+            "## Header names match SVG ids or unique Inkscape labels inside the template group.",
+            f"## The first column ({header_info['bbox']}) controls copies, layout and item selection.",
+            "## Replace the example values, add rows, and use Preview while editing.",
+        ]
+        temporary = f"{csv_path}.{os.getpid()}.tmp"
+        try:
+            with open(temporary, "w", encoding="utf-8", newline="") as stream:
+                writer = csv.writer(stream)
+                for comment in comments:
+                    writer.writerow([comment])
+                writer.writerow([])
+                writer.writerow(headers)
+                writer.writerow(["{}"] + [""] * (len(headers) - 1))
+            os.replace(temporary, csv_path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+        self.update({"sourceMode": "local_csv", "sheetId": "", "sheetRange": ""})
+        self._set_status(f"Starter CSV created: {csv_path}")
+        self.preview(force=False, refresh=True)
+        return True
+
+    def google_sheet_to_csv(self) -> bool:
+        with self._lock:
+            request = self._request
+            available = bool(
+                request.template
+                and request.sheet_id
+                and request.dataset_source_mode != "local_csv"
+            )
+        if not available:
+            self._set_status("Select a Google Sheets dataset first")
+            return False
+
+        def worker():
+            with self._lock:
+                previous_asset = self._preview_asset_key
+            self.activity("Downloading Google Sheets dataset...")
+            effect = self._preview_effect(request)
+            csv_data, access_mode = DATASET.fetch_gsheet_csv(
+                effect,
+                request.sheet_id,
+                request.sheet_range,
+                request.dataset_source_mode,
+            )
+            if not csv_data:
+                raise RuntimeError("Google Sheets returned an empty dataset")
+
+            csv_path = os.path.splitext(request.template)[0] + ".csv"
+            self.activity("Writing local CSV dataset...")
+            backup = self._replace_csv_from_google(csv_path, csv_data)
+            with self._lock:
+                self._local_dataset_revision = self._dataset_revision(csv_path)
+            self.update({"sourceMode": "local_csv"})
+            suffix = f" Previous CSV: {backup}" if backup else ""
+            self._set_status(
+                f"Google Sheet copied to {csv_path} ({access_mode or 'auto'}).{suffix}"
+            )
+            return lambda: self.preview(
+                force=False,
+                refresh=True,
+                asset_key=previous_asset,
+            )
+
+        return self._begin("gsheet-to-csv", "Copying Google Sheet to CSV...", worker)
+
     def command(self, name: str) -> bool:
         commands = {
             "generate": self.generate,
             "preview": self.preview,
             "preview-initial": lambda: self.preview(force=False, refresh=True),
             "preview-refresh": self.refresh_previews,
-            "preview-previous": lambda: self.preview(force=False, refresh=False, movement=-1),
-            "preview-next": lambda: self.preview(force=False, refresh=False, movement=1),
+            "preview-previous": lambda: self.navigate_preview(-1),
+            "preview-next": lambda: self.navigate_preview(1),
             "open-output": self.open_output,
             "export": self.export,
             "play-create": self.create_play_assets,
@@ -1470,11 +2040,17 @@ class DeckMakerService:
             "open-examples": lambda: self.open_auxiliary("examples"),
             "open-intro": lambda: self.open_auxiliary("intro"),
             "open-guide": lambda: self.open_auxiliary("guide"),
+            "create-starter-csv": self.create_starter_csv,
+            "gsheet-to-csv": self.google_sheet_to_csv,
         }
         action = commands.get(str(name or "").strip().lower())
         if not action:
             raise ValueError(f"Unknown command: {name}")
         return bool(action())
+
+    def close_preview(self) -> None:
+        """Close the external preview without stopping the DeckMaker service."""
+        self._inkscape_previewer.close()
 
     def close(self) -> None:
         LOG.remove_listener(self._on_log_line)
@@ -1489,6 +2065,7 @@ class DeckMakerService:
         if preview_prefetch_service is not None:
             preview_prefetch_service.close()
         self._text_query_service.close()
+        self._inkscape_previewer.close()
         self._play_server.close()
         try:
             import gsheets_client_pkce as GS

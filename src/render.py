@@ -1330,6 +1330,12 @@ def render_phase(ctx):
                     transform_spec=tr_spec,
                     force_copy=bool(force_copy or _styles),
                 )
+                if _placed is not None and rect_elem is not None:
+                    _source_field = str(
+                        rect_elem.get('data-field') or rect_elem.get('data-origid') or ''
+                    ).strip()
+                    if _source_field:
+                        _placed.set('data-field', _source_field)
                 for _style_target, _prop, _value in _styles:
                     _style_node = _placed
                     _st = str(_style_target or "").strip()

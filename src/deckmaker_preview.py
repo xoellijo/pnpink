@@ -19,7 +19,7 @@ import snippets as SNIPPETS
 import temp_paths as TEMPPATHS
 
 
-PREVIEW_CACHE_VERSION = 11
+PREVIEW_CACHE_VERSION = 15
 SYMBOL_CACHE_VERSION = 4
 
 
@@ -345,9 +345,68 @@ def catalog(datasets: list[dict]) -> list[dict]:
                     "dataset": dataset_index,
                     "row": row_index,
                     "variant": int(variant),
+                    "sheetRow": sheet_row,
                     "label": label,
                 })
     return entries
+
+
+def cell_selection(
+    datasets: list[dict], sheet_row: int, source_column: int, current_key: str = "",
+) -> dict | None:
+    """Resolve one spreadsheet cell to its preview asset and SVG target ids."""
+    candidates = [entry for entry in catalog(datasets) if int(entry["sheetRow"]) == int(sheet_row)]
+    if not candidates:
+        return None
+    entry = next((item for item in candidates if item["key"] == current_key), candidates[0])
+    dataset = datasets[int(entry["dataset"]) - 1]
+    headers = list(dataset.get("headers") or [])
+    source_columns = list(dataset.get("source_columns") or range(1, len(headers) + 1))
+    try:
+        header_index = source_columns.index(int(source_column))
+    except ValueError:
+        return {"entry": entry, "header": "", "targets": []}
+    if header_index >= len(headers):
+        return {"entry": entry, "header": "", "targets": []}
+    header = str(headers[header_index] or "").strip()
+    if not header or header.startswith("$") or header.startswith("__dm_"):
+        return {"entry": entry, "header": header, "targets": []}
+    import render_apply as RAP
+
+    parsed = RAP.parse_header_key_full(header)
+    targets = [str(value).strip() for value in parsed.get("target_ids") or [] if str(value).strip()]
+    return {"entry": entry, "header": header, "targets": targets}
+
+
+def selected_cell(datasets: list[dict], asset_key: str, selected_fields: list[str]) -> dict | None:
+    """Resolve selected SVG source ids back to the current dataset cell."""
+    import fnmatch
+    import render_apply as RAP
+
+    entry = next((item for item in catalog(datasets) if item["key"] == asset_key), None)
+    if not entry:
+        return None
+    dataset = datasets[int(entry["dataset"]) - 1]
+    headers = list(dataset.get("headers") or [])
+    source_columns = list(dataset.get("source_columns") or range(1, len(headers) + 1))
+    fields = {str(value).strip() for value in selected_fields if str(value).strip()}
+    for index, header_value in enumerate(headers):
+        header = str(header_value or "").strip()
+        if not header or header.startswith("$") or header.startswith("__dm_"):
+            continue
+        parsed = RAP.parse_header_key_full(header)
+        targets = [str(value).strip() for value in parsed.get("target_ids") or [] if str(value).strip()]
+        if any(
+            any(fnmatch.fnmatchcase(field, target) for field in fields)
+            for target in targets
+        ):
+            return {
+                "row": int(entry["sheetRow"]),
+                "column": int(source_columns[index]),
+                "header": header,
+                "asset": entry["key"],
+            }
+    return None
 
 
 def _selection(datasets: list[dict], entry: dict) -> tuple[list[dict], str, str]:
@@ -565,6 +624,7 @@ def render(
         effect._dm_preloaded_datasets = prepared["datasets"]
         effect._dm_output_disabled = True
         effect._dm_preview_cache_only = True
+        effect._dm_preview_center_single = True
         ENGINE.run(effect, version, text_query_service=text_query_service)
         _isolate_generated_output(effect)
         ENGINE._write_svg_atomic(effect.document, target)

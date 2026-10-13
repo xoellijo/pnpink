@@ -51,14 +51,24 @@ body.image-drop-active .preview-panel::after {
   backdrop-filter: blur(4px);
 }
 
-main { --deckmaker-pane-height: 320px; position: relative; width: 100%; height: 100%; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(60px, var(--deckmaker-pane-height)) 8px minmax(0, 1fr); padding: 2px; }
+main {
+  --deckmaker-pane-height: 320px;
+  --deckmaker-dataset-width: 560px;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(60px, var(--deckmaker-pane-height)) 8px minmax(0, 1fr);
+  padding: 2px;
+}
 #gui {
   position: absolute;
   top: 2px;
   left: 2px;
-  z-index: 100;
-  width: min(328px, calc(100vw - 4px));
-  height: calc(var(--deckmaker-pane-height) - 4px);
+  z-index: 110;
+  width: min(275px, calc(100vw - 4px));
+  height: calc(100% - 4px);
   max-height: none;
   overflow: visible;
   pointer-events: none;
@@ -202,12 +212,50 @@ main { --deckmaker-pane-height: 320px; position: relative; width: 100%; height: 
   opacity: 1;
   animation: deckmaker-preview-progress 1s ease-in-out infinite;
 }
+main.dataset-dock-right {
+  grid-template-columns: minmax(60px, 1fr) 8px var(--deckmaker-dataset-width);
+  grid-template-rows: minmax(0, 1fr);
+}
+main.dataset-dock-right #gui { height: calc(100% - 4px); }
+main.dataset-dock-right .preview-panel { grid-column: 1; grid-row: 1; }
+main.dataset-dock-right .workspace-splitter {
+  grid-column: 2;
+  grid-row: 1;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+}
+main.dataset-dock-right .workspace-splitter::before {
+  top: 0;
+  right: auto;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  height: auto;
+}
+main.dataset-dock-right .workspace-splitter::after {
+  top: 0;
+  left: 3px;
+  width: 2px;
+  height: 30%;
+  transform: translateY(-110%);
+}
+main.dataset-dock-right .workspace-splitter.preview-busy::after {
+  animation-name: deckmaker-preview-progress-vertical;
+}
+main.dataset-dock-right .gsheet-editor { grid-column: 3; grid-row: 1; }
+@keyframes deckmaker-preview-progress-vertical {
+  0% { transform: translateY(-110%); }
+  100% { transform: translateY(370%); }
+}
 @keyframes deckmaker-preview-progress {
   0% { transform: translateX(-110%); }
   100% { transform: translateX(370%); }
 }
-#gui > .lil-gui.deckmaker-menu,
-#gui > .lil-gui.deckmaker-menu .lil-gui {
+.deckmaker-gui-host > .lil-gui.deckmaker-menu,
+.deckmaker-gui-host > .lil-gui.deckmaker-menu .lil-gui,
+.lil-gui.dataset-context-menu,
+.lil-gui.dataset-context-menu .lil-gui {
   --background-color: #070707b8;
   --text-color: #f7f7f5;
   --title-background-color: #050505c4;
@@ -232,7 +280,7 @@ main { --deckmaker-pane-height: 320px; position: relative; width: 100%; height: 
 }
 #gui > .lil-gui.deckmaker-menu {
   width: 100% !important;
-  max-height: calc(var(--deckmaker-pane-height) - 4px);
+  max-height: calc(100vh - 4px);
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -263,27 +311,6 @@ main { --deckmaker-pane-height: 320px; position: relative; width: 100%; height: 
 #gui .deckmaker-menu.root > .title { display: flex; align-items: center; }
 #gui .deckmaker-menu.root > .title > .deckmaker-root-toggle { width: 0; min-width: 0; flex: 1 1 0; color: #fff; background: transparent; }
 #gui .deckmaker-menu .title .iconify { flex: 0 0 auto; margin-right: 2px !important; color: #fff !important; }
-#gui .deckmaker-menu .title > .deckmaker-dataset-open {
-  width: auto;
-  min-width: 0;
-  flex: 0 0 auto;
-  margin: 0 2px 0 auto;
-  padding: 0;
-}
-#gui .deckmaker-menu .title > .deckmaker-dataset-open .widget { min-height: 21px; }
-#gui .deckmaker-menu .title > .deckmaker-dataset-open button {
-  width: auto;
-  height: 21px;
-  padding: 0 5px;
-}
-#gui .deckmaker-menu .title > .deckmaker-dataset-open .name {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  padding: 0;
-  line-height: 21px;
-  white-space: nowrap;
-}
 #gui .deckmaker-menu.root > .title .deckmaker-template-name { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #gui .deckmaker-template-picker { position: relative; width: 22px; height: 21px; flex: 0 0 22px; display: grid; place-items: center; border: 1px solid #ffffff22; border-radius: 4px; background: #171717d9; }
 #gui .deckmaker-template-picker > .iconify { margin: 0 !important; pointer-events: none; }
@@ -305,11 +332,11 @@ main { --deckmaker-pane-height: 320px; position: relative; width: 100%; height: 
   color: #fff;
   background: #171717;
 }
-#gui .deckmaker-preview-asset-select {
+.deckmaker-gui-host .deckmaker-preview-asset-select {
   min-width: 0;
   height: 21px;
-  flex: 0 1 78px;
-  width: 78px;
+  flex: 1 1 48px;
+  width: 48px;
   border: 1px solid #ffffff22;
   border-radius: 4px;
   padding: 0 17px 0 4px;
@@ -321,7 +348,7 @@ main { --deckmaker-pane-height: 320px; position: relative; width: 100%; height: 
   font-weight: 400;
   text-overflow: ellipsis;
 }
-#gui .deckmaker-title-button {
+.deckmaker-gui-host .deckmaker-title-button {
   width: 22px;
   height: 21px;
   flex: 0 0 22px;
@@ -334,10 +361,10 @@ main { --deckmaker-pane-height: 320px; position: relative; width: 100%; height: 
   line-height: 19px;
   text-align: center;
 }
-#gui .deckmaker-title-button:hover { background: #343434; }
-#gui .deckmaker-title-button .iconify { margin: 0 !important; }
-#gui .deckmaker-title-button:disabled,
-#gui .deckmaker-preview-asset-select:disabled { opacity: .45; }
+.deckmaker-gui-host .deckmaker-title-button:hover { background: #343434; }
+.deckmaker-gui-host .deckmaker-title-button .iconify { margin: 0 !important; }
+.deckmaker-gui-host .deckmaker-title-button:disabled,
+.deckmaker-gui-host .deckmaker-preview-asset-select:disabled { opacity: .45; }
 #gui .deckmaker-drop-target > .title {
   color: #17120a !important;
   background: #efbd73 !important;
@@ -369,6 +396,30 @@ main { --deckmaker-pane-height: 320px; position: relative; width: 100%; height: 
 }
 #gui .lil-gui.root { max-height: none; }
 
+.gsheet-editor.empty .gsheet-editor-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+}
+.gsheet-editor.empty .gsheet-editor-message strong { font-size: 16px; font-weight: 500; }
+.gsheet-editor.empty .gsheet-editor-message span { max-width: 520px; color: #bdbdbd; }
+.deckmaker-create-dataset {
+  min-height: 30px;
+  border: 1px solid #efbd73;
+  border-radius: 5px;
+  padding: 4px 12px;
+  color: #17120a;
+  background: #efbd73;
+  font: inherit;
+  cursor: pointer;
+}
+.deckmaker-create-dataset:hover { background: #ffd28f; }
+.deckmaker-create-dataset:disabled { cursor: default; opacity: .45; }
+
 @media (hover: hover) {
   #gui .deckmaker-menu input[type="checkbox"]:hover {
     border-color: #fff !important;
@@ -388,6 +439,13 @@ main { --deckmaker-pane-height: 320px; position: relative; width: 100%; height: 
 .deckmaker-controller-icon { width: 16px; height: 16px; flex: 0 0 16px; margin-right: 2px; object-fit: contain; }
 .deckmaker-primary-actions > .controller button { font-weight: 400; }
 .deckmaker-main-actions > .deckmaker-action-button { flex: 1 1 0 !important; }
+.deckmaker-dataset-source-row > .controller:first-child { flex: 1 1 auto !important; }
+.deckmaker-dataset-source-row > .deckmaker-gsheet-to-csv {
+  width: 88px !important;
+  min-width: 88px !important;
+  flex: 0 0 88px !important;
+}
+.deckmaker-dataset-source-row > .deckmaker-gsheet-to-csv .name { padding: 0 1px; }
 .deckmaker-main-actions > .deckmaker-action-button button { padding: 0 2px; font-size: 10.5px; font-weight: 400; }
 .deckmaker-main-actions > .deckmaker-action-button .name { padding: 0 1px; }
 .deckmaker-icon-row > .controller,
@@ -424,6 +482,47 @@ main { --deckmaker-pane-height: 320px; position: relative; width: 100%; height: 
 .deckmaker-profile-row > .controller .widget { flex: 0 0 auto; width: auto; }
 .deckmaker-menu .controller.disabled { opacity: .62; }
 
+.lil-gui.dataset-context-menu {
+  width: 220px !important;
+  max-height: min(520px, calc(100vh - 10px));
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid #ffffff20;
+  border-radius: 7px;
+  color: #f7f7f5;
+  background: #070707e8;
+  box-shadow: 0 8px 24px #0009;
+  backdrop-filter: blur(7px);
+}
+.lil-gui.dataset-context-menu > .title { display: none !important; }
+.lil-gui.dataset-context-menu .children { background: #070707e8; }
+.lil-gui.dataset-context-menu .controller { border-color: #ffffff0d; }
+.lil-gui.dataset-context-menu .controller button {
+  color: #fff;
+  background: #151515e8;
+  font-weight: 400;
+  text-align: left;
+}
+.lil-gui.dataset-context-menu .controller button:hover { background: #292929; }
+.lil-gui.dataset-context-menu .controller.disabled { opacity: .45; }
+.lil-gui.dataset-context-menu .controller.disabled button { cursor: default; }
+.lil-gui.dataset-context-menu .lil-gui > .title {
+  color: #fff;
+  background: #101010e8;
+  font-weight: 400;
+}
+.lil-gui.dataset-context-menu .lil-gui > .children {
+  margin-left: var(--folder-indent);
+  border-left: 1px solid #ffffff20;
+}
+.lil-gui.dataset-context-menu .iconify { color: #fff !important; }
+.lil-gui.dataset-context-menu .dataset-context-danger { border-top: 1px solid #ffffff20; }
+.dataset-context-separator {
+  height: 1px;
+  margin: 3px 5px;
+  background: #ffffff20;
+}
+
 .console-panel {
   position: fixed;
   top: 2px;
@@ -448,7 +547,7 @@ main { --deckmaker-pane-height: 320px; position: relative; width: 100%; height: 
 .console-header button { margin-left: auto; width: 24px; height: 22px; border: 0; border-radius: 4px; color: #fff; background: transparent; font: 18px/1 sans-serif; cursor: pointer; }
 .console-header button:hover { background: #ffffff20; }
 #log { min-height: 0; flex: 1; margin: 0; padding: 9px 11px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: #ccd2db; font: 11px/1.42 "Cascadia Mono", Consolas, monospace; scrollbar-gutter: stable; }
-#toast { position: fixed; right: 18px; bottom: 18px; max-width: 420px; padding: 10px 14px; border-radius: 7px; color: white; background: #7b2e2e; opacity: 0; pointer-events: none; transition: opacity .18s; }
+#toast { position: fixed; left: 12px; bottom: 12px; z-index: 170; width: min(520px, calc(100vw - 24px)); padding: 10px 14px; border: 1px solid #d96b78; border-radius: 7px; color: white; background: rgba(77, 20, 29, .96); box-shadow: 0 8px 24px #0008; opacity: 0; pointer-events: none; transition: opacity .18s; }
 #toast.visible { opacity: 1; }
 
 .gsheet-editor {
@@ -475,6 +574,189 @@ main { --deckmaker-pane-height: 320px; position: relative; width: 100%; height: 
   background: #fff;
 }
 .gsheet-editor iframe[hidden] { display: none; }
+.dataset-table {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  border: 0;
+  background: #fff;
+}
+#gui .deckmaker-dataset-folder > .title,
+#gui .deckmaker-preview-folder > .title {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+#gui .deckmaker-dataset-folder > .title > .remove-bar {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+#gui .deckmaker-folder-title-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#gui .deckmaker-preview-folder > .title > .remove-bar {
+  min-width: 62px;
+  flex: 0 0 62px;
+}
+#gui .deckmaker-preview-folder > .title > .deckmaker-preview-asset-select {
+  width: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+#gui .deckmaker-dataset-folder > .title > .deckmaker-dataset-dock,
+#gui .deckmaker-preview-folder > .title > .deckmaker-title-button {
+  flex: 0 0 22px;
+}
+.dataset-table[hidden] { display: none; }
+.dataset-table.tabulator {
+  border: 0;
+  font: 400 12px/1.25 "Segoe UI", Arial, sans-serif;
+}
+.dataset-table .tabulator-header,
+.dataset-table .tabulator-header .tabulator-col,
+.dataset-table .tabulator-row .tabulator-cell.tabulator-row-header {
+  color: #303030;
+  background: #ececec;
+  font-weight: 700;
+}
+.dataset-table .tabulator-header .tabulator-col .tabulator-col-content { padding: 3px 7px; }
+.dataset-table .tabulator-header .tabulator-col .tabulator-col-title {
+  text-align: center;
+  font-weight: 700;
+}
+.dataset-table .tabulator-header .tabulator-col.tabulator-range-highlight,
+.dataset-table .tabulator-row .tabulator-cell.tabulator-row-header.tabulator-range-highlight {
+  color: #5b3510 !important;
+  background: #edb770 !important;
+}
+.dataset-table .tabulator-header .tabulator-col.tabulator-range-selected,
+.dataset-table .tabulator-row .tabulator-cell.tabulator-row-header.tabulator-range-selected {
+  color: #442506 !important;
+  background: #dc9340 !important;
+}
+.dataset-table .tabulator-row.tabulator-range-highlight .tabulator-cell.tabulator-range-row-header {
+  color: #5b3510 !important;
+  background: #edb770 !important;
+}
+.dataset-table .tabulator-row.tabulator-range-selected .tabulator-cell.tabulator-range-row-header {
+  color: #442506 !important;
+  background: #dc9340 !important;
+}
+.dataset-table .tabulator-row,
+.dataset-table .tabulator-row.tabulator-row-even { background: #fff; }
+.dataset-table .tabulator-row {
+  height: var(--dataset-row-height, 22px);
+  min-height: var(--dataset-row-height, 22px);
+}
+.dataset-table .tabulator-row .tabulator-cell {
+  height: var(--dataset-row-height, 22px);
+  min-height: var(--dataset-row-height, 22px);
+  padding: 2px 7px;
+  overflow: visible;
+  color: #242424;
+  font-weight: 400;
+}
+.dataset-table .tabulator-row .tabulator-cell.dataset-cell-empty { z-index: 1; }
+.dataset-table .tabulator-row .tabulator-cell.dataset-cell-filled { z-index: 2; }
+.dataset-table .dataset-cell-value {
+  display: block;
+  box-sizing: border-box;
+  position: absolute;
+  top: 50%;
+  left: 7px;
+  width: calc(100% - 14px);
+  overflow: hidden;
+  clip-path: inset(0);
+  white-space: nowrap;
+  text-overflow: clip;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.dataset-table .tabulator-row.dataset-row-dataset-header .tabulator-cell {
+  background: #f2b866;
+}
+.dataset-table .tabulator-row.dataset-row-dataset-header .tabulator-cell:not(.tabulator-row-header) {
+  color: #858585;
+  font-weight: 400;
+}
+.dataset-table .tabulator-row.dataset-row-dataset-header .tabulator-cell.dataset-cell-filled:not(.dataset-cell-commented) {
+  color: #4b2908;
+  font-weight: 700;
+}
+.dataset-table .tabulator-row.dataset-row-directive .tabulator-cell:not(.tabulator-row-header) { color: #8b382f; }
+.dataset-table .dataset-syntax-token { color: #8b382f; }
+.dataset-table .dataset-syntax-identifier { font-weight: 700; }
+.dataset-table .tabulator-row.dataset-row-comment .tabulator-cell:not(.tabulator-row-header),
+.dataset-table .tabulator-row.dataset-row-comment-marker .tabulator-cell:not(.tabulator-row-header),
+.dataset-table .tabulator-row.dataset-row-comment-block .tabulator-cell:not(.tabulator-row-header),
+.dataset-table .tabulator-row .tabulator-cell.dataset-cell-commented {
+  color: #858585 !important;
+  font-weight: 400 !important;
+}
+.dataset-table .tabulator-row.dataset-row-orphan .tabulator-cell:not(.tabulator-row-header) { color: #b04444; }
+.dataset-table .tabulator-range {
+  border-color: #d88920 !important;
+  background: rgba(238, 157, 53, .16) !important;
+}
+.dataset-table .tabulator-row .tabulator-cell.tabulator-range-selected:not(.tabulator-range-row-header) {
+  background: #ffead0 !important;
+}
+.dataset-table .tabulator-range-cell-active { border-color: #d88920 !important; }
+.dataset-table .tabulator-range.tabulator-range-active::after { background: #d88920 !important; }
+.dataset-table .tabulator-row:has(.tabulator-cell.tabulator-editing) { z-index: 50; }
+.dataset-table .tabulator-row .tabulator-cell.tabulator-editing {
+  z-index: 60;
+  overflow: visible;
+}
+.dataset-table .tabulator-row .tabulator-cell.tabulator-editing textarea {
+  position: absolute !important;
+  z-index: 30;
+  top: -2px;
+  left: -2px;
+  width: min(420px, calc(100vw - 40px)) !important;
+  min-width: calc(100% + 4px);
+  height: 104px !important;
+  min-height: 104px !important;
+  padding: 8px 10px;
+  resize: both;
+  pointer-events: auto !important;
+  border: 2px solid #8a6b16;
+  border-radius: 4px;
+  outline: 0;
+  color: #171717;
+  background: #fff1b8;
+  box-shadow: 0 8px 24px #0005;
+  font: 400 16px/1.35 "Segoe UI", Arial, sans-serif;
+}
+.tabulator-tooltip {
+  max-width: min(520px, calc(100vw - 24px));
+  padding: 6px 9px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #fff;
+  background: #202020;
+  box-shadow: 0 5px 16px #0005;
+  font: 400 12px/1.35 "Segoe UI", Arial, sans-serif;
+}
+.dataset-table .tabulator-tableholder {
+  overflow: scroll !important;
+  scrollbar-color: #999 #ededed;
+  scrollbar-gutter: stable;
+  scrollbar-width: auto;
+}
+.dataset-table .tabulator-tableholder::-webkit-scrollbar { width: 11px; height: 11px; }
+.dataset-table .tabulator-tableholder::-webkit-scrollbar-track { background: #ededed; }
+.dataset-table .tabulator-tableholder::-webkit-scrollbar-thumb {
+  border: 2px solid #ededed;
+  border-radius: 7px;
+  background: #999;
+}
+.dataset-table .tabulator-tableholder::-webkit-scrollbar-thumb:hover { background: #777; }
+.dataset-table .tabulator-tableholder::-webkit-scrollbar-corner { background: #ededed; }
 .gsheet-editor-message { min-height: 0; flex: 1 1 auto; display: grid; place-items: center; color: var(--muted); }
 .gsheet-editor-message[hidden] { display: none; }
 
@@ -538,6 +820,5 @@ body.log-visible .job-status { bottom: 12px; }
 
 @media (max-width: 760px) {
   main { padding: 2px; }
-  #gui { top: 2px; left: 2px; width: calc(100vw - 4px); height: calc(var(--deckmaker-pane-height) - 4px); }
-  #gui { width: 100%; }
+  #gui { top: 2px; left: 2px; width: min(275px, calc(100vw - 4px)); height: calc(100% - 4px); }
 }

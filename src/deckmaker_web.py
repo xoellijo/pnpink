@@ -27,9 +27,10 @@ import deckmaker_ipc as IPC
 import deckmaker_paths as DMPATHS
 from deckmaker_service import DeckMakerService
 from deckmaker_types import AppRequest
+import log as LOG
 import prefs
 import temp_paths as TEMPPATHS
-from web_app import open_web_app
+from web_app import load_window_geometry, open_web_app, save_window_geometry
 
 
 HTTP_HOST = "127.0.0.1"
@@ -73,6 +74,7 @@ class LocalThreadingHTTPServer(ThreadingHTTPServer):
 
 class DeckMakerWebHost:
     SESSION_TIMEOUT = 60.0
+    SUSPEND_GAP = 30.0
     CLOSE_GRACE = 2.0
     STARTUP_TIMEOUT = 30.0
 
@@ -81,6 +83,7 @@ class DeckMakerWebHost:
         self._session_lock = threading.Lock()
         self._sessions: dict[str, dict[str, object]] = {}
         self._started_at = time.monotonic()
+        self._last_session_check = self._started_at
         self._browser_expected_until = self._started_at + self.STARTUP_TIMEOUT
         self._empty_since: float | None = None
         self._had_session = False
@@ -104,6 +107,10 @@ class DeckMakerWebHost:
             self._browser_expected_until = now
             self._empty_since = None
             self._had_session = True
+
+    @staticmethod
+    def save_browser_geometry(geometry) -> bool:
+        return save_window_geometry(geometry)
 
     def browser_touched(self, session_id: str) -> None:
         session_id = str(session_id or "").strip()
@@ -149,10 +156,14 @@ class DeckMakerWebHost:
         session_id = str(session_id or "").strip()
         if not session_id:
             return
+        close_preview = False
         with self._session_lock:
             self._sessions.pop(session_id, None)
             if self._had_session and not self._sessions and self._empty_since is None:
                 self._empty_since = time.monotonic()
+                close_preview = True
+        if close_preview:
+            self.service.close_preview()
 
     def expect_browser(self) -> None:
         with self._session_lock:
@@ -162,6 +173,17 @@ class DeckMakerWebHost:
     def browser_active(self) -> bool:
         now = time.monotonic()
         with self._session_lock:
+            check_gap = now - self._last_session_check
+            self._last_session_check = now
+            if check_gap >= self.SUSPEND_GAP and self._sessions:
+                for session in self._sessions.values():
+                    session["seen_at"] = now
+                self._empty_since = None
+                LOG.i(
+                    "[deckmaker.web] resumed after %.1fs; preserving %d browser session(s)",
+                    check_gap,
+                    len(self._sessions),
+                )
             expired = [
                 key for key, session in self._sessions.items()
                 if now - float(session.get("seen_at") or 0.0) >= self.SESSION_TIMEOUT
@@ -292,6 +314,21 @@ class DeckMakerWebHost:
                 if parsed.path == "/api/template/headers":
                     self._json(host.service.template_headers())
                     return
+                if parsed.path == "/api/dataset/table":
+                    try:
+                        self._json(host.service.local_dataset_table())
+                    except Exception as error:
+                        self.send_error(HTTPStatus.NOT_FOUND, str(error))
+                    return
+                if parsed.path == "/api/dataset/revision":
+                    try:
+                        self._json(host.service.local_dataset_revision())
+                    except Exception as error:
+                        self.send_error(HTTPStatus.NOT_FOUND, str(error))
+                    return
+                if parsed.path == "/api/preview/selection":
+                    self._json(host.service.preview_selected_cell())
+                    return
                 if parsed.path in {"", "/"}:
                     if not self._authorized():
                         query = urllib.parse.parse_qs(parsed.query)
@@ -326,9 +363,10 @@ class DeckMakerWebHost:
                     session_id = host._session_id(self)
                     if parsed.path == "/api/session/open":
                         host.browser_opened(session_id, visible=bool(body.get("visible", True)))
-                        self._json({"ok": True})
+                        self._json({"ok": True, "geometry": load_window_geometry()})
                         return
                     if parsed.path == "/api/session/close":
+                        host.save_browser_geometry(body.get("geometry"))
                         host.browser_closed(session_id)
                         self._json({"ok": True})
                         return
@@ -336,12 +374,37 @@ class DeckMakerWebHost:
                         host.browser_visibility(session_id, bool(body.get("visible")))
                         self._json({"ok": True})
                         return
+                    if parsed.path == "/api/window-geometry":
+                        self._json({"saved": host.save_browser_geometry(body.get("geometry"))})
+                        return
                     host.browser_touched(session_id)
                     if parsed.path == "/api/settings":
                         self._json(host.service.update(body))
                         return
                     if parsed.path == "/api/sheet-activity":
                         self._json(host.service.set_sheet_editor_activity(bool(body.get("active"))))
+                        return
+                    if parsed.path == "/api/dataset/cells":
+                        updates = body.get("updates")
+                        if not isinstance(updates, list):
+                            raise ValueError("Dataset updates must be a list")
+                        self._json(host.service.update_local_dataset_cells(
+                            updates,
+                            str(body.get("revision") or ""),
+                        ))
+                        return
+                    if parsed.path == "/api/dataset/structure":
+                        self._json(host.service.update_local_dataset_structure(
+                            str(body.get("action") or ""),
+                            int(body.get("index") or 0),
+                            str(body.get("revision") or ""),
+                        ))
+                        return
+                    if parsed.path == "/api/preview/sync":
+                        self._json(host.service.sync_preview_cell(
+                            int(body.get("row") or 0),
+                            int(body.get("column") or 0),
+                        ))
                         return
                     if parsed.path == "/api/command":
                         accepted = host.service.command(str(body.get("command") or ""))
@@ -416,7 +479,7 @@ def notify_or_launch(
         selected_ids=selected_ids,
     )
     if launched and not browser_active and not os.environ.get("PNPINK_DECKMAKER_WEB_NO_BROWSER"):
-        if not _wait_until_listening():
+        if not _wait_until_listening(timeout=DeckMakerWebHost.STARTUP_TIMEOUT):
             return False
         if not _open_browser(f"http://{HTTP_HOST}:{HTTP_PORT}/"):
             return False

@@ -1,3 +1,18 @@
+[0.78.0-beta.1]
+- Add a full local CSV editor to DeckMaker Web with spreadsheet coordinates, atomic edits, row and column operations, semantic PnPInk highlighting, dynamic sticky dataset headers, external-change detection, and a lil-xgui context menu.
+- Remember each template's dataset source and add assisted starter CSV creation, Google Sheet to CSV synchronization with one emergency `.csv.old` backup, direct spreadsheet opening, and bottom/right dataset docking.
+- Add dataset-to-preview and optional two-way Inkscape selection synchronization while ignoring hidden template nodes and preserving physical CSV row numbers.
+- Add an isolated persistent Inkscape preview viewer that reloads SVGs in place, preserves window geometry and viewport, and closes with DeckMaker Web.
+- Improve DeckMaker Web lifecycle recovery after suspension, remember Chromium app-window geometry, and keep browser, template, dataset, and preview state synchronized.
+- Add explicit `:(...):` inline-icon compositions so document objects and multiple external Sources with URI colons can share one text placeholder safely.
+- Keep document objects used in arrays relative to their own geometry, so moving the template or its library groups cannot displace keyword icons outside their placeholders.
+- Detect saved SVG template changes while a preview is active, invalidate its generated cache, and refresh the current asset automatically.
+- Close the external Inkscape preview immediately when the last DeckMaker Web window closes, while retaining the server shutdown grace period.
+- Restore DeckMaker Web's saved Chromium window coordinates during normal startup, including placement on secondary monitors.
+- Let assisted starter CSV creation discover the template bbox from its Inkscape object label; SVG descriptions carry no PnPInk semantics.
+- Consolidate Google Sheet and CSV loading paths used by generation, preview, and synchronization, and propagate source-field metadata into generated SVG objects.
+- Reorganize DeckMaker Web into compact Dataset, Preview, Tools, Configuration, PnPPlay, and Help controls, with custom status, log, and dataset interaction surfaces.
+
 [0.74.0-beta.3]
 - Restore compatibility with Inkscape 1.2, where `inkex.etree` is not exported, through a shared lxml-backed compatibility adapter.
 

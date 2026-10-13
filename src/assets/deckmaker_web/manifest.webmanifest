@@ -9,7 +9,7 @@
   "theme_color": "#050505",
   "icons": [
     {
-      "src": "/shared-assets/deckmaker_icon.png?v=073",
+      "src": "/shared-assets/deckmaker_icon.png?v=078b1",
       "sizes": "256x256",
       "type": "image/png",
       "purpose": "any"

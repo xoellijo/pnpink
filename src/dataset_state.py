@@ -57,6 +57,12 @@ def remember_svg(svg_path: str) -> None:
         record["updated_at"] = int(time.time())
         if not record.get("kind"):
             record["kind"] = "local_csv"
+        if not record.get("source_mode"):
+            previous_mode = str(record.get("access_mode") or "").strip().lower()
+            record["source_mode"] = (
+                previous_mode if previous_mode in {"auto", "public", "oauth"}
+                else ("local_csv" if record["kind"] == "local_csv" else "auto")
+            )
         by_svg[key] = record
         state["version"] = 2
         state["by_svg"] = by_svg
@@ -75,7 +81,8 @@ def list_svg_templates() -> list[Dict[str, object]]:
             path = os.path.normpath(str(record.get("svg_path") or key))
             if not os.path.isfile(path):
                 continue
-            sheet_id = str(record.get("sheet_id") or "").strip()
+            source_mode = str(record.get("source_mode") or record.get("access_mode") or "").strip().lower()
+            sheet_id = str(record.get("sheet_id") or "").strip() if source_mode != "local_csv" else ""
             csv_path = os.path.splitext(path)[0] + ".csv"
             dataset = f"gsheet://{os.path.splitext(os.path.basename(path))[0]}" if sheet_id else (
                 os.path.basename(csv_path) if os.path.isfile(csv_path) else "No dataset"
@@ -90,14 +97,19 @@ def list_svg_templates() -> list[Dict[str, object]]:
         return templates
 
 
-def set_gsheet_for_svg(svg_path: str, sheet_id: str, sheet_range: str = "", access_mode: str = "") -> None:
+def set_dataset_source_for_svg(
+    svg_path: str,
+    source_mode: str,
+    sheet_id: str = "",
+    sheet_range: str = "",
+) -> None:
     sp = _norm_svg_path(svg_path)
     sid = str(sheet_id or "").strip()
     srg = str(sheet_range or "").strip()
-    am = str(access_mode or "").strip().lower()
-    if am not in ("", "public", "oauth"):
-        am = ""
-    if not sp or not sid:
+    mode = str(source_mode or "").strip().lower()
+    if mode not in ("auto", "local_csv", "public", "oauth"):
+        mode = "auto" if sid else "local_csv"
+    if not sp or (mode != "local_csv" and not sid):
         return
     with _STATE_LOCK:
         state = _load_state()
@@ -105,20 +117,30 @@ def set_gsheet_for_svg(svg_path: str, sheet_id: str, sheet_range: str = "", acce
         if not isinstance(by_svg, dict):
             by_svg = {}
         record = dict(by_svg.get(sp) or {})
-        if str(record.get("sheet_id") or "").strip() != sid or str(record.get("sheet_range") or "").strip() != srg:
+        if sid and (
+            str(record.get("sheet_id") or "").strip() != sid
+            or str(record.get("sheet_range") or "").strip() != srg
+        ):
             record.pop("sheet_gid", None)
         record.update({
-            "kind": "gsheet",
+            "kind": "local_csv" if mode == "local_csv" else "gsheet",
+            "source_mode": mode,
             "svg_path": os.path.normpath(os.path.abspath(svg_path)),
-            "sheet_id": sid,
-            "sheet_range": srg,
-            "access_mode": am,
+            "access_mode": mode if mode in {"auto", "public", "oauth"} else "",
             "updated_at": int(time.time()),
         })
+        if sid:
+            record["sheet_id"] = sid
+            record["sheet_range"] = srg
         by_svg[sp] = record
         state["version"] = 2
         state["by_svg"] = by_svg
         _save_state(state)
+
+
+def set_gsheet_for_svg(svg_path: str, sheet_id: str, sheet_range: str = "", access_mode: str = "") -> None:
+    """Compatibility wrapper for callers that only configure Google Sheets."""
+    set_dataset_source_for_svg(svg_path, access_mode or "auto", sheet_id, sheet_range)
 
 
 def set_gsheet_gid_for_svg(svg_path: str, sheet_id: str, sheet_range: str, sheet_gid: str) -> None:
@@ -143,7 +165,7 @@ def set_gsheet_gid_for_svg(svg_path: str, sheet_id: str, sheet_range: str, sheet
         _save_state(state)
 
 
-def get_gsheet_for_svg(svg_path: str) -> Optional[Dict[str, str]]:
+def get_dataset_source_for_svg(svg_path: str) -> Optional[Dict[str, str]]:
     sp = _norm_svg_path(svg_path)
     if not sp:
         return None
@@ -157,10 +179,28 @@ def get_gsheet_for_svg(svg_path: str) -> Optional[Dict[str, str]]:
         return None
     sid = str(rec.get("sheet_id") or "").strip()
     srg = str(rec.get("sheet_range") or "").strip()
-    am = str(rec.get("access_mode") or "").strip().lower()
+    mode = str(rec.get("source_mode") or rec.get("access_mode") or "").strip().lower()
+    if mode not in ("auto", "local_csv", "public", "oauth"):
+        mode = "auto" if sid else "local_csv"
     gid = str(rec.get("sheet_gid") or "").strip()
-    if am not in ("", "public", "oauth"):
-        am = ""
-    if not sid:
+    return {
+        "kind": "local_csv" if mode == "local_csv" else "gsheet",
+        "source_mode": mode,
+        "sheet_id": sid,
+        "sheet_range": srg,
+        "access_mode": mode if mode != "local_csv" else "",
+        "sheet_gid": gid if gid.isdigit() else "",
+    }
+
+
+def get_gsheet_for_svg(svg_path: str) -> Optional[Dict[str, str]]:
+    """Compatibility view of the Google Sheet association, if one exists."""
+    source = get_dataset_source_for_svg(svg_path)
+    if not source or not source.get("sheet_id"):
         return None
-    return {"sheet_id": sid, "sheet_range": srg, "access_mode": am, "sheet_gid": gid if gid.isdigit() else ""}
+    return {
+        "sheet_id": source["sheet_id"],
+        "sheet_range": source["sheet_range"],
+        "access_mode": source["access_mode"],
+        "sheet_gid": source["sheet_gid"],
+    }

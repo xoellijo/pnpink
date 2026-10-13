@@ -65,7 +65,7 @@ class Logger:
         # Open file handle once
         self._fh = None
         try:
-            self._fh = open(self.file_path, "a", encoding="utf-8")
+            self._fh = open(self.file_path, "w", encoding="utf-8")
         except Exception as ex:
             inkex.utils.errormsg(f"[{self.tag}] ERROR opening log file: {ex}")
 

@@ -42,10 +42,10 @@ def current_request(extension: inkex.EffectExtension) -> AppRequest:
         if str(node.get("id") or "").strip()
     )
     try:
-        record = DSTATE.get_gsheet_for_svg(document_path) or {}
+        record = DSTATE.get_dataset_source_for_svg(document_path) or {}
         sheet_id = str(record.get("sheet_id") or "").strip()
         sheet_range = str(record.get("sheet_range") or "").strip()
-        source_mode = str(record.get("access_mode") or "").strip().lower()
+        source_mode = str(record.get("source_mode") or "").strip().lower()
     except Exception:
         pass
     return AppRequest(

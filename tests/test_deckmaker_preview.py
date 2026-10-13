@@ -143,6 +143,35 @@ def test_preview_catalog_applies_google_sheet_range_offset():
     assert entries[0]["label"] == "34 - Visible"
 
 
+def test_preview_cell_selection_maps_physical_column_to_header_target():
+    datasets = dataset._matrix_to_datasets([
+        ["card", "$title", "Cost[fill]"],
+        ["", "Alpha", "#ff0000"],
+    ])
+
+    selection = deckmaker_preview.cell_selection(datasets, 2, 2)
+
+    assert selection["entry"]["key"] == "1:1:1"
+    assert selection["header"] == "Cost[fill]"
+    assert selection["targets"] == ["Cost"]
+
+
+def test_preview_selected_node_maps_back_to_physical_dataset_cell():
+    datasets = dataset._matrix_to_datasets([
+        ["card", "$title", "Cost[fill]"],
+        ["", "Alpha", "#ff0000"],
+    ])
+
+    selection = deckmaker_preview.selected_cell(datasets, "1:1:1", ["Cost"])
+
+    assert selection == {
+        "row": 2,
+        "column": 2,
+        "header": "Cost[fill]",
+        "asset": "1:1:1",
+    }
+
+
 def test_symbol_base_uses_persistent_content_addressed_cache(tmp_path, monkeypatch):
     from lxml import etree
 

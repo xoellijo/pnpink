@@ -10,14 +10,14 @@ import re
 import shutil
 import urllib.parse
 import zipfile
-import csv
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Dict, Iterable, Optional
 
 import inkex
 from inkex_compat import etree
-import gsheets_client_pkce as GS
+import dataset as DATASET
 import dataset_state as DSTATE
 import sources as SRC
 import svg as SVG
@@ -359,12 +359,14 @@ def _csv_for_export(ext, doc_path: Optional[Path], svg_name: str, ext_man: Dict[
     opt = getattr(ext, "options", None)
     state_sid = ""
     state_srg = ""
+    state_mode = ""
     if doc_path is not None:
         try:
             rec = DSTATE.get_gsheet_for_svg(str(doc_path))
             if rec:
                 state_sid = str(rec.get("sheet_id") or "").strip()
                 state_srg = str(rec.get("sheet_range") or "").strip()
+                state_mode = str(rec.get("access_mode") or "").strip()
         except Exception:
             pass
 
@@ -383,7 +385,12 @@ def _csv_for_export(ext, doc_path: Optional[Path], svg_name: str, ext_man: Dict[
         or state_srg
         or ""
     ).strip()
-    data = _fetch_gsheet_csv_bytes(doc_path, sheet_id, sheet_range)
+    source_mode = str(
+        (getattr(opt, "dataset_source_mode", "") if opt is not None else "")
+        or state_mode
+        or "auto"
+    ).strip()
+    data = _fetch_gsheet_csv_bytes(doc_path, sheet_id, sheet_range, source_mode)
     if data is None:
         return None, None
     ext_man.setdefault("gsheet_id", sheet_id)
@@ -458,42 +465,32 @@ def _build_manifest(kind: str, svg_name: str, csv_name: Optional[str], deckmaker
     return out
 
 
-def _choose_sheet_and_range_for_export(doc_path: Optional[Path], sheet_id: str, range_a1: Optional[str]) -> str:
-    rng = str(range_a1 or "").strip()
-    if rng.startswith("!") and rng.count("!") >= 2:
-        rng = rng[1:]
-    if "!" in rng:
-        sh, cells = rng.split("!", 1)
-        sh = (sh or "").strip()
-        cells = (cells or "").strip()
-        return f"{sh}!{cells}" if cells else sh
-    if re.fullmatch(r"\d+", rng or ""):
-        # GID has no direct OAuth values.get equivalent. Keep prior oauth behavior.
-        rng = ""
-    if rng:
-        return rng
-    svg_stem = (doc_path.stem if doc_path else "Sheet1")
-    titles = GS.list_sheet_titles(sheet_id)
-    sheet_name = next((t for t in titles if t.strip().lower() == svg_stem.strip().lower()), (titles[0] if titles else "Sheet1"))
-    return sheet_name
-
-
-def _fetch_gsheet_csv_bytes(doc_path: Optional[Path], sheet_id: str, range_a1: Optional[str]) -> Optional[bytes]:
+def _fetch_gsheet_csv_bytes(
+    doc_path: Optional[Path],
+    sheet_id: str,
+    range_a1: Optional[str],
+    source_mode: str = "auto",
+) -> Optional[bytes]:
     sid = (sheet_id or "").strip()
     if not sid:
         return None
-    client_id = os.environ.get("PNPINK_GSHEETS_CLIENT_ID") or GS.CLIENT_ID
     try:
-        rng = _choose_sheet_and_range_for_export(doc_path, sid, range_a1)
-        values = GS.fetch_sheet(sid, rng, client_id or None)
-        matrix = [[("" if v is None else str(v)) for v in r] for r in (values or [])]
-        sio = io.StringIO(newline="")
-        w = csv.writer(sio, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL, lineterminator="\n")
-        for r in matrix:
-            w.writerow(r)
-        out = sio.getvalue().encode("utf-8")
-        _l.i(f"[pnp] generated CSV from GSheet id='{sid}' range='{rng}' rows={len(matrix)}")
-        return out
+        source_path = doc_path or (Path.cwd() / "Sheet1.svg")
+        effect = SimpleNamespace(
+            options=SimpleNamespace(_dataset_effective_range=""),
+            _document_path_or_abort=lambda: str(source_path),
+        )
+        csv_data, access_mode = DATASET.fetch_gsheet_csv(
+            effect,
+            sid,
+            range_a1,
+            source_mode,
+        )
+        _l.i(
+            f"[pnp] generated CSV from GSheet id='{sid}' selector='{range_a1 or ''}' "
+            f"mode='{access_mode or source_mode}' bytes={len(csv_data)}"
+        )
+        return csv_data
     except Exception as ex:
         _l.w(f"[pnp] could not generate CSV from GSheet id='{sid}': {ex}")
         return None

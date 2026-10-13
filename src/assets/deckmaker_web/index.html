@@ -7,16 +7,17 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>DeckMaker Web</title>
-  <link rel="manifest" href="manifest.webmanifest?v=073">
-  <link rel="icon" href="/shared-assets/deckmaker_icon.png?v=073" sizes="256x256" type="image/png">
-  <link rel="shortcut icon" href="/shared-assets/deckmaker_icon.png?v=073" sizes="256x256" type="image/png">
-  <link rel="apple-touch-icon" href="/shared-assets/deckmaker_icon.png?v=073" sizes="256x256">
+  <link rel="manifest" href="manifest.webmanifest?v=078b1">
+  <link rel="icon" href="/shared-assets/deckmaker_icon.png?v=078b1" sizes="256x256" type="image/png">
+  <link rel="shortcut icon" href="/shared-assets/deckmaker_icon.png?v=078b1" sizes="256x256" type="image/png">
+  <link rel="apple-touch-icon" href="/shared-assets/deckmaker_icon.png?v=078b1" sizes="256x256">
   <link rel="stylesheet" href="vendor/lil-gui.min.css">
+  <link rel="stylesheet" href="https://unpkg.com/tabulator-tables@6.5.3/dist/css/tabulator_site.min.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <main>
-    <aside id="gui"></aside>
+  <main class="dataset-dock-bottom">
+    <aside id="gui" class="deckmaker-gui-host"></aside>
     <section id="preview-panel" class="preview-panel">
       <div id="preview-viewport" class="preview-viewport" tabindex="0" aria-label="SVG preview">
         <div id="preview-stage" class="preview-stage">
@@ -27,7 +28,7 @@
         <div id="preview-scale" class="preview-scale" aria-hidden="true" hidden><i></i><span>10 mm</span></div>
       </div>
     </section>
-    <div id="workspace-splitter" class="workspace-splitter" role="separator" aria-orientation="horizontal" aria-label="Resize DeckMaker and Google Sheets" tabindex="0"></div>
+    <div id="workspace-splitter" class="workspace-splitter" role="separator" aria-orientation="horizontal" aria-label="Resize preview and dataset" tabindex="0"></div>
     <section id="console-panel" class="console-panel" hidden>
       <header class="console-header">
         <span>Log</span>
@@ -61,6 +62,7 @@
     <section id="gsheet-editor" class="gsheet-editor" hidden>
       <div id="gsheet-editor-message" class="gsheet-editor-message">Resolving sheet tab&hellip;</div>
       <iframe id="gsheet-editor-frame" title="Google Sheets Editor" hidden></iframe>
+      <div id="dataset-table" class="dataset-table" aria-label="Local CSV dataset" hidden></div>
     </section>
   </main>
   <section id="job-status" class="job-status" aria-live="polite">

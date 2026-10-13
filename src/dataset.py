@@ -28,6 +28,21 @@ def _row_is_comment(cells: List[str]) -> bool:
     return c0l.startswith("#") and not c0l.startswith("##")
 
 
+def _row_is_directive(cells: List[str]) -> bool:
+    """Return whether a single-# comment contains a recognized definition."""
+    if not _row_is_comment(cells):
+        return False
+    body = str(cells[0] or "").lstrip()[1:].strip()
+    if not body:
+        return False
+    return bool(
+        re.match(r"^:[A-Za-z_][\w.-]*\([^\r\n]*\)\s*=", body)
+        or re.match(r"^@[A-Za-z][\w.-]*\s*=", body)
+        or re.match(r"^_DM_[A-Za-z0-9_]+\s*=", body)
+        or re.match(r"^[A-Za-z_][\w.-]*\s*=\s*(?:G|Gradient)\s*\{", body, re.IGNORECASE)
+    )
+
+
 def _row_is_hard_comment(cells: List[str]) -> bool:
     """Line-start hard comment row: '##...' (but not '####...' block markers)."""
     if not cells:
@@ -395,6 +410,7 @@ def _matrix_to_datasets(matrix, source_row_start: int = 1):
                         "header_marks_block": getattr(lead0, "marks_block", None) if lead0 else None,
                     },
                     "headers": headers_norm,
+                    "source_columns": [index + 1 for index in active_idx],
                     "rows": [],
                     "comments": list(pending_comments),
                     "_active_idx": list(active_idx),
@@ -516,6 +532,7 @@ def _matrix_to_datasets(matrix, source_row_start: int = 1):
             "overlay_templates_bbox_ids": [c.get('bbox_id') for c in (template_cols or []) if not (set(c.get('mods') or []) & {'@page','@back'})],
         },
         "headers": headers,
+        "source_columns": [index + 1 for index in active_idx],
         "rows": [],
         "comments": list(comments_shorthand),
     }
@@ -580,13 +597,14 @@ def _matrix_to_datasets(matrix, source_row_start: int = 1):
 
 
 
-def _read_csv_matrix(path: str) -> List[List[str]]:
+def _read_csv_matrix(path: str, *, log_rows: bool = True) -> List[List[str]]:
     with open(path, "r", encoding="utf-8", newline="") as f:
         matrix = [[strip_bom(c) for c in row] for row in csv.reader(f, delimiter=",")]
     # Raw dataset log (user request)
-    for i, r in enumerate(matrix, start=1):
-        c0 = r[0] if r else ""
-        _l.d(f"dataset.raw#{i}: cell0='{c0}' row={r}")
+    if log_rows:
+        for i, r in enumerate(matrix, start=1):
+            c0 = r[0] if r else ""
+            _l.d(f"dataset.raw#{i}: cell0='{c0}' row={r}")
     return matrix
 
 
@@ -619,6 +637,86 @@ def _load_ini_datasets(base_dir: str, *, warn_if_missing: bool = False) -> Optio
 def load_csv_datasets(csv_path: str):
     """Load a CSV file and split it into DeckMaker dataset sections."""
     return _matrix_to_datasets(_read_csv_matrix(csv_path))
+
+
+def read_csv_matrix(csv_path: str) -> List[List[str]]:
+    """Read the raw CSV cells using the same rules as DeckMaker."""
+    return _read_csv_matrix(csv_path, log_rows=False)
+
+
+def classify_csv_rows(matrix: List[List[str]]) -> List[str]:
+    """Classify physical CSV rows for spreadsheet presentation."""
+    has_markers = any(
+        row
+        and not _row_is_comment(row)
+        and not _row_is_hard_comment(row)
+        and DSL.parse_dataset_decl(str(row[0] or "").strip(), allow_bare=False) is not None
+        for _row_number, row in _apply_block_comments_indexed(matrix)
+    )
+    kinds = []
+    in_block_comment = False
+    shorthand_header_seen = False
+    active_dataset = False
+    for row in matrix or []:
+        cells = ["" if cell is None else str(cell) for cell in (row or [])]
+        if _row_is_eof_comment(cells):
+            kinds.append("comment-marker")
+            in_block_comment = not in_block_comment
+            continue
+        if in_block_comment:
+            kinds.append("comment-block")
+            continue
+        if _row_is_hard_comment(cells):
+            kinds.append("comment")
+            continue
+        if _row_is_comment(cells):
+            kinds.append("directive" if _row_is_directive(cells) else "comment")
+            continue
+        if all(not str(cell or "").strip() for cell in cells):
+            kinds.append("blank")
+            continue
+        first = str(cells[0] if cells else "").strip()
+        if has_markers:
+            if DSL.parse_dataset_decl(first, allow_bare=False) is not None:
+                active_dataset = True
+                kinds.append("dataset-header")
+            else:
+                kinds.append("data" if active_dataset else "orphan")
+            continue
+        if not shorthand_header_seen:
+            shorthand_header_seen = True
+            kinds.append("dataset-header")
+        else:
+            kinds.append("data")
+    return kinds
+
+
+def classify_csv_commented_columns(matrix: List[List[str]]) -> List[List[int]]:
+    """Return disabled/commented column indices for every physical CSV row.
+
+    A ``##header`` disables its column and ``###header`` disables that column
+    and every column to its right until the next dataset header.
+    """
+    row_kinds = classify_csv_rows(matrix)
+    commented = []
+    active_columns = set()
+    for row_index, row in enumerate(matrix or []):
+        cells = ["" if cell is None else str(cell) for cell in (row or [])]
+        kind = row_kinds[row_index] if row_index < len(row_kinds) else "blank"
+        if kind == "dataset-header":
+            active_columns = set()
+            disable_right = False
+            for column, value in enumerate(cells):
+                if column == 0:
+                    continue
+                header = value.strip()
+                if disable_right or header.startswith("###"):
+                    active_columns.add(column)
+                    disable_right = True
+                elif header.startswith("##"):
+                    active_columns.add(column)
+        commented.append(sorted(active_columns) if kind in {"dataset-header", "data"} else [])
+    return commented
 
 
 def _split_selector(selector: Optional[str]) -> Tuple[str, str]:
@@ -783,6 +881,60 @@ def _fetch_gsheet_matrix(
         raise last_err
     return [], ""
 
+
+def fetch_gsheet_matrix(
+    effect,
+    sheet_id: str,
+    selector: Optional[str] = None,
+    source_mode: str = "auto",
+) -> Tuple[List[List[str]], str]:
+    """Fetch raw Google Sheets cells using DeckMaker's configured access rules."""
+    requested_mode = str(source_mode or "").strip().lower()
+    mode = requested_mode or "auto"
+    access_hint = "oauth" if mode in {"oauth", "google_sheet_oauth"} else ""
+    if mode in {"public", "google_sheet_public"}:
+        access_hint = "public"
+    if not access_hint and requested_mode != "auto":
+        try:
+            doc_path = effect._document_path_or_abort()
+            record = DSTATE.get_gsheet_for_svg(doc_path) or {}
+            if str(record.get("sheet_id") or "").strip() == str(sheet_id or "").strip():
+                access_hint = str(record.get("access_mode") or "").strip().lower()
+        except Exception:
+            access_hint = ""
+    client_id = os.environ.get("PNPINK_GSHEETS_CLIENT_ID") or _gs.CLIENT_ID
+    return _fetch_gsheet_matrix(
+        effect,
+        str(sheet_id or "").strip(),
+        selector,
+        client_id,
+        access_hint=access_hint,
+    )
+
+
+def csv_matrix_bytes(matrix: List[List[str]]) -> bytes:
+    """Serialize a raw dataset matrix using PnPInk's canonical CSV format."""
+    output = io.StringIO(newline="")
+    csv.writer(
+        output,
+        delimiter=",",
+        quotechar='"',
+        quoting=csv.QUOTE_MINIMAL,
+        lineterminator="\n",
+    ).writerows(matrix or [])
+    return output.getvalue().encode("utf-8")
+
+
+def fetch_gsheet_csv(
+    effect,
+    sheet_id: str,
+    selector: Optional[str] = None,
+    source_mode: str = "auto",
+) -> Tuple[bytes, str]:
+    """Fetch Google Sheets and return its canonical CSV bytes and access mode."""
+    matrix, access_mode = fetch_gsheet_matrix(effect, sheet_id, selector, source_mode)
+    return csv_matrix_bytes(matrix), access_mode
+
 # --------------------- pages ---------------------
 
 
@@ -818,8 +970,6 @@ def load_datasets(effect, doc_path: Optional[str] = None, *, validate: bool = Tr
 
     sheet_id = (getattr(options, 'sheet_id', '') or '').strip()
     range_a1 = (getattr(options, 'sheet_range', '') or '').strip()
-    client_id = os.environ.get('PNPINK_GSHEETS_CLIENT_ID') or _gs.CLIENT_ID
-
     base_dir = None
     ini_datasets = []
     if doc_path:
@@ -848,23 +998,11 @@ def load_datasets(effect, doc_path: Optional[str] = None, *, validate: bool = Tr
         pass
     if sheet_id:
         mode_hint = str(getattr(options, 'dataset_source_mode', '') or '').strip().lower()
-        access_hint = "oauth" if mode_hint in {"oauth", "google_sheet_oauth"} else ""
-        if mode_hint in {"public", "google_sheet_public"}:
-            access_hint = "public"
         _l.i(
             f"[datasets.source] requested=gsheet mode_hint='{mode_hint or 'auto'}' "
             f"sheet_id='{sheet_id}' selector='{range_a1 or ''}'"
         )
-        try:
-            if not access_hint and mode_hint != "auto" and doc_path:
-                rec = DSTATE.get_gsheet_for_svg(doc_path) or {}
-                sid0 = str(rec.get("sheet_id") or "").strip()
-                if sid0 and sid0 == sheet_id:
-                    access_hint = str(rec.get("access_mode") or "").strip().lower()
-                    _l.i(f"[datasets.source] state_hint access_mode='{access_hint or ''}' for same sheet_id")
-        except Exception:
-            access_hint = ""
-        matrix, used_access_mode = _fetch_gsheet_matrix(effect, sheet_id, range_a1, client_id, access_hint=access_hint)
+        matrix, used_access_mode = fetch_gsheet_matrix(effect, sheet_id, range_a1, mode_hint)
         if used_access_mode:
             _l.i(f"[datasets] gsheet access mode='{used_access_mode}'")
         try:
