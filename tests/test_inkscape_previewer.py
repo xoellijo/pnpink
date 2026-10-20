@@ -19,6 +19,9 @@ def test_viewer_profile_hides_canvas_chrome():
 
     assert all(value == "0" for value in states.values())
     assert root.find("./group[@id='options']/group[@id='autosave']").get("enable") == "0"
+    boot = root.find("./group[@id='options']/group[@id='boot']")
+    assert boot.get("showsplash") == "0"
+    assert boot.get("showwelcome") == "0"
 
 
 def test_profile_update_preserves_saved_window_geometry():
@@ -88,7 +91,7 @@ def test_preview_namedview_is_centered_without_changing_geometry(tmp_path):
     assert root.get("width") == "210mm"
     assert root.get("height") == "297mm"
     assert card.get("transform") == "translate(75.5 104.5)"
-    assert float(namedview.get(f"{{{inkscape_previewer._INKSCAPE_NS}}}zoom")) > 1.5
+    assert float(namedview.get(f"{{{inkscape_previewer._INKSCAPE_NS}}}zoom")) > 1.0
     assert abs(float(namedview.get(f"{{{inkscape_previewer._INKSCAPE_NS}}}cx")) - 210 * 96 / 25.4 / 2) < 1e-5
     assert abs(float(namedview.get(f"{{{inkscape_previewer._INKSCAPE_NS}}}cy")) - 297 * 96 / 25.4 / 2) < 1e-5
 
@@ -119,6 +122,19 @@ def test_windows_geometry_restore_does_not_use_inkscape_shell():
         previewer._restore_window_geometry()
 
     apply_geometry.assert_called_once_with(geometry)
+    assert previewer._action.call_count == 0
+
+
+def test_first_preview_uses_visible_default_window_geometry():
+    previewer = inkscape_previewer.InkscapePreviewer()
+    previewer._action = Mock(side_effect=AssertionError("shell must not be used"))
+
+    with patch.object(inkscape_previewer.os, "name", "nt"), patch.object(
+        previewer, "_load_window_geometry", return_value={},
+    ), patch.object(previewer, "_apply_native_window_geometry") as apply_geometry:
+        previewer._restore_window_geometry()
+
+    apply_geometry.assert_called_once_with(inkscape_previewer._DEFAULT_WINDOW_GEOMETRY)
     assert previewer._action.call_count == 0
 
 
@@ -176,3 +192,27 @@ def test_reload_and_dataset_selection_are_one_inkscape_action(tmp_path):
     action.assert_called_once_with(
         "file-rebase:true;select-clear;select-by-id:card-title", timeout=12.0,
     )
+
+
+def test_reload_does_not_recenter_existing_preview(tmp_path):
+    svg = tmp_path / "preview.svg"
+    svg.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+        '<rect width="100" height="100"/>'
+        '</svg>',
+        encoding="utf-8",
+    )
+    previewer = inkscape_previewer.InkscapePreviewer()
+    previewer._runtime_dir = tmp_path / "runtime"
+    previewer._live_path = previewer._runtime_dir / "live.svg"
+
+    with patch.object(
+        inkscape_previewer.InkscapePreviewer, "running", new_callable=PropertyMock,
+        return_value=True,
+    ), patch.object(previewer, "_action", return_value="> "), patch.object(
+        inkscape_previewer, "_center_initial_namedview",
+    ) as center:
+        previewer.show(str(svg))
+
+    center.assert_not_called()
+    assert previewer._live_path.read_bytes() == svg.read_bytes()

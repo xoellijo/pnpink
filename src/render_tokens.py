@@ -232,6 +232,8 @@ def parse_object_token(token: str) -> Tuple[str, str, str]:
         (?:
             ~(?P<ops_tilde>.+)
           |
+            (?P<ops_fit>\.(?:Fit|F)\s*\{[^}]*\})
+          |
             (?P<ops_compact>[\^!\|].*)
         )?
         \s*$
@@ -241,6 +243,8 @@ def parse_object_token(token: str) -> Tuple[str, str, str]:
     base_id = m.group("id")
     mod = m.group("mode")
     ops = (m.group("ops_tilde") or m.group("ops_compact") or "")
+    if m.group("ops_fit"):
+        ops = fit_suffix_to_ops(m.group("ops_fit")).removeprefix("~")
     place = "clone" if mod is None else ("copy" if mod == "=" else "clone+unlink")
     return base_id, place, ops
 
@@ -291,7 +295,7 @@ def split_transform_suffixes(token: str):
     s = _peel_transform_suffixes(s)
     tail = ""
     m_tail = re.match(
-        r"^(?P<core>.*?)(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*))?\s*$",
+        r"^(?P<core>.*?)(?P<tail>(?:\.(?:Fit|F)\s*\{[^}]*\}|~.*|[\^!\|].*))?\s*$",
         s,
         re.IGNORECASE,
     )
@@ -310,9 +314,7 @@ def fit_suffix_to_ops(fit_suffix: str) -> str:
     if not s:
         return ""
     try:
-        fit_cmd = DSL.parse(f"X.{s}")
-        fs = getattr(fit_cmd, "fit", None)
-        return DSL.ops_from_fit_spec(fs) if fs else ""
+        return DSL.ops_from_fit_spec(DSL.parse_fit_suffix(s))
     except Exception:
         return ""
 
@@ -448,7 +450,7 @@ def parse_source_like_token(raw_token: str):
 
     m_all = re.match(
         r'^\s*@\{\s*(?P<body>[^}]*)\s*\}\s*'
-        r'(?:(?:\.(?P<fit>Fit\s*\{[^}]*\}))|(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$',
+        r'(?:(?:\.(?P<fit>(?:Fit|F)\s*\{[^}]*\}))|(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$',
         s,
         re.IGNORECASE,
     )
@@ -456,7 +458,7 @@ def parse_source_like_token(raw_token: str):
     if not m_all:
         m_all = re.match(
             r'^\s*(?:Source|S)\s*\{\s*(?P<body>[^}]*)\s*\}\s*'
-            r'(?:(?:\.(?P<fit>Fit\s*\{[^}]*\}))|(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$',
+            r'(?:(?:\.(?P<fit>(?:Fit|F)\s*\{[^}]*\}))|(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$',
             s,
             re.IGNORECASE,
         )
@@ -492,9 +494,7 @@ def parse_source_like_token(raw_token: str):
         compact_ops = m_all.group("ops_compact")
         if fit_text:
             try:
-                fit_cmd = DSL.parse(f"X.{fit_text}")
-                fs = getattr(fit_cmd, "fit", None)
-                ops = DSL.ops_from_fit_spec(fs) if fs else ""
+                ops = DSL.ops_from_fit_spec(DSL.parse_fit_suffix(fit_text))
             except Exception:
                 ops = ""
         elif legacy_ops:
@@ -526,7 +526,7 @@ def parse_source_like_token(raw_token: str):
 
     m_local_quoted = re.match(
         r"^\s*(?P<q>['\"])(?P<path>.+?\.(?:png|jpe?g|gif|bmp|webp|svgz?|pdf|tiff?))(?P=q)\s*"
-        r"(?:(?:\.(?P<fit>Fit\s*\{[^}]*\}))|(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$",
+        r"(?:(?:\.(?P<fit>(?:Fit|F)\s*\{[^}]*\}))|(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$",
         s,
         re.IGNORECASE,
     )
@@ -537,9 +537,7 @@ def parse_source_like_token(raw_token: str):
         compact_ops = m_local_quoted.group("ops_compact")
         if fit_text:
             try:
-                fit_cmd = DSL.parse(f"X.{fit_text}")
-                fs = getattr(fit_cmd, "fit", None)
-                ops = DSL.ops_from_fit_spec(fs) if fs else ""
+                ops = DSL.ops_from_fit_spec(DSL.parse_fit_suffix(fit_text))
             except Exception:
                 ops = ""
         elif legacy_ops:
@@ -553,7 +551,7 @@ def parse_source_like_token(raw_token: str):
 
     m_local = re.match(
         r"^\s*(?P<sigil>@)?(?P<path>[^\s\[\]~]+?\.(?:png|jpe?g|gif|bmp|webp|svgz?|pdf|tiff?))\s*"
-        r"(?:(?:\.(?P<fit>Fit\s*\{[^}]*\}))|(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$",
+        r"(?:(?:\.(?P<fit>(?:Fit|F)\s*\{[^}]*\}))|(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$",
         s,
         re.IGNORECASE,
     )
@@ -564,9 +562,7 @@ def parse_source_like_token(raw_token: str):
         compact_ops = m_local.group("ops_compact")
         if fit_text:
             try:
-                fit_cmd = DSL.parse(f"X.{fit_text}")
-                fs = getattr(fit_cmd, "fit", None)
-                ops = DSL.ops_from_fit_spec(fs) if fs else ""
+                ops = DSL.ops_from_fit_spec(DSL.parse_fit_suffix(fit_text))
             except Exception:
                 ops = ""
         elif legacy_ops:
@@ -585,7 +581,7 @@ def parse_source_token_with_selector(raw_token: str):
     m = re.match(
         r"^\s*(?P<core>(?:@\{[^}]*\}|(?:Source|S)\s*\{[^}]*\}|(?:https?://|wkmc://|pxby://|oclp://|pnp://|gdrive://|osm://|ofm://)\S+?))\s*"
         r"(?P<sel>\[[^\]]*\])?\s*"
-        r"(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
+        r"(?P<tail>(?:\.(?:Fit|F)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
         s,
         re.IGNORECASE,
     )

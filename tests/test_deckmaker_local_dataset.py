@@ -50,7 +50,22 @@ def test_create_starter_csv_uses_template_bbox_and_fields(tmp_path):
     content = template.with_suffix(".csv").read_text(encoding="utf-8")
     assert "## PnPInk starter dataset" in content
     assert "frame,title,art" in content
-    assert content.rstrip().endswith("{},,")
+    assert DATASET.read_csv_matrix(str(template.with_suffix(".csv")))[-1] == ["", "", ""]
+
+
+def test_selecting_first_valid_dataset_row_starts_initial_preview(tmp_path):
+    template = tmp_path / "cards.svg"
+    template.write_text("<svg/>", encoding="utf-8")
+    service = service_for(AppRequest(template=str(template), dataset_source_mode="local_csv"))
+    service._preview_datasets = []
+    service._preview_asset_key = ""
+    calls = []
+    service.preview = lambda **options: calls.append(options) or True
+
+    result = service.sync_preview_cell(8, 1)
+
+    assert calls == [{"force": False, "refresh": True}]
+    assert result["accepted"]
 
 
 def test_local_dataset_table_uses_spreadsheet_coordinates_and_source_rows(tmp_path):

@@ -84,11 +84,20 @@ _PROFILE_XML = """<?xml version="1.0" encoding="UTF-8" standalone="no"?>
     <group id="defaultwindowsize" value="2"/>
     <group id="dialogtype" value="1"/>
     <group id="dialogsskiptaskbar" value="1"/>
+    <group id="boot" showsplash="0" showwelcome="0"/>
     <group id="autosave" enable="0" interval="10" path="" max="0"/>
   </group>
-  <group id="geometry" width="1100" height="720" x="0" y="0" maximized="1" fullscreen="0"/>
+  <group id="geometry" width="1100" height="720" x="80" y="80" maximized="0" fullscreen="0"/>
 </inkscape>
 """
+
+_DEFAULT_WINDOW_GEOMETRY = {
+    "x": 80,
+    "y": 80,
+    "w": 1100,
+    "h": 720,
+    "maximized": False,
+}
 
 
 def _child_group(parent: ET.Element, group_id: str) -> ET.Element:
@@ -112,6 +121,10 @@ def _configure_profile(root: ET.Element) -> None:
         "autosave": {"enable": "0", "interval": "10", "path": "", "max": "0"},
     }.items():
         _child_group(options, option_id).attrib.update(attributes)
+    _child_group(options, "boot").attrib.update({
+        "showsplash": "0",
+        "showwelcome": "0",
+    })
 
 
 def _parse_geometry(output: str) -> dict[str, int]:
@@ -175,7 +188,7 @@ def _center_initial_namedview(
         content_height = max((bottom - top) * scale_y, 1e-9)
         viewport_width = max(320, int(viewport_size[0]))
         viewport_height = max(240, int(viewport_size[1]))
-        zoom = min(viewport_width / content_width, viewport_height / content_height) * 0.82
+        zoom = min(viewport_width / content_width, viewport_height / content_height) * 0.62
         zoom = min(max(zoom, 0.05), 8.0)
         namedview = root.find(f"{{{_SODIPODI_NS}}}namedview")
         if namedview is None:
@@ -226,8 +239,10 @@ class InkscapePreviewer:
         if not source.is_file():
             raise FileNotFoundError(str(source))
         with self._lock:
+            started = time.perf_counter()
             starting = not self.running
-            self._replace_live_svg(source)
+            self._replace_live_svg(source, center_viewport=starting)
+            replaced = time.perf_counter()
             selection_action = self._selection_action(selected_fields)
             if starting:
                 self._start()
@@ -244,6 +259,19 @@ class InkscapePreviewer:
                     self._start()
                     if selection_action:
                         self._action(selection_action, timeout=8.0)
+            finished = time.perf_counter()
+            LOG.i(
+                "[inkscape_previewer.timing] starting=%s replace_ms=%.1f action_ms=%.1f "
+                "total_ms=%.1f action='%s' bytes=%d",
+                starting,
+                (replaced - started) * 1000.0,
+                (finished - replaced) * 1000.0,
+                (finished - started) * 1000.0,
+                (selection_action if starting else ";".join(
+                    action for action in (_RELOAD_ACTION, selection_action) if action
+                )),
+                source.stat().st_size,
+            )
 
     def _selection_action(self, fields: list[str] | None) -> str:
         if fields is None:
@@ -367,18 +395,19 @@ class InkscapePreviewer:
         os.replace(temporary, preferences)
         self._profile_ready = True
 
-    def _replace_live_svg(self, source: Path) -> None:
+    def _replace_live_svg(self, source: Path, *, center_viewport: bool) -> None:
         self._runtime_dir.mkdir(parents=True, exist_ok=True)
         self._index_fields(source)
         temporary = self._live_path.with_suffix(f".{os.getpid()}.tmp.svg")
         shutil.copyfile(source, temporary)
-        geometry = self._load_window_geometry()
-        viewport_size = (
-            int(geometry.get("w", 1100)),
-            int(geometry.get("h", 720)),
-        )
-        if not _center_initial_namedview(temporary, viewport_size):
-            LOG.w("[inkscape_previewer] could not center initial viewport for '%s'", source)
+        if center_viewport:
+            geometry = self._load_window_geometry()
+            viewport_size = (
+                int(geometry.get("w", 1100)),
+                int(geometry.get("h", 720)),
+            )
+            if not _center_initial_namedview(temporary, viewport_size):
+                LOG.w("[inkscape_previewer] could not center initial viewport for '%s'", source)
         os.replace(temporary, self._live_path)
 
     def _index_fields(self, source: Path) -> None:
@@ -449,6 +478,8 @@ class InkscapePreviewer:
         if not self._wait_for_gui(timeout=30.0):
             self.close()
             raise RuntimeError("Inkscape preview window did not become ready")
+        if os.name == "nt":
+            self._restore_window_geometry()
         time.sleep(0.75)
 
         shell_kwargs = {
@@ -477,7 +508,8 @@ class InkscapePreviewer:
         ).start()
         try:
             self._read_prompt(timeout=30.0)
-            self._restore_window_geometry()
+            if os.name != "nt":
+                self._restore_window_geometry()
             self._start_geometry_monitor()
         except Exception:
             self.close()
@@ -520,9 +552,7 @@ class InkscapePreviewer:
         self._last_geometry = geometry
 
     def _restore_window_geometry(self) -> None:
-        geometry = self._load_window_geometry()
-        if not geometry:
-            return
+        geometry = self._load_window_geometry() or dict(_DEFAULT_WINDOW_GEOMETRY)
         if os.name == "nt":
             self._apply_native_window_geometry(geometry)
         else:

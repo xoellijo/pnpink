@@ -64,16 +64,29 @@ Representative examples of dataset cells:
 Fit-Anchor follows the same DSL conventions as other modules:
 
 - `Module{ key1=value1 key2=value2 ... }` long form.
-- Short aliases using the first letter are allowed, for example `.F{b=2}`.
-- Default keys can omit the key name.
+- The module name can be abbreviated as `F`.
+- Every Fit-Anchor parameter has a first-letter alias: `mode/m`, `anchor/a`, `border/b`, `shift/s`, and `clip/c`.
+- Mode values can omit the parameter name, for example `.F{inside}` or `.F{i}`.
 - Compact shorthand with `~` is available for the most common Fit-Anchor operations.
 
 Long form:
 
 ```txt
-object_id.Fit{ border fitmode anchor shift clip }
-object_id.F{ b= f= a= s= c }          ## first-letter aliases
+object_id.Fit{mode=inside anchor=7 border=[-2] shift=[1 0] clip}
+object_id.F{m=i a=7 b=[-2] s=[1 0] c}
 ```
+
+`Fit{...}` and `F{...}` are exactly equivalent. Parameter initials are also exactly equivalent to their full names.
+
+| Parameter | Initial | Purpose |
+| --- | --- | --- |
+| `mode` | `m` | Scaling behavior. |
+| `anchor` | `a` | Alignment point from 1 to 9. |
+| `border` | `b` | Adjustment of the area used for scaling. |
+| `shift` | `s` | Final positional offset. |
+| `clip` | `c` | Clip overflowing content. |
+
+Do not use `f` for mode. `F` abbreviates the **module name**; `m` abbreviates the **mode parameter**.
 
 Compact form:
 
@@ -95,7 +108,7 @@ Example:
 Read it left to right:
 
 - `[10%]` -> border (resize context around placeholder),
-- `i` -> fit mode `inside`,
+- `i` -> mode `inside`,
 - `7` -> anchor top-left,
 - `^^` -> Transform rotate 180 deg,
 - `[-50% 0]` -> shift left by half placeholder width,
@@ -107,24 +120,64 @@ This compact style is very expressive once you know the token order.
 The following subsections describe each Fit-Anchor parameter and what it changes in final placement.
 Order matters conceptually.
 
-### Border (`b=`)
-Border changes the usable fit area around the placeholder.
+### Mode (`mode=` / `m=`)
+Mode defines scaling behavior relative to the usable area. If omitted, `inside` is used.
+
+Equivalent examples:
+
+<div class="csv-dataset dataset-body-only" markdown>
+
+|  |
+| --- |
+| object_id.Fit{mode=inside} |
+| object_id.F{m=i} |
+| object_id.F{inside} |
+| object_id.F{i} |
+| object_id~i |
+
+</div>
+
+`m` has two related but unambiguous uses inside the block:
+
+- `m=value` is the initial form of the `mode` parameter: `.F{m=inside}` or `.F{m=i}`.
+- a bare `m` is the mode code for `max/cover`: `.F{m}`.
+
+The same rule applies to the mode codes `a` and `b`: a bare `.F{a}` or `.F{b}` selects a mode, while `.F{a=7}` and `.F{b=[-2]}` set the `anchor` and `border` parameters.
+
+#### Mode Reference
+| **Code** | **Name** | **Description** |
+|----|----|----|
+| `i` | inside / contain | Scales proportionally to fit entirely within the area (default). |
+| `o` | original / none | Keeps original size. |
+| `w` | width-fit | Scales proportionally to match area width. |
+| `h` | height-fit | Scales proportionally to match area height. |
+| `m` | max / cover | Scales proportionally until it completely covers the area, possibly overflowing. |
+| `x` | x-stretch | Stretches width to match the area (non-proportional). |
+| `y` | y-stretch | Stretches height to match the area (non-proportional). |
+| `a` | all-stretch | Scales independently in X/Y to fill the area exactly. |
+
+The parser also reserves `t` (`tile`) and `b` / `?` (`best-fit` / `auto-fit`), but these modes do not yet implement special scaling. Do not use them in production datasets yet.
+
+`c` is **not** a mode code. It is the initial of the `clip` parameter.
+
+### Border (`border=` / `b=`)
+Border changes the usable area on which `mode` computes scale.
 
 - positive values expand,
 - negative values shrink.
 
 Important behavior:
 
-- `border` modifies placeholder size **only for Fit Mode scaling**.
+- `border` modifies placeholder size **only for mode scaling**.
 - `anchor`, `shift`, and `clip` still use the **original placeholder** as geometric reference.
 
 In other words:
 
 1. border adjusts the fit area,
-2. fit mode computes object scale in that adjusted area,
+2. mode computes object scale in that adjusted area,
 3. anchor/shift/clip are evaluated against the original placeholder.
 
-This is why defining `border` first is conceptually important: it controls object size before final positioning.
+Although `mode` is documented first because it is the primary choice, the placement engine computes the border-adjusted usable area before applying that mode.
 
 Examples:
 
@@ -153,34 +206,7 @@ border=[100%x-100%]
 border=[-100%x100%]
 ```
 
-### Fit Mode
-Fit mode defines scaling behavior relative to the (possibly border-adjusted) fit area.
-If omitted, `inside` is the practical default.
-
-Examples:
-
-<div class="csv-dataset dataset-body-only" markdown>
-
-|  |
-| --- |
-| object_id.Fit{fitmode=inside} |
-| object_id~i |
-
-</div>
-
-### Fit Mode Reference
-| **Code** | **Name** | **Description** |
-|----|----|----|
-| i | inside / contain | Scales proportionally to fit entirely within the rect (default). |
-| o | original / none | Keeps original size. |
-| w / h | width-fit / height-fit | Scales proportionally to match rect width / height. |
-| m / c | max / cover | Scales proportionally until it completely covers the placeholder, possibly overflowing. |
-| x / y | x-stretch / y-stretch | Stretches width / height to match rect (non-proportional). |
-| a | all-stretch | Scales independently in X/Y to fill rect exactly. |
-| t | tile | Tiles the object as a pattern within the rect (not implemented). |
-| ? / b | auto-fit / best-fit | Smart mode that mixes `m`, `a`, and clipping for balance. |
-
-### Anchor
+### Anchor (`anchor=` / `a=`)
 Anchor selects the reference point used to align an object to the placeholder.
 Think of it as: "which point of the object goes to which point of the placeholder."
 
@@ -227,8 +253,15 @@ Notes:
 - mixed expressions are valid (`shift=[25%+2 0]`).
 - shift uses the original placeholder frame as reference.
 
-### Clip (`c` / `!`)
+### Clip (`clip` / `c` / `!`)
 Clips outside the original placeholder shape.
+
+In module form, `clip` and `c` are equivalent boolean flags:
+
+```txt
+object_id.Fit{mode=max clip}
+object_id.F{m=m c}
+```
 
 ```txt
 object_id~i8![0 %]   # pre-clip then shift
@@ -241,7 +274,7 @@ Position of `!` matters.
 When using shorthand `~`, tokens are parsed in this order:
 
 1. Optional border list (`[t r b l]`, `[x]`, `[x y]`)
-2. Fit mode + anchor (`i7`, `m5`, `a9`, etc.)
+2. Mode + anchor (`i7`, `m5`, `a9`, etc.)
 3. Optional shift list (`[dx dy]`)
 4. Optional clip (`!`)
 5. Optional Transform rotation (`^deg`, `^^`, `^^^`)

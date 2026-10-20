@@ -39,7 +39,7 @@
 # =====================
 
 # snippet for iconify noto icons
-# :Ic(icon) = @{icon://noto/${icon}}
+# :IC(icon) = @{icon://noto/${icon}}
 
 # snippet for Tabletop Simulator cache image path (only windows supported)
 # :TTS(img) = %USERPROFILE%\Documents\My Games\Tabletop Simulator\Mods\Images\${img}

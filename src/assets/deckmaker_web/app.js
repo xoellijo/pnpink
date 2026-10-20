@@ -81,7 +81,7 @@ const datasetTable = new DatasetTable({
 }), values => api('/api/dataset/structure', {
   method: 'POST',
   body: JSON.stringify(values),
-}), selection => schedulePreviewCellSync(selection));
+}), selection => schedulePreviewCellSync(selection), () => cancelPreviewCellSync());
 const controllers = [];
 const actionControllers = [];
 let sequence = 0;
@@ -151,7 +151,9 @@ function toast(message) {
 }
 
 function schedulePreviewCellSync(selection) {
-  if (model.previewSelectionSync === 'Off') return;
+  const hasPreviewAssets = Array.isArray(latestState.preview?.assets)
+    && latestState.preview.assets.length > 0;
+  if (model.previewSelectionSync === 'Off' && hasPreviewAssets) return;
   clearTimeout(previewCellSyncTimer);
   previewCellSyncTimer = setTimeout(async () => {
     try {
@@ -166,7 +168,12 @@ function schedulePreviewCellSync(selection) {
     } catch (error) {
       toast(error.message);
     }
-  }, 80);
+  }, 300);
+}
+
+function cancelPreviewCellSync() {
+  clearTimeout(previewCellSyncTimer);
+  previewCellSyncTimer = 0;
 }
 
 async function pollInkscapeSelection() {
@@ -303,7 +310,7 @@ function closeBrowserSession() {
   browserSessionClosed = true;
   const params = new URLSearchParams({ token, session: browserSession });
   const body = JSON.stringify({ geometry: currentWindowGeometry() });
-  if (navigator.sendBeacon?.(`/api/session/close?${params}`, new Blob([body], { type: 'application/json' }))) return;
+  navigator.sendBeacon?.(`/api/session/close?${params}`, new Blob([body], { type: 'application/json' }));
   fetch('/api/session/close', {
     method: 'POST',
     headers: {
@@ -335,6 +342,7 @@ function openBrowserSession() {
 
 document.addEventListener('visibilitychange', () => reportBrowserVisibility().catch(() => {}));
 window.addEventListener('pageshow', () => {
+  browserSessionClosed = false;
   openBrowserSession()
     .then(result => restoreWindowGeometry(result.geometry))
     .catch(() => {
@@ -1212,9 +1220,11 @@ function applyState(state) {
 }
 
 function appendEventLogs(events) {
-  const lines = (events || [])
-    .filter(event => event?.kind === 'log' && event.text)
-    .map(event => String(event.text));
+  const lines = (events || []).flatMap(event => {
+    if (event?.kind === 'log' && event.text) return [String(event.text)];
+    if (event?.kind === 'logs' && Array.isArray(event.lines)) return event.lines.map(String);
+    return [];
+  });
   if (!lines.length) return;
   const followsTail = !elements.log.textContent
     || elements.log.scrollHeight - elements.log.scrollTop - elements.log.clientHeight < 24;

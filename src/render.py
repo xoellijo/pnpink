@@ -738,7 +738,7 @@ def render_phase(ctx):
             t = (tail or '').strip()
             if not t:
                 return ''
-            if t.startswith(".Fit"):
+            if re.match(r"^\.(?:Fit|F)\s*\{", t, re.I):
                 t = _fit_suffix_to_ops(t)
             elif t.startswith("^") or t.startswith("!") or t.startswith("|"):
                 t = "~" + t
@@ -801,7 +801,7 @@ def render_phase(ctx):
                     r"^\s*(?P<core>(?:@\{[^}]*\}|(?:Source|S)\s*\{[^}]*\}|(?:https?://|gdrive://)\S+?))\s*"
                     r"(?P<sel>\[[^\]]*\])?\s*"
                     r"(?P<tmods>(?:\.(?:Transform|T)\s*\{[^{}]*\})*)\s*"
-                    r"(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
+                    r"(?P<tail>(?:\.(?:Fit|F)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
                     tok,
                     re.IGNORECASE,
                 )
@@ -812,7 +812,7 @@ def render_phase(ctx):
                     tail = (m_src.group("tail") or "").strip()
                     item_ops = ""
                     if tail:
-                        if tail.startswith(".Fit"):
+                        if re.match(r"^\.(?:Fit|F)\s*\{", tail, re.I):
                             item_ops = _fit_suffix_to_ops(tail)
                         elif tail.startswith("~"):
                             item_ops = _normalize_ops_chain(tail)
@@ -889,7 +889,7 @@ def render_phase(ctx):
             # '@{...}' filesystem glob, optionally with fit/anchor suffix.
             if s.startswith('@{'):
                 m_glob = re.match(
-                    r"^\s*(?P<core>@\{[^}]*\})\s*(?P<tmods>(?:\.(?:Transform|T)\s*\{[^{}]*\})*)\s*(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
+                    r"^\s*(?P<core>@\{[^}]*\})\s*(?P<tmods>(?:\.(?:Transform|T)\s*\{[^{}]*\})*)\s*(?P<tail>(?:\.(?:Fit|F)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
                     s,
                     re.IGNORECASE,
                 )
@@ -908,7 +908,7 @@ def render_phase(ctx):
 
             # '@alias[*]' spritesheet wildcard, optionally with fit/anchor suffix.
             m_ss = re.match(
-                r"^\s*(?P<core>@[A-Za-z0-9_\-]+\[\*\])\s*(?P<tmods>(?:\.(?:Transform|T)\s*\{[^{}]*\})*)\s*(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
+                r"^\s*(?P<core>@[A-Za-z0-9_\-]+\[\*\])\s*(?P<tmods>(?:\.(?:Transform|T)\s*\{[^{}]*\})*)\s*(?P<tail>(?:\.(?:Fit|F)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
                 s,
                 re.IGNORECASE,
             )
@@ -1329,6 +1329,7 @@ def render_phase(ctx):
                     rect_elem=rect_elem,
                     transform_spec=tr_spec,
                     force_copy=bool(force_copy or _styles),
+                    ignore_source_ancestors=bool(placeholder_to_remove is not None),
                 )
                 if _placed is not None and rect_elem is not None:
                     _source_field = str(
@@ -1623,7 +1624,7 @@ def render_phase(ctx):
 
         # Form 2: ops-only -> bind to current slot/page.
         # Accept both long and short Fit/Anchor syntaxes.
-        if s.startswith(('.', '~', '{')) or re.match(r"^[A-Za-z][\w\-.]*\s*\.Fit\s*\{", s):
+        if s.startswith(('.', '~', '{')) or re.match(r"^[A-Za-z][\w\-.]*\s*\.(?:Fit|F)\s*\{", s, re.I):
             return 0, s
 
         return None, None
@@ -2667,9 +2668,6 @@ def render_phase(ctx):
                     if ops_raw in ('0', '-'):
                         continue
                     ops = ops_raw if ops_raw else "~5"
-                    if ops.startswith(".F"):
-                        ops = ".Fit" + ops[2:]
-                    ops = ops.replace(".F{", ".Fit{").replace(".F {", ".Fit {")
                     try:
                         base_id = ov_node.get('id') or ''
                         if not base_id:

@@ -8,14 +8,14 @@ const ROW_KINDS = [
 
 let tabulatorConstructor;
 
-export function stickyHeaderCount(headers, scrollTop, rowHeight) {
-  let count = 0;
-  for (const header of headers) {
-    const threshold = Math.max(0, (header.position - count) * rowHeight);
-    if (scrollTop <= threshold) break;
-    count += 1;
+export function stickyHeaderIndex(headers, scrollTop, rowHeight) {
+  let active = -1;
+  for (let index = 0; index < headers.length; index += 1) {
+    const headerBottom = (headers[index].position + 1) * rowHeight;
+    if (scrollTop < headerBottom) break;
+    active = index;
   }
-  return count;
+  return active;
 }
 
 function syntaxTokens(value, kind) {
@@ -82,6 +82,7 @@ export class DatasetTable {
     saveCell,
     changeStructure,
     onCellSelected = null,
+    onCellEditing = null,
   ) {
     this.container = container;
     this.message = message;
@@ -91,6 +92,7 @@ export class DatasetTable {
     this.saveCell = saveCell;
     this.changeStructure = changeStructure;
     this.onCellSelected = onCellSelected || (() => {});
+    this.onCellEditing = onCellEditing || (() => {});
     this.table = null;
     this.key = '';
     this.loadingKey = '';
@@ -106,11 +108,17 @@ export class DatasetTable {
     this.saving = false;
     this.pollingRevision = false;
     this.suppressSelection = false;
+    this.selectedCell = null;
     this.spillLayoutFrame = 0;
     this.stickyHeaderFrame = 0;
     this.stickyHeaders = [];
-    this.stickyHeadersVisible = 0;
+    this.stickyHeaderIndex = -1;
     this.stickyScrollTop = 0;
+    this.stickyHeaderOverlay = null;
+    this.stickyHeaderHolder = null;
+    this.stickyHeaderScroll = null;
+    this.stickyHeaderScrolling = false;
+    this.stickyHeaderRevealTimer = 0;
     this.columnResizeObserver = new ResizeObserver(() => this.scheduleSpillLayout());
     this.rowHeight = 22;
     this.contextMenu = new DatasetContextMenu(this.contextMenuActions());
@@ -135,10 +143,37 @@ export class DatasetTable {
   indexStickyHeaders(rows) {
     if (this.stickyHeaderFrame) cancelAnimationFrame(this.stickyHeaderFrame);
     this.stickyHeaderFrame = 0;
-    this.stickyHeadersVisible = 0;
+    this.stickyHeaderIndex = -1;
     this.stickyHeaders = (rows || []).flatMap((row, position) => (
       row.__kind__ === 'dataset-header' ? [{id: row.__csv_row__, position}] : []
     ));
+    if (this.stickyHeaderOverlay) this.stickyHeaderOverlay.hidden = true;
+  }
+
+  installStickyHeaderOverlay() {
+    const holder = this.container.querySelector('.tabulator-tableholder');
+    if (!holder || holder === this.stickyHeaderHolder) return;
+    if (this.stickyHeaderHolder && this.stickyHeaderScroll) {
+      this.stickyHeaderHolder.removeEventListener('scroll', this.stickyHeaderScroll);
+    }
+    this.stickyHeaderOverlay?.remove();
+    const overlay = document.createElement('div');
+    overlay.className = 'dataset-sticky-header-overlay';
+    overlay.hidden = true;
+    holder.appendChild(overlay);
+    this.stickyHeaderHolder = holder;
+    this.stickyHeaderOverlay = overlay;
+    this.stickyHeaderScroll = () => {
+      this.stickyHeaderScrolling = true;
+      overlay.hidden = true;
+      clearTimeout(this.stickyHeaderRevealTimer);
+      this.scheduleStickyHeaders(holder.scrollTop);
+      this.stickyHeaderRevealTimer = setTimeout(() => {
+        this.stickyHeaderScrolling = false;
+        this.scheduleStickyHeaders(holder.scrollTop);
+      }, 100);
+    };
+    holder.addEventListener('scroll', this.stickyHeaderScroll, {passive: true});
   }
 
   scheduleStickyHeaders(scrollTop) {
@@ -150,38 +185,39 @@ export class DatasetTable {
     });
   }
 
+  refreshStickyHeader() {
+    if (!this.stickyHeaderHolder) return;
+    this.stickyHeaderIndex = -2;
+    this.scheduleStickyHeaders(this.stickyHeaderHolder.scrollTop);
+  }
+
   updateStickyHeaders(scrollTop) {
     if (!this.table || !this.stickyHeaders.length) return;
-    const desired = stickyHeaderCount(this.stickyHeaders, scrollTop, this.rowHeight);
-    if (desired === this.stickyHeadersVisible) return;
-    const holder = this.container.querySelector('.tabulator-tableholder');
-    const retainedScrollTop = holder?.scrollTop ?? scrollTop;
-    this.table.blockRedraw();
-    try {
-      if (desired > this.stickyHeadersVisible) {
-        for (let index = this.stickyHeadersVisible; index < desired; index += 1) {
-          const row = this.table.getRow(this.stickyHeaders[index].id);
-          if (row) row.freeze();
-        }
-      } else {
-        for (let index = this.stickyHeadersVisible - 1; index >= desired; index -= 1) {
-          const row = this.table.getRow(this.stickyHeaders[index].id);
-          if (row) row.unfreeze();
+    this.installStickyHeaderOverlay();
+    const overlay = this.stickyHeaderOverlay;
+    const holder = this.stickyHeaderHolder;
+    if (!overlay || !holder) return;
+    const desired = stickyHeaderIndex(this.stickyHeaders, scrollTop, this.rowHeight);
+    if (desired !== this.stickyHeaderIndex) {
+      overlay.replaceChildren();
+      this.stickyHeaderIndex = desired;
+      if (desired >= 0) {
+        const row = this.table.getRow(this.stickyHeaders[desired].id);
+        const source = row?.getElement();
+        if (source) {
+          const clone = source.cloneNode(true);
+          clone.classList.remove('tabulator-range-highlight', 'tabulator-range-selected');
+          clone.classList.add('dataset-sticky-header-row');
+          clone.querySelectorAll('[id]').forEach(element => element.removeAttribute('id'));
+          clone.querySelectorAll('[tabindex]').forEach(element => element.removeAttribute('tabindex'));
+          overlay.appendChild(clone);
         }
       }
-      this.stickyHeadersVisible = desired;
-    } finally {
-      this.table.restoreRedraw();
     }
-    if (holder) {
-      const restoreScroll = () => {
-        if (Math.abs(holder.scrollTop - retainedScrollTop) > 0.5) {
-          holder.scrollTop = retainedScrollTop;
-        }
-      };
-      restoreScroll();
-      requestAnimationFrame(restoreScroll);
-    }
+    overlay.hidden = this.stickyHeaderScrolling || desired < 0 || !overlay.firstElementChild;
+    overlay.style.transform = `translateY(${scrollTop}px)`;
+    const table = holder.querySelector('.tabulator-table');
+    if (table) overlay.style.width = `${table.scrollWidth}px`;
   }
 
   columns(dataset) {
@@ -271,13 +307,20 @@ export class DatasetTable {
   }
 
   notifyCellSelected(cell) {
-    if (this.suppressSelection || !cell) return;
+    const selection = this.rememberCell(cell);
+    if (!selection || this.suppressSelection) return;
+    this.onCellSelected(selection);
+  }
+
+  rememberCell(cell) {
+    if (!cell) return null;
     const field = String(cell.getField() || '');
-    if (!field.startsWith('column_')) return;
-    this.onCellSelected({
+    if (!field.startsWith('column_')) return null;
+    this.selectedCell = {
       row: Number(cell.getRow().getData().__csv_row__ || 0),
       column: Number(field.replace(/^column_/, '')),
-    });
+    };
+    return {...this.selectedCell};
   }
 
   async selectCell(rowNumber, columnNumber) {
@@ -286,6 +329,7 @@ export class DatasetTable {
     if (!row) return false;
     const cell = row.getCell(`column_${Number(columnNumber)}`);
     if (!cell) return false;
+    this.selectedCell = {row: Number(rowNumber), column: Number(columnNumber)};
     this.suppressSelection = true;
     try {
       await this.table.scrollToRow(row, 'center', false);
@@ -406,9 +450,19 @@ export class DatasetTable {
   }
 
   isolateEditorEvents(cell) {
-    requestAnimationFrame(() => {
+    requestAnimationFrame(async () => {
       const editor = cell.getElement().querySelector('input, textarea, select, [contenteditable="true"]');
       if (!editor || editor.dataset.pnpinkKeyboardGuard) return;
+      const holder = this.container.querySelector('.tabulator-tableholder');
+      const viewport = holder?.getBoundingClientRect();
+      if (viewport?.width > 0 && viewport?.height > 0) {
+        const width = Math.max(60, Math.min(420, viewport.width - 24));
+        const height = Math.max(48, Math.min(104, viewport.height - 24));
+        editor.style.setProperty('width', `${width}px`, 'important');
+        editor.style.setProperty('min-width', `${width}px`, 'important');
+        editor.style.setProperty('height', `${height}px`, 'important');
+        editor.style.setProperty('min-height', `${height}px`, 'important');
+      }
       editor.dataset.pnpinkKeyboardGuard = 'true';
       ['pointerdown', 'mousedown', 'mouseup', 'click', 'dblclick'].forEach(type => {
         editor.addEventListener(type, event => event.stopPropagation());
@@ -433,6 +487,61 @@ export class DatasetTable {
       editor.addEventListener('keydown', event => {
         if (!['Enter', 'Escape', 'Tab'].includes(event.key)) event.stopPropagation();
       });
+
+      for (let pass = 0; pass < 2 && holder; pass += 1) {
+        const bounds = holder.getBoundingClientRect();
+        const editorBounds = editor.getBoundingClientRect();
+        const margin = 8;
+        let deltaX = 0;
+        let deltaY = 0;
+        if (editorBounds.right > bounds.right - margin) {
+          deltaX = editorBounds.right - bounds.right + margin;
+        } else if (editorBounds.left < bounds.left + margin) {
+          deltaX = editorBounds.left - bounds.left - margin;
+        }
+        if (editorBounds.bottom > bounds.bottom - margin) {
+          deltaY = editorBounds.bottom - bounds.bottom + margin;
+        } else if (cell.getElement().getBoundingClientRect().top < bounds.top + margin) {
+          deltaY = cell.getElement().getBoundingClientRect().top - bounds.top - margin;
+        }
+        if (!deltaX && !deltaY) break;
+        holder.scrollLeft += deltaX;
+        holder.scrollTop += deltaY;
+        await new Promise(resolve => requestAnimationFrame(resolve));
+      }
+    });
+  }
+
+  prepareEditor(cell) {
+    const selection = this.rememberCell(cell);
+    if (selection) this.onCellEditing(selection);
+    document.querySelectorAll('.tabulator-tooltip').forEach(tooltip => tooltip.remove());
+    document.body.classList.add('dataset-cell-editing');
+    this.isolateEditorEvents(cell);
+  }
+
+  preserveEditedCell(cell) {
+    document.body.classList.remove('dataset-cell-editing');
+    if (!this.table || !cell) return;
+    const holder = this.container.querySelector('.tabulator-tableholder');
+    const scrollTop = holder?.scrollTop ?? 0;
+    const scrollLeft = holder?.scrollLeft ?? 0;
+    const field = String(cell.getField() || '');
+    this.selectedCell = {
+      row: Number(cell.getRow().getData().__csv_row__ || 0),
+      column: Number(field.replace(/^column_/, '')),
+    };
+    this.suppressSelection = true;
+    try {
+      this.table.getRanges().forEach(range => range.remove());
+      this.table.addRange(cell, cell);
+    } finally {
+      this.suppressSelection = false;
+    }
+    requestAnimationFrame(() => {
+      if (!holder) return;
+      holder.scrollTop = scrollTop;
+      holder.scrollLeft = scrollLeft;
     });
   }
 
@@ -453,6 +562,7 @@ export class DatasetTable {
           revision: this.revision,
         });
         this.revision = String(result.revision || this.revision);
+        if (this.editor?.url) this.key = `${this.editor.url}:${this.revision}`;
         this.applyRowSemantics(result.rowKinds, result.commentedColumns);
         this.table?.clearCellEdited();
       } finally {
@@ -539,10 +649,18 @@ export class DatasetTable {
   }
 
   async show(editor) {
-    if (this.editor?.url && this.editor.url !== editor.url) await this.flushEdits();
+    const previousUrl = this.editor?.url || '';
+    if (previousUrl && previousUrl !== editor.url) await this.flushEdits();
     this.editor = editor;
     const key = `${editor.url || ''}:${editor.revision || ''}`;
     this.container.hidden = false;
+    if (this.table && previousUrl && previousUrl === editor.url
+        && (this.saving || this.saveTimer || this.pendingEdits.size)) {
+      if (editor.revision) this.revision = String(editor.revision);
+      this.key = `${editor.url}:${this.revision}`;
+      this.message.hidden = true;
+      return;
+    }
     if (this.table && this.key === key) {
       this.message.hidden = true;
       return;
@@ -622,14 +740,22 @@ export class DatasetTable {
             editor: false,
           },
         });
-        this.table.on('cellEditing', cell => this.isolateEditorEvents(cell));
+        this.table.on('cellEditing', cell => this.prepareEditor(cell));
+        this.table.on('cellEdited', cell => this.preserveEditedCell(cell));
+        this.table.on('cellEditCancelled', () => document.body.classList.remove('dataset-cell-editing'));
         this.table.on('cellClick', (_event, cell) => this.notifyCellSelected(cell));
         this.table.on('cellTap', (_event, cell) => this.notifyCellSelected(cell));
         this.table.on('dataChanged', rows => this.trackChanges(rows));
-        this.table.on('columnResized', column => this.resizeSelectedColumns(column));
+        this.table.on('columnResized', column => {
+          this.resizeSelectedColumns(column);
+          this.refreshStickyHeader();
+        });
         this.table.on('scrollVertical', top => this.scheduleStickyHeaders(top));
         this.installContextMenuEvents();
-        requestAnimationFrame(() => this.observeColumnWidths());
+        requestAnimationFrame(() => {
+          this.observeColumnWidths();
+          this.installStickyHeaderOverlay();
+        });
       } else {
         this.indexStickyHeaders([]);
         const signature = (dataset.columns || []).map(column => column.field).join('|');

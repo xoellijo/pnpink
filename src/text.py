@@ -63,7 +63,7 @@ INLINE_GROUP_START = ":("
 _INLINE_ID_RX = re.compile(r"^[A-Za-z_][\w\-.]*$")
 _INLINE_LOCAL_SOURCE_RX = re.compile(
     r'^\s*(?P<sigil>@)?(?P<path>[^\s\[\]~]+?\.(?:png|jpe?g|gif|bmp|webp|svgz?|pdf|tiff?))\s*'
-    r'(?:(?:\.(?P<fit>Fit\s*\{[^}]*\}))|(?:~(?P<ops>.*)))?\s*$',
+    r'(?:(?:\.(?P<fit>(?:Fit|F)\s*\{[^}]*\}))|(?:~(?P<ops>.*)))?\s*$',
     re.IGNORECASE,
 )
 def _bal_find(s: str, i_open: int, ch_open: str, ch_close: str) -> int:
@@ -154,7 +154,7 @@ def _split_inline_transform_suffixes(token: str):
         return "", None
     tail = ""
     m_tail = re.match(
-        r"^(?P<core>.*?)(?P<tail>(?:\.(?:Fit)\s*\{[^}]*\}|~.*|[\^!\|].*))?\s*$",
+        r"^(?P<core>.*?)(?P<tail>(?:\.(?:Fit|F)\s*\{[^}]*\}|~.*|[\^!\|].*))?\s*$",
         s,
         re.IGNORECASE,
     )
@@ -181,7 +181,7 @@ def _split_inline_transform_suffixes(token: str):
 def _parse_inline_id_token(inner: str):
     s, tr = _split_inline_transform_suffixes(inner)
     m = re.match(
-        r"^\s*(?P<id>[A-Za-z_][\w\-.]*)\s*(?:(?:\.(?P<fit>Fit\s*\{[^}]*\}))|(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$",
+        r"^\s*(?P<id>[A-Za-z_][\w\-.]*)\s*(?:(?:\.(?P<fit>(?:Fit|F)\s*\{[^}]*\}))|(?:~(?P<ops>.*))|(?P<ops_compact>[\^!\|].*))?\s*$",
         s or "",
         re.IGNORECASE,
     )
@@ -191,8 +191,7 @@ def _parse_inline_id_token(inner: str):
     ops_text = m.group("ops")
     compact_ops = m.group("ops_compact")
     if fit_text:
-        fit_cmd = DSL.parse(f"X.{fit_text}")
-        fs = getattr(fit_cmd, "fit", None)
+        fs = DSL.parse_fit_suffix(fit_text)
         suffix = DSL.SourceSuffix(kind="fit", fit=fs, raw_fit_text=fit_text[fit_text.find('{'):])
     elif ops_text is not None:
         suffix = DSL.SourceSuffix(kind="ops", ops=DSL.normalize_ops_suffix(ops_text))
@@ -216,7 +215,7 @@ def _parse_source_inner_token(inner: str):
         return src_uri, suffix
 
     m = re.match(
-        r'^\s*(?:Source|S)\s*\{\s*(?P<body>[^}]*)\s*\}\s*(?:(?:\.(?P<fit>Fit\s*\{[^}]*\}))|(?:~(?P<ops>.*)))?\s*$',
+        r'^\s*(?:Source|S)\s*\{\s*(?P<body>[^}]*)\s*\}\s*(?:(?:\.(?P<fit>(?:Fit|F)\s*\{[^}]*\}))|(?:~(?P<ops>.*)))?\s*$',
         s,
         re.IGNORECASE,
     )
@@ -233,8 +232,7 @@ def _parse_source_inner_token(inner: str):
     fit_text = m.group("fit")
     legacy_ops = m.group("ops")
     if fit_text:
-        fit_cmd = DSL.parse(f"X.{fit_text}")
-        fs = getattr(fit_cmd, "fit", None)
+        fs = DSL.parse_fit_suffix(fit_text)
         return src_uri, DSL.SourceSuffix(kind="fit", fit=fs, raw_fit_text=fit_text[fit_text.find('{'):])
     if legacy_ops:
         return src_uri, DSL.SourceSuffix(kind="ops", ops=DSL.normalize_ops_suffix(legacy_ops))
@@ -250,8 +248,7 @@ def _parse_inline_local_source_token(inner: str):
     fit_text = m.group("fit")
     legacy_ops = m.group("ops")
     if fit_text:
-        fit_cmd = DSL.parse(f"X.{fit_text}")
-        fs = getattr(fit_cmd, "fit", None)
+        fs = DSL.parse_fit_suffix(fit_text)
         return src_uri, DSL.SourceSuffix(kind="fit", fit=fs, raw_fit_text=fit_text[fit_text.find('{'):])
     if legacy_ops:
         return src_uri, DSL.SourceSuffix(kind="ops", ops=DSL.normalize_ops_suffix(legacy_ops))

@@ -50,13 +50,15 @@ In this documentation, we always call them **parameters** (not properties).
 Short form:
 
 ```txt
-target.M{ ... }    # module short name
+target.F{ ... }    # Fit
+target.T{ ... }    # Transform
+target.L{ ... }    # Layout
 target~...         # Fit-Anchor shorthand
 ```
 
 Common modules:
 
-- `Fit{}` / `~...`
+- `Fit{}` / `F{}` / `~...`
 - `Layout{}` / `L{}`
 - `Page{}`
 - `Source{}` / `@{}`
@@ -136,7 +138,7 @@ Typical examples:
 These declarations are read by their corresponding modules/subsystems and then reused in dataset rows.
 
 ## Abbreviations, Defaults, and State Reuse
-Keyword abbreviations are supported with the firs character.
+Module and parameter abbreviations are supported where their reference page documents them. They are not arbitrary truncated words.
 
 ```txt
 Layout{} -> L{}
@@ -144,7 +146,18 @@ inside -> i
 Page{pagesize=A4 border=[-2]} -> P{A4 b=[-2]}
 ```
 
-Most modules define default parameters, so compact forms can omit explicit keys. I.e. you dont need to specify p=A4 because "pagesize" is the default parameter por Page{} module.
+For Fit-Anchor specifically, both the module and every parameter have stable initials:
+
+```txt
+Fit -> F
+mode -> m
+anchor -> a
+border -> b
+shift -> s
+clip -> c
+```
+
+Most modules define default parameters, so compact forms can omit explicit keys. For example, you do not need to write `p=A4` because `pagesize` is the default parameter of `Page{}`.
 
 When a required value is omitted, the last active state may be reused (module-dependent behavior).
 

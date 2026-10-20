@@ -150,7 +150,14 @@ def _parse_array_token(token: str):
     return {'items': items, 'layout': layout_spec, 'ops': ops}
 
 
-def _resolve_array_item(root_doc, inst_node, item_id: str, sm=None, ss_registry=None):
+def _resolve_array_item(
+    root_doc,
+    inst_node,
+    item_id: str,
+    sm=None,
+    ss_registry=None,
+    target_index=None,
+):
     s = (item_id or '').strip()
     if not s:
         return None
@@ -168,6 +175,20 @@ def _resolve_array_item(root_doc, inst_node, item_id: str, sm=None, ss_registry=
         s, _place, _ops = _parse_object_token(s)
     except Exception:
         pass
+    target_id, relation = TFX.split_related_target(s)
+    preferred = target_index.get(target_id) if target_index else None
+    if preferred is None and not relation:
+        preferred = SVG.find_id(root_doc, target_id, include_defs=True)
+    if preferred is not None:
+        if not relation:
+            return preferred, not normalized_source
+        if relation == "shape-inside":
+            frame, _owner, _text = TFX.ensure_private_shape_inside(
+                root_doc,
+                inst_node,
+                preferred,
+            )
+            return frame, not normalized_source
     base, _owner, _text_node, relation = TFX.resolve_related_target(
         root_doc, inst_node, s, private=True
     )
@@ -192,7 +213,18 @@ def _array_layout_with_header_default(array_spec, header_layout):
     return header_layout
 
 
-def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, ss_registry=None, group_id_prefix='dm_array', outer_anchor=5):
+def _build_array_group(
+    inst_node,
+    root_doc,
+    items,
+    layout_spec,
+    *,
+    sm=None,
+    ss_registry=None,
+    target_index=None,
+    group_id_prefix='dm_array',
+    outer_anchor=5,
+):
     if not items:
         return None, None
     g = inkex.Group()
@@ -214,7 +246,12 @@ def _build_array_group(inst_node, root_doc, items, layout_spec, *, sm=None, ss_r
         item_ops = (it.get("ops") if isinstance(it, dict) else "") or ""
         item_transform = it.get("transform") if isinstance(it, dict) else None
         base, is_doc_id = _resolve_array_item(
-            root_doc, inst_node, item_id, sm=sm, ss_registry=ss_registry
+            root_doc,
+            inst_node,
+            item_id,
+            sm=sm,
+            ss_registry=ss_registry,
+            target_index=target_index,
         )
         if base is None:
             _l.w(f"[array] target not found: '{item_id}'")
@@ -555,7 +592,7 @@ def _parse_header_default_spec(spec: str, target_id: str) -> Tuple[Optional[str]
     # Global-fit-only forms.
     if s.startswith("~"):
         return None, "", s, ""
-    if s.startswith(".Fit"):
+    if re.match(r"^\.(?:Fit|F)\s*\{", s, re.I):
         return None, "", (_fit_suffix_to_ops(s) or ""), ""
     # Default-id forms, optionally with ops.
     default_id = None
@@ -574,7 +611,7 @@ def _parse_header_default_spec(spec: str, target_id: str) -> Tuple[Optional[str]
             default_ops = rest
         elif rest.startswith("^") or rest.startswith("!") or rest.startswith("|"):
             default_ops = "~" + rest
-        elif rest.startswith(".Fit"):
+        elif re.match(r"^\.(?:Fit|F)\s*\{", rest, re.I):
             default_ops = _fit_suffix_to_ops(rest)
         else:
             # Not a valid id+ops tail (e.g. 'url(#g1)'): treat full RHS as literal expression.
@@ -1119,7 +1156,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
         s = (ops_body or "").strip()
         if not s:
             return "~"
-        if s.startswith(".Fit"):
+        if re.match(r"^\.(?:Fit|F)\s*\{", s, re.I):
             s = _fit_suffix_to_ops(s)
         elif not s.startswith("~"):
             s = "~" + s
@@ -1192,6 +1229,7 @@ def apply_field_in_clone(inst, key, raw_val, row, *, root_doc, use_jobs, fa_jobs
                     inst, root_doc, arr.get('items'),
                     _array_layout_with_header_default(arr, _global_layout),
                     sm=sm, ss_registry=ss_registry,
+                    target_index=target_index,
                     outer_anchor=_array_anchor_from_ops(ops_full),
                 )
                 if g_id:

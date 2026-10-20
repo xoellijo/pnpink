@@ -271,3 +271,31 @@ def test_merge_symbol_base_keeps_current_template_and_imports_cached_symbols(tmp
     assert len(root.xpath("//*[@id='cached-card']")) == 1
     assert len(root.xpath("//*[@id='symbol-gradient']")) == 1
     assert len(root.xpath("//*[@id='current-gradient']/*")) == 0
+
+
+def test_preview_pruning_keeps_only_transitive_render_dependencies():
+    import inkex
+
+    document = inkex.load_svg(b"""<svg xmlns='http://www.w3.org/2000/svg'
+        xmlns:xlink='http://www.w3.org/1999/xlink'>
+        <defs>
+            <linearGradient id='used-gradient'/>
+            <linearGradient id='unused-gradient'/>
+            <style>.card { opacity: 1 }</style>
+        </defs>
+        <g id='template' style='display:none'>
+            <g id='used-icon' style='fill:url(#used-gradient)'><path d='M0 0h1v1z'/></g>
+            <g id='unused-icon'><path d='M0 0h2v2z'/></g>
+        </g>
+        <g id='pnpink-output'><use id='card-icon' xlink:href='#used-icon'/></g>
+    </svg>""")
+
+    deckmaker_preview._prune_preview_dependencies(document)
+
+    root = document.getroot()
+    assert len(root.xpath("//*[@id='pnpink-output']")) == 1
+    assert len(root.xpath("//*[@id='used-icon']")) == 1
+    assert len(root.xpath("//*[@id='used-gradient']")) == 1
+    assert len(root.xpath("//svg:style", namespaces={"svg": "http://www.w3.org/2000/svg"})) == 1
+    assert not root.xpath("//*[@id='unused-icon']")
+    assert not root.xpath("//*[@id='unused-gradient']")

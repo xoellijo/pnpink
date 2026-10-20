@@ -7,6 +7,7 @@ import inkex
 import pytest
 
 import dataset
+import fit_anchor as FA
 import gradients as GRD
 import render_apply as RAP
 import render_tokens as RTK
@@ -96,6 +97,44 @@ def test_shape_inside_frame_resolves_uniquified_instance_by_origid():
 
     assert private_frame.get("width") == "77"
     assert private_frame.get("height") == "33"
+
+
+def test_uniquify_instance_keeps_shape_inside_reference_with_renamed_frame():
+    root, scope = _document()
+    old_frame, _owner, old_text = TFX.ensure_private_shape_inside(
+        root,
+        scope,
+        root.find(".//*[@id='description']"),
+    )
+    old_frame_id = old_frame.get("id")
+
+    SVG.uniquify_ids_and_build_target_index(scope, "_pnp42")
+
+    frame = next(
+        node for node in scope.iter()
+        if node.get("data-dm-shape-inside-private") == "1"
+    )
+    text = next(node for node in scope.iter() if node.get("data-origid") == "description")
+    assert f"url(#{frame.get('id')})" in text.get("style")
+    assert f"url(#{old_frame_id})" not in text.get("style")
+
+
+def test_semantic_clone_repairs_stale_shape_inside_reference_from_owner_relation():
+    root, scope = _document()
+    frame, owner, text = TFX.ensure_private_shape_inside(
+        root,
+        scope,
+        root.find(".//*[@id='description']"),
+    )
+    owner.set("data-dm-inside-owner", "y")
+    frame.set("data-dm-inside-frame", "y")
+    text.set("data-dm-inside-text", "1")
+    text.set("style", text.get("style").replace(frame.get("id"), "stale-frame"))
+
+    SVG._semanticize_ids_in_scope(owner, prefix="af")
+
+    assert f"url(#{frame.get('id')})" in text.get("style")
+    assert "stale-frame" not in text.get("style")
 
 
 def test_shape_inside_frames_share_object_bbox_gradient():
@@ -213,6 +252,71 @@ def test_array_document_items_ignore_template_ancestor_position():
     origin = inkex.Transform(placed.get("transform") or "").apply_to_point((0, 0))
     assert abs(origin.x) < 1e-6
     assert abs(origin.y) < 1e-6
+
+
+def test_array_uses_stable_template_target_instead_of_previous_array_clone():
+    raw = b'''<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200">
+      <g id="library"><g id="icon"><rect width="10" height="10"/></g></g>
+      <g id="card">
+        <g id="icon-instance" data-origid="icon"><rect width="10" height="10"/></g>
+        <g id="previous-array">
+          <g id="af-icon" data-origid="icon" transform="translate(21,0)">
+            <rect width="10" height="10"/>
+          </g>
+        </g>
+      </g>
+    </svg>'''
+    root = inkex.load_svg(io.BytesIO(raw)).getroot()
+    card = root.getElementById("card")
+    stable_icon = root.getElementById("icon-instance")
+
+    group, _group_id = RAP._build_array_group(
+        card,
+        root,
+        [{"id": "icon", "ops": "", "transform": None}],
+        "1x1",
+        target_index={"icon": stable_icon},
+    )
+
+    origin = inkex.Transform(group[0].get("transform") or "").apply_to_point((0, 0))
+    assert abs(origin.x) < 1e-6
+    assert abs(origin.y) < 1e-6
+
+
+def test_temporary_array_ignores_card_position_when_placed_in_placeholder():
+    raw = b'''<svg xmlns="http://www.w3.org/2000/svg" width="210" height="297">
+      <g id="library" transform="translate(150,200)">
+        <g id="icon"><rect width="10" height="20"/></g>
+      </g>
+      <g id="card" transform="translate(58,90)">
+        <g id="content" transform="translate(-29,-57)">
+          <rect id="keywords" x="96" y="84" width="8" height="20"/>
+        </g>
+      </g>
+    </svg>'''
+    root = inkex.load_svg(io.BytesIO(raw)).getroot()
+    card = root.getElementById("card")
+    target = root.getElementById("keywords")
+    group, group_id = RAP._build_array_group(
+        card,
+        root,
+        [{"id": "icon", "ops": "", "transform": None}],
+        "1x1",
+    )
+
+    placed = FA.PlacementSequence(root).apply(
+        card,
+        group_id,
+        target.get("id"),
+        "~i8",
+        place_mode="copy",
+        rect_elem=target,
+        ignore_source_ancestors=True,
+    )
+
+    origin = placed.composed_transform().apply_to_point((0, 0))
+    assert abs(origin.x - 125) < 1e-6
+    assert abs(origin.y - 117) < 1e-6
 
 
 def test_text_probe_keeps_shape_owner_and_drops_unrelated_art():

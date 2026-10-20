@@ -1,3 +1,14 @@
+[0.82.0-beta.1]
+- Unify long and abbreviated Fit-Anchor parsing across dataset cells, Sources, object arrays, overlays, and inline icons. `Fit`/`F` and `mode/m`, `anchor/a`, `border/b`, `shift/s`, and `clip/c` now share one canonical parser.
+- Clarify Fit-Anchor documentation around `mode`, place it before `border`, remove the obsolete `fitmode`/`f` naming, and document ambiguous bare mode codes such as `.F{a}`, `.F{b}`, and `.F{m}`.
+- Keep the active local-CSV dataset header visible only after it scrolls out of view, preserve physical CSV row numbers, and avoid disruptive jumps when crossing into later datasets.
+- Improve Tabulator editing by keeping the edited cell and viewport stable, scrolling the larger editor fully into view, using `Enter` to commit and `Alt+Enter` for line breaks, and suppressing tooltips beneath the editor.
+- Restore reliable dataset-to-preview synchronization after source changes and first-time starter CSV creation without forcing the dataset selection back to cell A1.
+- Reduce preview work by pruning unreachable template dependencies, reusing the resident text-query service, batching live log events, and refreshing the first valid asset after generation.
+- Improve the isolated Inkscape preview lifecycle with safe first-run geometry, stable reloads that preserve the existing viewport, immediate viewer shutdown, and clearer timing diagnostics.
+- Repair cloned SVG references when instance IDs change, including `shape-inside` frames, arrays, composed template roots, and objects moved together with their template groups.
+- Update the Medieval Showcase regression project and expand automated coverage for Fit-Anchor aliases, preview pruning, browser lifecycle, array placement, and SVG reference rewriting.
+
 [0.78.0-beta.1]
 - Add a full local CSV editor to DeckMaker Web with spreadsheet coordinates, atomic edits, row and column operations, semantic PnPInk highlighting, dynamic sticky dataset headers, external-change detection, and a lil-xgui context menu.
 - Remember each template's dataset source and add assisted starter CSV creation, Google Sheet to CSV synchronization with one emergency `.csv.old` backup, direct spreadsheet opening, and bottom/right dataset docking.

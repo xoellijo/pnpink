@@ -58,14 +58,15 @@ def _wait_until_listening(timeout: float = 3.0) -> bool:
     return False
 
 
-def _browser_window_active() -> bool:
+def _browser_window_status() -> dict:
     try:
         with urllib.request.urlopen(
             f"http://{HTTP_HOST}:{HTTP_PORT}/api/browser-active", timeout=0.25,
         ) as response:
-            return bool(json.loads(response.read().decode("utf-8")).get("active"))
+            value = json.loads(response.read().decode("utf-8"))
+            return value if isinstance(value, dict) else {}
     except Exception:
-        return False
+        return {}
 
 
 class LocalThreadingHTTPServer(ThreadingHTTPServer):
@@ -199,6 +200,15 @@ class DeckMakerWebHost:
         with self._session_lock:
             return bool(self._sessions)
 
+    def browser_status(self) -> dict:
+        active = self.browser_active()
+        with self._session_lock:
+            last_seen = max(
+                (float(session.get("seen_at") or 0.0) for session in self._sessions.values()),
+                default=0.0,
+            )
+            return {"active": active, "present": bool(self._sessions), "lastSeen": last_seen}
+
     def _session_id(self, handler) -> str:
         query = urllib.parse.parse_qs(urllib.parse.urlparse(handler.path).query)
         return str(
@@ -277,7 +287,7 @@ class DeckMakerWebHost:
             def do_GET(self):
                 parsed = urllib.parse.urlparse(self.path)
                 if parsed.path == "/api/browser-active":
-                    self._json({"active": host.browser_active()})
+                    self._json(host.browser_status())
                     return
                 if parsed.path.startswith("/api/") and not self._authorized():
                     self._json({"error": "Unauthorized"}, HTTPStatus.UNAUTHORIZED)
@@ -472,13 +482,22 @@ def notify_or_launch(
         TEMPPATHS.cleanup_runs_now(keep_paths=[snapshot_path] if snapshot_path else None)
     except Exception:
         pass
-    browser_active = _browser_window_active()
+    browser_status = _browser_window_status()
+    browser_active = bool(browser_status.get("active"))
+    previous_seen = float(browser_status.get("lastSeen") or 0.0)
     launched = IPC.notify_or_launch(
         __file__, template, snapshot_path, sheet_id, sheet_range, log_level,
         dataset_source_mode, autorun, port=IPC.WEB_PORT,
         selected_ids=selected_ids,
     )
-    if launched and not browser_active and not os.environ.get("PNPINK_DECKMAKER_WEB_NO_BROWSER"):
+    if launched and not os.environ.get("PNPINK_DECKMAKER_WEB_NO_BROWSER"):
+        if browser_active:
+            deadline = time.monotonic() + 1.25
+            while time.monotonic() < deadline:
+                status = _browser_window_status()
+                if float(status.get("lastSeen") or 0.0) > previous_seen:
+                    return True
+                time.sleep(0.05)
         if not _wait_until_listening(timeout=DeckMakerWebHost.STARTUP_TIMEOUT):
             return False
         if not _open_browser(f"http://{HTTP_HOST}:{HTTP_PORT}/"):

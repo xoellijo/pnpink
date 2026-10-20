@@ -12,7 +12,7 @@ __all__ = [
     "ModuleCall", "Chain", "Command",
     "parse", "maybe_parse",
     "tokenize_chain", "parse_chain", "maybe_parse_chain",
-    "is_source_expr", "split_source_token", "normalize_ops_suffix",
+    "is_source_expr", "split_source_token", "normalize_ops_suffix", "parse_fit_suffix",
     "ops_from_fit_spec", "fit_spec_from_ops", "split_ops_fit_transform",
     "parse_copies_page_tail", "parse_index_selector_1based", "excel_col_to_num", "measure_to_mm",
     "parse_dataset_decl"
@@ -534,7 +534,7 @@ def normalize_ops_suffix(ops: str) -> str:
 def split_source_token(s: str) -> Tuple[SourceRef, SourceSuffix]:
     s = (s or "").strip()
     m = re.match(
-        r'^\s*(?:@\{\s*(?P<body_a>[^}]*)\s*\}|(?:Source|S)\s*\{\s*(?P<body_b>[^}]*)\s*\})\s*(?:(?P<fit>\.Fit\s*\{.*\})|~(?P<ops>.*))?\s*$',
+        r'^\s*(?:@\{\s*(?P<body_a>[^}]*)\s*\}|(?:Source|S)\s*\{\s*(?P<body_b>[^}]*)\s*\})\s*(?:(?P<fit>\.(?:Fit|F)\s*\{.*\})|~(?P<ops>.*))?\s*$',
         s,
         re.I,
     )
@@ -545,7 +545,7 @@ def split_source_token(s: str) -> Tuple[SourceRef, SourceSuffix]:
     fit_txt = (m.group("fit") or "").strip()
     ops_txt = (m.group("ops") or "").strip()
     if fit_txt:
-        fs = _parse_fit_long(f"dummy.Fit{fit_txt[fit_txt.find('{'):]}")
+        fs = parse_fit_suffix(fit_txt)
         return src, SourceSuffix(kind="fit", fit=fs, raw_fit_text=fit_txt[fit_txt.find('{'):])
     if ops_txt:
         return src, SourceSuffix(kind="ops", ops=normalize_ops_suffix(ops_txt))
@@ -614,20 +614,32 @@ def _fit_from_dict(args: Dict[str, Any]) -> FitSpec:
     mv = str(args.get("mode","")).lower().strip() if "mode" in args else None
     if mv and mv in _FIT_MODES:
         fs.mode = _FIT_MODES[mv]
-    for k in ("i","m","w","h","x","y","a","t","o"):
-        if args.get(k) is True:
-            fs.mode = _FIT_MODES[k]
+    compact_mode = args.get("m")
+    if compact_mode is not None and compact_mode is not True:
+        compact_mode = str(compact_mode).lower().strip()
+        if compact_mode in _FIT_MODES:
+            fs.mode = _FIT_MODES[compact_mode]
+    for key, value in args.items():
+        mode_name = str(key).lower().strip()
+        if value is True and mode_name in _FIT_MODES:
+            fs.mode = _FIT_MODES[mode_name]
+    if args.get("anchor") is True:
+        raise DSLError("anchor requires a value from 1 to 9")
     if "anchor" in args:
         fs.anchor = _try_int(args.get("anchor"))
-    if "a" in args and fs.anchor is None:
+    if "a" in args and args.get("a") is not True and fs.anchor is None:
         fs.anchor = _try_int(args.get("a"))
+    if args.get("border") is True:
+        raise DSLError("border requires a value")
     if "border" in args:
         b = _as_list(args.get("border"))
         fs.border = [_num_to_str_trim(x) for x in b]
-    if "b" in args and fs.border is None:
+    if "b" in args and args.get("b") is not True and fs.border is None:
         b = _as_list(args.get("b"))
         fs.border = [_num_to_str_trim(x) for x in b]
     # shift (primary): shift/s.
+    if args.get("shift") is True or args.get("s") is True:
+        raise DSLError("shift requires [x y]")
     if "shift" in args:
         vals = _normalize_shift_pair(_as_list(args.get("shift")))
         fs.shift = [_to_number(vals[0]), _to_number(vals[1])]
@@ -644,8 +656,9 @@ def _fit_from_dict(args: Dict[str, Any]) -> FitSpec:
         raise DSLError("rotate belongs to Transform; use .T{rotate=...} or shorthand ~^")
     if "mirror" in args:
         raise DSLError("mirror belongs to Transform; use .T{mirror=...} or shorthand ~|")
-    if "clip" in args or args.get("c") is True:
-        v = args.get("clip", True)
+    clip_key = "clip" if "clip" in args else ("c" if "c" in args else None)
+    if clip_key is not None:
+        v = args.get(clip_key, True)
         fs.clip = True
         fs.clip_stage = "pre" if isinstance(v, str) else "post"
     if args.get("clip_pre") is True:
@@ -716,11 +729,21 @@ def _transform_from_dict(args: Dict[str, Any]) -> TransformSpec:
     return ts
 
 def _parse_fit_long(cmd: str) -> FitSpec:
-    m = re.match(r"^\s*(?:[A-Za-z][\w\-.]*\s*)?\.Fit\s*(\{.*\})\s*$", cmd)
+    m = re.match(r"^\s*(?:[A-Za-z][\w\-.]*\s*)?\.(?:Fit|F)\s*(\{.*\})\s*$", cmd, re.I)
     if not m:
         raise DSLError("Invalid long Fit form")
     args = _parse_brace_dict(m.group(1))
     return _fit_from_dict(args)
+
+
+def parse_fit_suffix(value: str) -> FitSpec:
+    """Parse a standalone `.Fit{...}` or `.F{...}` suffix canonically."""
+    suffix = str(value or "").strip()
+    if not suffix:
+        raise DSLError("Empty Fit suffix")
+    if not suffix.startswith("."):
+        suffix = f".{suffix}"
+    return _parse_fit_long(f"dummy{suffix}")
 
 def _parse_fit_shorthand(trail: str) -> FitSpec:
     toks = _lex_fit_trail(trail)
@@ -1483,9 +1506,9 @@ def parse(s: str) -> Command:
         return Command("Page", args={"page": ps})
 
     # Fit largo
-    if ".Fit" in s and "{" in s:
+    if re.search(r"\.(?:Fit|F)\s*\{", s, re.I):
         fs = _parse_fit_long(s)
-        m = re.match(r"^\s*(?P<id>[A-Za-z][\w\-.]*)\s*\.Fit", s)
+        m = re.match(r"^\s*(?P<id>[A-Za-z][\w\-.]*)\s*\.(?:Fit|F)", s, re.I)
         target = IdRef(m.group("id")) if m else IdRef("dummy")
         return Command("Fit", target=target, fit=fs)
 
@@ -1607,7 +1630,7 @@ def _parse_suffixes(tokens: List[Token], pos: int) -> Tuple[List[ModuleCall], Op
             body = tokens[p+2].value
             mc = ModuleCall(mod_name, {}, spec=None)
             lname = mod_name.lower()
-            if lname == 'fit':
+            if lname in ('fit', 'f'):
                 args = _parse_brace_dict(body)
                 mc.args = args
                 mc.spec = _fit_from_dict(args)

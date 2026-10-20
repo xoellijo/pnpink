@@ -2695,7 +2695,14 @@ def uniquify_all_ids_in_scope(scope, suffix: str, get_unique_id):
         if unique != cur:
             el.set('id', unique)
 
-def uniquify_ids_and_build_target_index(scope, suffix: str, get_unique_id=None, *, trust_suffix_unique: bool = True):
+def uniquify_ids_and_build_target_index(
+    scope,
+    suffix: str,
+    get_unique_id=None,
+    *,
+    trust_suffix_unique: bool = True,
+    id_map_out=None,
+):
     """Uniquify generated instance ids and build its target index in one pass.
 
     Render-generated suffixes are monotonic (_pnpN), so the normal path does not
@@ -2706,6 +2713,7 @@ def uniquify_ids_and_build_target_index(scope, suffix: str, get_unique_id=None, 
     if scope is None:
         return index
     used_ids = set()
+    id_map = {}
     for el in scope.iter():
         if not hasattr(el, 'tag') or not isinstance(el.tag, str):
             continue
@@ -2739,6 +2747,7 @@ def uniquify_ids_and_build_target_index(scope, suffix: str, get_unique_id=None, 
                 unique = proposed
         if unique != cur:
             el.set('id', unique)
+            id_map[cur] = unique
         index.setdefault(unique, el)
         index.setdefault(base, el)
         data_origid = el.get('data-origid')
@@ -2747,7 +2756,70 @@ def uniquify_ids_and_build_target_index(scope, suffix: str, get_unique_id=None, 
             index.setdefault(data_origid, el)
         if data_field:
             index.setdefault(data_field, el)
+    rewrite_local_id_references(scope, id_map)
+    if id_map_out is not None:
+        id_map_out.update(id_map)
     return index
+
+
+_LOCAL_URL_REF_RE = re.compile(r"url\(#([^)]+)\)")
+
+
+def rewrite_local_id_references(scope, id_map):
+    """Rewrite references to ids renamed inside ``scope``."""
+    if scope is None:
+        return
+    if id_map:
+        for el in scope.iter():
+            if not hasattr(el, "tag") or not isinstance(el.tag, str):
+                continue
+            try:
+                attrs = tuple((el.attrib or {}).items())
+            except Exception:
+                attrs = ()
+            for key, value in attrs:
+                old_value = str(value or "")
+                if not old_value:
+                    continue
+                new_value = old_value
+                if old_value.startswith("#") and len(old_value) > 1:
+                    target_id = old_value[1:]
+                    new_value = "#" + id_map.get(target_id, target_id)
+                if "url(#" in new_value:
+                    new_value = _LOCAL_URL_REF_RE.sub(
+                        lambda match: f"url(#{id_map.get(match.group(1), match.group(1))})",
+                        new_value,
+                    )
+                if new_value != old_value:
+                    try:
+                        el.set(key, new_value)
+                    except Exception:
+                        pass
+
+    for owner in scope.iter():
+        mode = str(owner.get("data-dm-inside-owner") or "").strip().lower()
+        if mode not in ("x", "y", "a"):
+            continue
+        frame = next(
+            (node for node in owner.iter() if node.get("data-dm-inside-frame") == mode),
+            None,
+        )
+        frame_id = str(frame.get("id") or "").strip() if frame is not None else ""
+        if not frame_id:
+            continue
+        for text_node in owner.iter():
+            if text_node.get("data-dm-inside-text") != "1":
+                continue
+            style = str(text_node.get("style") or "")
+            match = _SHAPE_INSIDE_RE.search(style)
+            if match and match.group(1).strip() != frame_id:
+                try:
+                    text_node.set(
+                        "style",
+                        style[:match.start(1)] + frame_id + style[match.end(1):],
+                    )
+                except Exception:
+                    pass
 
 def _semanticize_ids_in_scope(scope, prefix: str = "af"):
     """
@@ -2826,7 +2898,6 @@ def _semanticize_ids_in_scope(scope, prefix: str = "af"):
         if base != cur:
             id_map[base] = unique
 
-    rx_url = re.compile(r"url\(#([^)]+)\)")
     for el in scope.iter():
         if not hasattr(el, "tag") or not isinstance(el.tag, str):
             continue
@@ -2836,25 +2907,7 @@ def _semanticize_ids_in_scope(scope, prefix: str = "af"):
                 el.set("id", id_map[cur])
             except Exception:
                 pass
-        try:
-            attrs = dict(el.attrib or {})
-        except Exception:
-            attrs = {}
-        for k, v in attrs.items():
-            sv = str(v or "")
-            if not sv:
-                continue
-            newv = sv
-            if sv.startswith("#") and len(sv) > 1:
-                rid = sv[1:]
-                newv = "#" + id_map.get(rid, rid)
-            if "url(#" in newv:
-                newv = rx_url.sub(lambda m: f"url(#{id_map.get(m.group(1), m.group(1))})", newv)
-            if newv != sv:
-                try:
-                    el.set(k, newv)
-                except Exception:
-                    pass
+    rewrite_local_id_references(scope, id_map)
 
 def common_group_ancestor(nodes):
     """

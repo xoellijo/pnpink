@@ -10,6 +10,19 @@ if str(SRC) not in sys.path:
 import text
 
 
+def test_inline_fit_module_and_parameter_initials_match_long_form():
+    long_form = text._parse_inline_multi_token(
+        "shield.Fit{mode=inside anchor=7 border=[-2] shift=[3 4] clip}"
+    )
+    short_form = text._parse_inline_multi_token(
+        "shield.F{m=i a=7 b=[-2] s=[3 4] c}"
+    )
+
+    assert long_form is not None
+    assert short_form is not None
+    assert short_form[0][1].fit == long_form[0][1].fit
+
+
 def test_inline_icon_composition_accepts_multiple_sources():
     expression = (
         "@{icon://wood}~2 "

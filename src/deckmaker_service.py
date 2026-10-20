@@ -46,6 +46,8 @@ class DeckMakerService:
         self._condition = threading.Condition(self._lock)
         self._events: deque[dict] = deque(maxlen=1200)
         self._logs: deque[str] = deque(maxlen=500)
+        self._pending_live_logs: deque[str] = deque(maxlen=500)
+        self._last_live_log_emit = 0.0
         self._sequence = 0
         self._busy = False
         self._closed = False
@@ -93,10 +95,7 @@ class DeckMakerService:
         self._sheet_embed_gid = ""
         self._sheet_embed_status = ""
         self._google_authorization_url = ""
-        self._text_query_service = TM.TextQueryService(
-            timeout_s=60,
-            profile_stem="deckmaker-preview-main",
-        )
+        self._text_query_service = None
         self._text_query_generation = 0
         self._play_server = PLAY.PlayServer()
         self._inkscape_previewer = InkscapePreviewer()
@@ -126,6 +125,12 @@ class DeckMakerService:
     def _ensure_text_query_service(self):
         with self._lock:
             service = self._text_query_service
+            if service is None:
+                service = TM.TextQueryService(
+                    timeout_s=60,
+                    profile_stem=f"deckmaker-preview-main-{self._text_query_generation}",
+                )
+                self._text_query_service = service
         try:
             service.wait_ready(timeout_s=60)
             if not service.healthy:
@@ -183,7 +188,19 @@ class DeckMakerService:
             return
         with self._lock:
             self._logs.append(text)
-        self._emit("log", text=text)
+            self._pending_live_logs.append(text)
+            should_emit = time.monotonic() - self._last_live_log_emit >= 0.2
+        if should_emit:
+            self._flush_live_logs()
+
+    def _flush_live_logs(self) -> None:
+        with self._lock:
+            if not self._pending_live_logs:
+                return
+            lines = list(self._pending_live_logs)
+            self._pending_live_logs.clear()
+            self._last_live_log_emit = time.monotonic()
+        self._emit("logs", lines=lines)
 
     def log(self, message: str) -> None:
         text = str(message or "").strip()
@@ -1146,6 +1163,7 @@ class DeckMakerService:
             self._set_status(f"Error: {error}")
         finally:
             PROGRESS.clear_listener()
+            self._flush_live_logs()
             with self._lock:
                 self._busy = False
                 self._job = ""
@@ -1177,6 +1195,9 @@ class DeckMakerService:
             request = self._request
             sheet_id = "" if request.dataset_source_mode == "local_csv" else request.sheet_id
             started = time.perf_counter()
+            cancel_started = time.perf_counter()
+            self._cancel_preview_prefetch()
+            cancel_ms = (time.perf_counter() - cancel_started) * 1000.0
             TEMPPATHS.cleanup_old_runs()
 
             def on_progress(kind: str, payload: dict):
@@ -1191,7 +1212,10 @@ class DeckMakerService:
                 request.dataset_source_mode, snapshot_path=request.snapshot_path,
             )
             import engine as ENGINE
+            engine_started = time.perf_counter()
             ENGINE.run(effect, APP_VERSION, text_query_service=text_query_service)
+            engine_ms = (time.perf_counter() - engine_started) * 1000.0
+            post_started = time.perf_counter()
             try:
                 import dataset_state as DSTATE
                 if sheet_id:
@@ -1210,7 +1234,13 @@ class DeckMakerService:
                 self._dataset_source_invalid = not self._generated_output_ready
             if not self._generated_output_ready:
                 raise RuntimeError("Generated output SVG not found")
-            self._set_status(f"Done ({time.perf_counter() - started:.2f}s)")
+            post_ms = (time.perf_counter() - post_started) * 1000.0
+            total_ms = (time.perf_counter() - started) * 1000.0
+            LOG.i(
+                "[deckmaker.web.generate] cancel_prefetch_ms=%.1f engine_ms=%.1f post_ms=%.1f total_ms=%.1f",
+                cancel_ms, engine_ms, post_ms, total_ms,
+            )
+            self._set_status(f"Done ({total_ms / 1000.0:.2f}s)")
             if self._pending_play_publish:
                 self._pending_play_publish = False
                 self._publish_play_assets(effect)
@@ -1686,7 +1716,11 @@ class DeckMakerService:
             datasets = self._preview_datasets
             current_key = self._preview_asset_key
         if not datasets:
-            return {"accepted": False, "reason": "Preview dataset is not loaded"}
+            accepted = self.preview(force=False, refresh=True)
+            return {
+                "accepted": bool(accepted),
+                "reason": "Loading the first preview" if accepted else "Preview is busy",
+            }
         selection = PREVIEW.cell_selection(datasets, sheet_row, source_column, current_key)
         if not selection:
             return {"accepted": False, "reason": "The selected row has no preview asset"}
@@ -1965,7 +1999,7 @@ class DeckMakerService:
                     writer.writerow([comment])
                 writer.writerow([])
                 writer.writerow(headers)
-                writer.writerow(["{}"] + [""] * (len(headers) - 1))
+                writer.writerow([""] * len(headers))
             os.replace(temporary, csv_path)
         finally:
             if os.path.exists(temporary):
@@ -1973,7 +2007,6 @@ class DeckMakerService:
 
         self.update({"sourceMode": "local_csv", "sheetId": "", "sheetRange": ""})
         self._set_status(f"Starter CSV created: {csv_path}")
-        self.preview(force=False, refresh=True)
         return True
 
     def google_sheet_to_csv(self) -> bool:
@@ -2064,7 +2097,11 @@ class DeckMakerService:
             self._preview_prefetch_service = None
         if preview_prefetch_service is not None:
             preview_prefetch_service.close()
-        self._text_query_service.close()
+        with self._lock:
+            text_query_service = self._text_query_service
+            self._text_query_service = None
+        if text_query_service is not None:
+            text_query_service.close()
         self._inkscape_previewer.close()
         self._play_server.close()
         try:

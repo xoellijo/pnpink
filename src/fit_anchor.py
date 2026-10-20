@@ -108,8 +108,8 @@ class PlacementSequence:
 def _is_long_fit_ops(ops: str) -> bool:
     s = (ops or "").strip()
     return bool(
-        s.startswith(".Fit")
-        or re.match(r"^[A-Za-z][\w\-.]*\s*\.Fit\s*\{", s)
+        re.match(r"^\.(?:Fit|F)\s*\{", s, re.I)
+        or re.match(r"^[A-Za-z][\w\-.]*\s*\.(?:Fit|F)\s*\{", s, re.I)
         or (s.startswith("{") and s.endswith("}"))
     )
 
@@ -221,11 +221,11 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
             if not _is_long_fit_ops(ops_s):
                 ops_s, local_transform_spec = DSL.split_ops_fit_transform(ops_s)
             # cases with .Fit{...}
-            if ops_s.startswith(".Fit"):
+            if re.match(r"^\.(?:Fit|F)\s*\{", ops_s, re.I):
                 cmd = DSL.parse(f"{base_id}{ops_s}")
                 if cmd and getattr(cmd, "fit", None):
                     fs = cmd.fit
-            elif ops_s and re.match(r"^[A-Za-z][\w\-.]*\s*\.Fit\s*\{", ops_s):
+            elif ops_s and re.match(r"^[A-Za-z][\w\-.]*\s*\.(?:Fit|F)\s*\{", ops_s, re.I):
                 # may carry another target inside
                 cmd = DSL.parse(ops_s)
                 if cmd and getattr(cmd, "target", None) and hasattr(cmd.target, "name"):

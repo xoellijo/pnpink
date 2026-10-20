@@ -210,6 +210,7 @@ def instantiate_plan(plan: TemplatePlan, suffix: str, *, root_doc) -> tuple[inke
         group.append(container)
         instance_parent = container
     target_index = {}
+    instance_id_map = {}
     materialize_static = plan.static_source_mode == "first_instance" and not plan.instance_static_ready
     for item in plan.items:
         if item.kind == "static":
@@ -222,11 +223,17 @@ def instantiate_plan(plan: TemplatePlan, suffix: str, *, root_doc) -> tuple[inke
             continue
         if item.kind == "dynamic":
             cp = deepcopy(item.node)
-            idx = SVG.uniquify_ids_and_build_target_index(cp, suffix, getattr(root_doc, "get_unique_id", None))
+            idx = SVG.uniquify_ids_and_build_target_index(
+                cp,
+                suffix,
+                getattr(root_doc, "get_unique_id", None),
+                id_map_out=instance_id_map,
+            )
             instance_parent.append(cp)
             target_index.update(idx)
             continue
         raise RuntimeError(f"unknown composed plan item kind: {item.kind}")
     if materialize_static:
         plan.instance_static_ready = True
+    SVG.rewrite_local_id_references(group, instance_id_map)
     return group, target_index

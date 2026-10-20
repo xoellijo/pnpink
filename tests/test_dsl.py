@@ -22,6 +22,7 @@ from dsl import (
     is_source_expr,
     split_source_token,
     normalize_ops_suffix,
+    parse_fit_suffix,
     ops_from_fit_spec,
     fit_spec_from_ops,
     parse_dataset_decl,
@@ -88,6 +89,70 @@ def test_fit_largo_minimo():
     assert fs.rotate is None
     assert fs.mirror is None
     assert fs.clip is None
+
+
+@pytest.mark.parametrize("expression", [
+    "ID.Fit{ mode=max }",
+    "ID.Fit{ m=m }",
+    "ID.Fit{ m a=1 c }",
+    "ID.F{ m a=1 c }",
+])
+def test_fit_max_cover_long_and_compact_forms(expression):
+    fs = parse(expression).fit
+    assert fs.mode == "m"
+    if "a=1" in expression:
+        assert fs.anchor == 1
+        assert fs.clip is True
+
+
+def test_fit_short_module_works_in_chains_and_render_conversion():
+    chain = parse_chain("ID.F{ m a=1 c }")
+    assert chain.modules[0].name == "F"
+    assert chain.modules[0].spec.mode == "m"
+    assert chain.modules[0].spec.anchor == 1
+    assert chain.modules[0].spec.clip is True
+
+
+def test_fit_short_module_accepts_parameter_initials():
+    fs = parse("ID.F{ m a=1 b=[2] s=[3 4] c }").fit
+
+    assert fs.mode == "m"
+    assert fs.anchor == 1
+    assert _as_numlist(fs.border) == ["2"]
+    assert fs.shift == [3.0, 4.0]
+    assert fs.clip is True
+
+
+def test_fit_full_and_initial_parameter_names_are_equivalent():
+    full = parse(
+        "ID.Fit{mode=inside anchor=7 border=[-2] shift=[3 4] clip}"
+    ).fit
+    short = parse("ID.F{m=i a=7 b=[-2] s=[3 4] c}").fit
+
+    assert short == full
+
+
+@pytest.mark.parametrize("expression, expected_mode", [
+    ("ID.F{inside}", "i"),
+    ("ID.F{i}", "i"),
+    ("ID.F{max}", "m"),
+    ("ID.F{m}", "m"),
+    ("ID.F{all-stretch}", "a"),
+    ("ID.F{a}", "a"),
+    ("ID.F{best-fit}", "b"),
+    ("ID.F{b}", "b"),
+])
+def test_fit_bare_mode_names_and_codes(expression, expected_mode):
+    fs = parse(expression).fit
+    assert fs.mode == expected_mode
+    assert fs.anchor is None
+    assert fs.border is None
+
+
+def test_parse_fit_suffix_is_the_canonical_standalone_entry_point():
+    assert parse_fit_suffix(".Fit{mode=cover anchor=9}") == parse_fit_suffix(
+        ".F{m=m a=9}"
+    )
 
 def test_fit_largo_border_shift_clip():
     s = "Ico.Fit{ a=1 b=[-2 3] s=[10mm -5%] clip }"
@@ -387,6 +452,10 @@ def test_helpers_source_ops_y_fit():
     assert _is_src(src2, "b.svg")
     assert suf2.kind == "fit" and isinstance(suf2.fit, FitSpec)
     assert suf2.fit.anchor == 7 and suf2.fit.mode == "i"
+
+    src3, suf3 = split_source_token("@{ img src='b.svg' }.F{ a=7 m=i }")
+    assert src3 == src2
+    assert suf3.fit == suf2.fit
 
 def test_ops_roundtrip_fit_spec():
     fs = FitSpec(mode="i", anchor=9, border=["1mm"], shift=[10, -5], rotate=12.0, mirror="h", clip=True, clip_stage="pre")

@@ -15,7 +15,7 @@ Use:
 
 Examples of `Fit` concerns:
 
-- fit mode
+- Fit-Anchor mode
 - anchor
 - border
 - clipping to the placeholder

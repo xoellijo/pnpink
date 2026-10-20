@@ -37,6 +37,17 @@ def test_authenticated_activity_recovers_a_missing_session():
     assert host._had_session
 
 
+def test_browser_status_exposes_latest_heartbeat():
+    host = host_without_server()
+    host.browser_opened("browser", visible=True)
+
+    status = host.browser_status()
+
+    assert status["active"]
+    assert status["present"]
+    assert status["lastSeen"] > 0
+
+
 def test_system_resume_preserves_an_open_browser_session():
     host = host_without_server()
     host.browser_opened("browser", visible=True)

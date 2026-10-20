@@ -19,8 +19,70 @@ import snippets as SNIPPETS
 import temp_paths as TEMPPATHS
 
 
-PREVIEW_CACHE_VERSION = 15
+PREVIEW_CACHE_VERSION = 17
 SYMBOL_CACHE_VERSION = 4
+
+_REFERENCE_RE = re.compile(r"url\(\s*#([^\s)]+)\s*\)")
+_HREF_NAMES = {"href", "{http://www.w3.org/1999/xlink}href"}
+
+
+def _node_references(node) -> set[str]:
+    references: set[str] = set()
+    for attribute, raw_value in node.attrib.items():
+        value = str(raw_value or "").strip()
+        references.update(_REFERENCE_RE.findall(value))
+        if attribute in _HREF_NAMES and value.startswith("#"):
+            references.add(value[1:])
+    references.update(_REFERENCE_RE.findall(str(node.text or "")))
+    return references
+
+
+def _prune_preview_dependencies(document) -> None:
+    """Discard template nodes and defs that the generated preview cannot reach."""
+    from lxml import etree
+
+    root = document.getroot()
+    output = next((node for node in root.iter() if node.get("id") == "pnpink-output"), None)
+    if output is None:
+        return
+
+    nodes_by_id = {
+        str(node.get("id")): node
+        for node in root.iter()
+        if str(node.get("id") or "").strip()
+    }
+    required_ids: set[str] = set()
+    pending = set()
+    for node in output.iter():
+        pending.update(_node_references(node))
+    while pending:
+        reference = pending.pop()
+        if reference in required_ids:
+            continue
+        required_ids.add(reference)
+        target = nodes_by_id.get(reference)
+        if target is None:
+            continue
+        for node in target.iter():
+            pending.update(_node_references(node) - required_ids)
+
+    required_nodes = set(output.iter())
+    required_nodes.update(output.iterancestors())
+    for reference in required_ids:
+        target = nodes_by_id.get(reference)
+        if target is None:
+            continue
+        required_nodes.update(target.iterancestors())
+        required_nodes.update(target.iter())
+
+    for parent in list(root.iter()):
+        for child in list(parent):
+            if child in required_nodes:
+                continue
+            local_name = etree.QName(child).localname
+            if local_name in {"namedview", "metadata", "style"}:
+                continue
+            parent.remove(child)
 
 
 def _isolate_generated_output(effect) -> None:
@@ -31,6 +93,7 @@ def _isolate_generated_output(effect) -> None:
         source_svg_path=effect.document_path(),
         absolutize_images=False,
     )
+    _prune_preview_dependencies(effect.document)
 
 
 def _document_digest(effect) -> str:

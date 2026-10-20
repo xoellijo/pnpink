@@ -144,6 +144,8 @@ Comments allow you to create directives outside the dataset and are a simple way
 \* Comment markers apply only to non-text cells to avoid collisions with literal content. In text cells, \# and \## are treated as plain characters.
 
 ## 4. Fit & Anchor Module
+
+> **Archived documentation:** this imported page is retained only for historical reference. The canonical and maintained Fit-Anchor reference is [Fit-Anchor](../dsl/fit-anchor.md). In particular, use `mode` / `m`; `fitmode` / `f` are obsolete names.
 The **Fit** module (Fit{} or shorthand F{} or ~) describes how one element is positioned relative to another — usually a rect acting as a **placeholder**.
 
 Example:
@@ -153,7 +155,7 @@ ID.Fit{ inside anchor=7 }
 This places the element defined by ID inside its anchor rect, anchored at position 7 (top-left).
 
 ### 4.1. Syntax
-ID.Fit{ border fitmode anchor shift clip }
+ID.Fit{ mode anchor border shift clip }
 
 List elements are space-separated.
 
@@ -180,21 +182,21 @@ ID~7 → minimal form
 
 If not specified, the default anchor is ~5 (center)
 
-### 4.3. Fit Mode (\*f=)
+### 4.3. Mode (`mode=` / `m=`)
 Defines how the target scales relative to its anchor rect.\
-It is the **default parameter**, so fitmode= can be omitted.
+The parameter name can be omitted when a mode name or code is used alone.
 
 Examples:
 
-ID.Fit{fitmode=inside}
+ID.Fit{mode=inside}
 
 ID.F{i}
 
 ID~i
 
-If no fitmode is given, inside (scaling to fit inside) is assumed.
+If no mode is given, inside (scaling to fit inside) is assumed.
 
-#### Fit Mode Reference
+#### Mode Reference
 | **Code** | **Name** | **Description** |
 |----|----|----|
 | i | inside / contain | Scales proportionally to fit entirely within the rect (default). |
@@ -205,9 +207,10 @@ If no fitmode is given, inside (scaling to fit inside) is assumed.
 | x | x-stretch | Stretches width to match rect (non-proportional). |
 | y | y-stretch | Stretches height to match rect (non-proportional). |
 | a | all-stretch | Scales independently in X/Y to fill rect exactly. |
-| t | tile | Tiles the element as a pattern within the rect. |
-| b | best-fit ⚙️ | Smart mode — mixes m, a, and c depending on aspect ratio. Slightly deforms and clips automatically for composition balance. |
-| c | clip / cut ✂️ | Explicit clipping action — synonym of ! or !! depending on context. |
+| t | tile | Reserved; special tile scaling is not implemented yet. |
+| b | best-fit | Reserved; special best-fit scaling is not implemented yet. |
+
+`c` is the initial of the `clip` parameter, not a mode code.
 
 ### 4.4. Border (b=)
 Defines padding or margin around the anchor rect.\
@@ -254,10 +257,10 @@ border=\[-100%x100%\] → horizontal flip\
 In compact fit_anchor nomenclature, b can be omitted, being the firs \[ \] field (allways after the anchor number).\
 ~\[-50%\]→ inside the placeholder rect, reduced by 50% (~5 centered by default).
 
-### 4.5. Translate (t=)
+### 4.5. Shift (`shift=` / `s=`)
 Offsets the final position \[x y\] relative to the anchor rect, in absolute or percentage units.
 
-ID.Fit{anchor=7 trasalate=\[-100% -100%\]}
+ID.Fit{anchor=7 shift=\[-100% -100%\]}
 
 → Positions ID outside the rect, touching its top-left corner.
 
