@@ -35,7 +35,8 @@ from web_app import load_window_geometry, open_web_app, save_window_geometry
 
 HTTP_HOST = "127.0.0.1"
 HTTP_PORT = int(os.environ.get("PNPINK_DECKMAKER_WEB_PORT") or 48753)
-ASSET_DIR = Path(__file__).resolve().parent / "assets" / "deckmaker_web"
+WEB_ROOT = Path(__file__).resolve().parent / "deckmaker_web"
+SHARED_ASSET_DIR = Path(__file__).resolve().parent / "assets"
 
 
 def _open_browser(url: str) -> bool:
@@ -255,8 +256,8 @@ class DeckMakerWebHost:
                 return value if isinstance(value, dict) else {}
 
             def _asset(self, relative: str):
-                target = (ASSET_DIR / relative).resolve()
-                if ASSET_DIR.resolve() not in target.parents and target != ASSET_DIR.resolve():
+                target = (WEB_ROOT / relative).resolve()
+                if WEB_ROOT.resolve() not in target.parents and target != WEB_ROOT.resolve():
                     self.send_error(HTTPStatus.NOT_FOUND)
                     return
                 if not target.is_file():
@@ -355,8 +356,8 @@ class DeckMakerWebHost:
                     return
                 if parsed.path.startswith("/shared-assets/"):
                     relative = parsed.path.removeprefix("/shared-assets/")
-                    target = (ASSET_DIR.parent / relative).resolve()
-                    if target.parent != ASSET_DIR.parent.resolve():
+                    target = (SHARED_ASSET_DIR / relative).resolve()
+                    if target.parent != SHARED_ASSET_DIR.resolve():
                         self.send_error(HTTPStatus.NOT_FOUND)
                         return
                     self._file(str(target), mimetypes.guess_type(str(target))[0] or "application/octet-stream")

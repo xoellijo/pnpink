@@ -1,74 +1,42 @@
-[0.82.0-beta.1]
-- Unify long and abbreviated Fit-Anchor parsing across dataset cells, Sources, object arrays, overlays, and inline icons. `Fit`/`F` and `mode/m`, `anchor/a`, `border/b`, `shift/s`, and `clip/c` now share one canonical parser.
-- Clarify Fit-Anchor documentation around `mode`, place it before `border`, remove the obsolete `fitmode`/`f` naming, and document ambiguous bare mode codes such as `.F{a}`, `.F{b}`, and `.F{m}`.
-- Keep the active local-CSV dataset header visible only after it scrolls out of view, preserve physical CSV row numbers, and avoid disruptive jumps when crossing into later datasets.
-- Improve Tabulator editing by keeping the edited cell and viewport stable, scrolling the larger editor fully into view, using `Enter` to commit and `Alt+Enter` for line breaks, and suppressing tooltips beneath the editor.
-- Restore reliable dataset-to-preview synchronization after source changes and first-time starter CSV creation without forcing the dataset selection back to cell A1.
-- Reduce preview work by pruning unreachable template dependencies, reusing the resident text-query service, batching live log events, and refreshing the first valid asset after generation.
-- Improve the isolated Inkscape preview lifecycle with safe first-run geometry, stable reloads that preserve the existing viewport, immediate viewer shutdown, and clearer timing diagnostics.
-- Repair cloned SVG references when instance IDs change, including `shape-inside` frames, arrays, composed template roots, and objects moved together with their template groups.
-- Update the Medieval Showcase regression project and expand automated coverage for Fit-Anchor aliases, preview pruning, browser lifecycle, array placement, and SVG reference rewriting.
+[0.82-beta.1]
+- Improve DeckMaker Web editing, dataset navigation, source switching, and synchronization with previews.
+- Make browser and Inkscape previews faster and more reliable, including startup, reload, viewport preservation, and shutdown.
+- Unify Fit-Anchor syntax and aliases across objects, arrays, Sources, overlays, and inline icons.
+- Fix SVG references, dynamic text frames, moved templates, arrays, and composed objects in generated cards.
+- Improve the Medieval Showcase example and the documentation for DeckMaker Web, Fit-Anchor, Transform, and compact notation.
 
-[0.78.0-beta.1]
-- Add a full local CSV editor to DeckMaker Web with spreadsheet coordinates, atomic edits, row and column operations, semantic PnPInk highlighting, dynamic sticky dataset headers, external-change detection, and a lil-xgui context menu.
-- Remember each template's dataset source and add assisted starter CSV creation, Google Sheet to CSV synchronization with one emergency `.csv.old` backup, direct spreadsheet opening, and bottom/right dataset docking.
-- Add dataset-to-preview and optional two-way Inkscape selection synchronization while ignoring hidden template nodes and preserving physical CSV row numbers.
-- Add an isolated persistent Inkscape preview viewer that reloads SVGs in place, preserves window geometry and viewport, and closes with DeckMaker Web.
-- Improve DeckMaker Web lifecycle recovery after suspension, remember Chromium app-window geometry, and keep browser, template, dataset, and preview state synchronized.
-- Add explicit `:(...):` inline-icon compositions so document objects and multiple external Sources with URI colons can share one text placeholder safely.
-- Keep document objects used in arrays relative to their own geometry, so moving the template or its library groups cannot displace keyword icons outside their placeholders.
-- Detect saved SVG template changes while a preview is active, invalidate its generated cache, and refresh the current asset automatically.
-- Close the external Inkscape preview immediately when the last DeckMaker Web window closes, while retaining the server shutdown grace period.
-- Restore DeckMaker Web's saved Chromium window coordinates during normal startup, including placement on secondary monitors.
-- Let assisted starter CSV creation discover the template bbox from its Inkscape object label; SVG descriptions carry no PnPInk semantics.
-- Consolidate Google Sheet and CSV loading paths used by generation, preview, and synchronization, and propagate source-field metadata into generated SVG objects.
-- Reorganize DeckMaker Web into compact Dataset, Preview, Tools, Configuration, PnPPlay, and Help controls, with custom status, log, and dataset interaction surfaces.
+[0.78-beta.1]
+- Add an editable local CSV spreadsheet to DeckMaker Web with PnPInk-aware highlighting and row/column tools.
+- Add assisted CSV creation, Google Sheets synchronization, source selection, and flexible dataset placement.
+- Synchronize dataset cells, generated previews, and optional Inkscape selections.
+- Add a persistent Inkscape preview that preserves its viewport and refreshes when templates change.
+- Improve inline icon composition, moved-template handling, session recovery, and the DeckMaker Web interface.
 
-[0.74.0-beta.3]
-- Restore compatibility with Inkscape 1.2, where `inkex.etree` is not exported, through a shared lxml-backed compatibility adapter.
+[0.74-beta.3]
+- Restore compatibility with Inkscape 1.2.
 
-[0.74.0-beta.2]
-- Keep Deckmaker Web alive while its Chrome app window is hidden or minimized, and recover browser sessions from subsequent authenticated activity.
-- Add an explicit client heartbeat so preview refresh and asset navigation cannot be left connected to a closed backend.
+[0.74-beta.2]
+- Improve DeckMaker Web session recovery when its browser window is hidden, minimized, or reopened.
 
-[0.74.0-beta.1]
-- Publish the current development line as an isolated beta without changing the stable branch.
-- Separate bundled defaults from per-user preferences so local paths and settings are never written into the installed source tree.
-- Preserve existing user preferences when upgrading from installations that stored them beside the extension.
-- Add a dedicated prerelease payload channel that does not replace the stable `latest` package.
+[0.74-beta.1]
+- Introduce an isolated beta channel that does not replace the stable release.
+- Separate bundled defaults from personal preferences and preserve settings during upgrades.
 
 [0.73]
 - This is a major development jump with extensive internal and workflow changes. Although existing behavior is intended to remain compatible, regressions may appear in features that worked in previous versions; please report them.
-- Add Deckmaker Web as a lightweight browser interface alongside the existing Tkinter application, with embedded Google Sheets editing, fast item previews, template navigation, live logs, and compact export and PnPPlay controls.
-- Add an interactive spritesheet inspector to Deckmaker Web, including image drag-and-drop, live grid, gap and border controls, zoom, pan, rotation, and copyable PnPInk definitions and frame references.
-- Add persistent preview caches, warm Inkscape workers, dependency-aware dataset invalidation, background pre-rendering, and focused Google Sheets polling to reduce preview latency.
-- Split PnPPlay into its own project while preserving PnPInk integration through the shared asset store and local server/designer controls.
-- Add a shared per-user Python dependency runtime under `PnPInk/python`, bootstrapped with `pip.pyz`, isolated from Inkscape, atomically versioned per interpreter, and reusable by PnPInk and PnPPlay.
-- Simplify PnPPlay publishing around stable `$id` values: packs update live while image blobs remain content-addressed and deduplicated.
-- Publish generated PnPPlay components as immutable, versioned asset packs in a shared content-addressed local store, reusing unchanged fronts and backs across packs and versions.
-- Add `Pages`, `Items`, and `IDs` units to additional-format export, including compact item selectors, exact card-bbox crops without page marks, copy deduplication, shared or per-card backs, and an `items.json` manifest for playable packages.
-- Add semantic PnPPlay component metadata to generated item manifests and content-address exported assets for reliable synchronization.
-- Integrate Deckmaker with PnPPlay through regeneration and asset synchronization, linked runtime games, Game Designer, lobby, and new-room actions.
+- Add DeckMaker Web with Google Sheets editing, previews, template navigation, export controls, and PnPPlay integration.
+- Add an interactive spritesheet inspector with grid, spacing, zoom, pan, rotation, and copyable definitions.
+- Improve preview speed with persistent caches, background preparation, and focused Google Sheets updates.
+- Add shared Python dependency installation for PnPInk and PnPPlay.
+- Add richer exports by page, item, or ID, including playable asset manifests and reusable card backs.
+- Integrate PnPPlay asset creation, synchronization, local server, and Game Designer workflows.
 
 [0.57]
-- Fix rectangle text decorators with user-space fill gradients by normalizing the copied gradient from the style rect's original bbox before fitting it to the measured text.
-- Give text decorators 1 pt of default padding on all four sides while preserving explicit border values, including zero.
-- Allow headers such as `placeholder=.L{3x1}~i5` to provide a default array Layout together with global Fit/Anchor options; cell-local layouts take precedence.
-- Add rich-text decorations through `pnp:decoration` and `:TM(...)`, supporting optional border/layer arguments plus path, layered path-group, and fitted rectangle templates with copied paint styles, corrected round/square caps, front/behind layers, CSS-like padding, and shared persistent-shell measurement.
-- Reuse a warm Google Sheets OAuth/HTTPS session for DeckMaker's lifetime, cache sheet titles, remove duplicate range resolution, and show dataset loading separately from SVG rendering.
-- Resolve Google Drive folder sources asynchronously across dataset sections, refresh each folder once per generation, and invalidate changed cached files through Drive modification metadata.
-- Add dynamic `shape-inside` frames through `textID[shape-inside]` and `Transform{inside=x|y|a}`, including empty-frame removal, inline-icon-aware sizing, variable-height layouts, and reusable gradients.
-- Preserve the original flow geometry when fitting transformed `shape-inside` text, so compressed or stretched text cannot disappear after its visible frame is trimmed.
-- Add `force_bbox` guide rectangles, with case-insensitive separator variants, to work around unreliable Inkscape bounding boxes for groups containing text.
-- Support multiple inline icons sharing one text slot with the same Fit/Anchor/Transform behavior used by multi-value cells.
-- Improve snippet parsing so nested braces inside conditional expressions and transforms are handled correctly.
-- Speed up text geometry discovery with a persistent Inkscape shell, compact per-card probes, parallel warm-up, and focused profiling.
-- Make the persistent-shell pipeline the only text-geometry path, removing the monolithic CLI fallback, experimental backend selector, and unused query-tree minimization code.
-- Reuse the text-measurement Inkscape helper across DeckMaker generations, skip text scans when a card has no geometry consumers, and move per-card/per-page diagnostics from INFO to DEBUG.
-- Align the DeckMaker application and INX labels with version 0.57 and make release builds reject mismatched application or extension versions.
-- Replace the legacy installers with stable `pnpink_install.bat` and `pnpink_install.sh` launchers that download the latest or a selected release; Windows can install a private Ghostscript unless `--no-ghostscript` is used.
-- Simplify the Python installer by removing obsolete development-version coexistence and manifest rewriting machinery.
-- Rewrite the README and getting-started documentation around approachable card, event-badge, and variable-data PDF workflows, and consolidate plain text, rich text, snippets, inline icons, dynamic frames, and path decorations in a dedicated Text guide.
+- Add richer text decorations, dynamic text frames, reusable gradients, multiple inline icons, and more robust snippets.
+- Improve array layouts, Fit-Anchor behavior, and optional `force_bbox` guides for complex SVG groups.
+- Speed up Google Sheets, Google Drive, and text measurement during generation.
+- Add stable cross-platform installers and simplify upgrades and dependency setup.
+- Improve the getting-started, text, snippets, inline icons, dynamic frames, and export documentation.
 
 [0.55]
 - Add dataset symbol rows with `symbol_id` in column A, generating a row into `<defs>` without consuming page layout slots.

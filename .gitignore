@@ -3,6 +3,9 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Local test suite (kept out of public release branches)
+tests/
+
 # Logs
 *.log
 logs/

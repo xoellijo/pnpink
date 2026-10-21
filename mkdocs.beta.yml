@@ -1,0 +1,5 @@
+INHERIT: mkdocs.pdf.yml
+
+site_name: PnPInk Beta Documentation
+site_description: Documentation for the current PnPInk beta release
+site_url: https://xoellijo.github.io/pnpink/beta/

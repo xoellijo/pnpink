@@ -32,6 +32,10 @@ jobs:
             echo "Tag must match v* (example: v0.41). Got: ${TAG}" >&2
             exit 1
           fi
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "Version must use two numeric levels (example: 0.82 or 0.82-beta.1). Got: ${VERSION}" >&2
+            exit 1
+          fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           if [[ "${VERSION}" == *-* ]]; then
@@ -50,6 +54,7 @@ jobs:
           mkdir -p dist
           python - <<'PY'
           import os
+          import subprocess
           import zipfile
           from pathlib import Path
 
@@ -72,12 +77,17 @@ jobs:
 
           payload_name = f"pnpink_payload_{version}.zip"
           payload_path = dist / payload_name
+          tracked_src = subprocess.check_output(
+              ["git", "ls-files", "-z", "src"],
+          ).decode("utf-8").split("\0")
           with zipfile.ZipFile(payload_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-              for p in sorted(src.rglob("*")):
-                  if p.is_file():
-                      if p.parent == src / "docs" and p.suffix.lower() == ".pdf":
-                          continue
-                      zf.write(p, p.relative_to(root).as_posix())
+              for name in sorted(filter(None, tracked_src)):
+                  p = root / name
+                  if not p.is_file():
+                      continue
+                  if p.parent == src / "docs" and p.suffix.lower() == ".pdf":
+                      continue
+                  zf.write(p, p.relative_to(root).as_posix())
               zf.write(root / "pnp_python.py", "src/pnp_python.py")
 
           latest_name = os.environ["LATEST_NAME"]

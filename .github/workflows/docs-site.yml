@@ -2,11 +2,12 @@ name: Docs Site
 
 on:
   push:
-    branches: [main]
+    branches: [main, beta]
     paths:
       - "docs/**"
       - "mkdocs.yml"
       - "mkdocs.pdf.yml"
+      - "mkdocs.beta.yml"
       - ".github/workflows/docs-site.yml"
   workflow_dispatch:
 
@@ -23,8 +24,17 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout stable documentation
         uses: actions/checkout@v4
+        with:
+          ref: main
+          path: stable
+
+      - name: Checkout beta documentation
+        uses: actions/checkout@v4
+        with:
+          ref: beta
+          path: beta
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -46,12 +56,17 @@ jobs:
       - name: Install docs dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r docs/requirements-pdf.txt
+          python -m pip install -r beta/docs/requirements-pdf.txt
 
-      - name: Build MkDocs site with PDF guide
+      - name: Build stable and beta documentation
         run: |
-          mkdocs build -f mkdocs.pdf.yml --strict
+          cd stable
+          mkdocs build -f mkdocs.pdf.yml --strict -d ../site
+          cd ../beta
+          mkdocs build -f mkdocs.beta.yml --strict -d ../site/beta
+          cd ..
           test -f site/pnpink.pdf
+          test -f site/beta/pnpink.pdf
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

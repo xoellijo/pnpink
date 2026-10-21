@@ -163,3 +163,5 @@ When a required value is omitted, the last active state may be reused (module-de
 
 For exact page-state rules, see [Page](page.md).
 For Fit-Anchor shorthand order and precedence, see [Fit-Anchor](fit-anchor.md).
+For a visual quick reference combining Fit-Anchor and Transform tokens, see
+[Compact Notation (Fit-Anchor and Transform)](compact-notation.md).

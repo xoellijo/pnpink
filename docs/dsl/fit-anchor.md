@@ -94,6 +94,10 @@ Compact form:
 object_id~...
 ```
 
+See [Compact Notation (Fit-Anchor and Transform)](compact-notation.md) for a
+visual quick-reference covering token order, defaults, optional parts, and
+combined examples.
+
 ### Compact Example (Explained)
 Example:
 
@@ -101,7 +105,7 @@ Example:
 
 |  |
 | --- |
-| id1~[10%]i7^^[-50% 0]! |
+| id1~[10%]i7[-50% 0]!^^ |
 
 </div>
 
@@ -110,9 +114,9 @@ Read it left to right:
 - `[10%]` -> border (resize context around placeholder),
 - `i` -> mode `inside`,
 - `7` -> anchor top-left,
-- `^^` -> Transform rotate 180 deg,
 - `[-50% 0]` -> shift left by half placeholder width,
-- `!` -> clip to the placeholder shape.
+- `!` -> clip to the placeholder shape,
+- `^^` -> Transform rotate 180 deg.
 
 This compact style is very expressive once you know the token order.
 
@@ -264,21 +268,11 @@ object_id.F{m=m c}
 ```
 
 ```txt
-object_id~i8![0 %]   # pre-clip then shift
-object_id~i8[0 %]!   # shift then post-clip
+object_id~!i8[0 %]   # pre-clip, then fit and shift
+object_id~i8[0 %]!   # fit and shift, then post-clip
 ```
 
 Position of `!` matters.
-
-## Compact Token Order (Reference)
-When using shorthand `~`, tokens are parsed in this order:
-
-1. Optional border list (`[t r b l]`, `[x]`, `[x y]`)
-2. Mode + anchor (`i7`, `m5`, `a9`, etc.)
-3. Optional shift list (`[dx dy]`)
-4. Optional clip (`!`)
-5. Optional Transform rotation (`^deg`, `^^`, `^^^`)
-6. Optional Transform mirror (`|`, `||`)
 
 ## Priority and Overrides
 When multiple Fit-Anchor layers apply, use this precedence:
@@ -305,97 +299,6 @@ Effective merge:
 - apply iterator-level defaults,
 - apply item-level overrides last.
 
-## Practical Examples
-This section intentionally groups compact real-life patterns.
-
-## Compact Notation (Clarifications)
-This section consolidates the compact syntax details that usually cause confusion.
-
-### With `~` and without `~`
-`~` is a compact suffix for the main Fit and Transform operations.
-It is not an exact shorthand for `Fit{}` only: `^` and `|` belong to `Transform`.
-
-For simple rotate/mirror/clip operations, `~` can be omitted:
-
-- `id~^15` and `id^15` are equivalent.
-- `id~!` and `id!` are equivalent.
-- `id~|` and `id|` are equivalent.
-- `id~||` and `id||` are equivalent.
-
-Use the `~` form when you want the full compact chain in one expression (`border + fit/anchor + shift + clip + transform rotate/mirror`).
-
-### Combined compact operations
-You can combine these operators in one token, for example:
-
-```txt
-id~i5^^!
-id^90|
-id~m7[0 5%]!
-```
-
-### Parsing and precedence reminder
-- The compact parser still applies the same Fit-Anchor merge precedence: header defaults -> iterator/global ops -> item-local ops.
-- For conflicting properties, the last layer overrides previous ones.
-
-### Example 1: Simple inside-center
-
-<div class="csv-dataset dataset-body-only" markdown>
-
-|  |
-| --- |
-| art_id~i5 |
-
-</div>
-
-Places object inside placeholder, centered.
-
-### Example 2: Cover and clip
-
-<div class="csv-dataset dataset-body-only" markdown>
-
-|  |
-| --- |
-| art_id~m5! |
-
-</div>
-
-Covers placeholder area, then clips overflow to placeholder shape.
-
-### Example 3: Corner icon with offset
-
-<div class="csv-dataset dataset-body-only" markdown>
-
-|  |
-| --- |
-| icon_id~i7[2 -2] |
-
-</div>
-
-Inside fit, top-left anchor, then fine offset.
-
-### Example 4: Multiple objects in one cell
-
-<div class="csv-dataset dataset-body-only" markdown>
-
-|  |
-| --- |
-| id1~7 id2~9 id3~3 |
-
-</div>
-
-Places three objects in one placeholder flow, each with its own anchor.
-
-### Example 5: Array group with local layout
-
-<div class="csv-dataset dataset-body-only" markdown>
-
-|  |
-| --- |
-| [id1 id2 id3].L{3x1 g=2}~i5 |
-
-</div>
-
-Builds an array object, lays it out locally, then applies Fit-Anchor as one grouped target.
 
 ## Forcing a Group BBox
 
@@ -405,5 +308,6 @@ If Inkex measures a group incorrectly, especially when it contains text, add a d
 
 ## Related Pages
 
+- [Compact Notation (Fit-Anchor and Transform)](compact-notation.md)
 - [Transform](transform.md)
 - [Source](source.md)

@@ -63,6 +63,8 @@ Current parameters are:
 - `text` or `t`
 - `inside` or `i`
 
+<a id="rotate-and-mirror"></a>
+
 ## Rotate and Mirror
 
 <div class="csv-dataset dataset-body-only" markdown>
@@ -90,6 +92,8 @@ Compact `~` can still carry the same operations:
 </div>
 
 In compact form, `^` means rotate and `|` / `||` mean horizontal / vertical mirror.
+See [Compact Notation (Fit-Anchor and Transform)](compact-notation.md) for the
+complete token order and combined examples.
 
 ## Opacity
 
@@ -260,4 +264,5 @@ This is useful for:
 ## Related Pages
 
 - [Fit-Anchor](fit-anchor.md)
+- [Compact Notation (Fit-Anchor and Transform)](compact-notation.md)
 - [Source](source.md)

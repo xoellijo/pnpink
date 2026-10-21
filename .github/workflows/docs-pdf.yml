@@ -82,7 +82,7 @@ jobs:
           TAG="${{ github.event.inputs.release_tag }}"
           case "$TAG" in
             v*) ;;
-            *) echo "release_tag must start with 'v' (example: v0.42.0)"; exit 1 ;;
+            *) echo "release_tag must start with 'v' (example: v0.42)"; exit 1 ;;
           esac
           git fetch --tags
           if git rev-parse "$TAG" >/dev/null 2>&1; then

@@ -58,7 +58,7 @@ CLIENT_ID: str = os.environ.get(
 )
 CLIENT_SECRET: str = os.environ.get(
     "PNPINK_GSHEETS_CLIENT_SECRET",
-    ""
+    "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"
 )
 
 AUTH_URL   = "https://accounts.google.com/o/oauth2/v2/auth"
