@@ -63,8 +63,6 @@ Current parameters are:
 - `text` or `t`
 - `inside` or `i`
 
-<a id="rotate-and-mirror"></a>
-
 ## Rotate and Mirror
 
 <div class="csv-dataset dataset-body-only" markdown>

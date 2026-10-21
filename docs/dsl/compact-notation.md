@@ -46,8 +46,8 @@ art~[-2]i7[2 -2]!^15|
 | `anchor` | Aligns the object using keypad positions `1..9` | `7` top-left, `5` center, `3` bottom-right | `5` | [Anchor](fit-anchor.md#anchor-anchor-a) |
 | `[shift]` | Moves the result after fitting and anchoring | `[2 -2]`, `[10% 0]` | `[0 0]` | [Shift](fit-anchor.md#shift-shift-s) |
 | `!` | Clips overflow to the placeholder | `!` | Off | [Clip](fit-anchor.md#clip-clip-c) |
-| `^rotation` | Rotates the placed object | `^`, `^^`, `^^^`, `^-30`, `^15` | `0°` | [Rotate](transform.md#rotate-and-mirror) |
-| `|mirror` | Mirrors the placed object | `|` horizontal, `||` vertical | Off | [Mirror](transform.md#rotate-and-mirror) |
+| `^rotation` | Rotates the placed object | `^`, `^^`, `^^^`, `^-30`, `^15` | `0°` | [Rotate](transform.md#854-rotate-and-mirror) |
+| `|mirror` | Mirrors the placed object | `|` horizontal, `||` vertical | Off | [Mirror](transform.md#854-rotate-and-mirror) |
 
 Every operation group shown after `~` is optional. In practice, include at
 least the operation you want to make explicit:
