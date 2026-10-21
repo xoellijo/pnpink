@@ -1,4 +1,4 @@
-INHERIT: mkdocs.pdf.yml
+INHERIT: mkdocs.yml
 
 site_name: PnPInk Beta Documentation
 site_description: Documentation for the current PnPInk beta release

@@ -66,7 +66,7 @@ jobs:
           mkdocs build -f mkdocs.beta.yml --strict -d ../site/beta
           cd ..
           test -f site/pnpink.pdf
-          test -f site/beta/pnpink.pdf
+          test -f site/beta/index.html
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
