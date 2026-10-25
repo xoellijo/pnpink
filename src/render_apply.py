@@ -470,8 +470,11 @@ def _normalize_source_token(raw_token: str, sm=None, ss_registry=None):
                 _l.i(f"[spritesheet] token seen in render: '{token}'")
                 try:
                     if len(dims) == 1 and any(isinstance(x, str) and re.search(r"[A-Za-z]+\d+", x) for x in (dims[0] or [])):
-                        frames = RTK.expand_cell_selector(
+                        page, cell_selector = RTK.split_page_cell_selector(
                             " ".join(str(x) for x in (dims[0] or [])),
+                        )
+                        frames = RTK.expand_cell_selector(
+                            cell_selector,
                             cols=int(getattr(ss_def, "cols", 0) or 0),
                             rows=int(getattr(ss_def, "rows", 0) or 0),
                             sweep_rows_first=bool(getattr(ss_def, "sweep_rows_first", True)),

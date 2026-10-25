@@ -44,18 +44,9 @@ See also [Packages](dsl/packages.md).
 
 ## Utility tools
 
-### Preferences
-Visible in Inkscape as:
-
-`Extensions > PnPInk > Preferences`
-
-Purpose:
-
-- configure console and file log levels,
-- configure JSON logging behavior,
-- configure SVG output splitting,
-- configure export and advanced generation options,
-- persist preferences in `preferences.ini`.
+PnPInk preferences are stored in `preferences.ini`. Browser selection no longer
+uses a separate Tkinter extension; it is configured with the
+`deckmaker_web_browser` preference until the web preference editor is available.
 
 ### Docs and Examples
 Visible in Inkscape as:

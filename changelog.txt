@@ -1,3 +1,7 @@
+[0.82-beta.2]
+- Add an independent spritesheet editor with multipage PDF references and reusable page assets.
+- Improve DeckMaker Web preview, window handling, and browser preferences.
+
 [0.82-beta.1]
 - Improve DeckMaker Web editing, dataset navigation, source switching, and synchronization with previews.
 - Make browser and Inkscape previews faster and more reliable, including startup, reload, viewport preservation, and shutdown.

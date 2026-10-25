@@ -94,11 +94,6 @@ export function layoutExpression(grid, model) {
   return `.Layout{${parts.join(' ')}}`;
 }
 
-export function spriteReference(model, cell) {
-  const alias = String(model.spriteAlias || 'sprites').trim().replace(/^@/, '') || 'sprites';
-  return cell ? `@${alias}[${cell.address}]` : `@${alias}[*]`;
-}
-
 export function spritesheetDefinition(model, grid, sourceName) {
   const alias = String(model.spriteAlias || 'sprites').trim().replace(/^@/, '') || 'sprites';
   const source = String(sourceName || 'spritesheet.png').trim();

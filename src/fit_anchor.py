@@ -394,6 +394,22 @@ def apply_to_by_ids(scope, base_id, rect_id, ops_full, place_mode="clone", rect_
                 place = "use+unlink"
         except Exception:
             pass
+    # A <use> keeps the referenced node's hidden state. Template resources are
+    # commonly hidden in Inkscape, so materialize those sources while leaving
+    # the original resource untouched.
+    if place in ("use", "use+unlink") and svg.is_effectively_hidden(base):
+        place = "deep"
+    if place in ("use", "use+unlink"):
+        current = base
+        inside_scope = False
+        while current is not None:
+            if current is scope:
+                inside_scope = True
+                break
+            current = current.getparent()
+        base_tag = str(getattr(base, "tag", "") or "")
+        if not inside_scope and not base_tag.endswith("symbol"):
+            place = "deep"
     try:
         id_prefix = base.get("data-id-prefix") if "data-id-prefix" in dict(base.attrib or {}) else "af"
     except Exception:

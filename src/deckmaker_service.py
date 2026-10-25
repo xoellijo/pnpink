@@ -21,6 +21,7 @@ import deckmaker_play as PLAY
 import deckmaker_preview as PREVIEW
 import deckmaker_runner as RUNNER
 import deckmaker_spritesheet as SPRITESHEET
+from deckmaker_pdf_spritesheet import PdfSpritesheet
 import dataset as DATASET
 from deckmaker_types import APP_VERSION, OTHER_EXPORT_FORMATS, AppRequest, ExportOptions
 import const as CONST
@@ -98,7 +99,11 @@ class DeckMakerService:
         self._text_query_service = None
         self._text_query_generation = 0
         self._play_server = PLAY.PlayServer()
+        self._pdf_spritesheet = PdfSpritesheet()
         self._inkscape_previewer = InkscapePreviewer()
+        if prefs.get_deckmaker_preview_backend() == "inkscape":
+            template_name = os.path.basename(initial.template) if initial and initial.template else "No template"
+            self._inkscape_previewer.prewarm(f"PnPInk preview â€” {template_name}")
         self._static_options = self._build_static_options()
         LOG.add_listener(self._on_log_line)
         try:
@@ -344,10 +349,16 @@ class DeckMakerService:
             self.log("Using current unsaved Inkscape document snapshot")
         self._emit("activate")
         self._emit("state")
+        if prefs.get_deckmaker_preview_backend() == "inkscape":
+            self._inkscape_previewer.prewarm(
+                f"PnPInk preview — {os.path.basename(template) or 'No template'}"
+            )
         if request.autorun:
             self.generate()
         else:
             self._warm_google_session()
+            if has_dataset:
+                self.preview(force=False, refresh=True)
 
     def _refresh_templates(self) -> None:
         try:
@@ -372,7 +383,6 @@ class DeckMakerService:
             self.refresh_previews()
             return self.state()
         self.open_request(AppRequest(template=target, log_level=current.log_level))
-        self.preview(force=False, refresh=True)
         return self.state()
 
     def template_preview(self) -> str:
@@ -814,6 +824,10 @@ class DeckMakerService:
             "fileLog": prefs.get_file_level(),
             "imagePreflight": prefs.get_image_preflight(),
             "previewBackend": prefs.get_deckmaker_preview_backend(),
+            "previewSelectionSync": prefs.get_deckmaker_preview_selection_sync(),
+            "datasetDock": prefs.get_deckmaker_dataset_dock(),
+            "datasetSplitBottom": prefs.get_deckmaker_dataset_split_bottom(),
+            "datasetSplitRight": prefs.get_deckmaker_dataset_split_right(),
         }
 
     @staticmethod
@@ -963,6 +977,17 @@ class DeckMakerService:
             raise RuntimeError(self._sprite_message or "No spritesheet selection")
         return SPRITESHEET.render_preview(selection)
 
+    def load_pdf_spritesheet(self, filename: str, content: bytes) -> dict:
+        with self._lock:
+            template = self._request.template
+        return self._pdf_spritesheet.load(template, filename, content)
+
+    def pdf_spritesheet_page(self, page: int) -> dict:
+        return self._pdf_spritesheet.page(page)
+
+    def pdf_spritesheet_preview(self) -> str:
+        return self._pdf_spritesheet.preview()
+
     def preview_image(self) -> str:
         with self._lock:
             path = self._preview_path
@@ -1069,6 +1094,10 @@ class DeckMakerService:
             "fileLog": prefs.set_file_level,
             "imagePreflight": prefs.set_image_preflight,
             "previewBackend": prefs.set_deckmaker_preview_backend,
+            "previewSelectionSync": prefs.set_deckmaker_preview_selection_sync,
+            "datasetDock": prefs.set_deckmaker_dataset_dock,
+            "datasetSplitBottom": prefs.set_deckmaker_dataset_split_bottom,
+            "datasetSplitRight": prefs.set_deckmaker_dataset_split_right,
         }
         for key, setter in setters.items():
             if key in values:
@@ -1126,8 +1155,16 @@ class DeckMakerService:
             with self._lock:
                 has_cached_dataset = bool(self._preview_datasets)
                 current_asset = self._preview_asset_key
-            if current_asset:
-                self.preview(force=False, refresh=not has_cached_dataset, asset_key=current_asset)
+            if prefs.get_deckmaker_preview_backend() == "inkscape":
+                self._inkscape_previewer.prewarm(
+                    f"PnPInk preview — {os.path.basename(self._request.template) or 'No template'}"
+                )
+                if self._can_generate():
+                    self.preview(
+                        force=False,
+                        refresh=not has_cached_dataset,
+                        asset_key=current_asset,
+                    )
         return self.state()
 
     def set_sheet_editor_activity(self, active: bool) -> dict:
@@ -1244,6 +1281,17 @@ class DeckMakerService:
             if self._pending_play_publish:
                 self._pending_play_publish = False
                 self._publish_play_assets(effect)
+
+            auto_open = prefs.get_auto_open()
+            auto_export = prefs.get_auto_export() and bool(self._selected_export_outputs())
+            if auto_open or auto_export:
+                def post_generate():
+                    if auto_open:
+                        self.open_output()
+                    if auto_export:
+                        self.export()
+
+                return post_generate
 
         accepted = self._begin("generate", "Generating...", worker)
         if not accepted and play_after:
@@ -1670,7 +1718,11 @@ class DeckMakerService:
                     if cell_selection.get("asset") == current_key
                     else None
                 )
-                self._inkscape_previewer.show(paths["svg"], selected_fields=selected_fields)
+                self._inkscape_previewer.show(
+                    paths["svg"],
+                    selected_fields=selected_fields,
+                    page_label=f'Preview — {prepared["label"]}',
+                )
                 phase("show-inkscape")
 
             with self._lock:
@@ -2103,6 +2155,7 @@ class DeckMakerService:
         if text_query_service is not None:
             text_query_service.close()
         self._inkscape_previewer.close()
+        self._pdf_spritesheet.close()
         self._play_server.close()
         try:
             import gsheets_client_pkce as GS

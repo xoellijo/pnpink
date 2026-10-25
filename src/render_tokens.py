@@ -36,6 +36,15 @@ def cell_ref_to_rc(ref: str):
     return (int(c), int(m.group(2))) if c is not None else None
 
 
+def split_page_cell_selector(selector: str) -> tuple[int, str]:
+    """Split an optional spreadsheet-like page prefix: ``3!B4``."""
+    text = str(selector or "").strip()
+    match = re.fullmatch(r"(?:(?P<page>[1-9]\d*)!)?(?P<cells>.+)", text)
+    if not match:
+        return 1, text
+    return int(match.group("page") or 1), str(match.group("cells") or "").strip()
+
+
 def grid_rc_to_index_1based(c1: int, r1: int, cols: int, rows: int, *, sweep_rows_first=True, invert_cols=False, invert_rows=False):
     cols = int(cols or 0)
     rows = int(rows or 0)
@@ -661,6 +670,7 @@ def resolve_virtual_source_urls(sm, src_val: str, selector: Optional[str], *, wa
 __all__ = [
     "expand_index_expr",
     "parse_sprite_alias_token",
+    "split_page_cell_selector",
     "split_multivalue",
     "parse_object_token",
     "split_paths_suffix",

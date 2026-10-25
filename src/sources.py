@@ -17,7 +17,7 @@ from __future__ import annotations  # <-- MOVED ABOVE
 
 __version__ = "v0.1"
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Dict, Tuple, List, Set
 import os, re, hashlib, threading, mimetypes, fnmatch, time
 from concurrent.futures import ThreadPoolExecutor, Future
@@ -34,6 +34,7 @@ import const as CONST
 import sources_web as WEB
 import net as NET
 import gui as GUI
+from project_assets import ASSET_DIR_NAMES, find_named_asset, store_generated_asset
 
 
 _GDRIVE_FOLDER_CACHE: Dict[Tuple[str, str], List[Dict[str, str]]] = {}
@@ -89,20 +90,33 @@ class SpriteSheetDef:
     tile_h_px: float
     gap_x_px: float
     gap_y_px: float
+    margin_top_px: float = 0.0
+    margin_right_px: float = 0.0
+    margin_bottom_px: float = 0.0
+    margin_left_px: float = 0.0
+    source_w_px: float = 0.0
+    source_h_px: float = 0.0
+    pdf_source: Optional[Path] = None
     sweep_rows_first: bool = True     # LR-TB (rows first) vs TB-LR
     invert_rows: bool = False         # flip=v
     invert_cols: bool = False         # flip=h
     base_symbol_id: Optional[str] = None
-    base_image_id: Optional[str] = None
+    base_image_ids: Dict[int, str] = field(default_factory=dict)
     shared_clip_id: Optional[str] = None
 
     @property
     def sheet_w_px(self) -> float:
-        return float(self.cols) * float(self.tile_w_px) + max(0, self.cols-1) * float(self.gap_x_px)
+        if self.source_w_px > 0:
+            return float(self.source_w_px)
+        return (float(self.margin_left_px) + float(self.cols) * float(self.tile_w_px)
+                + max(0, self.cols-1) * float(self.gap_x_px) + float(self.margin_right_px))
 
     @property
     def sheet_h_px(self) -> float:
-        return float(self.rows) * float(self.tile_h_px) + max(0, self.rows-1) * float(self.gap_y_px)
+        if self.source_h_px > 0:
+            return float(self.source_h_px)
+        return (float(self.margin_top_px) + float(self.rows) * float(self.tile_h_px)
+                + max(0, self.rows-1) * float(self.gap_y_px) + float(self.margin_bottom_px))
 
 
 # ======================================================================================
@@ -115,7 +129,7 @@ EXT_PRIORITY = [
 ]
 
 # Local asset folder names, in lookup order.
-REL_DIRS = ["assets", "images", "img", "imgs"]
+REL_DIRS = list(ASSET_DIR_NAMES)
 
 # Default size (if we cannot inspect the image)
 DEFAULT_W = 100.0
@@ -612,6 +626,8 @@ class SourceManager:
         # If they later resolve with cache present, they still count as downloaded
         # for this run because the cache was created during the same execution.
         self._wkmc_prefetch_miss_keys: Set[str] = set()
+        self._spritesheets: Dict[str, SpriteSheetDef] = {}
+        self._sprite_frames: Dict[tuple, SourceRef] = {}
         self._closed = False
 
         # doc unit conversion helpers
@@ -643,10 +659,6 @@ class SourceManager:
 
     def __del__(self):
         self.close()
-
-        # spritesheets
-        self._spritesheets: Dict[str, SpriteSheetDef] = {}
-        self._sprite_frames: Dict[tuple, SourceRef] = {}
 
     def _ensure_assets_dir(self) -> Path:
         try:
@@ -2509,6 +2521,41 @@ class SourceManager:
 
     # ----------- spritesheets ----------------
 
+    def _ensure_pdf_spritesheet_page(self, pdf_path: Path, page: int) -> Path:
+        number = max(1, int(page or 1))
+        generated_name = f"{pdf_path.stem}.page-{number}.png"
+        template = str(self.svg_real_path or "")
+        existing = find_named_asset(template, generated_name) if template else None
+        pdf_mtime = pdf_path.stat().st_mtime
+        if existing is not None and existing.stat().st_mtime >= pdf_mtime:
+            return existing
+
+        try:
+            from deckmaker_pdf_spritesheet import PREVIEW_DPI, render_pdf_page
+        except Exception as ex:
+            raise RuntimeError(f"PDF spritesheet renderer is unavailable: {ex}") from ex
+
+        if template and Path(template).is_file():
+            target_dir = Path(template).resolve().parent / ASSET_DIR_NAMES[0]
+        else:
+            target_dir = pdf_path.parent
+        target_dir.mkdir(parents=True, exist_ok=True)
+        temporary = target_dir / f".{generated_name}.pnpink-render.png"
+        try:
+            render_pdf_page(pdf_path, temporary, number, dpi=PREVIEW_DPI)
+            if template and Path(template).is_file():
+                generated, _relative = store_generated_asset(template, generated_name, temporary)
+            else:
+                generated = pdf_path.with_name(generated_name)
+                os.replace(temporary, generated)
+            _l.i(f"[spritesheets] rendered PDF page {number}: '{generated}'")
+            return Path(generated).resolve()
+        finally:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+
     def register_spritesheet(self, alias: str, *, chain, px_per_mm: float) -> Optional[SpriteSheetDef]:
         """Register a spritesheet alias from a parsed DSL chain.
 
@@ -2664,47 +2711,66 @@ class SourceManager:
         except Exception:
             abspath = None
 
-        # --- Determine tile/gap sizing ---
-        # Caso A) Con shape preset -> tile size en mm
-        # Case B) No shape -> autodetect tile in px from bitmap size + grid + gap(px)
+        pdf_source = None
+        if abspath is not None and abspath.suffix.lower() == ".pdf":
+            pdf_source = abspath
+            try:
+                abspath = self._ensure_pdf_spritesheet_page(pdf_source, 1)
+            except Exception as ex:
+                _l.w(f"[spritesheets] alias '{alias_key}': cannot render PDF page 1: {ex}")
+                return None
+
+        px_per_mm_f = float(px_per_mm or 1.0)
+        uu_per_px = float(getattr(self, '_uu_per_px', 1.0) or 1.0)
+        source_w_u = source_h_u = 0.0
+        if abspath is not None:
+            source_w_px, source_h_px = _guess_bitmap_size_px(abspath, default_dpi=self.default_dpi)
+            source_w_u = float(source_w_px) * uu_per_px
+            source_h_u = float(source_h_px) * uu_per_px
+
+        border_tokens = list(getattr(spec, "border", None) or [])
+        base_w_mm = source_w_u / px_per_mm_f if px_per_mm_f else 0.0
+        base_h_mm = source_h_u / px_per_mm_f if px_per_mm_f else 0.0
+        border_mm = SVG.border_tokens_to_mm4(
+            [str(value) for value in border_tokens],
+            base_w_mm=base_w_mm,
+            base_h_mm=base_h_mm,
+        ) if border_tokens else [0.0, 0.0, 0.0, 0.0]
+        margin_top, margin_right, margin_bottom, margin_left = [float(value) * px_per_mm_f for value in border_mm]
+        gx_mm = float(gx_raw)
+        gy_mm = float(gy_raw)
+        gx = gx_mm * px_per_mm_f
+        gy = gy_mm * px_per_mm_f
+
+        # --- Determine tile sizing ---
+        # Layout gaps and borders are millimetres, matching DeckMaker Web.
         if shape is None:
             if abspath is None:
                 _l.w(f"[spritesheets] alias '{alias_key}': missing shape and cannot resolve src to autodetect tile")
                 return None
-            sheet_w_px, sheet_h_px = _guess_bitmap_size_px(abspath, default_dpi=self.default_dpi)
-            gx = float(gx_raw)
-            gy = float(gy_raw)
             try:
-                tw = (float(sheet_w_px) - max(0, cols - 1) * gx) / float(cols)
-                th = (float(sheet_h_px) - max(0, rows - 1) * gy) / float(rows)
+                tw = (source_w_u - margin_left - margin_right - max(0, cols - 1) * gx) / float(cols)
+                th = (source_h_u - margin_top - margin_bottom - max(0, rows - 1) * gy) / float(rows)
             except Exception:
-                tw = float(sheet_w_px) / float(cols)
-                th = float(sheet_h_px) / float(rows)
+                tw = source_w_u / float(cols)
+                th = source_h_u / float(rows)
             if tw <= 0 or th <= 0:
                 _l.w(
-                    f"[spritesheets] alias '{alias_key}': autodetect produced non-positive tile {tw:.3f}x{th:.3f}px; "
-                    f"falling back to sheet/grid (no gaps)"
+                    f"[spritesheets] alias '{alias_key}': autodetect produced non-positive tile {tw:.3f}x{th:.3f}; "
+                    f"falling back to the complete page grid"
                 )
                 gx = 0.0
                 gy = 0.0
-                tw = float(sheet_w_px) / float(cols)
-                th = float(sheet_h_px) / float(rows)
+                margin_top = margin_right = margin_bottom = margin_left = 0.0
+                tw = source_w_u / float(cols)
+                th = source_h_u / float(rows)
             _l.i(
-                f"[spritesheet] autodetect tile for @{alias_key}: sheet={sheet_w_px:.2f}x{sheet_h_px:.2f}px "
-                f"grid={cols}x{rows} gap_px={gx:.2f}x{gy:.2f} -> tile={tw:.2f}x{th:.2f}px"
+                f"[spritesheet] autodetect @{alias_key}: source_u={source_w_u:.3f}x{source_h_u:.3f} "
+                f"border_u={margin_top:.3f},{margin_right:.3f},{margin_bottom:.3f},{margin_left:.3f} "
+                f"grid={cols}x{rows} gap_u={gx:.3f}x{gy:.3f} tile_u={tw:.3f}x{th:.3f}"
             )
-            # Convert pixel-based measurements to document user units.
-            uu_per_px = float(getattr(self, '_uu_per_px', 1.0) or 1.0)
-            tw *= uu_per_px
-            th *= uu_per_px
-            gx *= uu_per_px
-            gy *= uu_per_px
-            _l.i(
-                f"[spritesheet] autodetect convert @{alias_key}: uu_per_px={uu_per_px:.8f} -> "
-                f"tile_u={tw:.3f}x{th:.3f} gap_u={gx:.3f}x{gy:.3f}"
-            )
-            tw_mm = th_mm = None
-            gx_mm = gy_mm = None
+            tw_mm = tw / px_per_mm_f
+            th_mm = th / px_per_mm_f
         else:
             # shape preset -> tile size (mm)
             preset = None
@@ -2719,13 +2785,12 @@ class SourceManager:
                 tile_mm = CONST.get_card_size_preset('Standard') or (63.0, 88.0)
 
             tw_mm, th_mm = float(tile_mm[0]), float(tile_mm[1])
-            px_per_mm_f = float(px_per_mm or 1.0)
             tw = tw_mm * px_per_mm_f
             th = th_mm * px_per_mm_f
-            gx_mm = float(gx_raw)
-            gy_mm = float(gy_raw)
-            gx = gx_mm * px_per_mm_f
-            gy = gy_mm * px_per_mm_f
+            if source_w_u <= 0:
+                source_w_u = margin_left + cols * tw + max(0, cols - 1) * gx + margin_right
+            if source_h_u <= 0:
+                source_h_u = margin_top + rows * th + max(0, rows - 1) * gy + margin_bottom
 
         # NOTE: measurements stored in SpriteSheetDef are in SVG document user units.
         # The field names keep the historical *_px suffix but the values are already converted
@@ -2737,6 +2802,13 @@ class SourceManager:
             cols=cols, rows=rows,
             tile_w_px=tw, tile_h_px=th,
             gap_x_px=gx, gap_y_px=gy,
+            margin_top_px=margin_top,
+            margin_right_px=margin_right,
+            margin_bottom_px=margin_bottom,
+            margin_left_px=margin_left,
+            source_w_px=source_w_u,
+            source_h_px=source_h_u,
+            pdf_source=pdf_source,
             sweep_rows_first=sweep_rows_first,
             invert_rows=invert_rows,
             invert_cols=invert_cols,
@@ -2817,31 +2889,27 @@ class SourceManager:
             _l.i("[spritesheets] no defs")
         return out
 
-    def _ensure_spritesheet_base_image(self, ss: SpriteSheetDef) -> str:
-        """Ensure a single <image> exists in <defs> for this spritesheet.
+    def _ensure_spritesheet_base_image(self, ss: SpriteSheetDef, page: int = 1) -> str:
+        """Ensure the requested page image exists in <defs> for this spritesheet.
 
         We avoid wrapping the bitmap in an intermediate <symbol> to reduce defs/DOM.
         """
-        if ss.base_image_id:
-            return ss.base_image_id
+        number = max(1, int(page or 1))
+        if number in ss.base_image_ids:
+            return ss.base_image_ids[number]
 
-        if ss.abspath is None:
+        image_path = ss.abspath
+        if ss.pdf_source is not None:
+            image_path = self._ensure_pdf_spritesheet_page(ss.pdf_source, number)
+
+        if image_path is None:
             # Fall back to placeholder symbol (keeps old behavior for missing sources).
             sid, _wh = _make_placeholder_symbol(self.defs, ss.src_raw, "spritesheet src not found")
             # NOTE: placeholder is a <symbol>; we keep it here because it's used only on error paths.
-            ss.base_image_id = sid
+            ss.base_image_ids[number] = sid
             return sid
 
-        # Stable-ish id per alias
-        base_id = f"img_{ss.alias}"
-        # If id already exists in defs, reuse it
-        try:
-            existing = self.defs.xpath(f".//*[@id='{base_id}']")
-        except Exception:
-            existing = []
-        if existing:
-            ss.base_image_id = base_id
-            return base_id
+        base_id = _unique_symbol_id(self.defs, f"img_{ss.alias}_p{number}_")
 
         im = SVG.etree.SubElement(self.defs, inkex.addNS('image','svg'))
         im.set('id', base_id)
@@ -2852,10 +2920,13 @@ class SourceManager:
         # Preserve pixel mapping (no aspect auto-fit surprises)
         im.set('preserveAspectRatio', 'none')
 
-        SVG.set_file_href(im, ss.abspath, touch_plain=True, touch_absref=True)
+        SVG.set_file_href(im, image_path, touch_plain=True, touch_absref=True)
 
-        ss.base_image_id = base_id
-        _l.i(f"[spritesheet] base image created id={base_id} for @{ss.alias} size_u={ss.sheet_w_px:.2f}x{ss.sheet_h_px:.2f}")
+        ss.base_image_ids[number] = base_id
+        _l.i(
+            f"[spritesheet] base image created id={base_id} for @{ss.alias} page={number} "
+            f"size_u={ss.sheet_w_px:.2f}x{ss.sheet_h_px:.2f} source='{image_path}'"
+        )
         return base_id
 
     def _ensure_spritesheet_shared_clip(self, ss: SpriteSheetDef) -> str:
@@ -2906,7 +2977,7 @@ class SourceManager:
         Supported selectors (1-based):
           - frame=N (linear 1..N)
           - col=C,row=R
-          - page=P,col=C,row=R  (page currently ignored; reserved for PDF spritesheets)
+          - page=P,col=C,row=R
         """
         a = (alias or '').strip()
         if not a:
@@ -2927,12 +2998,12 @@ class SourceManager:
         if key in self._sprite_frames:
             return self._sprite_frames[key]
 
-        base_img_id = self._ensure_spritesheet_base_image(ss)
+        base_img_id = self._ensure_spritesheet_base_image(ss, p)
 
         tw = float(ss.tile_w_px); th = float(ss.tile_h_px)
         gx = float(ss.gap_x_px);  gy = float(ss.gap_y_px)
-        x0 = (c - 1) * (tw + gx)
-        y0 = (r - 1) * (th + gy)
+        x0 = float(ss.margin_left_px) + (c - 1) * (tw + gx)
+        y0 = float(ss.margin_top_px) + (r - 1) * (th + gy)
 
         # IMPORTANT (performance/UI): use <g> instead of <symbol> for each frame.
         # Inkscape's Symbols dialog scans <symbol> elements to generate thumbnails,

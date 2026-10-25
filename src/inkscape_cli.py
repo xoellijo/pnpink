@@ -20,6 +20,42 @@ import temp_paths as TEMPPATHS
 _l = LOG
 
 
+def _mac_bundle_executables() -> list[str]:
+    if sys.platform != "darwin":
+        return []
+
+    candidates: list[Path] = []
+    try:
+        python_path = Path(sys.executable).resolve()
+    except Exception:
+        python_path = Path(sys.executable).absolute()
+    for parent in (python_path, *python_path.parents):
+        if parent.suffix.lower() == ".app":
+            candidates.append(parent / "Contents" / "MacOS" / "inkscape")
+            break
+
+    for applications_dir in (Path("/Applications"), Path.home() / "Applications"):
+        candidates.append(applications_dir / "Inkscape.app" / "Contents" / "MacOS" / "inkscape")
+        try:
+            candidates.extend(
+                bundle / "Contents" / "MacOS" / "inkscape"
+                for bundle in sorted(applications_dir.glob("Inkscape*.app"))
+            )
+        except OSError:
+            pass
+
+    output: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        path = str(candidate)
+        if path in seen:
+            continue
+        seen.add(path)
+        if candidate.is_file():
+            output.append(path)
+    return output
+
+
 def _parse_query_all(stdout: str, want_ids: set[str] | None = None) -> dict[str, dict[str, float]]:
     out: dict[str, dict[str, float]] = {}
     wanted = set(want_ids or set())
@@ -39,6 +75,10 @@ def _parse_query_all(stdout: str, want_ids: set[str] | None = None) -> dict[str,
 
 
 def find_executable() -> str | None:
+    mac_candidates = _mac_bundle_executables()
+    if mac_candidates:
+        return mac_candidates[0]
+
     names = ["inkscape.exe", "inkscape"] if os.name == "nt" else ["inkscape"]
     for name in names:
         exe = shutil.which(name)
@@ -55,11 +95,6 @@ def find_executable() -> str | None:
         os.path.join(os.path.dirname(bin_dir), "inkscape"),
         os.path.join(os.path.dirname(bin_dir), "bin", "inkscape"),
     ]
-    if sys.platform == "darwin":
-        candidates.extend(
-            str(root / "Inkscape.app" / "Contents" / "MacOS" / "inkscape")
-            for root in (Path("/Applications"), Path.home() / "Applications")
-        )
     for cand in candidates:
         if cand and os.path.isfile(cand):
             return cand
@@ -499,7 +534,12 @@ class ShellQuerySession:
             return
         output = self._read_until_prompt(timeout_s=timeout_s)
         if not output.endswith("> "):
-            raise RuntimeError("Inkscape shell did not become ready")
+            return_code = self.proc.poll() if self.proc is not None else None
+            detail = output.strip().replace("\n", " ")[:1000]
+            raise RuntimeError(
+                f"Inkscape shell did not become ready: exe='{self.exe}' "
+                f"rc={return_code} output={detail!r}"
+            )
         self.ready = True
 
     def _action(self, command: str, *, timeout_s: float) -> str:
@@ -553,6 +593,10 @@ class ShellQuerySession:
     ) -> None:
         """Export one SVG area through this already-running shell."""
         x0, y0, x1, y1 = (float(value) for value in area)
+        try:
+            os.remove(png_path)
+        except FileNotFoundError:
+            pass
         commands = []
         if reload_svg:
             commands.append(f"file-open:{svg_path}")
@@ -566,9 +610,8 @@ class ShellQuerySession:
             f"export-filename:{png_path}",
             "export-do",
         ])
-        for command in commands:
-            self._action(command, timeout_s=timeout_s)
-        if not os.path.isfile(png_path) or os.path.getsize(png_path) <= 16:
+        self._action(";".join(commands), timeout_s=timeout_s)
+        if not self._wait_for_export(png_path, timeout_s=min(3.0, timeout_s)):
             raise RuntimeError("Inkscape shell did not create the preview PNG")
 
     def export_id_png(
@@ -585,6 +628,10 @@ class ShellQuerySession:
         timeout_s: float = 20.0,
     ) -> None:
         """Export one SVG element through this already-running shell."""
+        try:
+            os.remove(png_path)
+        except FileNotFoundError:
+            pass
         commands = []
         if reload_svg:
             commands.append(f"file-open:{svg_path}")
@@ -599,10 +646,21 @@ class ShellQuerySession:
             f"export-filename:{png_path}",
             "export-do",
         ])
-        for command in commands:
-            self._action(command, timeout_s=timeout_s)
-        if not os.path.isfile(png_path) or os.path.getsize(png_path) <= 16:
+        self._action(";".join(commands), timeout_s=timeout_s)
+        if not self._wait_for_export(png_path, timeout_s=min(3.0, timeout_s)):
             raise RuntimeError("Inkscape shell did not create the preview PNG")
+
+    @staticmethod
+    def _wait_for_export(path: str, *, timeout_s: float) -> bool:
+        deadline = time.monotonic() + max(0.1, float(timeout_s))
+        while time.monotonic() < deadline:
+            try:
+                if os.path.isfile(path) and os.path.getsize(path) > 16:
+                    return True
+            except OSError:
+                pass
+            time.sleep(0.02)
+        return False
 
     def close(self) -> None:
         proc = self.proc

@@ -2318,6 +2318,40 @@ def clone_as_use(base, parent, T: inkex.Transform, *, insert_after=None, set_id=
     return use
 
 
+def is_effectively_hidden(node):
+    """Return whether a node is hidden by itself or one of its ancestors."""
+    current = node
+    while current is not None:
+        style = str(current.get("style") or "")
+        if re.search(r"(?:^|;)\s*display\s*:\s*none\s*(?:;|$)", style, re.IGNORECASE):
+            return True
+        if re.search(r"(?:^|;)\s*visibility\s*:\s*hidden\s*(?:;|$)", style, re.IGNORECASE):
+            return True
+        if str(current.get("display") or "").strip().lower() == "none":
+            return True
+        if str(current.get("visibility") or "").strip().lower() == "hidden":
+            return True
+        current = current.getparent()
+    return False
+
+
+def _make_placed_copy_visible(node):
+    """Remove source-only visibility flags from a placed deep copy."""
+    style = str(node.get("style") or "")
+    style = re.sub(
+        r"(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\s*(?=;|$)",
+        "",
+        style,
+        flags=re.IGNORECASE,
+    ).strip(" ;")
+    if style:
+        node.set("style", style)
+    else:
+        node.attrib.pop("style", None)
+    node.attrib.pop("display", None)
+    node.attrib.pop("visibility", None)
+
+
 def unlink_use(use_el):
     try:
         if hasattr(use_el, "unlink") and callable(use_el.unlink):
@@ -2374,6 +2408,7 @@ def deepcopy_place(base, parent, T: inkex.Transform, *, insert_after=None, id_pr
                 dup.append(deepcopy(child))
         else:
             child = deepcopy(base)
+            _make_placed_copy_visible(child)
             if base.getparent() is not parent:
                 try:
                     base_doc_t = base.composed_transform()
@@ -2413,6 +2448,7 @@ def deepcopy_place_local(base, parent, T: inkex.Transform, *, insert_after=None,
             dup.set("transform", str(T))
         else:
             dup = deepcopy(base)
+            _make_placed_copy_visible(dup)
             base_t = inkex.Transform(base.get("transform") or "")
             dup.set("transform", str(T @ base_t))
         if insert_after is not None and insert_after.getparent() is parent:

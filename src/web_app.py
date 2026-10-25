@@ -43,7 +43,7 @@ def normalize_window_geometry(value) -> dict[str, int]:
         return {}
     if not (320 <= geometry["width"] <= 16384 and 240 <= geometry["height"] <= 16384):
         return {}
-    if not (-10000 <= geometry["x"] <= 10000 and -10000 <= geometry["y"] <= 10000):
+    if not (-32768 <= geometry["x"] <= 32768 and -32768 <= geometry["y"] <= 32768):
         return {}
     return geometry
 

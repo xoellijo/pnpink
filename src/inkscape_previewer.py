@@ -6,12 +6,12 @@ from __future__ import annotations
 import ctypes
 from ctypes import wintypes
 import fnmatch
-import json
 import os
 import queue
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -27,6 +27,10 @@ _PROMPT = "> "
 _RELOAD_ACTION = "file-rebase:true"
 _INKSCAPE_NS = "http://www.inkscape.org/namespaces/inkscape"
 _SODIPODI_NS = "http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+_SVG_NS = "http://www.w3.org/2000/svg"
+_XLINK_NS = "http://www.w3.org/1999/xlink"
+_PREVIEW_PAGE_WIDTH_MM = 210.0
+_PREVIEW_PAGE_HEIGHT_MM = 148.0
 _WINDOW_SECTIONS = ("window", "fullscreen", "focus")
 _WINDOW_VISIBILITY = {
     "menu": "0",
@@ -36,7 +40,7 @@ _WINDOW_VISIBILITY = {
     "toolbox": "0",
     "statusbar": "0",
     "panels": "0",
-    "rulers": "0",
+    "rulers": "1",
     "scrollbars": "0",
 }
 _PROFILE_XML = """<?xml version="1.0" encoding="UTF-8" standalone="no"?>
@@ -49,7 +53,7 @@ _PROFILE_XML = """<?xml version="1.0" encoding="UTF-8" standalone="no"?>
     <group id="toolbox" state="0"/>
     <group id="statusbar" state="0"/>
     <group id="panels" state="0"/>
-    <group id="rulers" state="0"/>
+    <group id="rulers" state="1"/>
     <group id="scrollbars" state="0"/>
   </group>
   <group id="fullscreen">
@@ -60,7 +64,7 @@ _PROFILE_XML = """<?xml version="1.0" encoding="UTF-8" standalone="no"?>
     <group id="toolbox" state="0"/>
     <group id="statusbar" state="0"/>
     <group id="panels" state="0"/>
-    <group id="rulers" state="0"/>
+    <group id="rulers" state="1"/>
     <group id="scrollbars" state="0"/>
   </group>
   <group id="focus">
@@ -71,7 +75,7 @@ _PROFILE_XML = """<?xml version="1.0" encoding="UTF-8" standalone="no"?>
     <group id="toolbox" state="0"/>
     <group id="statusbar" state="0"/>
     <group id="panels" state="0"/>
-    <group id="rulers" state="0"/>
+    <group id="rulers" state="1"/>
     <group id="scrollbars" state="0"/>
   </group>
   <group id="dialogs">
@@ -79,9 +83,9 @@ _PROFILE_XML = """<?xml version="1.0" encoding="UTF-8" standalone="no"?>
     <group id="objects" expand_to_layer="1"/>
   </group>
   <group id="options">
-    <group id="savewindowgeometry" value="1"/>
+    <group id="savewindowgeometry" value="2"/>
     <group id="maxrecentdocuments" value="0"/>
-    <group id="defaultwindowsize" value="2"/>
+    <group id="defaultwindowsize" value="-1"/>
     <group id="dialogtype" value="1"/>
     <group id="dialogsskiptaskbar" value="1"/>
     <group id="boot" showsplash="0" showwelcome="0"/>
@@ -90,15 +94,6 @@ _PROFILE_XML = """<?xml version="1.0" encoding="UTF-8" standalone="no"?>
   <group id="geometry" width="1100" height="720" x="80" y="80" maximized="0" fullscreen="0"/>
 </inkscape>
 """
-
-_DEFAULT_WINDOW_GEOMETRY = {
-    "x": 80,
-    "y": 80,
-    "w": 1100,
-    "h": 720,
-    "maximized": False,
-}
-
 
 def _child_group(parent: ET.Element, group_id: str) -> ET.Element:
     group = parent.find(f"./group[@id='{group_id}']")
@@ -113,9 +108,9 @@ def _configure_profile(root: ET.Element) -> None:
 
     options = _child_group(root, "options")
     for option_id, attributes in {
-        "savewindowgeometry": {"value": "1"},
+        "savewindowgeometry": {"value": "2"},
         "maxrecentdocuments": {"value": "0"},
-        "defaultwindowsize": {"value": "2"},
+        "defaultwindowsize": {"value": "-1"},
         "dialogtype": {"value": "1"},
         "dialogsskiptaskbar": {"value": "1"},
         "autosave": {"enable": "0", "interval": "10", "path": "", "max": "0"},
@@ -125,11 +120,6 @@ def _configure_profile(root: ET.Element) -> None:
         "showsplash": "0",
         "showwelcome": "0",
     })
-
-
-def _parse_geometry(output: str) -> dict[str, int]:
-    values = {key: int(value) for key, value in re.findall(r"^(x|y|w|h):(-?\d+)$", output, re.MULTILINE)}
-    return values if all(key in values for key in ("x", "y", "w", "h")) else {}
 
 
 def _length_to_css_px(value: str) -> float | None:
@@ -203,6 +193,96 @@ def _center_initial_namedview(
         return False
 
 
+def _configure_preview_document(svg_path: Path, page_label: str) -> bool:
+    """Prepare the disposable live SVG with a page matching its generated bbox."""
+    try:
+        ET.register_namespace("", _SVG_NS)
+        ET.register_namespace("inkscape", _INKSCAPE_NS)
+        ET.register_namespace("sodipodi", _SODIPODI_NS)
+        ET.register_namespace("xlink", _XLINK_NS)
+        tree = ET.parse(svg_path)
+        root = tree.getroot()
+        output = next((node for node in root.iter() if node.get("id") == "pnpink-output"), None)
+        boxes = []
+        if output is not None:
+            for node in output.iter():
+                values = str(node.get("data-pnpink-cut-bbox") or "").replace(",", " ").split()
+                if len(values) != 4:
+                    continue
+                box = tuple(float(value) for value in values)
+                if box[2] > 0 and box[3] > 0:
+                    boxes.append((node, box))
+        if boxes:
+            left = min(box[0] for _node, box in boxes)
+            top = min(box[1] for _node, box in boxes)
+            right = max(box[0] + box[2] for _node, box in boxes)
+            bottom = max(box[1] + box[3] for _node, box in boxes)
+            page_width = right - left
+            page_height = bottom - top
+        else:
+            left = top = 0.0
+            page_width = _PREVIEW_PAGE_WIDTH_MM
+            page_height = _PREVIEW_PAGE_HEIGHT_MM
+
+        root.set("width", f"{page_width:.8g}mm")
+        root.set("height", f"{page_height:.8g}mm")
+        root.set("viewBox", f"0 0 {page_width:.8g} {page_height:.8g}")
+
+        namedview = root.find(f"{{{_SODIPODI_NS}}}namedview")
+        if namedview is None:
+            namedview = ET.Element(f"{{{_SODIPODI_NS}}}namedview", {"id": "pnpink-preview-view"})
+            root.insert(0, namedview)
+        namedview.set("showgrid", "true")
+        namedview.set("showborder", "false")
+        namedview.set("labelstyle", "below")
+        namedview.set(f"{{{_INKSCAPE_NS}}}showpageshadow", "false")
+        namedview.set(f"{{{_INKSCAPE_NS}}}document-units", "mm")
+
+        for grid in list(namedview.findall(f"{{{_INKSCAPE_NS}}}grid")):
+            namedview.remove(grid)
+        ET.SubElement(namedview, f"{{{_INKSCAPE_NS}}}grid", {
+            "type": "xygrid",
+            "id": "pnpink-preview-grid",
+            "units": "mm",
+            "originx": "0",
+            "originy": "0",
+            "spacingx": "1",
+            "spacingy": "1",
+            "empspacing": "10",
+            "visible": "true",
+            "enabled": "true",
+        })
+
+        pages = list(namedview.findall(f"{{{_INKSCAPE_NS}}}page"))
+        page = pages[0] if pages else ET.SubElement(namedview, f"{{{_INKSCAPE_NS}}}page")
+        for extra in pages[1:]:
+            namedview.remove(extra)
+        page.attrib.update({
+            "x": "0",
+            "y": "0",
+            "width": f"{page_width:.8g}",
+            "height": f"{page_height:.8g}",
+            f"{{{_INKSCAPE_NS}}}label": str(page_label or "PnPInk preview"),
+        })
+
+        if output is not None and boxes:
+            dx = -left
+            dy = -top
+            previous_transform = str(output.get("transform") or "").strip()
+            translation = f"translate({dx:.8g},{dy:.8g})"
+            output.set("transform", f"{translation} {previous_transform}".strip())
+            for node, (x, y, width, height) in boxes:
+                node.set(
+                    "data-pnpink-cut-bbox",
+                    f"{x + dx:.8f} {y + dy:.8f} {width:.8f} {height:.8f}",
+                )
+
+        tree.write(svg_path, encoding="utf-8", xml_declaration=True)
+        return True
+    except (ET.ParseError, OSError, TypeError, ValueError):
+        return False
+
+
 class InkscapePreviewer:
     """Display generated SVGs in one persistent Inkscape GUI window."""
 
@@ -214,13 +294,11 @@ class InkscapePreviewer:
         self._runtime_dir = Path(TEMPPATHS.named_dir("inkscape_previewer", stem="deckmaker-web"))
         self._legacy_profile_dir = Path(TEMPPATHS.named_dir("inkscape_profile", stem="deckmaker-viewer"))
         self._profile_dir = data_path("inkscape-previewer")
-        self._geometry_path = self._profile_dir / "window-geometry.json"
         self._live_path = self._runtime_dir / "pnpink-preview.svg"
         self._app_tag = f"pnpinkpreview{os.getpid()}"
         self._profile_ready = False
-        self._geometry_stop = threading.Event()
-        self._geometry_thread: threading.Thread | None = None
-        self._last_geometry: dict[str, int | bool] = {}
+        self._prewarm_pending = False
+        self._prewarm_generation = 0
         self._field_to_ids: dict[str, list[str]] = {}
         self._id_to_fields: dict[str, list[str]] = {}
 
@@ -234,14 +312,23 @@ class InkscapePreviewer:
                 return bool(self._window_handle(timeout=0.0))
             return self._gui_process is not None and self._gui_process.poll() is None
 
-    def show(self, svg_path: str, selected_fields: list[str] | None = None) -> None:
+    def show(
+        self,
+        svg_path: str,
+        selected_fields: list[str] | None = None,
+        page_label: str = "",
+    ) -> None:
         source = Path(str(svg_path or "")).resolve()
         if not source.is_file():
             raise FileNotFoundError(str(source))
         with self._lock:
             started = time.perf_counter()
             starting = not self.running
-            self._replace_live_svg(source, center_viewport=starting)
+            self._replace_live_svg(
+                source,
+                center_viewport=starting,
+                page_label=page_label or source.stem,
+            )
             replaced = time.perf_counter()
             selection_action = self._selection_action(selected_fields)
             if starting:
@@ -272,6 +359,57 @@ class InkscapePreviewer:
                 )),
                 source.stat().st_size,
             )
+
+    def show_empty(self, page_label: str = "PnPInk preview") -> None:
+        """Start the preview window immediately with an empty A5 document."""
+        with self._lock:
+            if self.running:
+                return
+            self._runtime_dir.mkdir(parents=True, exist_ok=True)
+            empty = self._runtime_dir / "pnpink-preview-empty.svg"
+            empty.write_text(
+                '<?xml version="1.0" encoding="UTF-8"?>\n'
+                '<svg xmlns="http://www.w3.org/2000/svg" '
+                'xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" '
+                'xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" '
+                'width="210mm" height="148mm" viewBox="0 0 210 148">'
+                '<sodipodi:namedview id="pnpink-preview-view"/>'
+                '</svg>',
+                encoding="utf-8",
+            )
+            self.show(str(empty), page_label=page_label)
+
+    def prewarm(self, page_label: str = "PnPInk preview") -> None:
+        """Start the empty viewer in the background before rendering an asset."""
+        if not self._lock.acquire(blocking=False):
+            return
+        try:
+            if self.running or self._prewarm_pending:
+                return
+            self._prewarm_pending = True
+            self._prewarm_generation += 1
+            generation = self._prewarm_generation
+        finally:
+            self._lock.release()
+        threading.Thread(
+            target=self._prewarm_worker,
+            args=(page_label, generation),
+            name="inkscape-previewer-prewarm",
+            daemon=True,
+        ).start()
+
+    def _prewarm_worker(self, page_label: str, generation: int) -> None:
+        try:
+            with self._lock:
+                if generation != self._prewarm_generation:
+                    return
+                self.show_empty(page_label)
+        except Exception as error:
+            LOG.w("[inkscape_previewer] prewarm failed: %s", error)
+        finally:
+            with self._lock:
+                if generation == self._prewarm_generation:
+                    self._prewarm_pending = False
 
     def _selection_action(self, fields: list[str] | None) -> str:
         if fields is None:
@@ -313,16 +451,12 @@ class InkscapePreviewer:
 
     def close(self) -> None:
         with self._lock:
-            self._remember_window_geometry()
-            self._geometry_stop.set()
-            geometry_thread = self._geometry_thread
-            self._geometry_thread = None
+            self._prewarm_generation += 1
+            self._prewarm_pending = False
             shell_process = self._shell_process
             gui_process = self._gui_process
             self._shell_process = None
             self._gui_process = None
-        if geometry_thread is not None and geometry_thread is not threading.current_thread():
-            geometry_thread.join(timeout=2.0)
         try:
             if shell_process is not None and shell_process.poll() is None and shell_process.stdin is not None:
                 try:
@@ -379,36 +513,41 @@ class InkscapePreviewer:
             root = ET.fromstring(_PROFILE_XML)
             tree = ET.ElementTree(root)
         _configure_profile(root)
-        saved_geometry = self._load_window_geometry()
-        if saved_geometry:
-            geometry = _child_group(root, "geometry")
-            geometry.attrib.update({
-                "x": str(saved_geometry["x"]),
-                "y": str(saved_geometry["y"]),
-                "width": str(saved_geometry["w"]),
-                "height": str(saved_geometry["h"]),
-                "maximized": "1" if saved_geometry.get("maximized") else "0",
-                "fullscreen": "0",
-            })
         temporary = preferences.with_suffix(".tmp")
         tree.write(temporary, encoding="utf-8", xml_declaration=True)
         os.replace(temporary, preferences)
         self._profile_ready = True
 
-    def _replace_live_svg(self, source: Path, *, center_viewport: bool) -> None:
+    def _replace_live_svg(
+        self,
+        source: Path,
+        *,
+        center_viewport: bool,
+        page_label: str,
+    ) -> None:
         self._runtime_dir.mkdir(parents=True, exist_ok=True)
         self._index_fields(source)
         temporary = self._live_path.with_suffix(f".{os.getpid()}.tmp.svg")
         shutil.copyfile(source, temporary)
+        if not _configure_preview_document(temporary, page_label):
+            LOG.w("[inkscape_previewer] could not configure preview document '%s'", source)
         if center_viewport:
-            geometry = self._load_window_geometry()
-            viewport_size = (
-                int(geometry.get("w", 1100)),
-                int(geometry.get("h", 720)),
-            )
+            viewport_size = self._saved_viewport_size()
             if not _center_initial_namedview(temporary, viewport_size):
                 LOG.w("[inkscape_previewer] could not center initial viewport for '%s'", source)
         os.replace(temporary, self._live_path)
+
+    def _saved_viewport_size(self) -> tuple[int, int]:
+        try:
+            root = ET.parse(self._profile_dir / "preferences.xml").getroot()
+            geometry = root.find("./group[@id='geometry']")
+            width = int(float(geometry.get("width", "1100")))
+            height = int(float(geometry.get("height", "720")))
+            if width >= 320 and height >= 240:
+                return width, height
+        except (AttributeError, ET.ParseError, OSError, TypeError, ValueError):
+            pass
+        return 1100, 720
 
     def _index_fields(self, source: Path) -> None:
         field_to_ids: dict[str, list[str]] = {}
@@ -445,17 +584,22 @@ class InkscapePreviewer:
         self._id_to_fields = id_to_fields
 
     def _start(self) -> None:
+        startup_started = time.perf_counter()
         executable = INKSCAPE.find_executable()
         shell = INKSCAPE.shell_executable(executable)
         if not shell:
             raise RuntimeError("Inkscape executable was not found")
         self._prepare_profile()
+        profile_ready = time.perf_counter()
         env = INKSCAPE.clean_launch_env(
             isolated_profile=False,
             profile_stem="deckmaker-viewer",
         )
         env["INKSCAPE_PROFILE_DIR"] = str(self._profile_dir)
         self._output = queue.Queue()
+        if sys.platform == "darwin":
+            self._start_macos(executable, env, startup_started, profile_ready)
+            return
         gui_kwargs = {
             "args": [
                 executable,
@@ -478,9 +622,8 @@ class InkscapePreviewer:
         if not self._wait_for_gui(timeout=30.0):
             self.close()
             raise RuntimeError("Inkscape preview window did not become ready")
-        if os.name == "nt":
-            self._restore_window_geometry()
-        time.sleep(0.75)
+        window_ready = time.perf_counter()
+        time.sleep(0.1)
 
         shell_kwargs = {
             "args": [
@@ -508,120 +651,77 @@ class InkscapePreviewer:
         ).start()
         try:
             self._read_prompt(timeout=30.0)
-            if os.name != "nt":
-                self._restore_window_geometry()
-            self._start_geometry_monitor()
         except Exception:
             self.close()
             raise
+        shell_ready = time.perf_counter()
         LOG.i(
             "[inkscape_previewer] started gui_pid=%s shell_pid=%s svg='%s'",
             self._gui_process.pid,
             self._shell_process.pid,
             self._live_path,
         )
-
-    def _load_window_geometry(self) -> dict[str, int | bool]:
-        try:
-            value = json.loads(self._geometry_path.read_text(encoding="utf-8"))
-            geometry = {key: int(value[key]) for key in ("x", "y", "w", "h")}
-            geometry["maximized"] = bool(value.get("maximized", False))
-            return geometry
-        except (OSError, ValueError, TypeError, KeyError):
-            return {}
-
-    def _remember_window_geometry(self) -> None:
-        if os.name == "nt":
-            geometry = self._native_window_geometry()
-        else:
-            if self._shell_process is None or self._shell_process.poll() is not None:
-                return
-            try:
-                geometry = _parse_geometry(self._action("window-query-geometry", timeout=2.0))
-            except Exception:
-                return
-        if not geometry:
-            return
-        geometry.setdefault("maximized", self._window_is_maximized())
-        if geometry == self._last_geometry:
-            return
-        self._profile_dir.mkdir(parents=True, exist_ok=True)
-        temporary = self._geometry_path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(geometry, separators=(",", ":")), encoding="utf-8")
-        os.replace(temporary, self._geometry_path)
-        self._last_geometry = geometry
-
-    def _restore_window_geometry(self) -> None:
-        geometry = self._load_window_geometry() or dict(_DEFAULT_WINDOW_GEOMETRY)
-        if os.name == "nt":
-            self._apply_native_window_geometry(geometry)
-        else:
-            try:
-                self._action(
-                    f"window-set-geometry:{geometry['x']},{geometry['y']},{geometry['w']},{geometry['h']}",
-                    timeout=4.0,
-                )
-            except Exception as error:
-                LOG.w("[inkscape_previewer] could not restore window geometry: %s", error)
-        self._last_geometry = geometry
-
-    def _native_window_geometry(self) -> dict[str, int | bool]:
-        handle = self._window_handle(timeout=0.0)
-        if not handle:
-            return {}
-        rectangle = wintypes.RECT()
-        user32 = ctypes.windll.user32
-        if not user32.GetWindowRect(handle, ctypes.byref(rectangle)):
-            return {}
-        return {
-            "x": int(rectangle.left),
-            "y": int(rectangle.top),
-            "w": int(rectangle.right - rectangle.left),
-            "h": int(rectangle.bottom - rectangle.top),
-            "maximized": bool(user32.IsZoomed(handle)),
-        }
-
-    def _apply_native_window_geometry(self, geometry: dict[str, int | bool]) -> None:
-        handle = self._window_handle(timeout=1.0)
-        if not handle:
-            return
-        user32 = ctypes.windll.user32
-        user32.ShowWindow(handle, 9)
-        user32.MoveWindow(
-            handle,
-            int(geometry["x"]),
-            int(geometry["y"]),
-            max(1, int(geometry["w"])),
-            max(1, int(geometry["h"])),
-            True,
+        LOG.i(
+            "[inkscape_previewer.startup] profile_ms=%.1f window_ms=%.1f shell_ms=%.1f total_ms=%.1f",
+            (profile_ready - startup_started) * 1000.0,
+            (window_ready - profile_ready) * 1000.0,
+            (shell_ready - window_ready) * 1000.0,
+            (shell_ready - startup_started) * 1000.0,
         )
-        if geometry.get("maximized"):
-            user32.ShowWindow(handle, 3)
 
-    def _window_is_maximized(self) -> bool:
-        if os.name != "nt":
-            return bool(self._last_geometry.get("maximized", False))
-        handle = self._window_handle(timeout=0.0)
-        return bool(handle and ctypes.windll.user32.IsZoomed(handle))
-
-    def _start_geometry_monitor(self) -> None:
-        if self._geometry_thread is not None and self._geometry_thread.is_alive():
-            return
-        self._geometry_stop.clear()
-
-        def monitor() -> None:
-            while not self._geometry_stop.wait(1.5):
-                with self._lock:
-                    if not self.running:
-                        return
-                    self._remember_window_geometry()
-
-        self._geometry_thread = threading.Thread(
-            target=monitor,
-            name="inkscape-previewer-geometry",
+    def _start_macos(
+        self,
+        executable: str,
+        env: dict[str, str],
+        startup_started: float,
+        profile_ready: float,
+    ) -> None:
+        """Run GUI and shell in one process; macOS has no active-window CLI mode."""
+        process = subprocess.Popen(
+            [
+                executable,
+                f"--app-id-tag={self._app_tag}",
+                "--with-gui",
+                "--shell",
+                str(self._live_path),
+            ],
+            cwd=INKSCAPE.executable_dir(executable),
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=0,
+            close_fds=True,
+            start_new_session=True,
+        )
+        self._gui_process = process
+        self._shell_process = process
+        threading.Thread(
+            target=self._read_output,
+            args=(process,),
+            name="inkscape-previewer-output",
             daemon=True,
+        ).start()
+        try:
+            self._read_prompt(timeout=30.0)
+            if not self._wait_for_gui(timeout=5.0):
+                raise RuntimeError("Inkscape preview window did not become ready")
+        except Exception:
+            self.close()
+            raise
+        shell_ready = time.perf_counter()
+        LOG.i(
+            "[inkscape_previewer] started combined macOS gui+shell pid=%s svg='%s'",
+            process.pid,
+            self._live_path,
         )
-        self._geometry_thread.start()
+        LOG.i(
+            "[inkscape_previewer.startup] profile_ms=%.1f combined_ms=%.1f total_ms=%.1f",
+            (profile_ready - startup_started) * 1000.0,
+            (shell_ready - profile_ready) * 1000.0,
+            (shell_ready - startup_started) * 1000.0,
+        )
 
     def _read_output(self, process: subprocess.Popen) -> None:
         stream = process.stdout
@@ -673,22 +773,30 @@ class InkscapePreviewer:
         expected_name = self._live_path.name.lower()
         deadline = time.monotonic() + max(0.0, timeout)
         while True:
-            found: list[int] = []
+            found: list[tuple[int, int]] = []
 
             @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
             def callback(hwnd, _parameter):
+                if not user32.IsWindowVisible(hwnd):
+                    return True
                 length = user32.GetWindowTextLengthW(hwnd)
                 if length:
                     buffer = ctypes.create_unicode_buffer(length + 1)
                     user32.GetWindowTextW(hwnd, buffer, length + 1)
                     title = buffer.value.lower()
                     if expected_name in title and "inkscape" in title:
-                        found.append(int(hwnd))
+                        rectangle = wintypes.RECT()
+                        area = 0
+                        if user32.GetWindowRect(hwnd, ctypes.byref(rectangle)):
+                            area = max(0, rectangle.right - rectangle.left) * max(
+                                0, rectangle.bottom - rectangle.top,
+                            )
+                        found.append((area, int(hwnd)))
                 return True
 
             user32.EnumWindows(callback, 0)
             if found:
-                return found[0]
+                return max(found)[1]
             if time.monotonic() >= deadline:
                 return 0
             time.sleep(0.05)

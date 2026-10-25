@@ -355,8 +355,9 @@ Then, you can reference any frame in the dataset as:
 
 |  | Meaning |
 | --- | --- |
-| @sp1[14] | # Frame 14, third page, second row |
-| @sp1[B3] | # Column B, row 3 |
+| @sp1[5] | # Linear frame 5 on page 1 |
+| @sp1[B3] | # Column B, row 3 on page 1 |
+| @sp1[3!B4] | # PDF page 3, column B, row 4 |
 | @sp1[B3:C5] | # Rectangular range |
 | @sp1[B4..C6] | # Linear walk following the spritesheet layout order |
 | @sp1[A4 B2 A1] | # Explicit unordered list selector |
@@ -366,6 +367,10 @@ Then, you can reference any frame in the dataset as:
 (`^` in the grid reverses numbering direction: first rows, then columns.)
 
 This spritesheet can be used as a source in any dataset, positioned with Fit parameters (e.g. `~i6`) as any other target.
+
+For PDF spritesheets, keep the PDF itself in the definition. PnPInk creates and reuses
+`<pdf-name>.page-N.png` files under the project assets when a referenced page is needed.
+The page prefix is optional: `B4` means `1!B4`.
 
 Notes:
 

@@ -2469,5 +2469,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception:
+        LOG.e("[deckmaker_app] fatal startup error\n%s", traceback.format_exc())
+        raise
 

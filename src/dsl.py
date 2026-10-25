@@ -112,6 +112,7 @@ class LayoutSpec:
     shape: Optional[ShapeSpec] = None
     gaps: Optional[List[Union[float, str]]] = None  # compat (k as sibling)
     offset: Optional[List[Union[float, str]]] = None
+    border: Optional[List[Union[float, str]]] = None
     extract: Optional[bool] = None
     # Note: page cursor and page size/orientation live in Page{}, not in Layout{}.
 
@@ -1322,6 +1323,11 @@ def _parse_layout_v2(layout_cmd: str) -> LayoutSpec:
         if ls.grid is None:
             ls.grid = GridSpec(cols=0, rows=0, order="lr-tb", flip=None, gaps=None)
         ls.grid.offset = _parse_offset_v2(offset_val)
+    border_val = args.get("border", None)
+    if border_val is None:
+        border_val = args.get("b", None)
+    if border_val is not None:
+        ls.border = list(border_val) if isinstance(border_val, (list, tuple)) else [border_val]
     # shape
     sval = args.get("s", None)
     if sval is None:

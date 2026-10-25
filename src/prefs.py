@@ -83,6 +83,10 @@ _DEFAULTS = {
     "web_user_agent": "github.com/xoellijo/pnpink",
     "deckmaker_web_browser": "system",
     "deckmaker_preview_backend": "browser",
+    "deckmaker_preview_selection_sync": "off",
+    "deckmaker_dataset_dock": "bottom",
+    "deckmaker_dataset_split_bottom": "0.58",
+    "deckmaker_dataset_split_right": "0.55",
 
 }
 
@@ -136,6 +140,10 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     ("web_user_agent", ("User-Agent used for Wikimedia/direct web asset downloads. Empty = github.com/xoellijo/pnpink",)),
     ("deckmaker_web_browser", ("Browser used by Deckmaker Web. Values: system | edge | chrome | chromium | firefox | safari",)),
     ("deckmaker_preview_backend", ("Deckmaker Web preview backend. Values: browser | inkscape",)),
+    ("deckmaker_preview_selection_sync", ("Deckmaker Web selection synchronization. Values: off | dataset | two_way",)),
+    ("deckmaker_dataset_dock", ("Deckmaker Web dataset position. Values: bottom | right",)),
+    ("deckmaker_dataset_split_bottom", ("Deckmaker Web horizontal splitter position from the top-left origin. Values: 0.05..0.95",)),
+    ("deckmaker_dataset_split_right", ("Deckmaker Web vertical splitter position from the top-left origin. Values: 0.05..0.95",)),
     ("split_svg_output", ("Split DM_output into SVG parts. Values: 0 | 1",)),
     ("split_svg_mode", ("SVG split mode. Values: parts | limits",)),
     ("split_svg_parts", ("Split SVG into this number of parts when split_svg_mode=parts. Empty = disabled.",)),
@@ -274,6 +282,74 @@ def get_deckmaker_preview_backend(default: str = "browser") -> str:
 def set_deckmaker_preview_backend(value: str) -> None:
     backend = str(value or "browser").strip().lower()
     set("deckmaker_preview_backend", backend if backend in {"browser", "inkscape"} else "browser", save=True)
+
+
+def get_deckmaker_preview_selection_sync(default: str = "off") -> str:
+    aliases = {
+        "off": "off",
+        "dataset": "dataset",
+        "dataset -> preview": "dataset",
+        "dataset → preview": "dataset",
+        "two-way": "two_way",
+        "two_way": "two_way",
+    }
+    value = str(get("deckmaker_preview_selection_sync", default) or default).strip().lower()
+    return aliases.get(value, "off")
+
+
+def set_deckmaker_preview_selection_sync(value: str) -> None:
+    aliases = {
+        "off": "off",
+        "dataset": "dataset",
+        "dataset -> preview": "dataset",
+        "dataset → preview": "dataset",
+        "two-way": "two_way",
+        "two_way": "two_way",
+    }
+    normalized = aliases.get(str(value or "off").strip().lower(), "off")
+    set("deckmaker_preview_selection_sync", normalized, save=True)
+
+
+def get_deckmaker_dataset_dock(default: str = "bottom") -> str:
+    value = str(get("deckmaker_dataset_dock", default) or default).strip().lower()
+    return value if value in {"bottom", "right"} else "bottom"
+
+
+def set_deckmaker_dataset_dock(value: str) -> None:
+    dock = str(value or "bottom").strip().lower()
+    set("deckmaker_dataset_dock", dock if dock in {"bottom", "right"} else "bottom", save=True)
+
+
+def _deckmaker_split_position(name: str, default: float) -> float:
+    try:
+        value = float(get(name, default))
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return value if 0.05 < value < 0.95 else default
+
+
+def get_deckmaker_dataset_split_bottom(default: float = 0.58) -> float:
+    return _deckmaker_split_position("deckmaker_dataset_split_bottom", default)
+
+
+def set_deckmaker_dataset_split_bottom(value: float) -> None:
+    try:
+        position = float(value)
+    except (TypeError, ValueError, OverflowError):
+        position = 0.58
+    set("deckmaker_dataset_split_bottom", f"{min(0.95, max(0.05, position)):.6f}", save=True)
+
+
+def get_deckmaker_dataset_split_right(default: float = 0.55) -> float:
+    return _deckmaker_split_position("deckmaker_dataset_split_right", default)
+
+
+def set_deckmaker_dataset_split_right(value: float) -> None:
+    try:
+        position = float(value)
+    except (TypeError, ValueError, OverflowError):
+        position = 0.55
+    set("deckmaker_dataset_split_right", f"{min(0.95, max(0.05, position)):.6f}", save=True)
 
 
 def get_pdf_profiles(default: str = "default") -> list[str]:

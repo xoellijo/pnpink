@@ -18,6 +18,7 @@
 <body>
   <main class="dataset-dock-bottom">
     <aside id="gui" class="deckmaker-gui-host"></aside>
+    <aside id="spritesheet-gui" class="deckmaker-gui-host spritesheet-gui-host" hidden></aside>
     <section id="preview-panel" class="preview-panel">
       <div id="preview-viewport" class="preview-viewport" tabindex="0" aria-label="SVG preview">
         <div id="preview-stage" class="preview-stage">
@@ -37,33 +38,16 @@
       </header>
       <pre id="log" aria-live="polite"></pre>
     </section>
-    <section id="spritesheet-panel" class="spritesheet-panel" hidden>
-      <div class="spritesheet-toolbar">
-        <strong>Spritesheet preview</strong>
-        <span id="spritesheet-layout"></span>
-        <button id="spritesheet-copy-layout" type="button" title="Copy Layout expression">Copy layout</button>
-        <button id="spritesheet-fit" type="button" title="Fit preview">Fit</button>
-        <button id="spritesheet-close" type="button" title="Close preview">Close</button>
-      </div>
-      <div id="spritesheet-viewport" class="spritesheet-viewport">
-        <div id="spritesheet-stage" class="spritesheet-stage">
-          <img id="spritesheet-image" alt="Selected spritesheet source">
-          <svg id="spritesheet-overlay"></svg>
-        </div>
-        <div id="spritesheet-message" class="spritesheet-message"></div>
-      </div>
-      <div class="spritesheet-footer">
-        <span>Selected frame</span>
-        <code id="spritesheet-frame">@sprites[*]</code>
-        <button id="spritesheet-copy-frame" type="button">Copy reference</button>
-        <small>Wheel to zoom · drag the background to pan · click a frame to address it</small>
-      </div>
-    </section>
     <section id="gsheet-editor" class="gsheet-editor" hidden>
       <div id="gsheet-editor-message" class="gsheet-editor-message">Resolving sheet tab&hellip;</div>
       <iframe id="gsheet-editor-frame" title="Google Sheets Editor" hidden></iframe>
       <div id="dataset-table" class="dataset-table" aria-label="Local CSV dataset" hidden></div>
     </section>
+    <nav id="pdf-page-controls" class="pdf-page-controls" aria-label="PDF pages" hidden>
+      <button id="pdf-page-previous" type="button" title="Previous PDF page" aria-label="Previous PDF page">&#x2039;</button>
+      <span id="pdf-page-label">Page 1</span>
+      <button id="pdf-page-next" type="button" title="Next PDF page" aria-label="Next PDF page">&#x203a;</button>
+    </nav>
   </main>
   <section id="job-status" class="job-status" aria-live="polite">
     <span id="job-spinner" class="job-spinner" aria-hidden="true"></span>

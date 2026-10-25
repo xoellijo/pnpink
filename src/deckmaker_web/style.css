@@ -36,7 +36,7 @@ body.url-drop-active .gsheet-editor::after {
   backdrop-filter: blur(7px);
 }
 body.image-drop-active .preview-panel::after {
-  content: "Drop image to create a spritesheet";
+  content: "Drop image or PDF to create a spritesheet";
   position: absolute;
   inset: 0;
   z-index: 20;
@@ -74,6 +74,18 @@ main {
   pointer-events: none;
 }
 #gui > .lil-gui { pointer-events: auto; }
+.spritesheet-gui-host {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  z-index: 112;
+  width: min(344px, calc(100vw - 4px));
+  max-height: calc(100% - 4px);
+  overflow: visible;
+  pointer-events: none;
+}
+.spritesheet-gui-host[hidden] { display: none; }
+.spritesheet-gui-host > .lil-gui { pointer-events: auto; }
 .preview-panel {
   position: relative;
   grid-column: 1;
@@ -136,11 +148,34 @@ main {
   pointer-events: none;
 }
 .preview-spritesheet-overlay[hidden] { display: none; }
-.preview-spritesheet-overlay .sprite-cell { cursor: grab; outline: none; pointer-events: auto; user-select: none; }
+.preview-spritesheet-overlay .sprite-cell { pointer-events: none; }
 .preview-spritesheet-overlay .sprite-cell rect { fill: #ef343409; stroke: #ef3434; stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
-.preview-spritesheet-overlay .sprite-cell:hover rect,
-.preview-spritesheet-overlay .sprite-cell:focus rect { fill: #ef343426; stroke: #ff8b8b; stroke-width: 2px; }
-.preview-spritesheet-overlay .sprite-cell.selected rect { fill: #ffc85738; stroke: #ffc857; stroke-width: 2.5px; }
+.pdf-page-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 2px 3px;
+  padding: 2px 3px;
+  border-bottom: 1px solid #ffffff20;
+  color: #fff;
+  background: transparent;
+}
+.pdf-page-controls[hidden] { display: none; }
+.pdf-page-controls button {
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: #fff;
+  background: #252525;
+  font: 20px/20px sans-serif;
+  cursor: pointer;
+}
+.pdf-page-controls button:hover:not(:disabled) { background: #444; }
+.pdf-page-controls button:disabled { color: #777; cursor: default; }
+.pdf-page-controls span { min-width: 54px; padding: 0 3px; text-align: center; font-size: 11px; }
 .deckmaker-row-label { flex: 0 0 auto; align-self: center; min-width: 34px; color: #ddd; font-size: 11px; }
 .preview-message {
   position: absolute;
@@ -405,6 +440,66 @@ main.dataset-dock-right .gsheet-editor { grid-column: 3; grid-row: 1; }
   padding: 24px;
   text-align: center;
 }
+#spritesheet-gui > .lil-gui.deckmaker-menu {
+  width: 100% !important;
+  max-height: calc(100vh - 4px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid #ffffff20;
+  border-radius: 7px;
+  box-shadow: 0 8px 24px #0008;
+  backdrop-filter: blur(7px);
+}
+#spritesheet-gui .deckmaker-menu > .title {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding-left: 5px;
+  color: #fff;
+  background: #050505e8;
+  font-weight: 400;
+}
+#spritesheet-gui .deckmaker-menu > .title::before {
+  display: inline-block !important;
+  flex: 0 0 11px;
+  width: 11px;
+  padding-right: 2px !important;
+  color: #bdbdbd;
+  font-family: lil-gui !important;
+}
+#spritesheet-gui .deckmaker-menu > .children { background: #070707dc; }
+#spritesheet-gui .deckmaker-menu .controller button { color: #fff; background: #151515e8; }
+#spritesheet-gui .deckmaker-menu .controller button:hover { background: #292929; }
+#spritesheet-gui .deckmaker-menu .title .iconify,
+#spritesheet-gui .deckmaker-row .iconify { color: #fff !important; }
+#spritesheet-gui .deckmaker-spritesheet-close {
+  order: 20;
+  flex: 0 0 22px;
+  width: 22px;
+  margin-left: auto;
+  font-size: 19px;
+  line-height: 18px;
+}
+#spritesheet-gui .deckmaker-menu > .title > .pdf-page-controls {
+  flex: 0 0 auto;
+  gap: 2px;
+  margin: 0 2px 0 4px;
+  padding: 0;
+  border: 0;
+}
+#spritesheet-gui .deckmaker-menu > .title > .pdf-page-controls button {
+  width: 21px;
+  height: 20px;
+  font-size: 17px;
+  line-height: 17px;
+}
+#spritesheet-gui .deckmaker-menu > .title > .pdf-page-controls span {
+  min-width: 48px;
+  padding: 0 1px;
+}
+#spritesheet-gui .deckmaker-sprite-link { flex: 0 0 27px !important; width: 27px !important; }
+#spritesheet-gui .deckmaker-sprite-link.linked .iconify { color: #efbd73 !important; }
+#spritesheet-gui .deckmaker-sprite-copy-definition { flex: 1 1 auto !important; }
 .gsheet-editor.empty .gsheet-editor-message strong { font-size: 16px; font-weight: 500; }
 .gsheet-editor.empty .gsheet-editor-message span { max-width: 520px; color: #bdbdbd; }
 .deckmaker-create-dataset {
@@ -599,8 +694,8 @@ main.dataset-dock-right .gsheet-editor { grid-column: 3; grid-row: 1; }
   white-space: nowrap;
 }
 #gui .deckmaker-preview-folder > .title > .remove-bar {
-  min-width: 62px;
-  flex: 0 0 62px;
+  min-width: 99px;
+  flex: 0 0 99px;
 }
 #gui .deckmaker-preview-folder > .title > .deckmaker-preview-asset-select {
   width: 0;
@@ -812,31 +907,8 @@ body.log-visible .job-status { bottom: 12px; }
 .job-status progress { grid-column: 1 / -1; width: 100%; height: 3px; border: 0; accent-color: #efbd73; }
 @keyframes deckmaker-spin { to { transform: rotate(360deg); } }
 
-.spritesheet-panel { position: fixed; inset: 0; z-index: 150; min-width: 0; min-height: 0; display: grid; grid-template-rows: 42px minmax(0, 1fr) 42px; background: #050505c4; }
-.spritesheet-panel[hidden] { display: none; }
-.spritesheet-toolbar, .spritesheet-footer { min-width: 0; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
-.spritesheet-toolbar strong { flex: 0 0 auto; font-size: 13px; }
-.spritesheet-toolbar span { min-width: 0; flex: 1 1 auto; overflow: hidden; color: #cfcfcb; font: 11px/1.2 "Cascadia Mono", Consolas, monospace; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
-.spritesheet-toolbar button, .spritesheet-footer button { min-height: 27px; padding: 0 9px; border: 1px solid var(--line); border-radius: 5px; color: #fff; background: #151515d9; cursor: pointer; }
-.spritesheet-toolbar button:hover, .spritesheet-footer button:hover { background: #292929; }
-.spritesheet-viewport { position: relative; min-width: 0; min-height: 0; overflow: hidden; background-color: #161616; background-image: linear-gradient(45deg, #202020 25%, transparent 25%), linear-gradient(-45deg, #202020 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #202020 75%), linear-gradient(-45deg, transparent 75%, #202020 75%); background-position: 0 0, 0 8px, 8px -8px, -8px 0; background-size: 16px 16px; cursor: grab; touch-action: none; }
-.spritesheet-viewport:active { cursor: grabbing; }
-.spritesheet-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; background: #fff; box-shadow: 0 8px 40px #000c; }
-.spritesheet-stage img, .spritesheet-stage svg { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
-.spritesheet-stage img { object-fit: fill; }
-.spritesheet-stage svg { overflow: visible; }
-.sprite-cell { cursor: pointer; outline: none; }
-.sprite-cell rect { fill: #1a73e812; stroke: #53a3ff; stroke-width: 1.2px; vector-effect: non-scaling-stroke; }
-.sprite-cell:hover rect, .sprite-cell:focus rect { fill: #1a73e833; stroke: #fff; stroke-width: 2px; }
-.sprite-cell.selected rect { fill: #ffc85738; stroke: #ffc857; stroke-width: 2.5px; }
-.sprite-cell text { fill: #fff; paint-order: stroke; stroke: #000; stroke-width: .7px; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
-.spritesheet-message { position: absolute; inset: 0; display: grid; place-items: center; padding: 30px; color: #ddd; background: #090909d9; text-align: center; }
-.spritesheet-footer { border-top: 1px solid var(--line); border-bottom: 0; }
-.spritesheet-footer > span { color: var(--muted); font-size: 11px; }
-.spritesheet-footer code { color: #fff0ae; font-size: 12px; }
-.spritesheet-footer small { min-width: 0; flex: 1; overflow: hidden; color: var(--muted); text-align: right; text-overflow: ellipsis; white-space: nowrap; }
-
 @media (max-width: 760px) {
   main { padding: 2px; }
   #gui { top: 2px; left: 2px; width: min(275px, calc(100vw - 4px)); height: calc(100% - 4px); }
+  .spritesheet-gui-host { top: 2px; right: 2px; width: min(344px, calc(100vw - 4px)); }
 }

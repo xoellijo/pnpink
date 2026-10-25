@@ -107,7 +107,13 @@ target[2..4]   -> items 2, 3, 4
 target[A..ZZ]  -> A B C ... Z AA AB .. ZZ
 target[*]      -> all items
 target[B3]     -> spreadsheet-style selector for grid/spritesheet structures
+target[3!B4]   -> column B, row 4 on page 3 of a multipage spritesheet
 ```
+
+The optional `page!cell` prefix follows spreadsheet notation. It is mainly used
+with PDF spritesheets: `@sp1[B4]` reads page 1, while `@sp1[3!B4]` reads the
+same grid position from page 3. See [Source: Spritesheets](source.md#spritesheets)
+for definitions, ranges, and lazy PDF page rendering.
 
 Note that `target[*]` (selector) and `*[ ... ]` (iterator) are not the same operation.
 - `target[*]` selects all items inside one target expression.

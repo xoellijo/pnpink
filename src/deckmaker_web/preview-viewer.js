@@ -90,6 +90,10 @@ export class PreviewViewer {
     this.elements.message.hidden = false;
   }
 
+  hideMessage() {
+    this.elements.message.hidden = true;
+  }
+
   apply() {
     const transform = `translate(-50%, -50%) translate(${this.panX}px, ${this.panY}px) rotate(${this.angle}deg) scale(${this.scale})`;
     this.elements.stage.style.transform = transform;
@@ -164,6 +168,7 @@ export class PreviewViewer {
 
   onPointerDown(event) {
     if (event.button !== 0 && event.button !== 1) return;
+    if (event.target.closest?.('button, input, select, textarea, a')) return;
     event.preventDefault();
     this.elements.viewport.focus({ preventScroll: true });
     this.elements.viewport.setPointerCapture(event.pointerId);

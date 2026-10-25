@@ -1,57 +1,136 @@
 import {
   computeSpriteGrid,
-  spriteReference,
   spritesheetDefinition,
 } from './spritesheet-model.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 export class SpritesheetEditor {
-  constructor(elements, model, presets, previewViewer, notify, onUpdate = () => {}) {
+  constructor(elements, model, presets, previewViewer, notify, request, resourceUrl, onUpdate = () => {}) {
     this.elements = elements;
     this.model = model;
     this.presets = presets || {};
     this.previewViewer = previewViewer;
     this.notify = notify;
+    this.request = request;
+    this.resourceUrl = resourceUrl;
     this.onUpdate = onUpdate;
     this.metadata = null;
     this.grid = null;
-    this.selectedCell = null;
     this.sourceName = '';
     this.objectUrl = '';
     this.active = false;
+    this.pdf = null;
     this.updateFrame = 0;
     this.elements.image.addEventListener('load', () => this.onImageLoad());
+    this.elements.pdfPrevious.addEventListener('click', () => this.changePdfPage(-1));
+    this.elements.pdfNext.addEventListener('click', () => this.changePdfPage(1));
   }
 
   setPresets(presets) { this.presets = presets || {}; }
   setMetadata(metadata) { this.svgMetadata = metadata || null; }
 
   sourceDescription() {
-    if (!this.sourceName) return 'Drop an image on the canvas to inspect it as a spritesheet.';
+    if (!this.sourceName) return 'Drop an image or PDF on the canvas to inspect it as a spritesheet.';
     if (!this.metadata) return this.sourceName;
+    if (this.pdf) return `${this.sourceName} · PDF page ${this.pdf.page}${this.pdf.pageCount ? `/${this.pdf.pageCount}` : ''}`;
     return `${this.sourceName}\n${this.metadata.widthPx} × ${this.metadata.heightPx} px`;
   }
 
-  loadFile(file) {
+  async loadFile(file) {
+    const pdfFile = file && (
+      String(file.type || '').toLowerCase() === 'application/pdf'
+      || /\.pdf$/i.test(String(file.name || ''))
+    );
+    if (pdfFile) return this.loadPdf(file);
     const imageFile = file && (
       String(file.type || '').startsWith('image/')
       || /\.(?:png|jpe?g|webp|gif|svg|bmp|avif)$/i.test(String(file.name || ''))
     );
     if (!imageFile) {
-      this.notify('Drop a PNG, JPEG, WebP, GIF or SVG image');
+      this.notify('Drop a PNG, JPEG, WebP, GIF, SVG or PDF file');
       return false;
     }
     if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
     this.objectUrl = URL.createObjectURL(file);
     this.sourceName = file.name || 'spritesheet.png';
-    this.selectedCell = null;
     this.metadata = null;
+    this.pdf = null;
+    this.updatePdfControls();
     this.active = true;
     this.model.spriteSource = this.sourceName;
     this.elements.overlay.hidden = false;
     this.previewViewer.showExternalImage(this.objectUrl, this.model.spriteDpi);
     this.onUpdate();
     return true;
+  }
+
+  async loadPdf(file) {
+    if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
+    this.objectUrl = '';
+    this.previewViewer.showMessage('Rendering PDF page 1 with Inkscape...');
+    try {
+      const data = await this.request('/api/spritesheet/pdf', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/pdf',
+          'X-DeckMaker-Filename': encodeURIComponent(file.name || 'spritesheet.pdf'),
+        },
+        body: file,
+      });
+      this.sourceName = data.sourcePath || file.name || 'spritesheet.pdf';
+      this.metadata = null;
+      this.active = true;
+      this.model.spriteSource = this.sourceName;
+      this.elements.overlay.hidden = false;
+      this.showPdfPage(data);
+      return true;
+    } catch (error) {
+      this.previewViewer.showMessage(error.message || 'The PDF page could not be rendered.');
+      this.notify(error.message || 'The PDF page could not be rendered');
+      return false;
+    }
+  }
+
+  async changePdfPage(delta) {
+    if (!this.pdf) return;
+    const target = this.pdf.page + delta;
+    if (target < 1) return;
+    this.elements.pdfPrevious.disabled = true;
+    this.elements.pdfNext.disabled = true;
+    this.previewViewer.showMessage(`Rendering PDF page ${target} with Inkscape...`);
+    try {
+      const data = await this.request('/api/spritesheet/pdf-page', {
+        method: 'POST',
+        body: JSON.stringify({ page: target }),
+      });
+      this.metadata = null;
+      this.showPdfPage(data);
+    } catch (error) {
+      this.previewViewer.hideMessage();
+      this.notify(error.message || `PDF page ${target} is not available`);
+      this.updatePdfControls();
+    }
+  }
+
+  showPdfPage(data) {
+    this.pdf = data;
+    this.sourceName = data.sourcePath || this.sourceName;
+    this.model.spriteSource = this.sourceName;
+    this.model.spriteDpi = Number(data.dpi || 96);
+    this.updatePdfControls();
+    this.previewViewer.showExternalImage(this.resourceUrl(data.previewUrl), this.model.spriteDpi);
+    this.onUpdate();
+  }
+
+  updatePdfControls() {
+    const active = Boolean(this.pdf);
+    this.elements.pdfControls.hidden = !active;
+    if (!active) return;
+    this.elements.pdfPrevious.disabled = !this.pdf.hasPrevious;
+    this.elements.pdfNext.disabled = !this.pdf.hasNext;
+    this.elements.pdfLabel.textContent = this.pdf.pageCount
+      ? `Page ${this.pdf.page}/${this.pdf.pageCount}`
+      : `Page ${this.pdf.page}`;
   }
 
   deactivate() {
@@ -64,8 +143,9 @@ export class SpritesheetEditor {
     this.elements.overlay.removeAttribute('viewBox');
     this.elements.overlay.removeAttribute('aria-label');
     this.grid = null;
-    this.selectedCell = null;
     this.metadata = null;
+    this.pdf = null;
+    this.updatePdfControls();
   }
 
   onImageLoad() {
@@ -86,7 +166,6 @@ export class SpritesheetEditor {
 
   update() {
     if (!this.active) return;
-    this.selectedCell = null;
     this.updatePhysicalSize();
     this.render();
   }
@@ -111,9 +190,6 @@ export class SpritesheetEditor {
     const overlay = this.elements.overlay;
     overlay.replaceChildren();
     this.grid = computeSpriteGrid(this.model, this.metadata, this.presets);
-    this.model.spriteDefinition = spritesheetDefinition(this.model, this.grid, this.sourceName)
-      || 'Invalid spritesheet grid';
-    this.model.spriteFrame = spriteReference(this.model, this.selectedCell);
     this.onUpdate();
     if (!this.grid || !this.metadata) return;
 
@@ -133,9 +209,6 @@ export class SpritesheetEditor {
     for (const cell of this.grid.cells) {
       const group = document.createElementNS(SVG_NS, 'g');
       group.classList.add('sprite-cell');
-      group.setAttribute('tabindex', '0');
-      group.setAttribute('role', 'button');
-      group.setAttribute('aria-label', `Frame ${cell.address}, item ${cell.index}`);
       const rectangle = document.createElementNS(SVG_NS, 'rect');
       rectangle.setAttribute('x', cell.x * scaleX);
       rectangle.setAttribute('y', cell.y * scaleY);
@@ -149,18 +222,6 @@ export class SpritesheetEditor {
       rectangle.style.stroke = '#ef3434';
       rectangle.style.strokeWidth = '1.5px';
       rectangle.style.vectorEffect = 'non-scaling-stroke';
-      const select = event => {
-        event?.stopPropagation();
-        this.selectedCell = cell;
-        overlay.querySelectorAll('.selected').forEach(node => node.classList.remove('selected'));
-        group.classList.add('selected');
-        this.model.spriteFrame = spriteReference(this.model, cell);
-        this.onUpdate();
-      };
-      group.addEventListener('click', select);
-      group.addEventListener('keydown', event => {
-        if (event.key === 'Enter' || event.key === ' ') select(event);
-      });
       group.append(rectangle);
       overlay.appendChild(group);
     }
@@ -168,7 +229,6 @@ export class SpritesheetEditor {
   }
 
   definition() { return spritesheetDefinition(this.model, this.grid, this.sourceName); }
-  frameReference() { return spriteReference(this.model, this.selectedCell); }
 
   async copy(value) {
     try {
@@ -180,5 +240,4 @@ export class SpritesheetEditor {
   }
 
   copyDefinition() { return this.copy(this.definition()); }
-  copyFrame() { return this.copy(this.frameReference()); }
 }

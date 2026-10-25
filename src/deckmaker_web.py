@@ -325,6 +325,12 @@ class DeckMakerWebHost:
                 if parsed.path == "/api/template/headers":
                     self._json(host.service.template_headers())
                     return
+                if parsed.path == "/api/spritesheet/pdf-preview":
+                    try:
+                        self._file(host.service.pdf_spritesheet_preview(), "image/png", cache_control="no-store, max-age=0")
+                    except Exception as error:
+                        self.send_error(HTTPStatus.BAD_REQUEST, str(error))
+                    return
                 if parsed.path == "/api/dataset/table":
                     try:
                         self._json(host.service.local_dataset_table())
@@ -370,6 +376,15 @@ class DeckMakerWebHost:
                     self._json({"error": "Unauthorized"}, HTTPStatus.UNAUTHORIZED)
                     return
                 try:
+                    if parsed.path == "/api/spritesheet/pdf":
+                        size = int(self.headers.get("Content-Length") or 0)
+                        if size <= 0:
+                            raise ValueError("The PDF upload is empty")
+                        if size > 100 * 1024 * 1024:
+                            raise ValueError("The PDF exceeds the 100 MB preview limit")
+                        filename = urllib.parse.unquote(self.headers.get("X-DeckMaker-Filename") or "spritesheet.pdf")
+                        self._json(host.service.load_pdf_spritesheet(filename, self.rfile.read(size)))
+                        return
                     body = self._body()
                     session_id = host._session_id(self)
                     if parsed.path == "/api/session/open":
@@ -416,6 +431,9 @@ class DeckMakerWebHost:
                             int(body.get("row") or 0),
                             int(body.get("column") or 0),
                         ))
+                        return
+                    if parsed.path == "/api/spritesheet/pdf-page":
+                        self._json(host.service.pdf_spritesheet_page(int(body.get("page") or 1)))
                         return
                     if parsed.path == "/api/command":
                         accepted = host.service.command(str(body.get("command") or ""))

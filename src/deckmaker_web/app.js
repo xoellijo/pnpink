@@ -7,7 +7,11 @@ import { DatasetTable } from './dataset-table.js';
 
 const materialIcon = name => `material-symbols-light:${name}`;
 const ENABLE_SPRITESHEETS = true;
-const PREVIEW_SYNC_MODES = ['Off', 'Dataset → Preview', 'Two-way'];
+const PREVIEW_SYNC_MODES = {
+  Off: 'off',
+  'Dataset → Preview': 'dataset',
+  'Two-way': 'two_way',
+};
 
 const query = new URLSearchParams(location.search);
 const token = query.get('token') || sessionStorage.getItem('deckmaker-token') || '';
@@ -30,8 +34,13 @@ const elements = {
   previewMessage: document.querySelector('#preview-message'),
   previewScale: document.querySelector('#preview-scale'),
   spriteGridOverlay: document.querySelector('#sprite-grid-overlay'),
+  pdfPageControls: document.querySelector('#pdf-page-controls'),
+  pdfPagePrevious: document.querySelector('#pdf-page-previous'),
+  pdfPageNext: document.querySelector('#pdf-page-next'),
+  pdfPageLabel: document.querySelector('#pdf-page-label'),
   workspace: document.querySelector('main'),
   splitter: document.querySelector('#workspace-splitter'),
+  spritesheetGui: document.querySelector('#spritesheet-gui'),
   logClose: document.querySelector('#log-close'),
   jobStatus: document.querySelector('#job-status'),
   jobSpinner: document.querySelector('#job-spinner'),
@@ -42,7 +51,7 @@ const elements = {
 };
 
 const model = {
-  previewSelectionSync: localStorage.getItem('deckmaker-preview-selection-sync') || 'Off',
+  previewSelectionSync: 'off',
   spriteSource: 'No selection',
   spriteMode: 'Grid',
   spriteOrder: 'Rows first',
@@ -59,8 +68,10 @@ const model = {
   spriteRight: 0,
   spriteBottom: 0,
   spriteLeft: 0,
-  spriteDefinition: 'Drop an image on the canvas',
-  spriteFrame: '@sprites[*]',
+  spriteSizing: 'Grid',
+  spriteLinkGaps: true,
+  spriteLinkHorizontalBorders: true,
+  spriteLinkVerticalBorders: true,
 };
 const previewViewer = new PreviewViewer({
   viewport: elements.previewViewport,
@@ -92,8 +103,14 @@ let datasetGui;
 let datasetDockController;
 let datasetTitleLabel;
 let datasetDock = 'bottom';
+const splitPositions = { bottom: .58, right: .55 };
+let datasetLayoutSaveTimer;
 let toolsFolder;
-let spritesFolder;
+let spriteGui;
+let spriteCopyDefinitionController;
+let spriteCustomRow;
+let spriteSequence = 0;
+let spriteLayoutBefore = null;
 let templateSelect;
 let templateRefresh;
 let templateName;
@@ -125,7 +142,18 @@ let previewSelectionPolling = false;
 let lastPreviewSelection = '';
 
 function leaveSpritesheet() {
+  if (!spriteEditor?.active) return;
   spriteEditor?.deactivate();
+  elements.spritesheetGui.hidden = true;
+  elements.workspace.classList.remove('spritesheet-mode');
+  if (spriteLayoutBefore) {
+    if (datasetDock === spriteLayoutBefore.dock) {
+      if (datasetDock === 'right') setDeckMakerPaneWidth(spriteLayoutBefore.datasetWidth, false);
+      else setDeckMakerPaneHeight(spriteLayoutBefore.previewHeight, false);
+    }
+    spriteLayoutBefore = null;
+  }
+  previewViewer.setPreview(latestState.preview);
 }
 
 async function api(path, options = {}) {
@@ -153,7 +181,7 @@ function toast(message) {
 function schedulePreviewCellSync(selection) {
   const hasPreviewAssets = Array.isArray(latestState.preview?.assets)
     && latestState.preview.assets.length > 0;
-  if (model.previewSelectionSync === 'Off' && hasPreviewAssets) return;
+  if (model.previewSelectionSync === 'off' && hasPreviewAssets) return;
   clearTimeout(previewCellSyncTimer);
   previewCellSyncTimer = setTimeout(async () => {
     try {
@@ -178,7 +206,7 @@ function cancelPreviewCellSync() {
 
 async function pollInkscapeSelection() {
   if (previewSelectionPolling || document.hidden || document.hasFocus()
-      || model.previewSelectionSync !== 'Two-way'
+      || model.previewSelectionSync !== 'two_way'
       || latestState.preview?.backend !== 'inkscape' || latestState.datasetEditor?.kind !== 'csv') return;
   previewSelectionPolling = true;
   try {
@@ -267,17 +295,22 @@ function restoreWindowGeometry(geometry) {
   windowGeometryRestored = true;
   const values = ['x', 'y', 'width', 'height'].map(key => Number(geometry?.[key]));
   if (values.every(Number.isFinite) && values[2] >= 320 && values[3] >= 240) {
-    try {
-      window.moveTo(values[0], values[1]);
-      window.resizeTo(values[2], values[3]);
-    } catch (_error) {
-      // Chromium may apply the launch geometry itself or reject script-driven placement.
-    }
+    const apply = () => {
+      try {
+        window.moveTo(values[0], values[1]);
+        window.resizeTo(values[2], values[3]);
+      } catch (_error) {
+        // Chromium may apply the launch geometry itself or reject script-driven placement.
+      }
+    };
+    apply();
+    setTimeout(apply, 150);
+    setTimeout(apply, 500);
   }
   setTimeout(() => {
     windowGeometryReady = true;
     reportWindowGeometry(true);
-  }, 350);
+  }, 750);
 }
 
 function reportWindowGeometry(force = false) {
@@ -374,7 +407,12 @@ function setDeckMakerPaneHeight(value, remember = true) {
   const height = Math.round(Math.max(minimum, Math.min(maximum, Number(value) || minimum)));
   elements.workspace.style.setProperty('--deckmaker-pane-height', `${height}px`);
   elements.splitter.setAttribute('aria-valuenow', String(height));
-  if (remember) localStorage.setItem('deckmaker-pane-height', String(height));
+  if (remember) {
+    const splitterHeight = elements.splitter.getBoundingClientRect().height || 8;
+    splitPositions.bottom = (elements.workspace.clientHeight - height - splitterHeight)
+      / Math.max(1, elements.workspace.clientHeight);
+    scheduleDatasetLayoutSave();
+  }
   updateSheetViewMode(datasetDock === 'bottom' && height <= window.innerHeight * .15 ? 'demo' : 'minimal');
   datasetTable.redraw();
 }
@@ -385,7 +423,12 @@ function setDeckMakerPaneWidth(value, remember = true) {
   const width = Math.round(Math.max(minimum, Math.min(maximum, Number(value) || minimum)));
   elements.workspace.style.setProperty('--deckmaker-dataset-width', `${width}px`);
   elements.splitter.setAttribute('aria-valuenow', String(width));
-  if (remember) localStorage.setItem('deckmaker-dataset-width', String(width));
+  if (remember) {
+    const splitterWidth = elements.splitter.getBoundingClientRect().width || 8;
+    splitPositions.right = (elements.workspace.clientWidth - width - splitterWidth)
+      / Math.max(1, elements.workspace.clientWidth);
+    scheduleDatasetLayoutSave();
+  }
   updateSheetViewMode('minimal');
   datasetTable.redraw();
 }
@@ -407,14 +450,20 @@ function setDatasetDock(value, remember = true) {
   elements.workspace.classList.toggle('dataset-dock-right', datasetDock === 'right');
   elements.splitter.setAttribute('aria-orientation', datasetDock === 'right' ? 'vertical' : 'horizontal');
   elements.splitter.setAttribute('aria-label', `Resize preview and ${datasetDock === 'right' ? 'right' : 'bottom'} dataset`);
-  if (remember) localStorage.setItem('deckmaker-dataset-dock', datasetDock);
+  if (remember) scheduleDatasetLayoutSave();
   updateDatasetDockButton();
   if (datasetDock === 'right') {
-    const remembered = Number(localStorage.getItem('deckmaker-dataset-width'));
-    setDeckMakerPaneWidth(remembered || Math.min(620, window.innerWidth * .45), false);
+    const splitterWidth = elements.splitter.getBoundingClientRect().width || 8;
+    setDeckMakerPaneWidth(
+      elements.workspace.clientWidth * (1 - splitPositions.right) - splitterWidth,
+      false,
+    );
   } else {
-    const current = parseFloat(getComputedStyle(elements.workspace).getPropertyValue('--deckmaker-pane-height'));
-    setDeckMakerPaneHeight(current || Math.min(320, window.innerHeight * .42), false);
+    const splitterHeight = elements.splitter.getBoundingClientRect().height || 8;
+    setDeckMakerPaneHeight(
+      elements.workspace.clientHeight * (1 - splitPositions.bottom) - splitterHeight,
+      false,
+    );
   }
 }
 
@@ -475,11 +524,17 @@ function initializeSplitter(hasSheet) {
   if (splitterReady) {
     if (!sheetConfigured && hasSheet) {
       if (datasetDock === 'right') {
-        const remembered = Number(localStorage.getItem('deckmaker-dataset-width'));
-        setDeckMakerPaneWidth(remembered || Math.min(620, window.innerWidth * .45), false);
+        const splitterWidth = elements.splitter.getBoundingClientRect().width || 8;
+        setDeckMakerPaneWidth(
+          elements.workspace.clientWidth * (1 - splitPositions.right) - splitterWidth,
+          false,
+        );
       } else {
-        const remembered = Number(localStorage.getItem('deckmaker-pane-height'));
-        setDeckMakerPaneHeight(remembered || Math.min(320, window.innerHeight * .42), false);
+        const splitterHeight = elements.splitter.getBoundingClientRect().height || 8;
+        setDeckMakerPaneHeight(
+          elements.workspace.clientHeight * (1 - splitPositions.bottom) - splitterHeight,
+          false,
+        );
       }
     }
     sheetConfigured = hasSheet;
@@ -487,13 +542,37 @@ function initializeSplitter(hasSheet) {
   }
   splitterReady = true;
   sheetConfigured = hasSheet;
-  datasetDock = localStorage.getItem('deckmaker-dataset-dock') === 'right' ? 'right' : 'bottom';
-  const remembered = Number(localStorage.getItem('deckmaker-pane-height'));
-  const initial = hasSheet
-    ? (remembered || Math.min(320, window.innerHeight * .42))
-    : window.innerHeight - 145;
-  setDeckMakerPaneHeight(initial, false);
+  datasetDock = model.datasetDock === 'right' ? 'right' : 'bottom';
+  const bottomPosition = Number(model.datasetSplitBottom);
+  const rightPosition = Number(model.datasetSplitRight);
+  splitPositions.bottom = bottomPosition > .05 && bottomPosition < .95
+    ? bottomPosition
+    : (hasSheet ? .58 : .18);
+  splitPositions.right = rightPosition > .05 && rightPosition < .95
+    ? rightPosition
+    : .55;
   setDatasetDock(datasetDock, false);
+}
+
+async function persistDatasetLayout() {
+  clearTimeout(datasetLayoutSaveTimer);
+  datasetLayoutSaveTimer = undefined;
+  const values = {
+    datasetDock,
+    datasetSplitBottom: splitPositions.bottom,
+    datasetSplitRight: splitPositions.right,
+  };
+  Object.assign(model, values);
+  try {
+    await api('/api/settings', { method: 'POST', body: JSON.stringify(values) });
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function scheduleDatasetLayoutSave() {
+  clearTimeout(datasetLayoutSaveTimer);
+  datasetLayoutSaveTimer = setTimeout(persistDatasetLayout, 250);
 }
 
 elements.splitter.addEventListener('pointerdown', event => {
@@ -509,6 +588,7 @@ elements.splitter.addEventListener('pointerdown', event => {
     elements.splitter.removeEventListener('pointermove', move);
     elements.splitter.removeEventListener('pointerup', finish);
     elements.splitter.removeEventListener('pointercancel', finish);
+    persistDatasetLayout();
   };
   elements.splitter.addEventListener('pointermove', move);
   elements.splitter.addEventListener('pointerup', finish);
@@ -544,11 +624,17 @@ elements.splitter.addEventListener('dblclick', event => {
 
 window.addEventListener('resize', () => {
   if (datasetDock === 'right') {
-    const current = parseFloat(getComputedStyle(elements.workspace).getPropertyValue('--deckmaker-dataset-width'));
-    if (current) setDeckMakerPaneWidth(current, false);
+    const splitterWidth = elements.splitter.getBoundingClientRect().width || 8;
+    setDeckMakerPaneWidth(
+      elements.workspace.clientWidth * (1 - splitPositions.right) - splitterWidth,
+      false,
+    );
   } else {
-    const current = parseFloat(getComputedStyle(elements.workspace).getPropertyValue('--deckmaker-pane-height'));
-    if (current) setDeckMakerPaneHeight(current, false);
+    const splitterHeight = elements.splitter.getBoundingClientRect().height || 8;
+    setDeckMakerPaneHeight(
+      elements.workspace.clientHeight * (1 - splitPositions.bottom) - splitterHeight,
+      false,
+    );
   }
 });
 
@@ -664,17 +750,6 @@ function updateTemplateTitle(state) {
     });
     picker.append(templateSelect);
     titleBar.append(picker);
-    templateRefresh = titleButton(
-      titleBar,
-      'deckmaker-template-refresh',
-      '',
-      'Reload the current template and rebuild all dataset previews',
-      () => {
-        leaveSpritesheet();
-        command('preview-refresh');
-      },
-    );
-    templateRefresh.append(gui._createIcon(materialIcon('refresh')));
   }
   templateName.textContent = state.templateName || 'No template';
   const records = Array.isArray(state.templates) ? state.templates : [];
@@ -691,7 +766,7 @@ function updateTemplateTitle(state) {
   }
   templateSelect.value = state.template || '';
   templateSelect.disabled = !records.length || Boolean(state.busy);
-  templateRefresh.disabled = !state.canGenerate || Boolean(state.busy);
+  if (templateRefresh) templateRefresh.disabled = !state.canGenerate || Boolean(state.busy);
   gui.$title.title = state.template || '';
 }
 
@@ -742,12 +817,33 @@ function enableSliderWheel(controller, args = []) {
   if (!slider) return;
   const [minimum = -Infinity, maximum = Infinity, configuredStep] = args;
   const step = Number(configuredStep) || 1;
+  let accumulatedDelta = 0;
+  let lastDirection = 0;
+  let resetTimer;
   slider.addEventListener('wheel', event => {
     event.preventDefault();
     event.stopImmediatePropagation();
-    const multiplier = event.shiftKey ? 10 : event.altKey ? .1 : 1;
-    const direction = event.deltaY < 0 || event.deltaX > 0 ? 1 : -1;
-    const value = Math.max(minimum, Math.min(maximum, Number(controller.getValue()) + direction * step * multiplier));
+    const rawDelta = Math.abs(event.deltaY) >= Math.abs(event.deltaX)
+      ? event.deltaY
+      : -event.deltaX;
+    const unitScale = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+      ? 16
+      : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? 100 : 1;
+    const delta = rawDelta * unitScale;
+    const direction = Math.sign(delta);
+    if (!direction) return;
+    if (lastDirection && direction !== lastDirection) accumulatedDelta = 0;
+    lastDirection = direction;
+    accumulatedDelta += delta;
+    clearTimeout(resetTimer);
+    resetTimer = setTimeout(() => {
+      accumulatedDelta = 0;
+      lastDirection = 0;
+    }, 180);
+    if (Math.abs(accumulatedDelta) < 40) return;
+    accumulatedDelta = 0;
+    const increment = direction < 0 ? step : -step;
+    const value = Math.max(minimum, Math.min(maximum, Number(controller.getValue()) + increment));
     controller.setValue(Number(value.toFixed(10)));
   }, { passive: false, capture: true });
 }
@@ -762,6 +858,183 @@ function labeledSettingRow(folder, label, items, className = '') {
     row.prepend(element);
   }
   return first;
+}
+
+function updateSpriteLinkButton(controller, linked, tooltip) {
+  const iconHost = controller?.$name;
+  if (iconHost && spriteGui) {
+    iconHost.replaceChildren(spriteGui._createIcon(materialIcon(linked ? 'link' : 'link-off')));
+  }
+  if (controller?.domElement) {
+    controller.domElement.classList.toggle('linked', linked);
+    controller.domElement.title = tooltip;
+    controller.domElement.setAttribute('aria-label', tooltip);
+  }
+}
+
+function linkedSpriteRow(label, firstItem, secondItem, linkKey) {
+  let synchronizing = false;
+  let firstController;
+  let secondController;
+  const apply = (sourceKey, targetKey, controller, value) => {
+    if (synchronizing) return;
+    model[sourceKey] = value;
+    if (model[linkKey]) {
+      synchronizing = true;
+      model[targetKey] = value;
+      controller.setValue(value);
+      synchronizing = false;
+    }
+    spriteEditor?.requestUpdate();
+  };
+  firstController = spriteGui.add(model, firstItem.key, ...firstItem.args);
+  decorate(firstController, firstItem);
+  secondController = firstController.append(model, secondItem.key, ...secondItem.args);
+  decorate(secondController, secondItem);
+  firstController.onChange(value => apply(firstItem.key, secondItem.key, secondController, value));
+  secondController.onChange(value => apply(secondItem.key, firstItem.key, firstController, value));
+  enableSliderWheel(firstController, firstItem.args);
+  enableSliderWheel(secondController, secondItem.args);
+  controllers.push(firstController, secondController);
+
+  const linkAction = { toggleSpriteLink: () => {
+    model[linkKey] = !model[linkKey];
+    if (model[linkKey]) {
+      synchronizing = true;
+      model[secondItem.key] = Number(firstController.getValue());
+      secondController.setValue(model[secondItem.key]);
+      synchronizing = false;
+      spriteEditor?.requestUpdate();
+    }
+    const tooltip = `${model[linkKey] ? 'Unlink' : 'Link'} ${label.toLowerCase()} values`;
+    updateSpriteLinkButton(linkController, model[linkKey], tooltip);
+  } };
+  const linkController = firstController.append(linkAction, 'toggleSpriteLink');
+  decorate(linkController, {
+    label: '', icon: 'link', iconOnly: true,
+    tooltip: `Unlink ${label.toLowerCase()} values`,
+    className: 'deckmaker-sprite-link',
+  });
+  finishRow(firstController, 'deckmaker-number-row deckmaker-sprite-compact-row deckmaker-sprite-linked-row');
+  const row = firstController.$multi || firstController.domElement;
+  const rowLabel = document.createElement('span');
+  rowLabel.className = 'deckmaker-row-label';
+  rowLabel.textContent = label;
+  row.prepend(rowLabel);
+  return { firstController, secondController, linkController };
+}
+
+function updateSpritePresetControls() {
+  const value = String(model.spriteSizing || 'Grid');
+  if (value === 'Grid') model.spriteMode = 'Grid';
+  else if (value === 'Custom') model.spriteMode = 'Custom';
+  else {
+    model.spriteMode = 'Preset';
+    model.spritePreset = value;
+  }
+  if (spriteCustomRow) spriteCustomRow.hidden = model.spriteMode !== 'Custom';
+  spriteEditor?.requestUpdate();
+}
+
+function buildSpritesheetGui(options) {
+  const container = elements.spritesheetGui;
+  container.replaceChildren();
+  spriteGui = new XGUI({
+    title: 'Spritesheet',
+    container,
+    autoPlace: false,
+    width: 344,
+  });
+  spriteGui.domElement.classList.add('deckmaker-menu', 'deckmaker-spritesheet-menu');
+  const closeButton = titleButton(
+    spriteGui.$multi || spriteGui.$title,
+    'deckmaker-spritesheet-close',
+    '\u00d7',
+    'Close spritesheet mode',
+    leaveSpritesheet,
+  );
+  closeButton.setAttribute('aria-label', 'Close spritesheet mode');
+  spriteGui.$title.after(elements.pdfPageControls);
+
+  settingRow(spriteGui, [
+    { key: 'spriteCols', args: [1, 30, 1], label: '', icon: 'view-column', tooltip: 'Number of columns (1–30)', iconOnly: true, local: true, live: true },
+    { key: 'spriteRows', args: [1, 30, 1], label: '', icon: 'view-stream', tooltip: 'Number of rows (1–30)', iconOnly: true, local: true, live: true },
+  ], 'deckmaker-number-row deckmaker-sprite-compact-row');
+
+  linkedSpriteRow('Gaps',
+    { key: 'spriteGapH', args: [0, 30, .1], label: '', icon: 'horizontal-distribute', tooltip: 'Horizontal gap in millimetres', iconOnly: true },
+    { key: 'spriteGapV', args: [0, 30, .1], label: '', icon: 'vertical-distribute', tooltip: 'Vertical gap in millimetres', iconOnly: true },
+    'spriteLinkGaps');
+  linkedSpriteRow('Left / right',
+    { key: 'spriteLeft', args: [0, 30, .1], label: '', icon: 'align-horizontal-left', tooltip: 'Left border in millimetres', iconOnly: true },
+    { key: 'spriteRight', args: [0, 30, .1], label: '', icon: 'align-horizontal-right', tooltip: 'Right border in millimetres', iconOnly: true },
+    'spriteLinkHorizontalBorders');
+  linkedSpriteRow('Top / bottom',
+    { key: 'spriteTop', args: [0, 30, .1], label: '', icon: 'vertical-align-top', tooltip: 'Top border in millimetres', iconOnly: true },
+    { key: 'spriteBottom', args: [0, 30, .1], label: '', icon: 'vertical-align-bottom', tooltip: 'Bottom border in millimetres', iconOnly: true },
+    'spriteLinkVerticalBorders');
+
+  const presetNames = ['Grid', ...Object.keys(options.cardPresets || {}), 'Custom'];
+  settingRow(spriteGui, [{
+    key: 'spriteSizing', args: [presetNames], label: 'Preset', icon: 'playing-cards',
+    tooltip: 'Use the grid, a known frame preset, or a custom frame size',
+    onChange: updateSpritePresetControls,
+  }]);
+  const customController = labeledSettingRow(spriteGui, 'Custom', [
+    { key: 'spriteWidth', args: [1, 1000, .1], label: '', icon: 'width', tooltip: 'Custom frame width in millimetres', iconOnly: true, local: true, live: true },
+    { key: 'spriteHeight', args: [1, 1000, .1], label: '', icon: 'height', tooltip: 'Custom frame height in millimetres', iconOnly: true, local: true, live: true },
+  ], 'deckmaker-number-row deckmaker-sprite-compact-row deckmaker-sprite-custom-row');
+  spriteCustomRow = customController?.$multi || customController?.domElement;
+
+  const copyAction = { spriteCopyDefinition: () => spriteEditor?.copyDefinition() };
+  spriteCopyDefinitionController = spriteGui.add(copyAction, 'spriteCopyDefinition');
+  decorate(spriteCopyDefinitionController, {
+    label: 'Copy definition SP1', icon: 'content-copy',
+    tooltip: 'Copy the complete spritesheet definition ready to paste into the dataset',
+    className: 'deckmaker-sprite-copy-definition',
+  });
+  finishRow(spriteCopyDefinitionController, 'deckmaker-primary-actions');
+  updateSpritePresetControls();
+  spriteGui.open();
+  container.hidden = true;
+}
+
+function enterSpritesheet() {
+  if (!spriteEditor?.active) return;
+  spriteSequence += 1;
+  model.spriteAlias = `SP${spriteSequence}`;
+  spriteEditor.requestUpdate();
+  if (spriteCopyDefinitionController) {
+    spriteCopyDefinitionController.name(`Copy definition SP${spriteSequence}`);
+    spriteCopyDefinitionController.icon(materialIcon('content-copy'));
+  }
+  spriteGui?.open();
+  elements.spritesheetGui.hidden = false;
+  elements.workspace.classList.add('spritesheet-mode');
+  if (!spriteLayoutBefore) {
+    spriteLayoutBefore = {
+      dock: datasetDock,
+      previewHeight: elements.previewViewport.closest('.preview-panel')?.getBoundingClientRect().height || 0,
+      datasetWidth: elements.sheetEditor.getBoundingClientRect().width || 0,
+    };
+  }
+  requestAnimationFrame(() => {
+    const menuHeight = Math.max(
+      gui?.domElement.scrollHeight || 0,
+      spriteGui?.domElement.scrollHeight || 0,
+    );
+    const requiredHeight = Math.min(window.innerHeight * .9, menuHeight + 8);
+    if (datasetDock === 'bottom' && requiredHeight > spriteLayoutBefore.previewHeight) {
+      setDeckMakerPaneHeight(requiredHeight, false);
+    } else if (datasetDock === 'right') {
+      const requiredPreviewWidth = 275 + 344 + 12;
+      const available = elements.previewViewport.closest('.preview-panel')?.getBoundingClientRect().width || 0;
+      if (available < requiredPreviewWidth) {
+        setDeckMakerPaneWidth(Math.max(240, window.innerWidth - requiredPreviewWidth - 8), false);
+      }
+    }
+    previewViewer.fit();
+  });
 }
 
 function actionRow(folder, items, className = '') {
@@ -878,19 +1151,30 @@ function buildPreviewGui(state, options) {
     leaveSpritesheet();
     command('preview-next');
   });
-  settingRow(preview, [
+  const viewerController = settingRow(preview, [
     {
       key: 'previewBackend', args: [options.previewBackends], label: 'Viewer', icon: 'visibility',
       tooltip: 'Browser renders 96/600 DPI PNGs. Inkscape opens the generated SVG in an isolated persistent viewer.',
     },
   ]);
+  templateRefresh = titleButton(
+    viewerController.$multi || viewerController.domElement,
+    'deckmaker-template-refresh',
+    '',
+    'Reload the current template and rebuild all dataset previews',
+    () => {
+      leaveSpritesheet();
+      command('preview-refresh');
+    },
+  );
+  templateRefresh.append(gui._createIcon(materialIcon('refresh')));
   settingRow(preview, [
     {
       key: 'previewSelectionSync', args: [PREVIEW_SYNC_MODES], label: 'Selection sync', icon: 'sync-alt',
       tooltip: 'Keep the selected dataset cell and preview asset synchronized. Two-way also follows selections made in the Inkscape viewer.',
       onChange: value => {
-        model.previewSelectionSync = PREVIEW_SYNC_MODES.includes(value) ? value : 'Off';
-        localStorage.setItem('deckmaker-preview-selection-sync', model.previewSelectionSync);
+        model.previewSelectionSync = Object.values(PREVIEW_SYNC_MODES).includes(value) ? value : 'off';
+        save('previewSelectionSync', model.previewSelectionSync);
         lastPreviewSelection = '';
       },
     },
@@ -922,10 +1206,18 @@ function build(state) {
     spriteEditor = new SpritesheetEditor({
       image: elements.previewImage,
       overlay: elements.spriteGridOverlay,
-    }, model, options.cardPresets, previewViewer, toast, () => {
+      pdfControls: elements.pdfPageControls,
+      pdfPrevious: elements.pdfPagePrevious,
+      pdfNext: elements.pdfPageNext,
+      pdfLabel: elements.pdfPageLabel,
+    }, model, options.cardPresets, previewViewer, toast, api, url => {
+      const separator = String(url || '').includes('?') ? '&' : '?';
+      return `${url}${separator}token=${encodeURIComponent(token)}`;
+    }, () => {
       controllers.forEach(controller => controller.updateDisplay());
-      if (spritesFolder) spritesFolder.$title.title = spriteEditor.sourceDescription();
+      if (spriteGui?.$title) spriteGui.$title.title = spriteEditor.sourceDescription();
     });
+    buildSpritesheetGui(options);
   }
 
   buildDatasetGui(state, options);
@@ -1006,54 +1298,6 @@ function build(state) {
   pdf.close();
   parts.close();
 
-  let sprites;
-  if (ENABLE_SPRITESHEETS) {
-    sprites = toolsFolder.addFolder('Spritesheet');
-    spritesFolder = sprites;
-    sprites.icon(materialIcon('grid-on'));
-    sprites.$title.title = 'Drop an image on the canvas to inspect it as a spritesheet.';
-    actionRow(sprites, [
-      { key: 'spriteCopyDefinition', label: 'Definition', icon: 'content-copy', tooltip: 'Copy the complete # @alias = @{image}.Layout{...} definition for the dataset', run: () => spriteEditor.copyDefinition() },
-      { key: 'spriteCopyFrame', label: 'Frame', icon: 'select-all', tooltip: 'Copy the @alias[A1] reference for the frame selected on the image', run: () => spriteEditor.copyFrame() },
-    ], 'deckmaker-primary-actions');
-  settingRow(sprites, [
-    { key: 'spriteMode', args: [['Grid', 'Preset', 'Custom']], label: 'Mode', icon: 'grid-on', tooltip: 'Define frames by grid, card preset or custom size', local: true, live: true },
-    { key: 'spriteOrder', args: [['Rows first', 'Columns first']], label: 'Order', icon: 'sort', tooltip: 'Number frames by rows or by columns', local: true, live: true },
-  ]);
-  settingRow(sprites, [
-    { key: 'spriteAlias', label: 'Alias', icon: 'alternate-email', tooltip: 'Alias used in generated frame references', local: true, live: true, inputType: 'text', attributes: { placeholder: 'Alias', autocomplete: 'off', spellcheck: 'false' } },
-    { key: 'spriteDpi', args: [1, 2400, 1], label: 'DPI', icon: 'high-quality', tooltip: 'Resolution used to convert dropped image pixels to millimetres', local: true, live: true },
-  ]);
-  settingRow(sprites, [
-    { key: 'spritePreset', args: [Object.keys(options.cardPresets)], label: 'Preset', icon: 'playing-cards', tooltip: 'Known card or counter size', local: true, live: true },
-  ]);
-  settingRow(sprites, [
-    { key: 'spriteCols', args: [1, 30, 1], label: '', icon: 'view-column', tooltip: 'Number of columns (1–30)', iconOnly: true, local: true, live: true },
-    { key: 'spriteRows', args: [1, 30, 1], label: '', icon: 'view-stream', tooltip: 'Number of rows (1–30)', iconOnly: true, local: true, live: true },
-  ], 'deckmaker-number-row deckmaker-sprite-compact-row');
-  settingRow(sprites, [
-    { key: 'spriteWidth', args: [1, 1000, .1], label: '', icon: 'width', tooltip: 'Custom frame width in millimetres', iconOnly: true, local: true, live: true },
-    { key: 'spriteHeight', args: [1, 1000, .1], label: '', icon: 'height', tooltip: 'Custom frame height in millimetres', iconOnly: true, local: true, live: true },
-  ], 'deckmaker-number-row deckmaker-sprite-compact-row');
-  labeledSettingRow(sprites, 'Gaps', [
-    { key: 'spriteGapH', args: [0, 30, .1], label: '', icon: 'horizontal-distribute', tooltip: 'Horizontal gap in millimetres (0–30)', iconOnly: true, local: true, live: true },
-    { key: 'spriteGapV', args: [0, 30, .1], label: '', icon: 'vertical-distribute', tooltip: 'Vertical gap in millimetres (0–30)', iconOnly: true, local: true, live: true },
-  ], 'deckmaker-number-row deckmaker-sprite-compact-row');
-  settingRow(sprites, [
-    { key: 'spriteLeft', args: [0, 30, .1], label: '', icon: 'align-horizontal-left', tooltip: 'Left border in millimetres (0–30)', iconOnly: true, local: true, live: true },
-    { key: 'spriteRight', args: [0, 30, .1], label: '', icon: 'align-horizontal-right', tooltip: 'Right border in millimetres (0–30)', iconOnly: true, local: true, live: true },
-  ], 'deckmaker-number-row deckmaker-sprite-compact-row');
-    settingRow(sprites, [
-      { key: 'spriteTop', args: [0, 30, .1], label: '', icon: 'vertical-align-top', tooltip: 'Top border in millimetres (0–30)', iconOnly: true, local: true, live: true },
-      { key: 'spriteBottom', args: [0, 30, .1], label: '', icon: 'vertical-align-bottom', tooltip: 'Bottom border in millimetres (0–30)', iconOnly: true, local: true, live: true },
-    ], 'deckmaker-number-row deckmaker-sprite-compact-row');
-    const definitionController = decorate(sprites.add(model, 'spriteDefinition'), {
-      label: 'Result', icon: 'data-object', tooltip: 'Definition ready to paste into a dataset comment row',
-    });
-    definitionController.disable();
-    controllers.push(definitionController);
-  }
-
   settingRow(advanced, [
     { key: 'inkscapeWorkers', args: [1, 32, 1], label: 'Workers', icon: 'speed', tooltip: 'Parallel Inkscape export workers' },
     { key: 'templateEngine', args: [options.templateEngines], label: 'Engine', icon: 'manufacturing', tooltip: 'Template rendering engine' },
@@ -1108,7 +1352,7 @@ function build(state) {
     installController?._show(shell.canInstall);
     fullscreenController?.name(shell.fullscreen ? 'Exit full screen' : 'Full screen');
   });
-  [exportFolder, sprites, toolsFolder, play, advanced, configuration, help].filter(Boolean).forEach(folder => folder.close());
+  [exportFolder, toolsFolder, play, advanced, configuration, help].filter(Boolean).forEach(folder => folder.close());
   gui.close();
 }
 
@@ -1256,16 +1500,17 @@ async function poll() {
 
 let dropDepth = 0;
 
-function imageFileFromTransfer(dataTransfer) {
+function spriteFileFromTransfer(dataTransfer) {
   return Array.from(dataTransfer?.files || []).find(file => (
     String(file.type || '').startsWith('image/')
-    || /\.(?:png|jpe?g|webp|gif|svg|bmp|avif)$/i.test(String(file.name || ''))
+    || String(file.type || '').toLowerCase() === 'application/pdf'
+    || /\.(?:png|jpe?g|webp|gif|svg|bmp|avif|pdf)$/i.test(String(file.name || ''))
   )) || null;
 }
 
 function isCanvasImageDrag(event) {
   return elements.previewViewport.contains(event.target)
-    && (imageFileFromTransfer(event.dataTransfer) || Array.from(event.dataTransfer?.types || []).includes('Files'));
+    && (spriteFileFromTransfer(event.dataTransfer) || Array.from(event.dataTransfer?.types || []).includes('Files'));
 }
 
 function clearDropFeedback() {
@@ -1298,14 +1543,12 @@ window.addEventListener('drop', async event => {
   dropDepth = 0;
   clearDropFeedback();
   const image = elements.previewViewport.contains(event.target)
-    ? imageFileFromTransfer(event.dataTransfer)
+    ? spriteFileFromTransfer(event.dataTransfer)
     : null;
   if (image) {
-    if (spriteEditor?.loadFile(image)) {
-      gui?.open();
-      toolsFolder?.open();
-      spritesFolder?.open();
-      toast(`Spritesheet image loaded: ${image.name}`);
+    if (await spriteEditor?.loadFile(image)) {
+      enterSpritesheet();
+      toast(`Spritesheet source loaded: ${image.name}`);
     }
     return;
   }
