@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 __all__ = [
     "DSLError",
     "IdRef", "AliasRef", "RangeIdx", "ListIdx", "StarIdx",
+    "SpriteCellRef", "SpriteSelectorTerm", "SpriteSelector",
     "SourceRef", "GroupRef",
     "FitSpec", "TransformSpec", "LayoutSpec", "PageSpec", "GridSpec", "ShapeSpec",
     "ModuleCall", "Chain", "Command",
@@ -15,7 +16,8 @@ __all__ = [
     "is_source_expr", "split_source_token", "normalize_ops_suffix", "parse_fit_suffix",
     "ops_from_fit_spec", "fit_spec_from_ops", "split_ops_fit_transform",
     "parse_copies_page_tail", "parse_index_selector_1based", "excel_col_to_num", "measure_to_mm",
-    "parse_dataset_decl"
+    "parse_dataset_decl", "parse_spritesheet_selector", "parse_sprite_alias_token",
+    "split_sprite_alias_prefix"
 ]
 
 # =================== Errors ===================
@@ -40,10 +42,27 @@ class ListIdx:
 class StarIdx:
     pass
 
+@dataclass(frozen=True)
+class SpriteCellRef:
+    page: Optional[int]
+    cell: str
+
+@dataclass(frozen=True)
+class SpriteSelectorTerm:
+    kind: str
+    start: Optional[SpriteCellRef] = None
+    end: Optional[SpriteCellRef] = None
+
+@dataclass(frozen=True)
+class SpriteSelector:
+    raw: str
+    terms: Tuple[SpriteSelectorTerm, ...]
+
 @dataclass
 class AliasRef:
     name: str
-    indices: List[Union[int, RangeIdx, ListIdx, StarIdx]]
+    indices: List[Union[int, RangeIdx, ListIdx, StarIdx]] = field(default_factory=list)
+    selector: Optional[SpriteSelector] = None
 
 @dataclass
 class SourceRef:
@@ -1453,8 +1472,106 @@ def _parse_page_v2_from_brace(body: str) -> PageSpec:
     return ps
 
 # =================== Alias access y define ===================
+_SPRITE_ENDPOINT_RE = re.compile(
+    r"^(?:(?P<page>[1-9]\d*)!)?(?P<cell>[A-Za-z]+[1-9]\d*|[1-9]\d*)$"
+)
+_SPRITE_ALIAS_PREFIX_RE = re.compile(
+    r"^@(?P<name>[A-Za-z][\w\-.]*)\[(?P<selector>[^\]]+)\]"
+)
+
+
+def _parse_sprite_endpoint(text: str) -> SpriteCellRef:
+    match = _SPRITE_ENDPOINT_RE.fullmatch(str(text or "").strip())
+    if not match:
+        raise DSLError(f"Invalid spritesheet cell reference: {text}")
+    return SpriteCellRef(
+        page=int(match.group("page")) if match.group("page") else None,
+        cell=match.group("cell").upper(),
+    )
+
+
+def parse_spritesheet_selector(text: str) -> SpriteSelector:
+    raw = str(text or "").strip()
+    if not raw:
+        raise DSLError("Empty spritesheet selector")
+    terms = []
+    for token in [value for value in re.split(r"[\s,]+", raw) if value]:
+        if token == "*":
+            terms.append(SpriteSelectorTerm("all"))
+            continue
+        if ".." in token:
+            parts = token.split("..")
+            if len(parts) != 2:
+                raise DSLError(f"Invalid spritesheet linear range: {token}")
+            terms.append(SpriteSelectorTerm(
+                "linear",
+                _parse_sprite_endpoint(parts[0]),
+                _parse_sprite_endpoint(parts[1]),
+            ))
+            continue
+        if ":" in token:
+            parts = token.split(":")
+            if len(parts) != 2:
+                raise DSLError(f"Invalid spritesheet rectangle: {token}")
+            terms.append(SpriteSelectorTerm(
+                "rectangle",
+                _parse_sprite_endpoint(parts[0]),
+                _parse_sprite_endpoint(parts[1]),
+            ))
+            continue
+        terms.append(SpriteSelectorTerm("single", _parse_sprite_endpoint(token)))
+    if not terms:
+        raise DSLError("Empty spritesheet selector")
+    return SpriteSelector(raw=raw, terms=tuple(terms))
+
+
+def split_sprite_alias_prefix(raw_token: str):
+    text = str(raw_token or "").strip()
+    match = _SPRITE_ALIAS_PREFIX_RE.match(text)
+    if not match:
+        return None
+    selector = parse_spritesheet_selector(match.group("selector"))
+    return match.group("name"), selector, text[match.end():].strip()
+
+
+def parse_sprite_alias_token(raw_token: str):
+    parsed = split_sprite_alias_prefix(raw_token)
+    if parsed is None:
+        return None
+    name, selector, suffix = parsed
+    if not suffix:
+        return name, selector, ""
+    if suffix.startswith("~"):
+        return name, selector, suffix[1:].strip()
+    if suffix[0] in "^!|":
+        return name, selector, suffix
+    return None
+
+
 def _parse_alias_access(s: str) -> AliasRef:
     s = s.strip()
+    modern = parse_sprite_alias_token(s)
+    if modern:
+        name, selector, ops = modern
+        if ops:
+            raise DSLError("Alias access operations are not valid in this parser context")
+        raw = selector.raw
+        indices: List[Union[int, RangeIdx, ListIdx, StarIdx]] = []
+        if raw == "*":
+            indices.append(StarIdx())
+        elif re.fullmatch(r"\d+", raw):
+            indices.append(int(raw))
+        else:
+            numeric_range = re.fullmatch(r"(?P<a>\d+)\s*\.\.\s*(?P<b>\d+)", raw)
+            numeric_list = re.fullmatch(r"\d+(?:\s+\d+)+", raw)
+            if numeric_range:
+                indices.append(RangeIdx(int(numeric_range.group("a")), int(numeric_range.group("b"))))
+            elif numeric_list:
+                indices.append(ListIdx([int(value) for value in raw.split()]))
+        return AliasRef(name=name, indices=indices, selector=selector)
+
+    # Legacy multidimensional aliases remain parseable for old datasets, but
+    # spritesheet rendering uses the single selector grammar above.
     m = re.match(r"^@(?P<name>[A-Za-z][\w\-\.]*)(?P<idx>(?:\[[^\]]+\])*)$", s)
     if not m:
         raise DSLError("Invalid alias")

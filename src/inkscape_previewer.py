@@ -25,6 +25,7 @@ import temp_paths as TEMPPATHS
 
 _PROMPT = "> "
 _RELOAD_ACTION = "file-rebase:true"
+_INITIAL_VIEW_ACTIONS = ("zoom-page",)
 _INKSCAPE_NS = "http://www.inkscape.org/namespaces/inkscape"
 _SODIPODI_NS = "http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
 _SVG_NS = "http://www.w3.org/2000/svg"
@@ -299,6 +300,7 @@ class InkscapePreviewer:
         self._profile_ready = False
         self._prewarm_pending = False
         self._prewarm_generation = 0
+        self._has_preview_content = False
         self._field_to_ids: dict[str, list[str]] = {}
         self._id_to_fields: dict[str, list[str]] = {}
 
@@ -324,28 +326,51 @@ class InkscapePreviewer:
         with self._lock:
             started = time.perf_counter()
             starting = not self.running
+            fit_view = not self._has_preview_content or sys.platform == "darwin"
             self._replace_live_svg(
                 source,
-                center_viewport=starting,
+                center_viewport=False,
                 page_label=page_label or source.stem,
             )
             replaced = time.perf_counter()
             selection_action = self._selection_action(selected_fields)
             if starting:
                 self._start()
+                actions = (list(_INITIAL_VIEW_ACTIONS) if fit_view else [])
                 if selection_action:
-                    self._action(selection_action, timeout=8.0)
+                    actions.append(selection_action)
+                if actions:
+                    self._action(";".join(actions), timeout=8.0)
+                action_description = ";".join(actions)
+            elif sys.platform == "darwin":
+                # Inkscape 1.4.x on macOS crashes in SPDocument::rebase while
+                # replacing pages/namedviews. A fresh isolated viewer is slower,
+                # but is the only reliable reload path exposed by its CLI.
+                self.close()
+                self._start()
+                actions = list(_INITIAL_VIEW_ACTIONS)
+                if selection_action:
+                    actions.append(selection_action)
+                self._action(";".join(actions), timeout=8.0)
+                action_description = "restart"
             else:
                 try:
                     actions = [_RELOAD_ACTION]
+                    if fit_view:
+                        actions.extend(_INITIAL_VIEW_ACTIONS)
                     if selection_action:
                         actions.append(selection_action)
                     self._action(";".join(actions), timeout=12.0)
+                    action_description = ";".join(actions)
                 except Exception:
                     self.close()
                     self._start()
+                    actions = list(_INITIAL_VIEW_ACTIONS)
                     if selection_action:
-                        self._action(selection_action, timeout=8.0)
+                        actions.append(selection_action)
+                    self._action(";".join(actions), timeout=8.0)
+                    action_description = "restart"
+            self._has_preview_content = True
             finished = time.perf_counter()
             LOG.i(
                 "[inkscape_previewer.timing] starting=%s replace_ms=%.1f action_ms=%.1f "
@@ -354,9 +379,7 @@ class InkscapePreviewer:
                 (replaced - started) * 1000.0,
                 (finished - replaced) * 1000.0,
                 (finished - started) * 1000.0,
-                (selection_action if starting else ";".join(
-                    action for action in (_RELOAD_ACTION, selection_action) if action
-                )),
+                action_description,
                 source.stat().st_size,
             )
 
@@ -378,6 +401,7 @@ class InkscapePreviewer:
                 encoding="utf-8",
             )
             self.show(str(empty), page_label=page_label)
+            self._has_preview_content = False
 
     def prewarm(self, page_label: str = "PnPInk preview") -> None:
         """Start the empty viewer in the background before rendering an asset."""

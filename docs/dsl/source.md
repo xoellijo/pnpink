@@ -361,16 +361,24 @@ Then, you can reference any frame in the dataset as:
 | @sp1[B3:C5] | # Rectangular range |
 | @sp1[B4..C6] | # Linear walk following the spritesheet layout order |
 | @sp1[A4 B2 A1] | # Explicit unordered list selector |
+| @sp1[2!B2:C4 3!C4] | # Combined rectangle and cell selectors on specific PDF pages |
+| @sp1[2!B2..5!C1] | # Linear walk across PDF pages, including both endpoints |
 
 </div>
 
 (`^` in the grid reverses numbering direction: first rows, then columns.)
 
+Selectors separated by spaces are combined in the written order. Prefix the complete
+source with `*` to generate one dataset instance per selected frame, for example
+`*@sp1[2!B2:C4 3!C4 5!A2..6!D4]`. A `:` range is rectangular and stays on one page;
+a `..` range follows layout order and may cross page boundaries.
+
 This spritesheet can be used as a source in any dataset, positioned with Fit parameters (e.g. `~i6`) as any other target.
 
 For PDF spritesheets, keep the PDF itself in the definition. PnPInk creates and reuses
 `<pdf-name>.page-N.png` files under the project assets when a referenced page is needed.
-The page prefix is optional: `B4` means `1!B4`.
+Each page PNG uses the highest effective DPI of the raster images placed on that PDF
+page, and never less than 300 DPI. The page prefix is optional: `B4` means `1!B4`.
 
 Notes:
 

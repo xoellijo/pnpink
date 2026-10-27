@@ -764,6 +764,60 @@ def _collect_ref_ids_from_value(value: str) -> set[str]:
     return out
 
 
+def prune_unreferenced_generated_assets(root) -> dict[str, int]:
+    """Remove unused generated spritesheet assets from normalized chunks."""
+    asset_root = next((el for el in root.iter() if str(el.get("id") or "") == "_DM01_defs"), None)
+    if asset_root is None:
+        return {"removed": 0, "kept": 0}
+
+    asset_nodes = list(asset_root.iter())
+    asset_node_ids = {id(el) for el in asset_nodes}
+    assets_by_id = {
+        str(el.get("id") or "").strip(): el
+        for el in asset_nodes
+        if str(el.get("id") or "").strip()
+    }
+    needed_ids: set[str] = set()
+    for el in root.iter():
+        if id(el) in asset_node_ids:
+            continue
+        for value in _iter_ref_values(el):
+            needed_ids.update(ref_id for ref_id in _collect_ref_ids_from_value(value) if ref_id in assets_by_id)
+
+    if not needed_ids:
+        return {"removed": 0, "kept": len(list(asset_root))}
+
+    pending = list(needed_ids)
+    while pending:
+        ref_id = pending.pop()
+        target = assets_by_id.get(ref_id)
+        if target is None:
+            continue
+        for el in target.iter():
+            for value in _iter_ref_values(el):
+                for dependency_id in _collect_ref_ids_from_value(value):
+                    if dependency_id in assets_by_id and dependency_id not in needed_ids:
+                        needed_ids.add(dependency_id)
+                        pending.append(dependency_id)
+
+    removed = 0
+    kept = 0
+    for child in list(asset_root):
+        child_ids = {
+            str(el.get("id") or "").strip()
+            for el in child.iter()
+            if str(el.get("id") or "").strip()
+        }
+        if child_ids.intersection(needed_ids):
+            kept += 1
+            continue
+        asset_root.remove(child)
+        removed += 1
+    if removed:
+        _l.i("[svg_chunks] generated assets pruned removed=%d kept=%d referenced=%d", removed, kept, len(needed_ids))
+    return {"removed": removed, "kept": kept}
+
+
 def _iter_ref_values(node) -> Iterable[str]:
     for key, value in list(getattr(node, "attrib", {}).items()):
         if value:
@@ -1267,6 +1321,7 @@ def normalize_output_doc(doc, *, source_svg_path: str, keep_pages: set[int] | No
     root.set("height", f"{root_h:.6f}{height_unit}")
     root.set("viewBox", f"0 0 {root_w:.6f} {root_h:.6f}")
     copied_static_defs = _ensure_missing_composed_static_defs(root, composed_static_sources)
+    pruned_assets = prune_unreferenced_generated_assets(root)
     selected_page_numbers = [int(page_no) for page_no, _page in page_layout.selected]
     _l.i(
         "[svg_chunks] normalize pages=%d first=%d last=%d grouped_mode=%s out_children=%d static_defs=%d root=(%s x %s)",
@@ -1291,6 +1346,7 @@ def normalize_output_doc(doc, *, source_svg_path: str, keep_pages: set[int] | No
         "root_height": str(root.get("height") or ""),
         "root_viewbox": str(root.get("viewBox") or ""),
         "composed_static_defs": int(copied_static_defs),
+        "pruned_generated_assets": int(pruned_assets.get("removed") or 0),
     }
 
 

@@ -108,6 +108,8 @@ target[A..ZZ]  -> A B C ... Z AA AB .. ZZ
 target[*]      -> all items
 target[B3]     -> spreadsheet-style selector for grid/spritesheet structures
 target[3!B4]   -> column B, row 4 on page 3 of a multipage spritesheet
+target[2!B2:C4 3!C4] -> combined rectangle and cell selectors
+target[2!B2..5!C1]   -> linear range crossing PDF pages
 ```
 
 The optional `page!cell` prefix follows spreadsheet notation. It is mainly used
@@ -115,9 +117,17 @@ with PDF spritesheets: `@sp1[B4]` reads page 1, while `@sp1[3!B4]` reads the
 same grid position from page 3. See [Source: Spritesheets](source.md#spritesheets)
 for definitions, ranges, and lazy PDF page rendering.
 
+Space-separated selectors are combined in order. `:` selects a rectangle on one
+page; `..` follows layout order and may cross page boundaries. Prefix the source
+with `*` to create one dataset instance per selected frame.
+
+This is core PnPInk DSL syntax. The same selector grammar is used for direct
+sources, iterators, raster images, and multipage PDF spritesheets; those paths do
+not define separate selector variants.
+
 Note that `target[*]` (selector) and `*[ ... ]` (iterator) are not the same operation.
 - `target[*]` selects all items inside one target expression.
-- `*[ ... ]` expands rows/instances during iterator processing (asign items to diferent cards)
+- `*[ ... ]` expands rows/instances during iterator processing (assign items to different cards)
 
 ## Units and Expressions
 In paramters, most numeric tokens accept:

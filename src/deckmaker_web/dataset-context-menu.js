@@ -1,6 +1,5 @@
 import { XGUI } from './vendor/lil-xgui.min.js';
-
-const materialIcon = name => `material-symbols-light:${name}`;
+import { menuIcon } from './icon-set.js';
 
 export class DatasetContextMenu {
   constructor(actions = []) {
@@ -77,7 +76,7 @@ export class DatasetContextMenu {
   }
 
   icon(name) {
-    return name.includes(':') ? name : materialIcon(name);
+    return menuIcon(name);
   }
 
   label(action) {

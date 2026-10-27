@@ -84,6 +84,7 @@ _DEFAULTS = {
     "deckmaker_web_browser": "system",
     "deckmaker_preview_backend": "browser",
     "deckmaker_preview_selection_sync": "off",
+    "deckmaker_show_log_on_build": "1",
     "deckmaker_dataset_dock": "bottom",
     "deckmaker_dataset_split_bottom": "0.58",
     "deckmaker_dataset_split_right": "0.55",
@@ -97,6 +98,7 @@ _PREF_DOCS: list[tuple[str, tuple[str, ...]]] = [
     ("auto_preview", ("Refresh the Deckmaker Web SVG preview automatically. Values: 0 | 1",)),
     ("console_log_level", ("Console log verbosity. Values: none | error | warn | info | debug | trace | all | debug_only | trace_only",)),
     ("file_log_level", ("File log verbosity written to pnpink.log. Values: none | error | warn | info | debug | trace | all | debug_only | trace_only",)),
+    ("deckmaker_show_log_on_build", ("Show the Deckmaker Web visual log automatically while creating or exporting. Values: 0 | 1",)),
     ("log_json", ("Write logs as JSON. Values: 0 | 1",)),
     ("export_pdf", ("Enable standard PDF export. Values: 0 | 1",)),
     ("export_pdfx", ("Enable PDF/X CMYK export. Values: 0 | 1",)),
@@ -247,6 +249,12 @@ def get_file_level(default: str="trace") -> str:
 
 def set_file_level(level: str) -> None:
     set("file_log_level", _norm_level(level, "trace"), save=True)
+
+def get_deckmaker_show_log_on_build(default: bool = True) -> bool:
+    return str(get("deckmaker_show_log_on_build", "1" if default else "0")).strip() == "1"
+
+def set_deckmaker_show_log_on_build(flag: bool) -> None:
+    set("deckmaker_show_log_on_build", "1" if flag else "0", save=True)
 
 def set_log_json(flag: bool) -> None:
     set("log_json", "1" if flag else "0", save=True)

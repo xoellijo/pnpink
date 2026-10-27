@@ -16,6 +16,7 @@ import icc_profiles as ICC
 import inkscape_cli as INKSCAPE
 import log as LOG
 import prefs
+import spritesheet_export as SPRITESHEETEXPORT
 import svg_chunks as SVGCHUNKS
 import temp_paths as TEMPPATHS
 
@@ -139,6 +140,7 @@ def export_pdf_via_inkscape(
     on_raster_progress=None,
     on_inkscape_output=None,
     on_ghostscript_output=None,
+    on_phase=None,
 ) -> tuple[bool, dict]:
     _l.i(
         "[export.pdf] start svg='%s' pdf='%s' profiles=%s raster_filter_mode=%s",
@@ -164,6 +166,16 @@ def export_pdf_via_inkscape(
     except Exception:
         pass
     started = time.perf_counter()
+    phase_timings: dict[str, float] = {}
+
+    def _phase(message: str) -> None:
+        _l.i("[export.pdf.phase] %s", message)
+        if on_phase is not None:
+            try:
+                on_phase(message)
+            except Exception:
+                pass
+
     try:
         import inkex
         import raster as RASTER
@@ -173,6 +185,8 @@ def export_pdf_via_inkscape(
         exe_dir = os.path.dirname(exe) or None
         max_shell_workers = max(1, int(prefs.get_inkscape_shell_workers(EXPORT.MAX_INKSCAPE_SHELL_WORKERS)))
 
+        chunk_started = time.perf_counter()
+        _phase("PDF: preparing SVG pages...")
         chunk_plan = existing_chunk_plan or SVGCHUNKS.write_svg_chunks(
             svg_path,
             pdf_path,
@@ -181,6 +195,7 @@ def export_pdf_via_inkscape(
             **EXPORT.split_chunk_kwargs(),
         )
         chunks = list(chunk_plan.get("chunks") or [])
+        phase_timings["prepare_svg_s"] = time.perf_counter() - chunk_started
         if page_count <= 0:
             page_count = sum(len(getattr(chunk, "pages", ()) or ()) for chunk in chunks)
         fixed_images = int(chunk_plan.get("fixed_images") or 0)
@@ -194,6 +209,40 @@ def export_pdf_via_inkscape(
         )
         if not chunks:
             return False, {"error": "No SVG parts were generated", "fixed_images": fixed_images}
+        _phase(
+            f"PDF: SVG pages prepared in {phase_timings['prepare_svg_s']:.2f}s "
+            f"({len(chunks)} part(s), {page_count} page(s))"
+        )
+
+        spritesheet_started = time.perf_counter()
+        _phase("PDF: preparing physical spritesheet crops...")
+        spritesheet_svg_by_index: dict[int, str] = {}
+        spritesheet_infos: list[dict] = []
+        for chunk in chunks:
+            optimized_path = os.path.join(
+                export_work_dir,
+                f"{Path(chunk.svg_path).stem}.sprites{Path(chunk.svg_path).suffix or '.svg'}",
+            )
+            try:
+                info = SPRITESHEETEXPORT.materialize_spritesheet_frames(chunk.svg_path, optimized_path)
+            except Exception as ex:
+                _l.w("[export.pdf] spritesheet materialization failed chunk=%d: %s", int(chunk.index), ex)
+                info = {"svg_path": chunk.svg_path, "rewritten": 0, "error": str(ex)}
+            spritesheet_svg_by_index[int(chunk.index)] = str(info.get("svg_path") or chunk.svg_path)
+            spritesheet_infos.append(info)
+        phase_timings["spritesheet_crops_s"] = time.perf_counter() - spritesheet_started
+        rewritten_frames = sum(int(item.get("rewritten") or 0) for item in spritesheet_infos)
+        unique_crops = sum(int(item.get("unique_crops") or 0) for item in spritesheet_infos)
+        cache_hits = sum(int(item.get("cache_hits") or 0) for item in spritesheet_infos)
+        cache_misses = sum(int(item.get("cache_misses") or 0) for item in spritesheet_infos)
+        if rewritten_frames:
+            _phase(
+                f"PDF: spritesheet crops prepared in {phase_timings['spritesheet_crops_s']:.2f}s "
+                f"({rewritten_frames} frame(s), {unique_crops} unique, "
+                f"{cache_hits} cached, {cache_misses} created)"
+            )
+        else:
+            _phase(f"PDF: no spritesheet crops required ({phase_timings['spritesheet_crops_s']:.2f}s)")
 
         mode = str(raster_filter_mode or "png").strip().lower()
         rasterize_filters = mode in {"png", "jpeg", "png_alpha"}
@@ -201,7 +250,9 @@ def export_pdf_via_inkscape(
         export_dpi = max(1, int(export_dpi or 300))
         raster_dpi = max(1, int(round(float(export_dpi) * 1.5)))
 
+        raster_started = time.perf_counter()
         if rasterize_filters:
+            _phase("PDF: preparing rasters for complex SVG filters...")
             raster_chunk_workers = max(1, min(len(chunks), max_shell_workers))
             raster_per_chunk_workers = max(1, max_shell_workers // raster_chunk_workers)
             raster_dirs: list[str] = []
@@ -211,7 +262,8 @@ def export_pdf_via_inkscape(
                     export_work_dir,
                     f"{Path(chunk.svg_path).stem}.raster{Path(chunk.svg_path).suffix or '.svg'}",
                 )
-                shutil.copy2(chunk.svg_path, export_svg_path)
+                source_svg_path = spritesheet_svg_by_index.get(int(chunk.index), chunk.svg_path)
+                shutil.copy2(source_svg_path, export_svg_path)
                 with open(export_svg_path, "rb") as fh:
                     doc = inkex.load_svg(fh.read())
                 raster_info = RASTER.rasterize_filtered_nodes_for_export(
@@ -252,10 +304,15 @@ def export_pdf_via_inkscape(
         else:
             raster_dirs = []
             rasterized_svg_by_index = {}
+        phase_timings["raster_filters_s"] = time.perf_counter() - raster_started
+        _phase(f"PDF: complex-filter rasters prepared in {phase_timings['raster_filters_s']:.2f}s")
 
         jobs = []
         for chunk in chunks:
-            job_svg_path = rasterized_svg_by_index.get(int(chunk.index), chunk.svg_path)
+            job_svg_path = rasterized_svg_by_index.get(
+                int(chunk.index),
+                spritesheet_svg_by_index.get(int(chunk.index), chunk.svg_path),
+            )
             jobs.append({
                 "index": int(chunk.index),
                 "pages": list(chunk.pages),
@@ -273,6 +330,8 @@ def export_pdf_via_inkscape(
             })
 
         results = []
+        inkscape_started = time.perf_counter()
+        _phase(f"PDF: opening, rendering and writing {len(jobs)} SVG part(s) with Inkscape...")
         with ThreadPoolExecutor(max_workers=max(1, min(max_shell_workers, len(jobs)))) as pool:
             futs = [
                 (job, pool.submit(_run_pdf_chunk_job, job, exe_dir=exe_dir, env=env, on_output=on_inkscape_output))
@@ -299,7 +358,6 @@ def export_pdf_via_inkscape(
                         on_page_pdf_created(result["pdf_path"])
                     except Exception:
                         pass
-
         failed = [r for r in results if not r["ok"]]
         if failed:
             for failed_result in failed:
@@ -345,6 +403,13 @@ def export_pdf_via_inkscape(
                         retried["pdf_path"],
                     )
 
+        phase_timings["inkscape_pdf_s"] = time.perf_counter() - inkscape_started
+        intermediate_bytes = sum(int(item.get("output_size") or 0) for item in results)
+        _phase(
+            f"PDF: Inkscape open/render/write finished in {phase_timings['inkscape_pdf_s']:.2f}s "
+            f"({intermediate_bytes / (1024 * 1024):.1f} MB intermediate)"
+        )
+
         total_elapsed = time.perf_counter() - started
         failed = [r for r in results if not r["ok"]]
         if failed:
@@ -368,6 +433,7 @@ def export_pdf_via_inkscape(
                 "work_dir": str(chunk_plan.get("work_dir") or export_work_dir),
                 "raster_dirs": raster_dirs,
                 "target_chunk_bytes": int(chunk_plan.get("target_chunk_bytes") or EXPORT.DEFAULT_SVG_CHUNK_TARGET_BYTES),
+                "phase_timings": phase_timings,
             }
 
         ordered_chunk_pdfs = [
@@ -376,6 +442,7 @@ def export_pdf_via_inkscape(
         ]
 
         def _merge_profile(profile: str):
+            merge_started = time.perf_counter()
             target_pdf = DMPATHS.profile_pdf(pdf_path, profile)
             _l.i("[export.pdf] merge profile='%s' inputs=%d target='%s'", profile, len(ordered_chunk_pdfs), target_pdf)
             merge_kwargs = {
@@ -426,21 +493,34 @@ def export_pdf_via_inkscape(
                 _l.w(f"[export.pdf] cmyk retry without TextKPreserve profile='{profile}'")
                 merge_kwargs["text_k_preserve"] = None
                 res = GS.merge_pdfs(ordered_chunk_pdfs, target_pdf, on_output=on_ghostscript_output, **merge_kwargs)
-            return profile, res
+            return profile, res, time.perf_counter() - merge_started
 
         gs_results = []
         _l.i("[export.pdf] merge_profiles total=%d", len(selected_profiles))
+        ghostscript_started = time.perf_counter()
+        _phase(f"PDF: optimizing {len(selected_profiles)} PDF profile(s) with Ghostscript...")
         with ThreadPoolExecutor(max_workers=max(1, len(selected_profiles))) as pool:
             futs = [pool.submit(_merge_profile, profile) for profile in selected_profiles]
             for fut in futs:
                 gs_results.append(fut.result())
+        phase_timings["ghostscript_s"] = time.perf_counter() - ghostscript_started
+        final_bytes = sum(
+            os.path.getsize(getattr(res, "output_pdf", ""))
+            for _profile, res, _elapsed in gs_results
+            if res and getattr(res, "ok", False) and os.path.isfile(getattr(res, "output_pdf", ""))
+        )
+        _phase(
+            f"PDF: Ghostscript optimization finished in {phase_timings['ghostscript_s']:.2f}s "
+            f"({final_bytes / (1024 * 1024):.1f} MB final)"
+        )
 
         total_elapsed = time.perf_counter() - started
-        failed_profiles = [profile for profile, res in gs_results if not res or not getattr(res, "ok", False)]
+        phase_timings["total_s"] = total_elapsed
+        failed_profiles = [profile for profile, res, _elapsed in gs_results if not res or not getattr(res, "ok", False)]
         if failed_profiles:
             _l.w("[export.pdf] profile_failures=%s", ",".join(failed_profiles))
             details = []
-            for profile, res in gs_results:
+            for profile, res, _elapsed in gs_results:
                 if profile not in failed_profiles:
                     continue
                 if not res:
@@ -463,8 +543,9 @@ def export_pdf_via_inkscape(
                         "message": getattr(res, "message", "") if res else "",
                         "output_pdf": getattr(res, "output_pdf", "") if res else "",
                     }
-                    for profile, res in gs_results
+                    for profile, res, _elapsed in gs_results
                 ],
+                "phase_timings": phase_timings,
                 "page_count": page_count,
                 "chunk_count": len(chunks),
                 "fixed_images": fixed_images,
@@ -485,9 +566,21 @@ def export_pdf_via_inkscape(
             "raster_dirs": raster_dirs,
             "used_parallel": len(chunks) > 1,
             "target_chunk_bytes": int(chunk_plan.get("target_chunk_bytes") or EXPORT.DEFAULT_SVG_CHUNK_TARGET_BYTES),
+            "phase_timings": phase_timings,
+            "spritesheet_frames": rewritten_frames,
+            "spritesheet_unique_crops": unique_crops,
+            "spritesheet_cache_hits": cache_hits,
+            "spritesheet_cache_misses": cache_misses,
+            "intermediate_pdf_bytes": intermediate_bytes,
+            "final_pdf_bytes": final_bytes,
             "gs_outputs": [
-                {"profile": profile, "output_pdf": getattr(res, "output_pdf", ""), "ok": bool(getattr(res, "ok", False))}
-                for profile, res in gs_results
+                {
+                    "profile": profile,
+                    "output_pdf": getattr(res, "output_pdf", ""),
+                    "ok": bool(getattr(res, "ok", False)),
+                    "elapsed_s": elapsed,
+                }
+                for profile, res, elapsed in gs_results
             ],
         }
     except Exception as ex:

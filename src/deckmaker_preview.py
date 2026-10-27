@@ -11,16 +11,24 @@ import os
 from pathlib import Path
 import re
 import shlex
+from types import SimpleNamespace
 
 import app_paths as APPPATHS
 import dataset as DATASET
 import dsl as DSL
+import render_tokens as RENDER_TOKENS
 import snippets as SNIPPETS
+import sources as SOURCES
 import temp_paths as TEMPPATHS
 
 
-PREVIEW_CACHE_VERSION = 17
+PREVIEW_CACHE_VERSION = 18
 SYMBOL_CACHE_VERSION = 4
+
+_PREVIEW_SPRITESHEETS = "__dm_preview_spritesheets__"
+_ITERATOR_EXPRESSION_RE = re.compile(
+    r"(?<!\S)(?P<stars>\*+)\s*(?P<expression>@[A-Za-z][\w.\-]*\[[^\]]+\]|\[[^\]]*\])"
+)
 
 _REFERENCE_RE = re.compile(r"url\(\s*#([^\s)]+)\s*\)")
 _HREF_NAMES = {"href", "{http://www.w3.org/1999/xlink}href"}
@@ -171,8 +179,97 @@ def asset_signatures(datasets: list[dict]) -> dict[str, str]:
     return signatures
 
 
-def _iterator_tokens(value: str) -> list[str]:
+def _spritesheet_metadata(dataset: dict | None) -> dict:
+    return dict((dataset or {}).get(_PREVIEW_SPRITESHEETS) or {})
+
+
+def _spritesheet_definition(metadata: dict):
+    return SimpleNamespace(**metadata)
+
+
+def _parse_preview_spritesheets(comment_lines, resolver: SOURCES.PathResolver) -> dict:
+    definitions = {}
+    for row in comment_lines or []:
+        first = str((row[0] if isinstance(row, (list, tuple)) and row else row) or "").lstrip()
+        if not first.startswith("#") or first.startswith("##"):
+            continue
+        match = re.match(r"^#\s*@(?P<alias>[A-Za-z][\w.\-]*)\s*=\s*(?P<rhs>.+)$", first)
+        if not match:
+            continue
+        chain = DSL.maybe_parse_chain(match.group("rhs").strip())
+        if chain is None:
+            continue
+        layout = next(
+            (
+                module.spec
+                for module in chain.modules
+                if str(module.name or "").lower() in {"layout", "l"} and module.spec is not None
+            ),
+            None,
+        )
+        grid = getattr(layout, "grid", None)
+        if grid is None or int(grid.cols or 0) <= 0 or int(grid.rows or 0) <= 0:
+            continue
+        source = str(getattr(chain.target, "src", "") or "").strip().strip("\"'")
+        page_count = 1
+        resolved = resolver.resolve_logical(source) if source else None
+        if resolved is not None and resolved.suffix.lower() == ".pdf":
+            try:
+                from deckmaker_pdf_spritesheet import pdf_page_count
+                page_count = max(1, int(pdf_page_count(resolved) or 1))
+            except Exception:
+                page_count = 1
+        order = str(getattr(grid, "order", "") or "").lower()
+        flip = str(getattr(grid, "flip", "") or "").lower()
+        definitions[match.group("alias")] = {
+            "cols": int(grid.cols),
+            "rows": int(grid.rows),
+            "page_count": page_count,
+            "sweep_rows_first": order not in {"tb-lr", "tblr", "tb_lr"},
+            "invert_rows": flip == "v",
+            "invert_cols": flip == "h",
+        }
+    return definitions
+
+
+def annotate_spritesheet_iterators(effect, datasets: list[dict]) -> None:
+    """Attach lightweight selector metadata used by the preview catalog."""
+    if not datasets:
+        return
+    if all(_PREVIEW_SPRITESHEETS in dataset for dataset in datasets):
+        return
+    resolver = SOURCES.PathResolver(effect.document_path())
+    global_comments = next(
+        (dataset.get("comments") or [] for dataset in datasets if dataset.get("comments")),
+        [],
+    )
+    global_definitions = _parse_preview_spritesheets(global_comments, resolver)
+    for dataset in datasets:
+        definitions = dict(global_definitions)
+        comments = dataset.get("comments") or []
+        if comments is not global_comments:
+            definitions.update(_parse_preview_spritesheets(comments, resolver))
+        dataset[_PREVIEW_SPRITESHEETS] = definitions
+
+
+def _iterator_tokens(value: str, spritesheets: dict | None = None) -> list[str]:
     body = str(value or "").strip()
+    try:
+        parsed_alias = DSL.parse_sprite_alias_token(body)
+    except DSL.DSLError:
+        parsed_alias = None
+    if parsed_alias is not None:
+        alias, selector, operations = parsed_alias
+        definition_data = dict((spritesheets or {}).get(alias) or {})
+        if not definition_data:
+            return [body]
+        tokens = RENDER_TOKENS.spritesheet_selector_tokens(
+            alias,
+            selector,
+            _spritesheet_definition(definition_data),
+        )
+        suffix = f"~{operations}" if operations else ""
+        return [f"{token}{suffix}" for token in tokens]
     if body.startswith("[") and body.endswith("]"):
         body = body[1:-1].strip()
     if not body:
@@ -237,30 +334,34 @@ def _iterator_tokens(value: str) -> list[str]:
     return items or [""]
 
 
-def _iterator_list_size(value: str) -> int:
-    return len(_iterator_tokens(value))
+def _iterator_list_size(value: str, spritesheets: dict | None = None) -> int:
+    return len(_iterator_tokens(value, spritesheets))
 
 
-def _iterator_levels(row: dict) -> dict[int, int]:
+def _iterator_levels(row: dict, dataset: dict | None = None) -> dict[int, int]:
     levels: dict[int, int] = {}
+    spritesheets = _spritesheet_metadata(dataset)
     for cell in row.get("cells") or []:
         text = str(cell or "")
-        for match in re.finditer(r"(?<!\S)(\*+)\s*(\[[^\]]*\])", text):
-            level = len(match.group(1))
-            levels[level] = max(levels.get(level, 1), _iterator_list_size(match.group(2)))
+        for match in _ITERATOR_EXPRESSION_RE.finditer(text):
+            level = len(match.group("stars"))
+            levels[level] = max(
+                levels.get(level, 1),
+                _iterator_list_size(match.group("expression"), spritesheets),
+            )
     return levels
 
 
-def _iterator_count(row: dict) -> int:
-    levels = _iterator_levels(row)
+def _iterator_count(row: dict, dataset: dict | None = None) -> int:
+    levels = _iterator_levels(row, dataset)
     count = 1
     for level in range(1, max(levels, default=0) + 1):
         count *= levels.get(level, 1)
     return max(1, count)
 
 
-def _iterator_variant_indices(row: dict, variant: int) -> list[int]:
-    levels = _iterator_levels(row)
+def _iterator_variant_indices(row: dict, variant: int, dataset: dict | None = None) -> list[int]:
+    levels = _iterator_levels(row, dataset)
     if not levels:
         return []
     zero_based = max(0, int(variant) - 1)
@@ -296,9 +397,9 @@ def _title_column(dataset: dict) -> int | None:
     return None
 
 
-def _resolve_iterator_text(value: str, row: dict, variant: int) -> str:
+def _resolve_iterator_text(value: str, row: dict, variant: int, dataset: dict | None = None) -> str:
     text = str(value or "").strip()
-    levels = _iterator_levels(row)
+    levels = _iterator_levels(row, dataset)
     if not levels:
         return text
     zero_based = max(0, int(variant) - 1)
@@ -310,11 +411,14 @@ def _resolve_iterator_text(value: str, row: dict, variant: int) -> str:
         indices[level] = (zero_based // divisor) % levels.get(level, 1)
 
     def replace(match) -> str:
-        level = len(match.group(1))
-        items = _iterator_tokens(match.group(2))
+        level = len(match.group("stars"))
+        items = _iterator_tokens(
+            match.group("expression"),
+            _spritesheet_metadata(dataset),
+        )
         return items[indices.get(level, 0) % len(items)] if items else ""
 
-    return re.sub(r"(?<!\S)(\*+)\s*(\[[^\]]*\])", replace, text).strip()
+    return _ITERATOR_EXPRESSION_RE.sub(replace, text).strip()
 
 
 class _VisibleTextParser(HTMLParser):
@@ -356,7 +460,7 @@ def _row_title(
     cells = list(row.get("cells") or [])
     if title_column is None or title_column >= len(cells):
         return ""
-    resolved = _resolve_iterator_text(cells[title_column], row, variant)
+    resolved = _resolve_iterator_text(cells[title_column], row, variant, dataset)
     return _visible_title(resolved, snippet_registry)
 
 
@@ -389,14 +493,14 @@ def catalog(datasets: list[dict]) -> list[dict]:
                 continue
             if str(row.get("__dm_symbol_id__") or "").strip():
                 continue
-            count = _iterator_count(row)
+            count = _iterator_count(row, dataset)
             selected = DSL.parse_index_selector_1based(str(row.get("__dm_iter_select__") or ""), size=count)
             variants = selected or list(range(1, count + 1))
             for variant in variants:
                 sheet_row = int(row.get("__dm_sheet_row__") or row_index)
                 label = str(sheet_row)
                 if count > 1:
-                    indices = _iterator_variant_indices(row, int(variant))
+                    indices = _iterator_variant_indices(row, int(variant), dataset)
                     label += "." + ".".join(str(value) for value in indices)
                 title = _row_title(
                     dataset, row, int(variant), title_column, snippet_registry,
@@ -479,7 +583,7 @@ def _selection(datasets: list[dict], entry: dict) -> tuple[list[dict], str, str]
     source_dataset = datasets[dataset_index - 1]
     source_row = (source_dataset.get("rows") or [])[row_index - 1]
     row = deepcopy(source_row)
-    selector = f"[{variant}]" if _iterator_count(source_row) > 1 else ""
+    selector = f"[{variant}]" if _iterator_count(source_row, source_dataset) > 1 else ""
     row["__dm_iter_select__"] = selector
     row["__dm_copies__"] = 1
     row["__dm_copies_explicit__"] = False
@@ -533,6 +637,7 @@ def prepare(
     base_signature: str = "",
 ) -> dict:
     datasets = datasets if datasets is not None else DATASET.load_datasets(effect, effect.document_path())
+    annotate_spritesheet_iterators(effect, datasets)
     entries = catalog(datasets)
     if not entries:
         raise ValueError("The dataset contains no previewable assets")

@@ -126,17 +126,6 @@ def _pillow_convert_image(src_png: str, dst_path: str, export_name: str, *, jpeg
         image.save(dst_path, format=fmt, **params)
 
 
-def _run_page_job_batch(page_jobs: list[tuple[int, str, list[str]]], exe_dir: str | None, env: dict[str, str]) -> tuple[int, str]:
-    msgs: list[str] = []
-    for _local_idx, _temp_path, argv in page_jobs:
-        rc, msg = INKSCAPE.run(argv, exe_dir=exe_dir, env=env)
-        if msg:
-            msgs.append(str(msg))
-        if int(rc) != 0:
-            return int(rc), "\n".join(msgs)
-    return 0, "\n".join(msgs)
-
-
 def paths_exist_with_size(paths: list[str]) -> bool:
     for path in paths:
         try:
@@ -531,22 +520,17 @@ def export_other_pages_via_inkscape(
                 final_paths.append((temp_path, final_path))
             if not local_page_exports:
                 continue
-            page_jobs = []
-            for local_idx, temp_path in local_page_exports:
-                argv = INKSCAPE.build_page_export_argv(
-                    exe,
-                    chunk.svg_path,
-                    temp_path,
-                    export_type=_inkscape_export_type("png" if use_png_intermediate else export_name),
-                    page_selector=str(int(local_idx)),
-                    dpi=export_dpi,
-                )
-                page_jobs.append((int(local_idx), temp_path, argv))
+            commands = INKSCAPE.build_shell_page_export_commands(
+                chunk.svg_path,
+                local_page_exports,
+                export_type=_inkscape_export_type("png" if use_png_intermediate else export_name),
+                dpi=export_dpi,
+            )
             jobs.append({
                 "index": int(chunk.index),
                 "pages": [int(p) for p in chunk.pages if int(p) in selected_set],
                 "expected_paths": list(final_paths),
-                "page_jobs": page_jobs,
+                "commands": commands,
             })
 
         results = []
@@ -556,10 +540,11 @@ def export_other_pages_via_inkscape(
             for job in jobs:
                 job_started = time.perf_counter()
                 fut = pool.submit(
-                    _run_page_job_batch,
-                    job["page_jobs"],
-                    exe_dir,
-                    env,
+                    INKSCAPE.run_shell_commands,
+                    exe,
+                    job["commands"],
+                    exe_dir=exe_dir,
+                    env=env,
                 )
                 futs.append((job, job_started, fut))
             for job, job_started, fut in futs:

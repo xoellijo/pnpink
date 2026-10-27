@@ -96,6 +96,7 @@ class SpriteSheetDef:
     margin_left_px: float = 0.0
     source_w_px: float = 0.0
     source_h_px: float = 0.0
+    page_count: int = 1
     pdf_source: Optional[Path] = None
     sweep_rows_first: bool = True     # LR-TB (rows first) vs TB-LR
     invert_rows: bool = False         # flip=v
@@ -220,6 +221,41 @@ def _guess_bitmap_size_px(abspath: Path, default_dpi: float = SVG.DPI) -> Tuple[
     except Exception:
         _l.w(f"[sources] Pillow unavailable or failed reading '{abspath.name}'; using {DEFAULT_W}x{DEFAULT_H}px")
         return (DEFAULT_W, DEFAULT_H)
+
+
+def _guess_bitmap_physical_size_mm(
+    abspath: Path,
+    *,
+    default_dpi: float = SVG.DPI,
+) -> Tuple[float, float, float, float]:
+    """Return bitmap width/height in millimetres plus the effective X/Y DPI."""
+    fallback_dpi = max(1.0, float(default_dpi or SVG.DPI))
+    try:
+        from PIL import Image
+        with Image.open(str(abspath)) as image:
+            width_px, height_px = image.size
+            dpi = image.info.get("dpi") or (fallback_dpi, fallback_dpi)
+            if isinstance(dpi, (int, float)):
+                dpi_x = dpi_y = float(dpi)
+            else:
+                dpi_x = float(dpi[0] or fallback_dpi)
+                dpi_y = float((dpi[1] if len(dpi) > 1 else dpi[0]) or fallback_dpi)
+            dpi_x = max(1.0, dpi_x)
+            dpi_y = max(1.0, dpi_y)
+            return (
+                float(width_px) * 25.4 / dpi_x,
+                float(height_px) * 25.4 / dpi_y,
+                dpi_x,
+                dpi_y,
+            )
+    except Exception:
+        width_px, height_px = _guess_bitmap_size_px(abspath, default_dpi=fallback_dpi)
+        return (
+            float(width_px) * 25.4 / fallback_dpi,
+            float(height_px) * 25.4 / fallback_dpi,
+            fallback_dpi,
+            fallback_dpi,
+        )
 
 def _is_data_uri(s: str) -> bool:
     return isinstance(s, str) and s.strip().lower().startswith("data:")
@@ -2527,13 +2563,17 @@ class SourceManager:
         template = str(self.svg_real_path or "")
         existing = find_named_asset(template, generated_name) if template else None
         pdf_mtime = pdf_path.stat().st_mtime
-        if existing is not None and existing.stat().st_mtime >= pdf_mtime:
-            return existing
-
         try:
-            from deckmaker_pdf_spritesheet import PREVIEW_DPI, render_pdf_page
+            from deckmaker_pdf_spritesheet import pdf_page_render_dpi, png_has_dpi, render_pdf_page
         except Exception as ex:
             raise RuntimeError(f"PDF spritesheet renderer is unavailable: {ex}") from ex
+        target_dpi = pdf_page_render_dpi(pdf_path, number)
+        if (
+            existing is not None
+            and existing.stat().st_mtime >= pdf_mtime
+            and png_has_dpi(existing, target_dpi)
+        ):
+            return existing
 
         if template and Path(template).is_file():
             target_dir = Path(template).resolve().parent / ASSET_DIR_NAMES[0]
@@ -2542,7 +2582,7 @@ class SourceManager:
         target_dir.mkdir(parents=True, exist_ok=True)
         temporary = target_dir / f".{generated_name}.pnpink-render.png"
         try:
-            render_pdf_page(pdf_path, temporary, number, dpi=PREVIEW_DPI)
+            render_pdf_page(pdf_path, temporary, number, dpi=target_dpi)
             if template and Path(template).is_file():
                 generated, _relative = store_generated_asset(template, generated_name, temporary)
             else:
@@ -2712,21 +2752,32 @@ class SourceManager:
             abspath = None
 
         pdf_source = None
+        page_count = 1
         if abspath is not None and abspath.suffix.lower() == ".pdf":
             pdf_source = abspath
             try:
+                from deckmaker_pdf_spritesheet import pdf_page_count
+                page_count = pdf_page_count(pdf_source)
                 abspath = self._ensure_pdf_spritesheet_page(pdf_source, 1)
             except Exception as ex:
                 _l.w(f"[spritesheets] alias '{alias_key}': cannot render PDF page 1: {ex}")
                 return None
 
         px_per_mm_f = float(px_per_mm or 1.0)
-        uu_per_px = float(getattr(self, '_uu_per_px', 1.0) or 1.0)
         source_w_u = source_h_u = 0.0
+        source_dpi_x = source_dpi_y = float(self.default_dpi or SVG.DPI)
         if abspath is not None:
-            source_w_px, source_h_px = _guess_bitmap_size_px(abspath, default_dpi=self.default_dpi)
-            source_w_u = float(source_w_px) * uu_per_px
-            source_h_u = float(source_h_px) * uu_per_px
+            source_dpi = self.default_dpi
+            try:
+                source_dpi = float((getattr(tgt, "args", None) or {}).get("dpi") or source_dpi)
+            except (TypeError, ValueError):
+                pass
+            source_w_mm, source_h_mm, source_dpi_x, source_dpi_y = _guess_bitmap_physical_size_mm(
+                abspath,
+                default_dpi=source_dpi,
+            )
+            source_w_u = source_w_mm * px_per_mm_f
+            source_h_u = source_h_mm * px_per_mm_f
 
         border_tokens = list(getattr(spec, "border", None) or [])
         base_w_mm = source_w_u / px_per_mm_f if px_per_mm_f else 0.0
@@ -2766,6 +2817,7 @@ class SourceManager:
                 th = source_h_u / float(rows)
             _l.i(
                 f"[spritesheet] autodetect @{alias_key}: source_u={source_w_u:.3f}x{source_h_u:.3f} "
+                f"dpi={source_dpi_x:.2f}x{source_dpi_y:.2f} "
                 f"border_u={margin_top:.3f},{margin_right:.3f},{margin_bottom:.3f},{margin_left:.3f} "
                 f"grid={cols}x{rows} gap_u={gx:.3f}x{gy:.3f} tile_u={tw:.3f}x{th:.3f}"
             )
@@ -2808,6 +2860,7 @@ class SourceManager:
             margin_left_px=margin_left,
             source_w_px=source_w_u,
             source_h_px=source_h_u,
+            page_count=page_count,
             pdf_source=pdf_source,
             sweep_rows_first=sweep_rows_first,
             invert_rows=invert_rows,
@@ -2987,11 +3040,21 @@ class SourceManager:
             return None
 
         p = int(page or 1)
+        if p <= 0 or p > max(1, int(getattr(ss, "page_count", 1) or 1)):
+            _l.w(
+                f"[spritesheets] alias '@{a}': page {p} is outside PDF page range "
+                f"1..{max(1, int(getattr(ss, 'page_count', 1) or 1))}"
+            )
+            return None
         if frame is not None:
             c, r = self._linear_to_rc(int(frame), ss)
         else:
             c = int(col or 1); r = int(row or 1)
-        if c <= 0 or r <= 0:
+        if c <= 0 or r <= 0 or c > int(ss.cols) or r > int(ss.rows):
+            _l.w(
+                f"[spritesheets] alias '@{a}': cell ({c},{r}) is outside grid "
+                f"{int(ss.cols)}x{int(ss.rows)}"
+            )
             return None
 
         key = (a, int(p), int(c), int(r))

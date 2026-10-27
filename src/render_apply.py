@@ -21,7 +21,6 @@ _P1_KEEP_SET = None
 TEXT_LIKE = set(getattr(SVG, "TEXT_LIKE", ()))
 
 _parse_object_token = RTK.parse_object_token
-_parse_sprite_alias_token = RTK.parse_sprite_alias_token
 _split_multivalue = RTK.split_multivalue
 _split_paths_suffix = RTK.split_paths_suffix
 _split_transform_suffixes = RTK.split_transform_suffixes
@@ -458,71 +457,46 @@ def _normalize_source_token(raw_token: str, sm=None, ss_registry=None):
     symbol_id = None
 
     if token.startswith('@') and (not token.startswith('@{')) and sm is not None and ss_registry is not None:
-        parsed = _parse_sprite_alias_token(token)
+        try:
+            parsed = DSL.parse_sprite_alias_token(token)
+        except DSL.DSLError as ex:
+            _l.w(f"[spritesheets] invalid selector '{token}': {ex}")
+            parsed = None
         if parsed:
-            a_name, dims, ops_tail = parsed
+            a_name, selector, ops_tail = parsed
             if a_name in ss_registry:
                 ss_def = ss_registry.get(a_name)
-                frame = None
-                page = 1
-                col = None
-                row_i = None
                 _l.i(f"[spritesheet] token seen in render: '{token}'")
                 try:
-                    if len(dims) == 1 and any(isinstance(x, str) and re.search(r"[A-Za-z]+\d+", x) for x in (dims[0] or [])):
-                        page, cell_selector = RTK.split_page_cell_selector(
-                            " ".join(str(x) for x in (dims[0] or [])),
-                        )
-                        frames = RTK.expand_cell_selector(
-                            cell_selector,
-                            cols=int(getattr(ss_def, "cols", 0) or 0),
-                            rows=int(getattr(ss_def, "rows", 0) or 0),
-                            sweep_rows_first=bool(getattr(ss_def, "sweep_rows_first", True)),
-                            invert_cols=bool(getattr(ss_def, "invert_cols", False)),
-                            invert_rows=bool(getattr(ss_def, "invert_rows", False)),
-                        )
-                        ids = []
-                        for fr in frames:
-                            sref = sm.register_spritesheet_frame(a_name, frame=int(fr), page=page)
-                            if sref is not None:
-                                ids.append(sref.symbol_id)
-                        if ids:
-                            symbol_id = ids[0] if len(ids) == 1 else None
-                            token = (ids[0] if len(ids) == 1 else "[" + " ".join(ids) + "]") + (f"~{ops_tail}" if ops_tail else "")
-                            normalized = True
-                            _l.d(f"[spritesheets] normalized cell selector '@{a_name}[...]' -> '{token}'")
-                            return token, normalized, symbol_id
-                    if len(dims) == 1:
-                        frame = next((x for x in dims[0] if isinstance(x, int)), None)
-                        if frame is None:
-                            frame = 1
-                        if len([x for x in dims[0] if isinstance(x, int)]) > 1:
-                            _l.w(f"[spritesheets] token '{token}': multiple frame indices not supported yet; using first={frame}")
-                    elif len(dims) == 2:
-                        col = next((x for x in dims[0] if isinstance(x, int)), None)
-                        row_i = next((x for x in dims[1] if isinstance(x, int)), None)
-                    elif len(dims) == 3:
-                        page = next((x for x in dims[0] if isinstance(x, int)), None)
-                        col = next((x for x in dims[1] if isinstance(x, int)), None)
-                        row_i = next((x for x in dims[2] if isinstance(x, int)), None)
-                    else:
-                        _l.w(f"[spritesheets] token '{token}': invalid selector dims={len(dims)}")
+                    frames = RTK.spritesheet_selector_frames(selector, ss_def)
                 except Exception as ex:
                     _l.w(f"[spritesheets] token '{token}': parse error: {ex}")
-
-                _l.i(f"[spritesheet] parsed indices: page={page} col={col} row={row_i} idx={frame}")
-                if frame is not None or (col is not None and row_i is not None):
-                    try:
-                        _l.i(f"[spritesheet] frame symbol requested id=sp_{a_name}_? selector p={page} c={col} r={row_i} idx={frame}")
-                        sref = sm.register_spritesheet_frame(a_name, frame=frame, page=page, col=col, row=row_i)
+                    frames = []
+                if not frames:
+                    _l.w(
+                        f"[spritesheets] token '{token}': selector '{selector.raw}' "
+                        f"is outside grid {int(getattr(ss_def, 'cols', 0) or 0)}x"
+                        f"{int(getattr(ss_def, 'rows', 0) or 0)}"
+                    )
+                    return token, False, None
+                try:
+                    ids = []
+                    for selected_page, frame in frames:
+                        sref = sm.register_spritesheet_frame(
+                            a_name,
+                            frame=int(frame),
+                            page=int(selected_page),
+                        )
                         if sref is not None:
-                            _l.i(f"[spritesheet] frame symbol created id={sref.symbol_id}")
-                            symbol_id = sref.symbol_id
-                            token = f"{sref.symbol_id}" + (f"~{ops_tail}" if ops_tail else "")
-                            normalized = True
-                            _l.d(f"[spritesheets] normalized '@{a_name}[...]' ? '{token}'")
-                    except Exception as ex:
-                        _l.w(f"[spritesheets] frame resolve failed '{token}': {ex}")
+                            ids.append(sref.symbol_id)
+                    if ids:
+                        symbol_id = ids[0] if len(ids) == 1 else None
+                        token = (ids[0] if len(ids) == 1 else "[" + " ".join(ids) + "]") + (f"~{ops_tail}" if ops_tail else "")
+                        normalized = True
+                        _l.d(f"[spritesheets] normalized '@{a_name}[...]' -> '{token}'")
+                        return token, normalized, symbol_id
+                except Exception as ex:
+                    _l.w(f"[spritesheets] frame resolve failed '{token}': {ex}")
             else:
                 _l.d(f"[spritesheets] token '{token}': alias @{a_name} not registered; ignoring")
 

@@ -7,6 +7,8 @@ from collections import deque
 from dataclasses import replace
 import csv
 import os
+import re
+from pathlib import Path
 import shutil
 import subprocess
 import sys
@@ -254,9 +256,23 @@ class DeckMakerService:
         except Exception:
             return ""
 
-    def open_request(self, request: AppRequest) -> None:
+    @staticmethod
+    def _without_example_templates(records: list[dict]) -> list[dict]:
+        examples_root = Path(DMPATHS.examples_dir(os.path.dirname(__file__))).resolve()
+        visible = []
+        for record in records:
+            try:
+                template = Path(DMPATHS.normalize(record.get("path") or "")).resolve()
+                if template.is_relative_to(examples_root):
+                    continue
+            except (OSError, ValueError):
+                pass
+            visible.append(record)
+        return visible
+
+    def open_request(self, request: AppRequest, *, remember_template: bool = True) -> None:
         template = DMPATHS.normalize(request.template)
-        if template:
+        if template and remember_template:
             try:
                 if prefs.get("deckmaker_web_last_template", "") != template:
                     prefs.set("deckmaker_web_last_template", template, save=True)
@@ -272,12 +288,13 @@ class DeckMakerService:
         except Exception:
             DSTATE = None
         if DSTATE is not None:
+            if remember_template:
+                try:
+                    DSTATE.remember_svg(template)
+                except Exception as error:
+                    LOG.w("[deckmaker.web] Could not persist the template: %s", error)
             try:
-                DSTATE.remember_svg(template)
-            except Exception as error:
-                LOG.w("[deckmaker.web] Could not persist the template: %s", error)
-            try:
-                self._templates = DSTATE.list_svg_templates()
+                self._templates = self._without_example_templates(DSTATE.list_svg_templates())
             except Exception:
                 pass
             try:
@@ -363,7 +380,7 @@ class DeckMakerService:
     def _refresh_templates(self) -> None:
         try:
             import dataset_state as DSTATE
-            self._templates = DSTATE.list_svg_templates()
+            self._templates = self._without_example_templates(DSTATE.list_svg_templates())
         except Exception:
             self._templates = []
 
@@ -779,7 +796,16 @@ class DeckMakerService:
         )
 
     def _can_open_output(self) -> bool:
-        return self._can_generate() and self._generated_output_ready and os.path.isfile(DMPATHS.output_svg(self._request.template))
+        template = self._request.template
+        return bool(template and os.path.isfile(DMPATHS.output_svg(template)))
+
+    def _generated_output_is_current(self) -> bool:
+        template = self._request.template
+        return bool(
+            template
+            and self._generated_output_ready
+            and os.path.isfile(DMPATHS.output_svg(template))
+        )
 
     def _can_export(self) -> bool:
         return bool(
@@ -789,7 +815,8 @@ class DeckMakerService:
         )
 
     def _preferences(self) -> dict:
-        profiles = set(prefs.get_pdf_profiles())
+        profile_list = list(prefs.get_pdf_profiles())
+        profiles = set(profile_list)
         return {
             "autoOpen": prefs.get_auto_open(),
             "autoExport": prefs.get_auto_export(),
@@ -801,6 +828,7 @@ class DeckMakerService:
             "pdfEbook": "ebook" in profiles,
             "pdfPrinter": "printer" in profiles,
             "pdfPrepress": "prepress" in profiles,
+            "pdfProfile": profile_list[0] if profile_list else "default",
             "pdfRasterMode": prefs.get_pdf_raster_mode(),
             "pdfCmykIcc": ICC.display_value(prefs.get_pdf_cmyk_icc()),
             "pdfPureBlack": prefs.get_pdf_cmyk_pure_black_text(),
@@ -822,6 +850,7 @@ class DeckMakerService:
             "templateEngine": prefs.get_template_engine(),
             "consoleLog": prefs.get_console_level(),
             "fileLog": prefs.get_file_level(),
+            "showLogOnBuild": prefs.get_deckmaker_show_log_on_build(),
             "imagePreflight": prefs.get_image_preflight(),
             "previewBackend": prefs.get_deckmaker_preview_backend(),
             "previewSelectionSync": prefs.get_deckmaker_preview_selection_sync(),
@@ -829,6 +858,22 @@ class DeckMakerService:
             "datasetSplitBottom": prefs.get_deckmaker_dataset_split_bottom(),
             "datasetSplitRight": prefs.get_deckmaker_dataset_split_right(),
         }
+
+    @staticmethod
+    def _example_templates() -> list[dict[str, str]]:
+        root = Path(DMPATHS.examples_dir(os.path.dirname(__file__))).resolve()
+        if not root.is_dir():
+            return []
+        examples = []
+        for path in sorted(root.rglob("*.svg"), key=lambda item: str(item).casefold()):
+            if path.stem.casefold().endswith("_output"):
+                continue
+            relative = path.relative_to(root)
+            examples.append({
+                "name": relative.with_suffix("").as_posix(),
+                "path": str(path),
+            })
+        return examples
 
     @staticmethod
     def _build_static_options() -> dict:
@@ -839,15 +884,49 @@ class DeckMakerService:
             "rasterModes": ["png", "jpeg", "png_alpha", "inkscape", "none"],
             "iccProfiles": ICC.display_choices(),
             "pdfxVersions": ["1a", "3", "4"],
+            "pdfProfiles": {
+                "Default": "default",
+                "Screen": "screen",
+                "E-book": "ebook",
+                "Printer": "printer",
+                "Prepress": "prepress",
+            },
             "cutFormats": ["svg", "dxf", "png"],
             "templateEngines": ["legacy", "composed", "composed-instance"],
             "previewBackends": ["browser", "inkscape"],
             "logLevels": ["trace", "debug", "info", "warn", "error", "none", "global"],
+            "examples": DeckMakerService._example_templates(),
             "cardPresets": {
                 name: {"width": size[0], "height": size[1]}
                 for name, size in CONST.CARD_SIZES_MM.items()
             },
         }
+
+    def _next_spritesheet_alias(self, request: AppRequest) -> str:
+        lines = []
+        for dataset in self._preview_datasets or []:
+            for row in dataset.get("comments", []) or []:
+                if isinstance(row, (list, tuple)):
+                    lines.extend(str(cell or "") for cell in row)
+                else:
+                    lines.append(str(row or ""))
+        if request.template:
+            csv_path = os.path.splitext(request.template)[0] + ".csv"
+            if os.path.isfile(csv_path):
+                try:
+                    lines.extend(
+                        str(cell or "")
+                        for row in DATASET.read_csv_matrix(csv_path)
+                        for cell in row
+                    )
+                except Exception:
+                    pass
+        numbers = []
+        for line in lines:
+            match = re.match(r"^\s*#(?!#)\s*@SP(\d+)\s*=", line, re.IGNORECASE)
+            if match:
+                numbers.append(int(match.group(1)))
+        return f"SP{max(numbers, default=0) + 1}"
 
     def state(self, *, include_logs: bool = True) -> dict:
         with self._lock:
@@ -954,6 +1033,7 @@ class DeckMakerService:
                     if self._sprite_selection
                     else SPRITESHEET.unavailable(self._sprite_message)
                 ),
+                "nextSpritesheetAlias": self._next_spritesheet_alias(request),
                 "play": {
                     "serverRunning": self._play_server.running,
                     "serverPort": self._play_server.port if self._play_server.running else 0,
@@ -1018,6 +1098,11 @@ class DeckMakerService:
             }
 
     def update(self, values: dict) -> dict:
+        if "examplePath" in values:
+            selected = self.open_example(str(values.get("examplePath") or ""))
+            values = {key: value for key, value in values.items() if key != "examplePath"}
+            if not values:
+                return selected
         if "templatePath" in values:
             selected = self.select_template(str(values.get("templatePath") or ""))
             values = {key: value for key, value in values.items() if key != "templatePath"}
@@ -1092,6 +1177,7 @@ class DeckMakerService:
             "inkscapeWorkers": prefs.set_inkscape_shell_workers,
             "consoleLog": prefs.set_console_level,
             "fileLog": prefs.set_file_level,
+            "showLogOnBuild": prefs.set_deckmaker_show_log_on_build,
             "imagePreflight": prefs.set_image_preflight,
             "previewBackend": prefs.set_deckmaker_preview_backend,
             "previewSelectionSync": prefs.set_deckmaker_preview_selection_sync,
@@ -1102,6 +1188,10 @@ class DeckMakerService:
         for key, setter in setters.items():
             if key in values:
                 setter(values[key])
+        if "pdfProfile" in values:
+            profile = str(values["pdfProfile"] or "default").strip().lower()
+            allowed_profiles = {"default", "screen", "ebook", "printer", "prepress"}
+            prefs.set_pdf_profiles([profile if profile in allowed_profiles else "default"])
         if "previewBackend" in values and prefs.get_deckmaker_preview_backend() != "inkscape":
             self._inkscape_previewer.close()
         profile_keys = {
@@ -1871,7 +1961,7 @@ class DeckMakerService:
         if not self._selected_export_outputs():
             raise RuntimeError("No export outputs selected")
         template = self._request.template
-        svg_path = DMPATHS.output_svg(template) if self._can_open_output() else template
+        svg_path = DMPATHS.output_svg(template) if self._generated_output_is_current() else template
         result = JOBS.export_project(
             template, svg_path, self._export_options(),
             JOBS.JobEvents(log=self.log, activity=self.activity, progress=self.progress),
@@ -1891,8 +1981,37 @@ class DeckMakerService:
         path = DMPATHS.output_svg(self._request.template)
         if not INKSCAPE.launch_gui(path):
             self._open_path(path)
-        self._set_status("Opened output")
+        self._set_status("Opening output in Inkscape...")
         return True
+
+    def open_template_folder(self) -> bool:
+        template = DMPATHS.normalize(self._request.template)
+        if not template or not os.path.isfile(template):
+            self._set_status("Save/open an SVG template first")
+            return False
+        self._open_path(os.path.dirname(template))
+        self._set_status("Opened template folder")
+        return True
+
+    def open_example(self, example: str) -> dict:
+        with self._lock:
+            if self._busy:
+                raise RuntimeError("Wait for the current DeckMaker operation to finish")
+            log_level = self._request.log_level
+        known = {
+            os.path.normcase(DMPATHS.normalize(record["path"])): record["path"]
+            for record in self._example_templates()
+        }
+        target = known.get(os.path.normcase(DMPATHS.normalize(example)))
+        if not target or not os.path.isfile(target):
+            raise ValueError("Unknown bundled example")
+        if not INKSCAPE.launch_gui(target):
+            self._open_path(target)
+        self.open_request(
+            AppRequest(template=target, log_level=log_level),
+            remember_template=False,
+        )
+        return self.state()
 
     @staticmethod
     def _open_path(path: str) -> None:
@@ -1914,6 +2033,7 @@ class DeckMakerService:
             base_path = self._preview_base_path
             base_signature = self._preview_base_signature
         preview_effect = self._preview_effect(self._request, base_path)
+        PREVIEW.annotate_spritesheet_iterators(preview_effect, datasets)
         cached = {}
         for entry in PREVIEW.catalog(datasets):
             prepared = PREVIEW.prepare(
@@ -2001,6 +2121,7 @@ class DeckMakerService:
             self._open_path(paths[target])
             return True
         urls = {
+            "docs": "https://xoellijo.github.io/pnpink/",
             "intro": "https://xoellijo.github.io/pnpink/intro/",
             "guide": "https://xoellijo.github.io/pnpink/quickstart/",
         }
@@ -2114,6 +2235,7 @@ class DeckMakerService:
             "preview-previous": lambda: self.navigate_preview(-1),
             "preview-next": lambda: self.navigate_preview(1),
             "open-output": self.open_output,
+            "open-template-folder": self.open_template_folder,
             "export": self.export,
             "play-create": self.create_play_assets,
             "play-server": self.toggle_play_server,
@@ -2122,6 +2244,7 @@ class DeckMakerService:
             "play-game": lambda: self.open_play("game"),
             "open-preferences": lambda: self.open_auxiliary("preferences"),
             "open-log": lambda: self.open_auxiliary("log"),
+            "open-docs": lambda: self.open_auxiliary("docs"),
             "open-examples": lambda: self.open_auxiliary("examples"),
             "open-intro": lambda: self.open_auxiliary("intro"),
             "open-guide": lambda: self.open_auxiliary("guide"),

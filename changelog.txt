@@ -1,3 +1,8 @@
+[0.82-beta.3]
+- Refine DeckMaker Web menus, previews, export controls, help, and progress feedback.
+- Expand PDF spritesheets with multipage ranges, reusable high-resolution pages, and complete iterator support.
+- Improve SVG and PDF output for spritesheet crops, complex filters, overlays, and static text frames.
+
 [0.82-beta.2]
 - Add an independent spritesheet editor with multipage PDF references and reusable page assets.
 - Improve DeckMaker Web preview, window handling, and browser preferences.

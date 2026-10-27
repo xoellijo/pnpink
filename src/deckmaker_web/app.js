@@ -1,16 +1,46 @@
 import { XGUI } from './vendor/lil-xgui.min.js';
 import { googleSheetFromDataTransfer } from './gsheet-drop.js';
 import { SpritesheetEditor } from './spritesheet-editor.js';
-import { appShell } from './app-shell.js';
 import { PreviewViewer } from './preview-viewer.js';
 import { DatasetTable } from './dataset-table.js';
-
-const materialIcon = name => `material-symbols-light:${name}`;
+import { menuIcon } from './icon-set.js';
 const ENABLE_SPRITESHEETS = true;
 const PREVIEW_SYNC_MODES = {
   Off: 'off',
   'Dataset → Preview': 'dataset',
   'Two-way': 'two_way',
+};
+const DOCUMENTATION_CHAPTERS = {
+  'Select chapter...': '',
+  Home: 'https://xoellijo.github.io/pnpink/',
+  Introduction: 'https://xoellijo.github.io/pnpink/intro/',
+  'Basic workflow': 'https://xoellijo.github.io/pnpink/quickstart/',
+  'DeckMaker GUI': 'https://xoellijo.github.io/pnpink/deckmaker-gui/',
+  'Dataset sources': 'https://xoellijo.github.io/pnpink/dataset-overview/',
+  'Dataset reference': 'https://xoellijo.github.io/pnpink/dataset/',
+  Text: 'https://xoellijo.github.io/pnpink/text/',
+  'Package formats': 'https://xoellijo.github.io/pnpink/dsl/packages/',
+  'DSL nomenclature': 'https://xoellijo.github.io/pnpink/dsl/nomenclature/',
+  'DSL architecture': 'https://xoellijo.github.io/pnpink/dsl/architecture/',
+  'Iterators and copies': 'https://xoellijo.github.io/pnpink/dsl/iterators/',
+  'Fit and Anchor': 'https://xoellijo.github.io/pnpink/dsl/fit-anchor/',
+  Transform: 'https://xoellijo.github.io/pnpink/dsl/transform/',
+  'Compact notation': 'https://xoellijo.github.io/pnpink/dsl/compact-notation/',
+  Layout: 'https://xoellijo.github.io/pnpink/dsl/layout/',
+  Hexes: 'https://xoellijo.github.io/pnpink/dsl/hexes/',
+  Paths: 'https://xoellijo.github.io/pnpink/dsl/paths/',
+  Page: 'https://xoellijo.github.io/pnpink/dsl/page/',
+  Source: 'https://xoellijo.github.io/pnpink/dsl/source/',
+  Maps: 'https://xoellijo.github.io/pnpink/dsl/maps/',
+  Marks: 'https://xoellijo.github.io/pnpink/dsl/marks/',
+  Gradients: 'https://xoellijo.github.io/pnpink/dsl/gradients/',
+  'Advanced DSL': 'https://xoellijo.github.io/pnpink/dsl/advanced/',
+  Export: 'https://xoellijo.github.io/pnpink/export/',
+  'PnPPlay metadata': 'https://xoellijo.github.io/pnpink/pnpplay/component-metadata/',
+  'PnPPlay asset stores': 'https://xoellijo.github.io/pnpink/pnpplay/asset-stores/',
+  'Extensions and tools': 'https://xoellijo.github.io/pnpink/extensions/',
+  Snippets: 'https://xoellijo.github.io/pnpink/snippets/',
+  Presets: 'https://xoellijo.github.io/pnpink/presets/',
 };
 
 const query = new URLSearchParams(location.search);
@@ -37,7 +67,7 @@ const elements = {
   pdfPageControls: document.querySelector('#pdf-page-controls'),
   pdfPagePrevious: document.querySelector('#pdf-page-previous'),
   pdfPageNext: document.querySelector('#pdf-page-next'),
-  pdfPageLabel: document.querySelector('#pdf-page-label'),
+  pdfPageSelect: document.querySelector('#pdf-page-select'),
   workspace: document.querySelector('main'),
   splitter: document.querySelector('#workspace-splitter'),
   spritesheetGui: document.querySelector('#spritesheet-gui'),
@@ -48,9 +78,16 @@ const elements = {
   jobActivity: document.querySelector('#job-activity'),
   googleAuthLink: document.querySelector('#google-auth-link'),
   jobProgress: document.querySelector('#job-progress'),
+  resourceViewer: document.querySelector('#resource-viewer'),
+  resourceViewerTitle: document.querySelector('#resource-viewer-title'),
+  resourceViewerExternal: document.querySelector('#resource-viewer-external'),
+  resourceViewerClose: document.querySelector('#resource-viewer-close'),
+  resourceViewerFrame: document.querySelector('#resource-viewer-frame'),
 };
 
 const model = {
+  helpExample: '',
+  helpChapter: '',
   previewSelectionSync: 'off',
   spriteSource: 'No selection',
   spriteMode: 'Grid',
@@ -106,10 +143,16 @@ let datasetDock = 'bottom';
 const splitPositions = { bottom: .58, right: .55 };
 let datasetLayoutSaveTimer;
 let toolsFolder;
+let exportFolder;
+let exportSummary;
+let exportActionButton;
 let spriteGui;
 let spriteCopyDefinitionController;
 let spriteCustomRow;
-let spriteSequence = 0;
+let spriteGridRow;
+let spriteGridControllers = [];
+let spritePresetIcon;
+let spritePresetSelect;
 let spriteLayoutBefore = null;
 let templateSelect;
 let templateRefresh;
@@ -123,8 +166,9 @@ let logDisplayMode = 'auto';
 let wasBusy = false;
 let splitterReady = false;
 let sheetConfigured = false;
-let installController;
-let fullscreenController;
+let createActionButton;
+let templateFolderButton;
+let openOutputButton;
 let playServerController;
 let openSheetController;
 let googleSheetToCsvController;
@@ -171,11 +215,12 @@ async function api(path, options = {}) {
   return data;
 }
 
-function toast(message) {
+function toast(message, { tone = 'error', duration = 3200 } = {}) {
   clearTimeout(toastTimer);
   elements.toast.textContent = message;
+  elements.toast.classList.toggle('info', tone === 'info');
   elements.toast.classList.add('visible');
-  toastTimer = setTimeout(() => elements.toast.classList.remove('visible'), 3200);
+  toastTimer = setTimeout(() => elements.toast.classList.remove('visible'), duration);
 }
 
 function schedulePreviewCellSync(selection) {
@@ -225,36 +270,6 @@ async function pollInkscapeSelection() {
 }
 
 setInterval(pollInkscapeSelection, 400);
-
-async function copyText(text) {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {}
-  }
-  const input = document.createElement('textarea');
-  input.value = text;
-  input.style.position = 'fixed';
-  input.style.left = '-9999px';
-  input.style.top = '0';
-  document.body.append(input);
-  input.focus();
-  input.select();
-  const copied = document.execCommand('copy');
-  input.remove();
-  if (!copied) throw new Error('Browser denied clipboard access');
-}
-
-async function copyTemplateHeaders() {
-  try {
-    const result = await api('/api/template/headers');
-    await copyText(result.text || '');
-    toast(`Copied ${result.headers?.length || 0} template headers`);
-  } catch (error) {
-    toast(`Could not copy headers: ${error.message}`);
-  }
-}
 
 function reportSheetActivity(active, force = false) {
   const now = Date.now();
@@ -385,8 +400,9 @@ window.addEventListener('pageshow', () => {
 setInterval(() => reportBrowserVisibility().catch(() => {}), 5000);
 
 function updateLogVisibility(busy = Boolean(latestState.busy)) {
-  const quietJob = ['preview', 'gsheet-to-csv'].includes(String(latestState.job || ''));
-  const visible = logDisplayMode === 'open' || (logDisplayMode === 'auto' && busy && !quietJob);
+  const autoJob = model.showLogOnBuild
+    && ['generate', 'export'].includes(String(latestState.job || ''));
+  const visible = logDisplayMode === 'open' || (logDisplayMode === 'auto' && busy && autoJob);
   elements.consolePanel.hidden = !visible;
   document.body.classList.toggle('log-visible', visible);
 }
@@ -417,6 +433,29 @@ function setDeckMakerPaneHeight(value, remember = true) {
   datasetTable.redraw();
 }
 
+function openResourceViewer({ title, embedUrl, externalUrl }) {
+  elements.resourceViewerTitle.textContent = title;
+  elements.resourceViewerFrame.title = title;
+  elements.resourceViewerFrame.src = embedUrl;
+  elements.resourceViewerExternal.href = externalUrl;
+  elements.resourceViewerExternal.replaceChildren(gui._createIcon(menuIcon('open-in-new')));
+  elements.resourceViewer.hidden = false;
+  elements.resourceViewerClose.focus({ preventScroll: true });
+}
+
+function closeResourceViewer() {
+  elements.resourceViewer.hidden = true;
+  elements.resourceViewerFrame.src = 'about:blank';
+}
+
+elements.resourceViewerClose.addEventListener('click', closeResourceViewer);
+elements.resourceViewer.addEventListener('pointerdown', event => {
+  if (event.target === elements.resourceViewer) closeResourceViewer();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !elements.resourceViewer.hidden) closeResourceViewer();
+});
+
 function setDeckMakerPaneWidth(value, remember = true) {
   const minimum = Math.max(240, window.innerWidth * .2);
   const maximum = Math.max(minimum, window.innerWidth - 100);
@@ -439,7 +478,7 @@ function updateDatasetDockButton() {
   const tooltip = moveRight ? 'Move dataset to the right' : 'Move dataset to the bottom';
   const buttonContent = datasetDockController.$name || datasetDockController;
   const buttonElement = datasetDockController.domElement || datasetDockController;
-  buttonContent.replaceChildren(gui._createIcon(materialIcon(moveRight ? 'dock-to-right' : 'dock-to-bottom')));
+  buttonContent.replaceChildren(gui._createIcon(menuIcon(moveRight ? 'dock-to-right' : 'dock-to-bottom')));
   buttonElement.title = tooltip;
   buttonElement.setAttribute('aria-label', tooltip);
 }
@@ -660,7 +699,7 @@ async function command(name) {
 
 function decorate(controller, { label = '', icon = '', image = '', tooltip = '', iconOnly = false, className = '' } = {}) {
   controller.name(iconOnly ? '' : label);
-  if (icon) controller.icon(icon.includes(':') ? icon : materialIcon(icon));
+  if (icon) controller.icon(menuIcon(icon));
   if (image && controller.$name) {
     const element = document.createElement('img');
     element.className = 'deckmaker-controller-icon';
@@ -697,11 +736,24 @@ function datasetTitle(state) {
   return 'Dataset';
 }
 
+function datasetIcon(state) {
+  const editorKind = String(state.datasetEditor?.kind || '').toLowerCase();
+  if (editorKind === 'csv') return 'csv-01';
+  if (editorKind === 'gsheet') return 'google-sheet';
+  return 'file-spreadsheet';
+}
+
+function updateFolderIcon(folder, icon) {
+  const current = folder?.$title?.querySelector(':scope > .iconify');
+  if (current) current.setAttribute('data-icon', menuIcon(icon));
+}
+
 function updateMenuIdentity(state) {
   updateTemplateTitle(state);
   updatePreviewNavigation(state);
   if (datasetGui?.$title) {
     if (datasetTitleLabel) datasetTitleLabel.textContent = datasetTitle(state);
+    updateFolderIcon(datasetGui, datasetIcon(state));
     datasetGui.$title.title = `${state.datasetPath || 'No dataset'}\n\nDrag a Google Sheets URL here to link it automatically.`;
   }
   const title = `${menuTitle(state)} [${state.templateName || 'No template'}]`;
@@ -734,10 +786,19 @@ function updateTemplateTitle(state) {
     templateName.className = 'deckmaker-template-name';
     gui.$title.append(templateName);
     gui.$title.classList.add('deckmaker-root-toggle');
+    templateFolderButton = titleButton(
+      titleBar,
+      'deckmaker-template-folder',
+      '',
+      'Open the template folder in the system file browser',
+      () => command('open-template-folder'),
+    );
+    templateFolderButton.replaceChildren(gui._createIcon(menuIcon('folder-open')));
+    templateFolderButton.setAttribute('aria-label', 'Open template folder');
     const picker = document.createElement('span');
     picker.className = 'deckmaker-template-picker';
     picker.title = 'Select another known SVG template';
-    picker.append(gui._createIcon(materialIcon('swap-horiz')));
+    picker.append(gui._createIcon(menuIcon('swap-horiz')));
     templateSelect = document.createElement('select');
     templateSelect.className = 'deckmaker-template-select';
     templateSelect.title = 'Known SVG templates. Launch DeckMaker Web from Inkscape to register another template.';
@@ -766,6 +827,7 @@ function updateTemplateTitle(state) {
   }
   templateSelect.value = state.template || '';
   templateSelect.disabled = !records.length || Boolean(state.busy);
+  if (templateFolderButton) templateFolderButton.disabled = !state.template || Boolean(state.busy);
   if (templateRefresh) templateRefresh.disabled = !state.canGenerate || Boolean(state.busy);
   gui.$title.title = state.template || '';
 }
@@ -791,8 +853,19 @@ function updatePreviewNavigation(state) {
   previewNext.disabled = !assets.length || Boolean(state.busy);
 }
 
+function bindSettingController(controller, item) {
+  decorate(controller, item);
+  const callback = item.onChange
+    || (item.local ? () => spriteEditor?.requestUpdate() : value => save(item.key, value));
+  (item.live ? controller.onChange(callback) : controller.onFinishChange(callback));
+  if (item.local && typeof model[item.key] === 'number') enableSliderWheel(controller, item.args);
+  controllers.push(controller);
+  return controller;
+}
+
 function settingRow(folder, items, className = '') {
   let first;
+  const rowControllers = [];
   for (const item of items) {
     const args = item.inputType
       ? [item.inputType, item.attributes || {}, ...(item.args || [])]
@@ -800,14 +873,11 @@ function settingRow(folder, items, className = '') {
     const controller = first
       ? first.append(model, item.key, ...args)
       : folder.add(model, item.key, ...args);
-    decorate(controller, item);
-    const callback = item.onChange
-      || (item.local ? () => spriteEditor?.requestUpdate() : value => save(item.key, value));
-    (item.live ? controller.onChange(callback) : controller.onFinishChange(callback));
-    if (item.local && typeof model[item.key] === 'number') enableSliderWheel(controller, item.args);
-    controllers.push(controller);
+    bindSettingController(controller, item);
+    rowControllers.push(controller);
     first ||= controller;
   }
+  if (first) first.deckmakerRowControllers = rowControllers;
   finishRow(first, className);
   return first;
 }
@@ -860,10 +930,40 @@ function labeledSettingRow(folder, label, items, className = '') {
   return first;
 }
 
+function exportSection(title, icon, enabledItem, optionItem) {
+  const folder = exportFolder.addFolder(title);
+  folder.icon(menuIcon(icon));
+  folder.domElement.classList.add('deckmaker-export-section');
+  const enabled = bindSettingController(folder.append(model, enabledItem.key), {
+    ...enabledItem,
+    label: '',
+    iconOnly: true,
+    live: true,
+    onChange: value => {
+      updateExportSummary();
+      save(enabledItem.key, value);
+    },
+  });
+  enabled.domElement.classList.add('deckmaker-export-section-toggle');
+  folder.$multi.insertBefore(enabled.domElement, folder.$title);
+  const option = bindSettingController(folder.append(model, optionItem.key, ...(optionItem.args || [])), {
+    ...optionItem,
+    label: '',
+    iconOnly: true,
+    onChange: value => {
+      updateExportSummary();
+      save(optionItem.key, value);
+    },
+  });
+  option.domElement.classList.add('deckmaker-export-section-option');
+  folder.close();
+  return folder;
+}
+
 function updateSpriteLinkButton(controller, linked, tooltip) {
   const iconHost = controller?.$name;
   if (iconHost && spriteGui) {
-    iconHost.replaceChildren(spriteGui._createIcon(materialIcon(linked ? 'link' : 'link-off')));
+    iconHost.replaceChildren(spriteGui._createIcon(menuIcon(linked ? 'link' : 'link-off')));
   }
   if (controller?.domElement) {
     controller.domElement.classList.toggle('linked', linked);
@@ -933,6 +1033,17 @@ function updateSpritePresetControls() {
     model.spritePreset = value;
   }
   if (spriteCustomRow) spriteCustomRow.hidden = model.spriteMode !== 'Custom';
+  const automaticGrid = model.spriteMode !== 'Grid';
+  spriteGridControllers.forEach(controller => {
+    if (automaticGrid) controller.disable();
+    else controller.enable();
+  });
+  spriteGridRow?.classList.toggle('automatic', automaticGrid);
+  if (spritePresetIcon && spriteGui) {
+    spritePresetIcon.replaceChildren(spriteGui._createIcon(menuIcon(
+      model.spriteMode === 'Grid' ? 'grid-view' : 'playing-cards',
+    )));
+  }
   spriteEditor?.requestUpdate();
 }
 
@@ -946,20 +1057,66 @@ function buildSpritesheetGui(options) {
     width: 344,
   });
   spriteGui.domElement.classList.add('deckmaker-menu', 'deckmaker-spritesheet-menu');
+  const titleBar = spriteGui.$multi || spriteGui.$title;
+  [...spriteGui.$title.childNodes]
+    .filter(node => node.nodeType === Node.TEXT_NODE)
+    .forEach(node => node.remove());
+  spriteGui.icon(menuIcon('settings'));
+  const titleLabel = document.createElement('span');
+  titleLabel.className = 'deckmaker-spritesheet-title-label';
+  titleLabel.textContent = 'Spritesheet';
+  spriteGui.$title.append(titleLabel);
+
+  const presetNames = ['Grid', ...Object.keys(options.cardPresets || {}), 'Custom'];
+  const presetPicker = document.createElement('span');
+  presetPicker.className = 'deckmaker-sprite-preset-picker';
+  presetPicker.title = 'Select grid, card preset, or custom frame size';
+  spritePresetIcon = document.createElement('span');
+  spritePresetIcon.className = 'deckmaker-sprite-preset-icon';
+  spritePresetSelect = document.createElement('select');
+  spritePresetSelect.className = 'deckmaker-sprite-preset-select';
+  spritePresetSelect.title = presetPicker.title;
+  spritePresetSelect.replaceChildren(...presetNames.map(name => {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = name;
+    return option;
+  }));
+  spritePresetSelect.value = model.spriteSizing;
+  spritePresetSelect.addEventListener('pointerdown', event => event.stopPropagation());
+  spritePresetSelect.addEventListener('click', event => event.stopPropagation());
+  spritePresetSelect.addEventListener('change', event => {
+    event.stopPropagation();
+    model.spriteSizing = spritePresetSelect.value;
+    updateSpritePresetControls();
+  });
+  presetPicker.append(spritePresetIcon, spritePresetSelect);
+  titleBar.append(presetPicker);
+
+  elements.pdfPageControls.addEventListener('pointerdown', event => event.stopPropagation());
+  elements.pdfPageControls.addEventListener('click', event => event.stopPropagation());
+  titleBar.append(elements.pdfPageControls);
   const closeButton = titleButton(
-    spriteGui.$multi || spriteGui.$title,
+    titleBar,
     'deckmaker-spritesheet-close',
     '\u00d7',
     'Close spritesheet mode',
     leaveSpritesheet,
   );
   closeButton.setAttribute('aria-label', 'Close spritesheet mode');
-  spriteGui.$title.after(elements.pdfPageControls);
 
-  settingRow(spriteGui, [
+  const customController = labeledSettingRow(spriteGui, 'Custom', [
+    { key: 'spriteWidth', args: [1, 1000, .1], label: '', icon: 'width', tooltip: 'Custom frame width in millimetres', iconOnly: true, local: true, live: true },
+    { key: 'spriteHeight', args: [1, 1000, .1], label: '', icon: 'height', tooltip: 'Custom frame height in millimetres', iconOnly: true, local: true, live: true },
+  ], 'deckmaker-number-row deckmaker-sprite-compact-row deckmaker-sprite-custom-row');
+  spriteCustomRow = customController?.$multi || customController?.domElement;
+
+  const gridController = settingRow(spriteGui, [
     { key: 'spriteCols', args: [1, 30, 1], label: '', icon: 'view-column', tooltip: 'Number of columns (1–30)', iconOnly: true, local: true, live: true },
     { key: 'spriteRows', args: [1, 30, 1], label: '', icon: 'view-stream', tooltip: 'Number of rows (1–30)', iconOnly: true, local: true, live: true },
-  ], 'deckmaker-number-row deckmaker-sprite-compact-row');
+  ], 'deckmaker-number-row deckmaker-sprite-compact-row deckmaker-sprite-grid-row');
+  spriteGridRow = gridController?.$multi || gridController?.domElement;
+  spriteGridControllers = gridController?.deckmakerRowControllers || [];
 
   linkedSpriteRow('Gaps',
     { key: 'spriteGapH', args: [0, 30, .1], label: '', icon: 'horizontal-distribute', tooltip: 'Horizontal gap in millimetres', iconOnly: true },
@@ -973,18 +1130,6 @@ function buildSpritesheetGui(options) {
     { key: 'spriteTop', args: [0, 30, .1], label: '', icon: 'vertical-align-top', tooltip: 'Top border in millimetres', iconOnly: true },
     { key: 'spriteBottom', args: [0, 30, .1], label: '', icon: 'vertical-align-bottom', tooltip: 'Bottom border in millimetres', iconOnly: true },
     'spriteLinkVerticalBorders');
-
-  const presetNames = ['Grid', ...Object.keys(options.cardPresets || {}), 'Custom'];
-  settingRow(spriteGui, [{
-    key: 'spriteSizing', args: [presetNames], label: 'Preset', icon: 'playing-cards',
-    tooltip: 'Use the grid, a known frame preset, or a custom frame size',
-    onChange: updateSpritePresetControls,
-  }]);
-  const customController = labeledSettingRow(spriteGui, 'Custom', [
-    { key: 'spriteWidth', args: [1, 1000, .1], label: '', icon: 'width', tooltip: 'Custom frame width in millimetres', iconOnly: true, local: true, live: true },
-    { key: 'spriteHeight', args: [1, 1000, .1], label: '', icon: 'height', tooltip: 'Custom frame height in millimetres', iconOnly: true, local: true, live: true },
-  ], 'deckmaker-number-row deckmaker-sprite-compact-row deckmaker-sprite-custom-row');
-  spriteCustomRow = customController?.$multi || customController?.domElement;
 
   const copyAction = { spriteCopyDefinition: () => spriteEditor?.copyDefinition() };
   spriteCopyDefinitionController = spriteGui.add(copyAction, 'spriteCopyDefinition');
@@ -1001,12 +1146,12 @@ function buildSpritesheetGui(options) {
 
 function enterSpritesheet() {
   if (!spriteEditor?.active) return;
-  spriteSequence += 1;
-  model.spriteAlias = `SP${spriteSequence}`;
+  const suggested = Number(String(latestState.nextSpritesheetAlias || '').match(/^SP(\d+)$/i)?.[1] || 1);
+  model.spriteAlias = `SP${suggested}`;
   spriteEditor.requestUpdate();
   if (spriteCopyDefinitionController) {
-    spriteCopyDefinitionController.name(`Copy definition SP${spriteSequence}`);
-    spriteCopyDefinitionController.icon(materialIcon('content-copy'));
+    spriteCopyDefinitionController.name(`Copy definition SP${suggested}`);
+    spriteCopyDefinitionController.icon(menuIcon('content-copy'));
   }
   spriteGui?.open();
   elements.spritesheetGui.hidden = false;
@@ -1019,19 +1164,11 @@ function enterSpritesheet() {
     };
   }
   requestAnimationFrame(() => {
-    const menuHeight = Math.max(
-      gui?.domElement.scrollHeight || 0,
-      spriteGui?.domElement.scrollHeight || 0,
-    );
-    const requiredHeight = Math.min(window.innerHeight * .9, menuHeight + 8);
-    if (datasetDock === 'bottom' && requiredHeight > spriteLayoutBefore.previewHeight) {
-      setDeckMakerPaneHeight(requiredHeight, false);
-    } else if (datasetDock === 'right') {
-      const requiredPreviewWidth = 275 + 344 + 12;
-      const available = elements.previewViewport.closest('.preview-panel')?.getBoundingClientRect().width || 0;
-      if (available < requiredPreviewWidth) {
-        setDeckMakerPaneWidth(Math.max(240, window.innerWidth - requiredPreviewWidth - 8), false);
-      }
+    if (datasetDock === 'bottom') {
+      setDeckMakerPaneHeight(elements.workspace.clientHeight * .75, false);
+    } else {
+      const splitterWidth = elements.splitter.getBoundingClientRect().width || 8;
+      setDeckMakerPaneWidth(elements.workspace.clientWidth * .25 - splitterWidth, false);
     }
     previewViewer.fit();
   });
@@ -1051,34 +1188,227 @@ function actionRow(folder, items, className = '') {
 }
 
 function mainActionRow(folder) {
-  actionRow(folder, [
-    {
-      key: 'generateAction', command: 'generate', label: 'Create all',
-      image: '/shared-assets/deckmaker_icon.png',
-      tooltip: 'Refresh the dataset and create every item in the editable output SVG.',
-      className: 'deckmaker-action-button',
+  const autoOpen = bindSettingController(folder.add(model, 'autoOpen'), {
+    key: 'autoOpen',
+    label: 'Auto-open',
+    icon: 'pen-tool-03',
+    tooltip: 'Automatically open the generated output SVG in Inkscape after Create',
+    className: 'deckmaker-auto-open',
+    live: true,
+  });
+  const actions = { playCreateAction: () => command('play-create') };
+  const buildAssets = autoOpen.append(actions, 'playCreateAction');
+  decorate(buildAssets, {
+    label: 'Build assets',
+    icon: 'deployed-code-update',
+    tooltip: 'Create or update the PnPPlay asset pack in every enabled asset store.',
+    className: 'deckmaker-action-button',
+  });
+  actionControllers.push({ controller: buildAssets, command: 'play-create' });
+  finishRow(autoOpen, 'deckmaker-main-actions');
+}
+
+function configureCreateTitle(folder) {
+  folder.domElement.classList.add('deckmaker-create-folder');
+  const titleBar = folder.$multi || folder.$title;
+  openOutputButton = titleButton(
+    titleBar,
+    'deckmaker-open-output',
+    '',
+    'Open the last generated output SVG in Inkscape',
+    () => {
+      toast('Opening output in Inkscape… This can take a while.', {
+        tone: 'info',
+        duration: 6000,
+      });
+      command('open-output');
     },
-    {
-      key: 'openAction', command: 'open-output', label: 'Open', icon: 'simple-icons:inkscape',
-      tooltip: 'Open the last generated output SVG in Inkscape.',
-      className: 'deckmaker-action-button',
+  );
+  openOutputButton.replaceChildren(gui._createIcon(menuIcon('pen-tool-03')));
+  openOutputButton.setAttribute('aria-label', 'Open output in Inkscape');
+  createActionButton = titleButton(
+    titleBar,
+    'deckmaker-create-run',
+    '',
+    'Create every item from the current template and dataset',
+    () => command('generate'),
+  );
+  createActionButton.replaceChildren(gui._createIcon(menuIcon('album-02')));
+  createActionButton.setAttribute('aria-label', 'Create');
+}
+
+function configureHelpTitle(folder) {
+  const titleBar = folder.$multi || folder.$title;
+  const visualLog = titleButton(
+    titleBar,
+    'deckmaker-help-log',
+    '',
+    'Open or close the visual log',
+    toggleLog,
+  );
+  visualLog.replaceChildren(gui._createIcon(menuIcon('prompt')));
+  visualLog.setAttribute('aria-label', 'Open or close the visual log');
+  const tutorials = titleButton(
+    titleBar,
+    'deckmaker-help-tutorials',
+    '',
+    'Watch PnPInk video tutorials',
+    () => openResourceViewer({
+      title: 'PnPInk Video Tutorials',
+      embedUrl: 'https://www.youtube.com/embed?listType=playlist&list=PLM5-7ajCwZAQ&index=1',
+      externalUrl: 'https://www.youtube.com/playlist?list=PLM5-7ajCwZAQ',
+    }),
+  );
+  tutorials.replaceChildren(gui._createIcon('hugeicons:play-list'));
+  tutorials.setAttribute('aria-label', 'Open video tutorials');
+  const documentation = titleButton(
+    titleBar,
+    'deckmaker-help-docs',
+    '',
+    'Open PnPInk documentation',
+    () => openResourceViewer({
+      title: 'PnPInk Documentation',
+      embedUrl: 'https://xoellijo.github.io/pnpink/',
+      externalUrl: 'https://xoellijo.github.io/pnpink/',
+    }),
+  );
+  documentation.replaceChildren(gui._createIcon(menuIcon('menu-book')));
+  documentation.setAttribute('aria-label', 'Open documentation');
+}
+
+function buildLogRow(folder, options) {
+  const autoController = bindSettingController(folder.add(model, 'showLogOnBuild'), {
+    key: 'showLogOnBuild',
+    label: 'Log',
+    icon: 'terminal',
+    tooltip: 'Show the visual log automatically while creating or exporting',
+    live: true,
+  });
+  const levelController = bindSettingController(autoController.append(model, 'fileLog', options.logLevels), {
+    label: 'Mode',
+    tooltip: 'Logging detail written to pnpink.log',
+  });
+  const textModel = { openTextLog: () => command('open-log') };
+  decorate(levelController.append(textModel, 'openTextLog'), {
+    label: '',
+    icon: 'file-02',
+    iconOnly: true,
+    tooltip: 'Open pnpink.log with the system text viewer',
+  });
+  finishRow(autoController, 'deckmaker-log-row');
+}
+
+async function openExample(examplePath) {
+  if (!examplePath) return;
+  try {
+    await datasetTable.flushEdits();
+    leaveSpritesheet();
+    applyState(await api('/api/settings', {
+      method: 'POST',
+      body: JSON.stringify({ examplePath }),
+    }));
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function buildExamplesPanel(help, options) {
+  const choices = { 'Select example...': '' };
+  for (const example of options.examples || []) choices[example.name] = example.path;
+  const selection = bindSettingController(help.add(model, 'helpExample', choices), {
+    label: 'Examples',
+    icon: 'folder-special',
+    tooltip: 'Open a bundled SVG example in Inkscape and use it as the active template',
+    onChange: openExample,
+  });
+  const folderAction = { openExamplesFolder: () => command('open-examples') };
+  decorate(selection.append(folderAction, 'openExamplesFolder'), {
+    label: '',
+    icon: 'folder-open',
+    iconOnly: true,
+    tooltip: 'Open the bundled examples folder',
+  });
+  finishRow(selection, 'deckmaker-help-selector-row');
+  return selection;
+}
+
+function buildDocumentationPanel(help) {
+  return settingRow(help, [{
+    key: 'helpChapter',
+    args: [DOCUMENTATION_CHAPTERS],
+    label: 'Documentation',
+    icon: 'menu-book',
+    tooltip: 'Open a PnPInk documentation chapter',
+    onChange: url => {
+      if (!url) return;
+      const label = Object.entries(DOCUMENTATION_CHAPTERS)
+        .find(([, chapterUrl]) => chapterUrl === url)?.[0] || 'PnPInk Documentation';
+      openResourceViewer({ title: label, embedUrl: url, externalUrl: url });
     },
-    {
-      key: 'exportAction', command: 'export', label: 'Export', icon: 'file-export',
-      tooltip: 'Export the last generated SVG using the formats and selection configured in Export options.',
-      className: 'deckmaker-action-button',
-    },
-    {
-      key: 'playCreateAction', command: 'play-create', label: 'Build assets', icon: 'deployed-code-update',
-      tooltip: 'Create or update the PnPPlay asset pack in every enabled asset store.',
-      className: 'deckmaker-action-button',
-    },
-  ], 'deckmaker-main-actions');
+  }], 'deckmaker-help-selector-row');
+}
+
+function exportFormatEntries() {
+  const entries = [];
+  if (model.exportPdf) entries.push({ icon: 'pdf-01', label: 'PDF' });
+  if (model.exportPdfx) entries.push({ icon: 'file-verified', label: 'PDF/X' });
+  if (model.exportOther) {
+    const format = String(model.otherFormat || 'image').trim().toLowerCase();
+    const icons = {
+      jpeg: 'jpg-01',
+      jpg: 'jpg-01',
+      png: 'png-01',
+      svg: 'svg-01',
+      tif: 'tiff-02',
+      tiff: 'tiff-02',
+      webp: 'image-02',
+    };
+    entries.push({ icon: icons[format] || 'file-image', label: format.toUpperCase() });
+  }
+  if (model.cutTemplate) entries.push({ icon: 'scissors', label: 'Cut template' });
+  return entries;
+}
+
+function updateExportSummary(state = latestState) {
+  if (exportSummary && gui) {
+    const entries = exportFormatEntries();
+    exportSummary.replaceChildren(...entries.map(entry => {
+      const icon = document.createElement('span');
+      icon.className = 'deckmaker-export-format';
+      icon.title = entry.label;
+      icon.setAttribute('aria-label', entry.label);
+      icon.append(gui._createIcon(menuIcon(entry.icon)));
+      return icon;
+    }));
+    exportSummary.title = entries.length
+      ? `Enabled outputs: ${entries.map(entry => entry.label).join(', ')}`
+      : 'No export output is enabled';
+  }
+  if (exportActionButton) {
+    exportActionButton.disabled = Boolean(state.busy) || !state.canExport;
+  }
+}
+
+function configureExportTitle(folder) {
+  const titleBar = folder.$multi || folder.$title;
+  exportSummary = document.createElement('span');
+  exportSummary.className = 'deckmaker-export-summary';
+  titleBar.append(exportSummary);
+  exportActionButton = titleButton(
+    titleBar,
+    'deckmaker-export-run',
+    '',
+    'Export the last generated SVG with the enabled outputs',
+    () => command('export'),
+  );
+  exportActionButton.replaceChildren(gui._createIcon(menuIcon('file-export')));
+  exportActionButton.setAttribute('aria-label', 'Export');
+  updateExportSummary();
 }
 
 function buildDatasetGui(state, options) {
   datasetGui = gui.addFolder(datasetTitle(state));
-  datasetGui.icon(materialIcon('dataset'));
+  datasetGui.icon(menuIcon(datasetIcon(state)));
   datasetGui.domElement.classList.add('deckmaker-dataset-folder');
   [...datasetGui.$title.childNodes]
     .filter(node => node.nodeType === Node.TEXT_NODE)
@@ -1131,7 +1461,7 @@ function buildDatasetGui(state, options) {
 
 function buildPreviewGui(state, options) {
   const preview = gui.addFolder('Preview');
-  preview.icon(materialIcon('preview'));
+  preview.icon(menuIcon('preview'));
   preview.domElement.classList.add('deckmaker-preview-folder');
   previewAssetSelect = document.createElement('select');
   previewAssetSelect.className = 'deckmaker-preview-asset-select';
@@ -1167,7 +1497,7 @@ function buildPreviewGui(state, options) {
       command('preview-refresh');
     },
   );
-  templateRefresh.append(gui._createIcon(materialIcon('refresh')));
+  templateRefresh.append(gui._createIcon(menuIcon('refresh')));
   settingRow(preview, [
     {
       key: 'previewSelectionSync', args: [PREVIEW_SYNC_MODES], label: 'Selection sync', icon: 'sync-alt',
@@ -1200,7 +1530,7 @@ function build(state) {
     width: 275,
   });
   gui.domElement.classList.add('deckmaker-menu');
-  gui.icon(materialIcon('view-quilt'));
+  gui.icon(menuIcon('svg-01'));
 
   if (ENABLE_SPRITESHEETS) {
     spriteEditor = new SpritesheetEditor({
@@ -1209,7 +1539,7 @@ function build(state) {
       pdfControls: elements.pdfPageControls,
       pdfPrevious: elements.pdfPagePrevious,
       pdfNext: elements.pdfPageNext,
-      pdfLabel: elements.pdfPageLabel,
+      pdfSelect: elements.pdfPageSelect,
     }, model, options.cardPresets, previewViewer, toast, api, url => {
       const separator = String(url || '').includes('?') ? '&' : '?';
       return `${url}${separator}token=${encodeURIComponent(token)}`;
@@ -1220,69 +1550,73 @@ function build(state) {
     buildSpritesheetGui(options);
   }
 
-  buildDatasetGui(state, options);
   buildPreviewGui(state, options);
-  updateMenuIdentity(state);
 
-  toolsFolder = gui.addFolder('Tools');
-  toolsFolder.icon(materialIcon('construction'));
+  toolsFolder = gui.addFolder('Create');
+  toolsFolder.icon(menuIcon('album-02'));
+  configureCreateTitle(toolsFolder);
   mainActionRow(toolsFolder);
-  actionRow(toolsFolder, [
-    {
-      key: 'copyTemplateHeadersAction', label: 'Copy template headers', icon: 'content-copy',
-      tooltip: 'Copy the template bbox and its element names as a tab-separated row ready to paste into the dataset.',
-      run: copyTemplateHeaders,
-    },
-  ]);
 
-  const configuration = gui.addFolder('Configuration');
-  configuration.icon(materialIcon('settings'));
-
-  const exportFolder = configuration.addFolder('Export options');
-  exportFolder.icon(materialIcon('file-export'));
+  const configuration = toolsFolder.addFolder('Configuration');
+  configuration.icon(menuIcon('settings'));
   const play = configuration.addFolder('PnPPlay');
-  play.icon(materialIcon('sports-esports'));
-  const advanced = configuration.addFolder('Advanced');
-  advanced.icon(materialIcon('settings'));
-  settingRow(exportFolder, [
-    { key: 'exportPdf', label: 'PDF', icon: 'picture-as-pdf', tooltip: 'Export a standard PDF', live: true },
-    { key: 'exportPdfx', label: 'PDF/X', icon: 'verified', tooltip: 'Export print-ready PDF/X', live: true },
-    { key: 'exportOther', label: 'Image', icon: 'image', tooltip: 'Export PNG, JPEG, WebP or another format', live: true },
-  ], 'deckmaker-output-row');
-  settingRow(exportFolder, [
-    { key: 'otherFormat', args: [options.formats], label: '', icon: 'photo-library', tooltip: 'Raster/vector output format', iconOnly: true },
-    { key: 'otherUnit', args: [options.units], label: '', icon: 'select-all', tooltip: 'Export pages, generated items or SVG IDs', iconOnly: true },
-    { key: 'otherSelection', label: '', icon: 'filter-alt', tooltip: 'Pages, items or IDs to export', iconOnly: true, inputType: 'text', attributes: { placeholder: 'Selection', autocomplete: 'off', spellcheck: 'false' } },
-  ], 'deckmaker-fields');
-  settingRow(exportFolder, [
-    { key: 'exportDpi', args: [1, 2400, 1], label: 'DPI', icon: 'high-quality', tooltip: 'Raster export resolution in dots per inch' },
-    { key: 'jpegQuality', args: [70, 95, 1], label: 'Quality', icon: 'center-focus-strong', tooltip: 'JPEG compression quality' },
-  ], 'deckmaker-number-row');
-  settingRow(exportFolder, [
-    { key: 'cutTemplate', label: 'Cut', icon: 'content-cut', tooltip: 'Generate a cutting template', live: true },
-    { key: 'cutFormat', args: [options.cutFormats], label: 'Format', icon: 'polyline', tooltip: 'Cutting template format' },
-  ]);
+  play.icon(menuIcon('sports-esports'));
 
-  const pdf = exportFolder.addFolder('PDF options');
-  pdf.icon(materialIcon('picture-as-pdf'));
-  settingRow(pdf, [
-    { key: 'pdfDefault', label: '', icon: 'draft', tooltip: 'Default PDF profile', iconOnly: true, live: true },
-    { key: 'pdfScreen', label: '', icon: 'monitor', tooltip: 'Screen PDF profile', iconOnly: true, live: true },
-    { key: 'pdfEbook', label: '', icon: 'tablet', tooltip: 'E-book PDF profile', iconOnly: true, live: true },
-    { key: 'pdfPrinter', label: '', icon: 'print', tooltip: 'Printer PDF profile', iconOnly: true, live: true },
-    { key: 'pdfPrepress', label: '', icon: 'precision-manufacturing', tooltip: 'Prepress PDF profile', iconOnly: true, live: true },
-  ], 'deckmaker-profile-row');
+  exportFolder = gui.addFolder('Export');
+  exportFolder.icon(menuIcon('file-export'));
+  exportFolder.domElement.classList.add('deckmaker-export-folder');
+  configureExportTitle(exportFolder);
+  const pdf = exportSection(
+    'PDF', 'pdf-01',
+    { key: 'exportPdf', tooltip: 'Enable standard PDF export' },
+    { key: 'pdfProfile', args: [options.pdfProfiles || {
+      Default: 'default', Screen: 'screen', 'E-book': 'ebook', Printer: 'printer', Prepress: 'prepress',
+    }], tooltip: 'Standard PDF quality profile' },
+  );
   settingRow(pdf, [
     { key: 'pdfRasterMode', args: [options.rasterModes], label: 'Filters', icon: 'blur-on', tooltip: 'How SVG filters are exported to PDF' },
-    { key: 'pdfxVersion', args: [options.pdfxVersions], label: 'PDF/X', icon: 'verified', tooltip: 'PDF/X compatibility version' },
+    { key: 'exportDpi', args: [1, 2400, 1], label: 'DPI', icon: 'high-quality', tooltip: 'Resolution used when PDF filters require rasterization' },
   ]);
-  settingRow(pdf, [
+
+  const pdfx = exportSection(
+    'PDF/X', 'file-verified',
+    { key: 'exportPdfx', tooltip: 'Enable print-ready PDF/X export' },
+    { key: 'pdfxVersion', args: [options.pdfxVersions], tooltip: 'PDF/X compatibility version' },
+  );
+  settingRow(pdfx, [
+    { key: 'pdfRasterMode', args: [options.rasterModes], label: 'Filters', icon: 'blur-on', tooltip: 'How SVG filters are exported to PDF/X' },
+    { key: 'exportDpi', args: [1, 2400, 1], label: 'DPI', icon: 'high-quality', tooltip: 'Resolution used when PDF/X filters require rasterization' },
+  ]);
+  settingRow(pdfx, [
     { key: 'pdfCmykIcc', args: [options.iccProfiles], label: 'ICC', icon: 'palette', tooltip: 'CMYK ICC output profile' },
     { key: 'pdfPureBlack', label: 'Black', icon: 'format-color-fill', tooltip: 'Keep black text as pure K', live: true },
   ]);
 
-  const parts = exportFolder.addFolder('SVG parts');
-  parts.icon(materialIcon('call-split'));
+  const image = exportSection(
+    'Image', 'image-01',
+    { key: 'exportOther', tooltip: 'Enable image export' },
+    { key: 'otherFormat', args: [options.formats], tooltip: 'Image output format' },
+  );
+  settingRow(image, [
+    { key: 'otherUnit', args: [options.units], label: 'Items', icon: 'select-all', tooltip: 'Export pages, generated items or SVG IDs' },
+    { key: 'otherSelection', label: 'Selection', icon: 'filter-alt', tooltip: 'Pages, items or IDs to export', inputType: 'text', attributes: { placeholder: 'Selection', autocomplete: 'off', spellcheck: 'false' } },
+  ], 'deckmaker-fields');
+  settingRow(image, [
+    { key: 'exportDpi', args: [1, 2400, 1], label: 'DPI', icon: 'high-quality', tooltip: 'Image export resolution in dots per inch' },
+    { key: 'jpegQuality', args: [70, 95, 1], label: 'JPEG', icon: 'center-focus-strong', tooltip: 'JPEG and WebP compression quality' },
+  ], 'deckmaker-number-row');
+
+  const cut = exportSection(
+    'Cut', 'scissors',
+    { key: 'cutTemplate', tooltip: 'Enable cutting-template export' },
+    { key: 'cutFormat', args: [options.cutFormats], tooltip: 'Cutting-template format' },
+  );
+  settingRow(cut, [
+    { key: 'exportDpi', args: [1, 2400, 1], label: 'DPI', icon: 'high-quality', tooltip: 'Resolution used for PNG cutting templates' },
+  ], 'deckmaker-number-row');
+
+  const parts = configuration.addFolder('SVG parts');
+  parts.icon(menuIcon('call-split'));
   settingRow(parts, [
     { key: 'splitSvg', label: 'Split', icon: 'call-split', tooltip: 'Split large SVG output into parts', live: true },
     { key: 'splitMode', args: [['parts', 'limits']], label: 'By', icon: 'tune', tooltip: 'Split by a fixed count or by limits' },
@@ -1295,21 +1629,16 @@ function build(state) {
     { key: 'splitRecords', args: [0, 100000000, 1], label: 'Items', icon: 'style', tooltip: 'Maximum generated items per SVG part' },
     { key: 'splitMb', args: [0, 2048, 1], label: 'MB', icon: 'database', tooltip: 'Maximum approximate file size per SVG part' },
   ], 'deckmaker-number-row');
-  pdf.close();
-  parts.close();
+  [pdf, pdfx, image, cut, parts].forEach(folder => folder.close());
 
-  settingRow(advanced, [
+  settingRow(configuration, [
     { key: 'inkscapeWorkers', args: [1, 32, 1], label: 'Workers', icon: 'speed', tooltip: 'Parallel Inkscape export workers' },
     { key: 'templateEngine', args: [options.templateEngines], label: 'Engine', icon: 'manufacturing', tooltip: 'Template rendering engine' },
   ]);
-  settingRow(advanced, [
-    { key: 'consoleLog', args: [options.logLevels], label: 'Console', icon: 'terminal', tooltip: 'Console logging level' },
-    { key: 'fileLog', args: [options.logLevels], label: 'File', icon: 'draft', tooltip: 'File logging level' },
-  ]);
-  settingRow(advanced, [
+  settingRow(configuration, [
     { key: 'imagePreflight', label: 'DPI report', icon: 'image-search', tooltip: 'Create an image DPI preflight report', live: true },
   ]);
-  actionRow(advanced, [
+  actionRow(configuration, [
     { key: 'preferencesAction', command: 'open-preferences', label: 'Preferences', icon: 'tune', tooltip: 'Open PnPInk preferences' },
   ]);
 
@@ -1329,30 +1658,16 @@ function build(state) {
   finishRow(localStore, 'deckmaker-store-row');
   stores.close();
 
+  buildDatasetGui(state, options);
+  updateMenuIdentity(state);
+
   const help = gui.addFolder('Help');
-  help.icon(materialIcon('help'));
-  actionRow(help, [
-    { key: 'introAction', command: 'open-intro', label: '', icon: 'info', tooltip: 'PnPInk introduction', iconOnly: true },
-    { key: 'guideAction', command: 'open-guide', label: '', icon: 'menu-book', tooltip: 'Open PnPInk guide', iconOnly: true },
-    { key: 'examplesAction', command: 'open-examples', label: '', icon: 'folder-special', tooltip: 'Open bundled examples', iconOnly: true },
-  ], 'deckmaker-icon-row');
-  actionRow(help, [
-    { key: 'liveLogAction', label: 'Live log', icon: 'terminal', tooltip: 'Show or hide the live activity log', run: toggleLog },
-    { key: 'logAction', command: 'open-log', label: 'Log file', icon: 'draft', tooltip: 'Open the complete log file' },
-    { key: 'clearLogAction', label: 'Clear', icon: 'delete', tooltip: 'Clear the visible activity log', run: () => { elements.log.textContent = ''; } },
-  ]);
-  actionRow(help, [
-    { key: 'installAppAction', label: 'Install', icon: 'install-desktop', tooltip: 'Install Deckmaker as an app', run: () => appShell.install() },
-    { key: 'fullscreenAction', label: 'Full screen', icon: 'fullscreen', tooltip: 'Enter or leave full screen', run: () => appShell.toggleFullscreen() },
-  ], 'deckmaker-app-actions');
-  const helpControllers = help.controllersRecursive();
-  installController = helpControllers.find(controller => controller.property === 'installAppAction');
-  fullscreenController = helpControllers.find(controller => controller.property === 'fullscreenAction');
-  appShell.subscribe(shell => {
-    installController?._show(shell.canInstall);
-    fullscreenController?.name(shell.fullscreen ? 'Exit full screen' : 'Full screen');
-  });
-  [exportFolder, toolsFolder, play, advanced, configuration, help].filter(Boolean).forEach(folder => folder.close());
+  help.icon(menuIcon('help'));
+  configureHelpTitle(help);
+  buildExamplesPanel(help, options);
+  buildDocumentationPanel(help);
+  buildLogRow(help, options);
+  [exportFolder, toolsFolder, configuration, play, help].filter(Boolean).forEach(folder => folder.close());
   gui.close();
 }
 
@@ -1401,10 +1716,12 @@ function applyState(state) {
   spriteEditor?.setPresets(state.options?.cardPresets || {});
   spriteEditor?.setMetadata(state.spritesheet);
   controllers.forEach(controller => controller.updateDisplay());
+  updateExportSummary(state);
   const availability = {
     generate: Boolean(state.canGenerate),
     preview: Boolean(state.canGenerate),
     'open-output': Boolean(state.canOpenOutput),
+    'open-template-folder': Boolean(state.template),
     export: Boolean(state.canExport),
     'play-create': Boolean(state.canGenerate),
     'play-server': Boolean(state.template),
@@ -1437,7 +1754,9 @@ function applyState(state) {
   const failed = /^Error:/i.test(state.status || '');
   const busy = Boolean(state.busy);
   const previewBusy = busy && state.job === 'preview';
-  if (busy && !wasBusy && !['preview', 'gsheet-to-csv'].includes(state.job)) logDisplayMode = 'auto';
+  if (busy && !wasBusy && model.showLogOnBuild && ['generate', 'export'].includes(state.job)) {
+    logDisplayMode = 'auto';
+  }
   updateLogVisibility(busy);
   wasBusy = busy;
   elements.splitter.classList.toggle('preview-busy', previewBusy);
@@ -1461,6 +1780,8 @@ function applyState(state) {
     elements.log.textContent = state.logs.join('\n');
     if (followsTail) elements.log.scrollTop = elements.log.scrollHeight;
   }
+  if (createActionButton) createActionButton.disabled = Boolean(state.busy) || !state.canGenerate;
+  if (openOutputButton) openOutputButton.disabled = Boolean(state.busy) || !state.canOpenOutput;
 }
 
 function appendEventLogs(events) {

@@ -12,12 +12,15 @@ import threading
 import time
 import re
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 import log as LOG
 import process_io as PROCESS_IO
 import temp_paths as TEMPPATHS
 
 _l = LOG
+
+_EXPORT_SETTLE_TIMEOUT_S = 4.0
 
 
 def _mac_bundle_executables() -> list[str]:
@@ -610,9 +613,21 @@ class ShellQuerySession:
             f"export-filename:{png_path}",
             "export-do",
         ])
-        self._action(";".join(commands), timeout_s=timeout_s)
-        if not self._wait_for_export(png_path, timeout_s=min(3.0, timeout_s)):
-            raise RuntimeError("Inkscape shell did not create the preview PNG")
+        output = self._action(";".join(commands), timeout_s=timeout_s)
+        settle_timeout = min(_EXPORT_SETTLE_TIMEOUT_S, timeout_s)
+        if not self._wait_for_export(png_path, timeout_s=settle_timeout):
+            detail = self._export_failure_detail(png_path, output, settle_timeout)
+            _l.w("[inkscape_shell_preview] area export fallback: %s", detail)
+            self._export_png_once(
+                svg_path,
+                png_path,
+                area=(x0, y0, x1, y1),
+                dpi=dpi,
+                compression=compression,
+                background_color=background_color,
+                background_opacity=background_opacity,
+                timeout_s=timeout_s,
+            )
 
     def export_id_png(
         self,
@@ -646,9 +661,70 @@ class ShellQuerySession:
             f"export-filename:{png_path}",
             "export-do",
         ])
-        self._action(";".join(commands), timeout_s=timeout_s)
-        if not self._wait_for_export(png_path, timeout_s=min(3.0, timeout_s)):
-            raise RuntimeError("Inkscape shell did not create the preview PNG")
+        output = self._action(";".join(commands), timeout_s=timeout_s)
+        settle_timeout = min(_EXPORT_SETTLE_TIMEOUT_S, timeout_s)
+        if not self._wait_for_export(png_path, timeout_s=settle_timeout):
+            detail = self._export_failure_detail(png_path, output, settle_timeout)
+            _l.w("[inkscape_shell_preview] id export fallback: %s", detail)
+            self._export_png_once(
+                svg_path,
+                png_path,
+                node_id=node_id,
+                dpi=dpi,
+                compression=compression,
+                background_color=background_color,
+                background_opacity=background_opacity,
+                timeout_s=timeout_s,
+            )
+
+    def _export_png_once(
+        self,
+        svg_path: str,
+        png_path: str,
+        *,
+        area: tuple[float, float, float, float] | None = None,
+        node_id: str = "",
+        dpi: int,
+        compression: int,
+        background_color: str,
+        background_opacity: str,
+        timeout_s: float,
+    ) -> None:
+        argv = [
+            self.exe,
+            svg_path,
+            "--export-type=png",
+            f"--export-dpi={int(dpi)}",
+            f"--export-png-compression={max(0, min(9, int(compression)))}",
+            f"--export-background={background_color}",
+            f"--export-background-opacity={background_opacity}",
+            f"--export-filename={png_path}",
+        ]
+        if area is not None:
+            x0, y0, x1, y1 = area
+            argv.append(f"--export-area={x0:.6f}:{y0:.6f}:{x1:.6f}:{y1:.6f}")
+        elif node_id:
+            argv.extend((f"--export-id={node_id}", "--export-id-only"))
+        return_code, command_output = run(
+            argv,
+            exe_dir=self.exe_dir,
+            env=self.env,
+            timeout_s=timeout_s,
+        )
+        if return_code != 0 or not self._wait_for_export(png_path, timeout_s=1.0):
+            detail = self._export_failure_detail(png_path, command_output, 1.0)
+            raise RuntimeError(
+                f"Inkscape could not create the preview PNG "
+                f"(shell and one-shot export failed, rc={return_code}); {detail}"
+            )
+
+    @staticmethod
+    def _export_failure_detail(path: str, output: str, timeout_s: float) -> str:
+        shell_output = " ".join(str(output or "").split())[-1000:]
+        return (
+            f"path={path!r} wait={float(timeout_s):.1f}s "
+            f"shell_output={shell_output!r}"
+        )
 
     @staticmethod
     def _wait_for_export(path: str, *, timeout_s: float) -> bool:
@@ -771,14 +847,20 @@ def build_shell_png_page_commands(
     *,
     dpi: int = 300,
 ) -> list[str]:
+    page_areas = svg_page_areas(svg_path)
+    units_per_inch = svg_user_units_per_inch(svg_path)
     commands = [f"file-open:{svg_path}"]
     for page_no, png_path in page_exports:
+        area = page_areas.get(int(page_no))
+        if area is None:
+            raise ValueError(f"SVG page {page_no} not found: {svg_path}")
+        pixel_width = _page_pixel_width(area, units_per_inch, dpi)
         commands.extend(
             [
-                f"export-page:{int(page_no)}",
+                f"export-area:{_format_export_area(area)}",
                 f"export-filename:{png_path}",
                 "export-type:png",
-                f"export-dpi:{int(dpi)}",
+                f"export-width:{pixel_width}",
                 "export-do",
             ]
         )
@@ -793,19 +875,93 @@ def build_shell_page_export_commands(
     dpi: int = 300,
 ) -> list[str]:
     export_name = str(export_type or "png").strip().lower()
+    page_areas = svg_page_areas(svg_path)
+    units_per_inch = svg_user_units_per_inch(svg_path)
     commands = [f"file-open:{svg_path}"]
     for page_no, out_path in page_exports:
+        area = page_areas.get(int(page_no))
+        if area is None:
+            raise ValueError(f"SVG page {page_no} not found: {svg_path}")
         commands.extend(
             [
-                f"export-page:{int(page_no)}",
+                f"export-area:{_format_export_area(area)}",
                 f"export-filename:{out_path}",
                 f"export-type:{export_name}",
             ]
         )
         if export_name == "png":
-            commands.append(f"export-dpi:{int(dpi)}")
+            commands.append(f"export-width:{_page_pixel_width(area, units_per_inch, dpi)}")
         commands.append("export-do")
     return commands
+
+
+def svg_page_areas(svg_path: str) -> dict[int, tuple[float, float, float, float]]:
+    tree = ET.parse(svg_path)
+    root = tree.getroot()
+    pages = root.findall(".//{http://www.inkscape.org/namespaces/inkscape}page")
+    areas: dict[int, tuple[float, float, float, float]] = {}
+    for page_no, page in enumerate(pages, start=1):
+        x = float(page.get("x") or 0.0)
+        y = float(page.get("y") or 0.0)
+        width = float(page.get("width") or 0.0)
+        height = float(page.get("height") or 0.0)
+        if width > 0 and height > 0:
+            areas[page_no] = (x, y, x + width, y + height)
+    if areas:
+        return areas
+
+    view_box = str(root.get("viewBox") or "").replace(",", " ").split()
+    if len(view_box) == 4:
+        x, y, width, height = (float(value) for value in view_box)
+        if width > 0 and height > 0:
+            return {1: (x, y, x + width, y + height)}
+    raise ValueError(f"SVG has no valid page geometry: {svg_path}")
+
+
+def _format_export_area(area: tuple[float, float, float, float]) -> str:
+    return ":".join(f"{value:.9g}" for value in area)
+
+
+def svg_user_units_per_inch(svg_path: str) -> float:
+    root = ET.parse(svg_path).getroot()
+    view_box = str(root.get("viewBox") or "").replace(",", " ").split()
+    if len(view_box) == 4:
+        view_width = float(view_box[2])
+        physical_width = _svg_length_inches(root.get("width"))
+        if view_width > 0 and physical_width is not None and physical_width > 0:
+            return view_width / physical_width
+    return 96.0
+
+
+def _svg_length_inches(value: str | None) -> float | None:
+    match = re.fullmatch(
+        r"\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*(px|mm|cm|in|pt|pc|q)?\s*",
+        str(value or ""),
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    amount = float(match.group(1))
+    unit = str(match.group(2) or "px").lower()
+    units_per_inch = {
+        "px": 96.0,
+        "mm": 25.4,
+        "cm": 2.54,
+        "in": 1.0,
+        "pt": 72.0,
+        "pc": 6.0,
+        "q": 101.6,
+    }
+    return amount / units_per_inch[unit]
+
+
+def _page_pixel_width(
+    area: tuple[float, float, float, float],
+    units_per_inch: float,
+    dpi: int,
+) -> int:
+    width = max(0.0, float(area[2]) - float(area[0]))
+    return max(1, int(round(width / max(float(units_per_inch), 1e-12) * max(1, int(dpi)))))
 
 
 def build_shell_export_id_png_commands(

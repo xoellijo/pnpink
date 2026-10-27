@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+import re
 from typing import Iterable
 
 import inkex
@@ -104,6 +105,30 @@ def _contains_any_id(node, ids: set[str]) -> bool:
     return False
 
 
+_LOCAL_URL_REFERENCE_RE = re.compile(r"url\(\s*#([^\s)]+)\s*\)")
+
+
+def _has_internal_references(nodes: list) -> bool:
+    """Return whether a static run refers to ids inside that same run."""
+    local_ids = {
+        _node_id(el)
+        for node in nodes
+        for el in node.iter()
+        if _node_id(el)
+    }
+    if not local_ids:
+        return False
+    for node in nodes:
+        for el in node.iter():
+            for value in getattr(el, "attrib", {}).values():
+                text = str(value or "")
+                if text.startswith("#") and text[1:] in local_ids:
+                    return True
+                if any(match.group(1) in local_ids for match in _LOCAL_URL_REFERENCE_RE.finditer(text)):
+                    return True
+    return False
+
+
 def _make_static_block_group(block_nodes: list, block_id: str) -> inkex.Group:
     g = inkex.Group()
     g.set("id", block_id)
@@ -171,6 +196,10 @@ def build_plan(
         nonlocal static_run, static_count
         if not static_run:
             return
+        if _has_internal_references(static_run):
+            raise UnsupportedComposedTemplate(
+                "composed template does not support internal references in static runs"
+            )
         static_count += 1
         block_id = f"{block_id_prefix}_static_{static_count}"
         if mode == "defs":

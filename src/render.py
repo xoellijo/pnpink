@@ -45,8 +45,6 @@ _page_attrs_from_resolved = RPL.page_attrs_from_resolved
 ensure_page_for = RPL.ensure_page_for
 CardPlanner = RPL.CardPlanner
 
-_expand_index_expr = RTK.expand_index_expr
-_parse_sprite_alias_token = RTK.parse_sprite_alias_token
 _parse_object_token = RTK.parse_object_token
 _split_paths_suffix = RTK.split_paths_suffix
 _split_transform_suffixes = RTK.split_transform_suffixes
@@ -705,32 +703,21 @@ def render_phase(ctx):
                     pass
             return out
 
-        def _expand_spritesheet_wildcard(expr: str):
-            """Expand '@alias[*]' into ['@alias[1]', ... '@alias[N]'].
+        def _expand_spritesheet_selector(alias: str, selector: DSL.SpriteSelector):
+            """Expand an iterator spritesheet selector into individual frame tokens.
 
-            Only triggers for the exact wildcard form. Returns None when not applicable.
             Returns [] when applicable but alias is missing/unregistered.
             """
-            s = (expr or '').strip()
-            if not s.startswith('@'):
-                return None
-            m = re.match(r"^@([A-Za-z0-9_\-]+)\[\*\]$", s)
-            if not m:
-                return None
-            a_name = m.group(1)
             try:
                 reg = ss_registry or {}
-                ss = reg.get(a_name)
+                ss = reg.get(alias)
                 if ss is None:
                     try:
-                        _l.w(f"[iter] spritesheet wildcard: alias '@{a_name}' not registered")
+                        _l.w(f"[iter] spritesheet selector: alias '@{alias}' not registered")
                     except Exception:
                         pass
                     return []
-                n = int(getattr(ss, 'cols', 0) or 0) * int(getattr(ss, 'rows', 0) or 0)
-                if n <= 0:
-                    return []
-                return [f"@{a_name}[{i}]" for i in range(1, n + 1)]
+                return RTK.spritesheet_selector_tokens(alias, selector, ss)
             except Exception:
                 return []
 
@@ -906,17 +893,26 @@ def render_phase(ctx):
                             return [f"{v}{tmods}{ops_norm}" for v in seq]
                         return [f"{v}{tmods}" for v in seq]
 
-            # '@alias[*]' spritesheet wildcard, optionally with fit/anchor suffix.
-            m_ss = re.match(
-                r"^\s*(?P<core>@[A-Za-z0-9_\-]+\[\*\])\s*(?P<tmods>(?:\.(?:Transform|T)\s*\{[^{}]*\})*)\s*(?P<tail>(?:\.(?:Fit|F)\s*\{[^}]*\}|~.*|[\^!\|].*)?)\s*$",
-                s,
-                re.IGNORECASE,
-            )
-            ss_core = (m_ss.group("core") if m_ss else s)
-            ss_tmods = (m_ss.group("tmods") if m_ss else "")
-            ss_tail = (m_ss.group("tail") if m_ss else "")
-            ss = _expand_spritesheet_wildcard(ss_core)
-            if ss is not None:
+            # Spritesheet selector iterator, optionally with fit/anchor suffix.
+            try:
+                ss_prefix = DSL.split_sprite_alias_prefix(s)
+            except DSL.DSLError as ex:
+                _l.w(f"[iter] invalid spritesheet selector '{s}': {ex}")
+                ss_prefix = None
+            if ss_prefix is not None:
+                ss_alias, ss_selector, ss_suffix = ss_prefix
+                m_ss = re.fullmatch(
+                    r"(?P<tmods>(?:\.(?:Transform|T)\s*\{[^{}]*\})*)\s*"
+                    r"(?P<tail>(?:\.(?:Fit|F)\s*\{[^}]*\}|~.*|[\^!\|].*)?)",
+                    ss_suffix,
+                    re.IGNORECASE,
+                )
+            else:
+                m_ss = None
+            if ss_prefix is not None and m_ss is not None:
+                ss_tmods = m_ss.group("tmods") or ""
+                ss_tail = m_ss.group("tail") or ""
+                ss = _expand_spritesheet_selector(ss_alias, ss_selector)
                 ops_norm = _iter_suffix_to_ops(ss_tail)
                 if ss_tail and not ops_norm:
                     _l.w(f"[iter] invalid iterator suffix after spritesheet wildcard: '{ss_tail}'")
@@ -964,7 +960,7 @@ def render_phase(ctx):
                             mlen = int(len(seq))
                         except Exception:
                             mlen = 1
-                        level_len[k] = max(int(level_len.get(k, 1) or 1), max(mlen, 1))
+                        level_len[k] = max(int(level_len.get(k, 0) or 0), max(mlen, 0))
                     else:
                         parts.append(("lit", tt))
                 if cell_has_iter:
@@ -1012,7 +1008,7 @@ def render_phase(ctx):
                     rr['cells'] = rr_cells
                     out_rows.append(rr)
                     return
-                for i in range(0, int(level_len.get(level, 1) or 1)):
+                for i in range(0, int(level_len.get(level, 0) or 0)):
                     idx_stack[level] = i
                     _recur(level + 1)
 
@@ -1028,7 +1024,7 @@ def render_phase(ctx):
                 _l.i(f"[iter] expanded row: levels={max_lv} " + " ".join(parts) + f" -> {len(out_rows)} inst")
             except Exception:
                 pass
-            return (out_rows if out_rows else [row0]), True
+            return out_rows, True
 
         def _as_bool(v) -> bool:
             if isinstance(v, bool):

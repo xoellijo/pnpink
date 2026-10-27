@@ -79,8 +79,8 @@ main {
   top: 2px;
   right: 2px;
   z-index: 112;
-  width: min(344px, calc(100vw - 4px));
-  max-height: calc(100% - 4px);
+  width: min(344px, calc(100% - 4px));
+  height: calc(100% - 4px);
   overflow: visible;
   pointer-events: none;
 }
@@ -175,7 +175,20 @@ main {
 }
 .pdf-page-controls button:hover:not(:disabled) { background: #444; }
 .pdf-page-controls button:disabled { color: #777; cursor: default; }
-.pdf-page-controls span { min-width: 54px; padding: 0 3px; text-align: center; font-size: 11px; }
+.pdf-page-controls select {
+  width: 46px;
+  min-width: 0;
+  height: 20px;
+  border: 1px solid #ffffff22;
+  border-radius: 4px;
+  padding: 0 13px 0 3px;
+  color: #fff;
+  background: #171717d9;
+  color-scheme: dark;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 18px;
+}
 .deckmaker-row-label { flex: 0 0 auto; align-self: center; min-width: 34px; color: #ddd; font-size: 11px; }
 .preview-message {
   position: absolute;
@@ -313,6 +326,20 @@ main.dataset-dock-right .gsheet-editor { grid-column: 3; grid-row: 1; }
   background: #070707b8;
   font-weight: 400;
 }
+.deckmaker-gui-host .lil-gui,
+.deckmaker-gui-host .lil-gui button,
+.deckmaker-gui-host .lil-gui input,
+.deckmaker-gui-host .lil-gui select,
+.deckmaker-gui-host .lil-gui .title,
+.deckmaker-gui-host .lil-gui .name,
+.lil-gui.dataset-context-menu,
+.lil-gui.dataset-context-menu button,
+.lil-gui.dataset-context-menu input,
+.lil-gui.dataset-context-menu select,
+.lil-gui.dataset-context-menu .title,
+.lil-gui.dataset-context-menu .name {
+  font-weight: 400 !important;
+}
 #gui > .lil-gui.deckmaker-menu {
   width: 100% !important;
   max-height: calc(100vh - 4px);
@@ -400,6 +427,72 @@ main.dataset-dock-right .gsheet-editor { grid-column: 3; grid-row: 1; }
 .deckmaker-gui-host .deckmaker-title-button .iconify { margin: 0 !important; }
 .deckmaker-gui-host .deckmaker-title-button:disabled,
 .deckmaker-gui-host .deckmaker-preview-asset-select:disabled { opacity: .45; }
+#gui .deckmaker-create-folder > .title > .remove-bar {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+#gui .deckmaker-create-folder > .title > .deckmaker-title-button,
+#gui .deckmaker-menu .deckmaker-help-log,
+#gui .deckmaker-menu .deckmaker-help-tutorials,
+#gui .deckmaker-menu .deckmaker-help-docs { flex: 0 0 22px; }
+#gui .deckmaker-export-folder > .title > .remove-bar {
+  width: 0;
+  min-width: 58px;
+  flex: 1 1 auto;
+}
+#gui .deckmaker-export-summary {
+  min-width: 0;
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1px;
+  overflow: hidden;
+}
+#gui .deckmaker-export-format {
+  width: 18px;
+  height: 20px;
+  flex: 0 0 18px;
+  display: grid;
+  place-items: center;
+  color: #efbd73;
+}
+#gui .deckmaker-export-format .iconify {
+  margin: 0 !important;
+  color: inherit !important;
+}
+#gui .deckmaker-export-folder.closed > .title .deckmaker-export-summary .iconify { opacity: 1; }
+#gui .deckmaker-export-run { margin-left: 2px; }
+#gui .deckmaker-export-section > .title > .remove-bar {
+  width: 0;
+  min-width: 58px;
+  flex: 1 1 auto;
+}
+#gui .deckmaker-export-section > .title > .controller {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+}
+#gui .deckmaker-export-section > .title > .controller .name { display: none; }
+#gui .deckmaker-export-section > .title > .controller .widget {
+  width: 100%;
+  min-height: 20px;
+}
+#gui .deckmaker-export-section > .title > .deckmaker-export-section-toggle {
+  width: 22px;
+  flex: 0 0 22px;
+}
+#gui .deckmaker-export-section > .title > .deckmaker-export-section-toggle .widget {
+  justify-content: center;
+}
+#gui .deckmaker-export-section > .title > .deckmaker-export-section-option {
+  width: 92px;
+  flex: 0 0 92px;
+}
+#gui .deckmaker-export-section > .title > .deckmaker-export-section-option .display {
+  height: 20px;
+  line-height: 20px;
+}
 #gui .deckmaker-drop-target > .title {
   color: #17120a !important;
   background: #efbd73 !important;
@@ -442,7 +535,7 @@ main.dataset-dock-right .gsheet-editor { grid-column: 3; grid-row: 1; }
 }
 #spritesheet-gui > .lil-gui.deckmaker-menu {
   width: 100% !important;
-  max-height: calc(100vh - 4px);
+  max-height: 100%;
   overflow-x: hidden;
   overflow-y: auto;
   border: 1px solid #ffffff20;
@@ -457,6 +550,38 @@ main.dataset-dock-right .gsheet-editor { grid-column: 3; grid-row: 1; }
   padding-left: 5px;
   color: #fff;
   background: #050505e8;
+  font-weight: 400;
+}
+#spritesheet-gui .deckmaker-spritesheet-title-label {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+#spritesheet-gui .deckmaker-sprite-preset-picker {
+  min-width: 76px;
+  height: 21px;
+  flex: 1 1 92px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+#spritesheet-gui .deckmaker-sprite-preset-icon {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+}
+#spritesheet-gui .deckmaker-sprite-preset-select {
+  min-width: 56px;
+  width: 100%;
+  height: 20px;
+  border: 1px solid #ffffff22;
+  border-radius: 4px;
+  padding: 0 16px 0 3px;
+  color: #fff;
+  background: #171717d9;
+  color-scheme: dark;
+  font: inherit;
   font-weight: 400;
 }
 #spritesheet-gui .deckmaker-menu > .title::before {
@@ -493,10 +618,12 @@ main.dataset-dock-right .gsheet-editor { grid-column: 3; grid-row: 1; }
   font-size: 17px;
   line-height: 17px;
 }
-#spritesheet-gui .deckmaker-menu > .title > .pdf-page-controls span {
-  min-width: 48px;
-  padding: 0 1px;
+#spritesheet-gui .deckmaker-menu > .title > .pdf-page-controls select {
+  width: 64px;
+  min-width: 64px;
 }
+#spritesheet-gui .deckmaker-sprite-grid-row.automatic { opacity: .52; }
+#spritesheet-gui .deckmaker-sprite-custom-row[hidden] { display: none !important; }
 #spritesheet-gui .deckmaker-sprite-link { flex: 0 0 27px !important; width: 27px !important; }
 #spritesheet-gui .deckmaker-sprite-link.linked .iconify { color: #efbd73 !important; }
 #spritesheet-gui .deckmaker-sprite-copy-definition { flex: 1 1 auto !important; }
@@ -547,6 +674,13 @@ main.dataset-dock-right .gsheet-editor { grid-column: 3; grid-row: 1; }
 .deckmaker-profile-row > .controller { flex-basis: 28px !important; }
 .deckmaker-row > .deckmaker-icon-only .name { min-width: 22px; justify-content: center; padding: 0; }
 .deckmaker-row > .deckmaker-icon-only .iconify { margin: 0 !important; }
+.deckmaker-log-row > .controller:first-child { flex: 0 0 68px !important; width: 68px !important; }
+.deckmaker-log-row > .controller:nth-child(2) { flex: 1 1 auto !important; }
+.deckmaker-log-row > .deckmaker-icon-only { flex: 0 0 26px !important; width: 26px !important; }
+.deckmaker-log-row > .controller:first-child .widget { flex: 0 0 auto; width: auto; }
+.deckmaker-log-row > .controller:nth-child(2) .name { flex: 0 0 auto; }
+.deckmaker-help-selector-row > .controller:first-child { flex: 1 1 auto !important; }
+.deckmaker-help-selector-row > .deckmaker-icon-only { flex: 0 0 26px !important; width: 26px !important; }
 .deckmaker-fields > .controller { flex: 1 1 50% !important; }
 .deckmaker-fields > .controller:last-child { flex-grow: 1.4 !important; }
 .deckmaker-fields .name { flex: 0 0 24px !important; width: 24px; }
@@ -642,7 +776,51 @@ main.dataset-dock-right .gsheet-editor { grid-column: 3; grid-row: 1; }
 .console-header button { margin-left: auto; width: 24px; height: 22px; border: 0; border-radius: 4px; color: #fff; background: transparent; font: 18px/1 sans-serif; cursor: pointer; }
 .console-header button:hover { background: #ffffff20; }
 #log { min-height: 0; flex: 1; margin: 0; padding: 9px 11px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: #ccd2db; font: 11px/1.42 "Cascadia Mono", Consolas, monospace; scrollbar-gutter: stable; }
+.resource-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: #0009;
+  backdrop-filter: blur(4px);
+}
+.resource-viewer[hidden] { display: none; }
+.resource-viewer-window {
+  position: relative;
+  width: min(1180px, 94vw);
+  height: min(820px, 92vh);
+  overflow: hidden;
+  border: 0;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 18px 60px #000c;
+}
+.resource-viewer-header {
+  position: absolute;
+  z-index: 2;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  color: #fff;
+  background: #050505d9;
+  border: 1px solid #ffffff30;
+  border-radius: 5px;
+  box-shadow: 0 3px 12px #0008;
+}
+.resource-viewer-header strong { display: none; }
+.resource-viewer-header a,
+.resource-viewer-header button { width: 24px; height: 22px; display: grid; place-items: center; border: 0; border-radius: 4px; padding: 0; color: #fff; background: transparent; text-decoration: none; cursor: pointer; }
+.resource-viewer-header a:hover,
+.resource-viewer-header button:hover { background: #ffffff20; }
+.resource-viewer-header button { font: 18px/1 sans-serif; }
+#resource-viewer-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
 #toast { position: fixed; left: 12px; bottom: 12px; z-index: 170; width: min(520px, calc(100vw - 24px)); padding: 10px 14px; border: 1px solid #d96b78; border-radius: 7px; color: white; background: rgba(77, 20, 29, .96); box-shadow: 0 8px 24px #0008; opacity: 0; pointer-events: none; transition: opacity .18s; }
+#toast.info { border-color: #d6a54f; background: rgba(40, 36, 28, .96); }
 #toast.visible { opacity: 1; }
 
 .gsheet-editor {
@@ -910,5 +1088,5 @@ body.log-visible .job-status { bottom: 12px; }
 @media (max-width: 760px) {
   main { padding: 2px; }
   #gui { top: 2px; left: 2px; width: min(275px, calc(100vw - 4px)); height: calc(100% - 4px); }
-  .spritesheet-gui-host { top: 2px; right: 2px; width: min(344px, calc(100vw - 4px)); }
+  .spritesheet-gui-host { top: 2px; right: 2px; width: min(344px, calc(100% - 4px)); }
 }

@@ -24,6 +24,9 @@ export class SpritesheetEditor {
     this.elements.image.addEventListener('load', () => this.onImageLoad());
     this.elements.pdfPrevious.addEventListener('click', () => this.changePdfPage(-1));
     this.elements.pdfNext.addEventListener('click', () => this.changePdfPage(1));
+    this.elements.pdfSelect.addEventListener('change', () => {
+      this.selectPdfPage(Number(this.elements.pdfSelect.value));
+    });
   }
 
   setPresets(presets) { this.presets = presets || {}; }
@@ -93,10 +96,14 @@ export class SpritesheetEditor {
 
   async changePdfPage(delta) {
     if (!this.pdf) return;
-    const target = this.pdf.page + delta;
-    if (target < 1) return;
+    return this.selectPdfPage(this.pdf.page + delta);
+  }
+
+  async selectPdfPage(target) {
+    if (!this.pdf || target < 1 || target === this.pdf.page) return;
     this.elements.pdfPrevious.disabled = true;
     this.elements.pdfNext.disabled = true;
+    this.elements.pdfSelect.disabled = true;
     this.previewViewer.showMessage(`Rendering PDF page ${target} with Inkscape...`);
     try {
       const data = await this.request('/api/spritesheet/pdf-page', {
@@ -128,9 +135,19 @@ export class SpritesheetEditor {
     if (!active) return;
     this.elements.pdfPrevious.disabled = !this.pdf.hasPrevious;
     this.elements.pdfNext.disabled = !this.pdf.hasNext;
-    this.elements.pdfLabel.textContent = this.pdf.pageCount
-      ? `Page ${this.pdf.page}/${this.pdf.pageCount}`
-      : `Page ${this.pdf.page}`;
+    const pageCount = Math.max(1, Number(this.pdf.pageCount || this.pdf.page || 1));
+    const signature = String(pageCount);
+    if (this.elements.pdfSelect.dataset.signature !== signature) {
+      this.elements.pdfSelect.replaceChildren(...Array.from({ length: pageCount }, (_, index) => {
+        const option = document.createElement('option');
+        option.value = String(index + 1);
+        option.textContent = `${index + 1}/${pageCount}`;
+        return option;
+      }));
+      this.elements.pdfSelect.dataset.signature = signature;
+    }
+    this.elements.pdfSelect.value = String(this.pdf.page);
+    this.elements.pdfSelect.disabled = false;
   }
 
   deactivate() {
@@ -190,6 +207,10 @@ export class SpritesheetEditor {
     const overlay = this.elements.overlay;
     overlay.replaceChildren();
     this.grid = computeSpriteGrid(this.model, this.metadata, this.presets);
+    if (this.grid && String(this.model.spriteMode || 'Grid').toLowerCase() !== 'grid') {
+      this.model.spriteCols = this.grid.columns;
+      this.model.spriteRows = this.grid.rows;
+    }
     this.onUpdate();
     if (!this.grid || !this.metadata) return;
 

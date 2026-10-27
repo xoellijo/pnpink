@@ -31,7 +31,7 @@ If a template has no dataset, DeckMaker Web can create a commented starter CSV f
 
 Only one long-running operation can run at a time. Closing or refreshing the browser does not stop an active generation or export because the work belongs to the resident Python process.
 
-The browser actions execute the same Python generation, Inkscape export, PDF/PDF-X, cutting-template, and PnPPlay pipelines as classic DeckMaker. **Tools** contains **Create all**, **Open**, **Export**, and **Build assets**. A floating log can be opened when detailed activity is needed; unavailable actions remain disabled until their template, dataset, or generated output is ready.
+The browser actions execute the same Python generation, Inkscape export, PDF/PDF-X, cutting-template, and PnPPlay pipelines as classic DeckMaker. Its compact menu is organized as **Preview**, **Create**, **Export**, **Dataset**, and **Help**. **Create** generates the complete output, opens it in Inkscape, optionally auto-opens it after generation, and builds PnPPlay assets. **Export** shows the enabled output formats in its title and groups the detailed settings under PDF, PDF/X, Image, and Cut. **Help** provides examples, documentation, tutorials, and visual or text logs. Unavailable actions remain disabled until their template, dataset, or generated output is ready.
 
 ### Preview backends
 
@@ -41,7 +41,7 @@ The **Preview** panel selects an asset, moves to the previous or next generated 
 
 ## Spritesheet editor
 
-Drop an image or PDF onto the preview canvas to enter spritesheet mode. A separate **Spritesheet** menu opens at the upper right with rows, columns, linked or independent gaps and borders, presets, custom frame dimensions, and a copyable `SP#` definition. PDF page controls appear in its title only while editing a PDF. The copied definition continues to reference the PDF; PnPInk creates and reuses project-local page PNGs only when `@SP1[B2]`, `@SP1[3!B2]`, or another page reference needs them. Closing the menu restores the previous preview layout.
+Drop an image or PDF onto the preview canvas to enter spritesheet mode. A separate **Spritesheet** menu opens at the upper right of the preview with rows, columns, linked or independent gaps and borders, presets, custom frame dimensions, and a copyable `SP#` definition. PDF page controls appear in its title only while editing a PDF. The copied definition continues to reference the PDF; PnPInk creates and reuses project-local page PNGs only when `@SP1[B2]`, `@SP1[3!B2]`, or another page reference needs them. PDF pages use the highest effective resolution of their placed raster images, with a minimum of 300 DPI; vector-only pages also use 300 DPI. Multipage selectors can combine cells, rectangles, and cross-page linear ranges, and `*@SP1[*]` creates one generated item per frame across the complete PDF. Closing the menu restores the previous preview layout.
 
 The window title shows the running DeckMaker version and the current template file name. The full template path is not shown in the form because the extension is launched from the active Inkscape document.
 

@@ -28,21 +28,38 @@ def unquote_iterator_item(value: str) -> tuple[str, bool]:
 excel_col_to_num = DSL.excel_col_to_num
 
 
+def _excel_col_name(number: int) -> str:
+    value = max(1, int(number or 1))
+    out = ""
+    while value:
+        value, remainder = divmod(value - 1, 26)
+        out = chr(65 + remainder) + out
+    return out
+
+
+def _spritesheet_frame_cell(frame: int, definition) -> str:
+    cols = max(0, int(getattr(definition, "cols", 0) or 0))
+    rows = max(0, int(getattr(definition, "rows", 0) or 0))
+    offset = max(0, min(cols * rows - 1, int(frame) - 1))
+    if bool(getattr(definition, "sweep_rows_first", True)):
+        row = offset // cols
+        col = offset % cols
+    else:
+        col = offset // rows
+        row = offset % rows
+    if bool(getattr(definition, "invert_rows", False)):
+        row = rows - 1 - row
+    if bool(getattr(definition, "invert_cols", False)):
+        col = cols - 1 - col
+    return f"{_excel_col_name(col + 1)}{row + 1}"
+
+
 def cell_ref_to_rc(ref: str):
     m = re.fullmatch(r"([A-Za-z]+)([1-9]\d*)", str(ref or "").strip())
     if not m:
         return None
     c = excel_col_to_num(m.group(1))
     return (int(c), int(m.group(2))) if c is not None else None
-
-
-def split_page_cell_selector(selector: str) -> tuple[int, str]:
-    """Split an optional spreadsheet-like page prefix: ``3!B4``."""
-    text = str(selector or "").strip()
-    match = re.fullmatch(r"(?:(?P<page>[1-9]\d*)!)?(?P<cells>.+)", text)
-    if not match:
-        return 1, text
-    return int(match.group("page") or 1), str(match.group("cells") or "").strip()
 
 
 def grid_rc_to_index_1based(c1: int, r1: int, cols: int, rows: int, *, sweep_rows_first=True, invert_cols=False, invert_rows=False):
@@ -59,139 +76,91 @@ def grid_rc_to_index_1based(c1: int, r1: int, cols: int, rows: int, *, sweep_row
     return (r0 * cols + c0 + 1) if sweep_rows_first else (c0 * rows + r0 + 1)
 
 
-def expand_cell_selector(selector: str, *, cols: int, rows: int, sweep_rows_first=True, invert_cols=False, invert_rows=False):
-    body = str(selector or "").strip()
-    if body.startswith("[") and body.endswith("]"):
-        body = body[1:-1].strip()
-    if not body:
+def spritesheet_selector_frames(selector: str | DSL.SpriteSelector, definition) -> list[tuple[int, int]]:
+    """Resolve the DSL selector AST into ordered ``(page, linear_frame)`` pairs."""
+    cols = max(0, int(getattr(definition, "cols", 0) or 0))
+    rows = max(0, int(getattr(definition, "rows", 0) or 0))
+    pages = max(1, int(getattr(definition, "page_count", 1) or 1))
+    per_page = cols * rows
+    if per_page <= 0:
         return []
 
-    def idx_of(cell: str):
-        rc = cell_ref_to_rc(cell)
-        if rc is None:
+    def endpoint(reference: DSL.SpriteCellRef, default_page: int = 1):
+        page = int(reference.page or default_page)
+        if not 1 <= page <= pages:
             return None
-        c1, r1 = rc
-        return grid_rc_to_index_1based(
-            c1, r1, cols, rows,
-            sweep_rows_first=sweep_rows_first,
-            invert_cols=invert_cols,
-            invert_rows=invert_rows,
-        )
+        if reference.cell.isdigit():
+            frame = int(reference.cell)
+        else:
+            rc = cell_ref_to_rc(reference.cell)
+            if rc is None:
+                return None
+            frame = grid_rc_to_index_1based(
+                rc[0], rc[1], cols, rows,
+                sweep_rows_first=bool(getattr(definition, "sweep_rows_first", True)),
+                invert_cols=bool(getattr(definition, "invert_cols", False)),
+                invert_rows=bool(getattr(definition, "invert_rows", False)),
+            )
+        if frame is None or not 1 <= int(frame) <= per_page:
+            return None
+        return page, int(frame)
 
-    out = []
-    toks = [t for t in re.split(r"[\s,]+", body) if t]
-    for t in toks:
-        if t == "*":
-            out.extend(range(1, int(cols or 0) * int(rows or 0) + 1))
+    parsed = selector if isinstance(selector, DSL.SpriteSelector) else DSL.parse_spritesheet_selector(selector)
+    result = []
+    for term in parsed.terms:
+        if term.kind == "all":
+            result.extend((page, frame) for page in range(1, pages + 1) for frame in range(1, per_page + 1))
             continue
-        m = re.fullmatch(r"([A-Za-z]+[1-9]\d*)\s*\.\.\s*([A-Za-z]+[1-9]\d*)", t)
-        if m:
-            a = idx_of(m.group(1))
-            b = idx_of(m.group(2))
-            if a is None or b is None:
+        if term.kind == "linear":
+            start = endpoint(term.start)
+            end = endpoint(term.end, start[0] if start else 1)
+            if start is None or end is None:
                 continue
-            step = 1 if b >= a else -1
-            out.extend(range(a, b + step, step))
+            first = (start[0] - 1) * per_page + start[1]
+            last = (end[0] - 1) * per_page + end[1]
+            step = 1 if last >= first else -1
+            for absolute in range(first, last + step, step):
+                result.append(((absolute - 1) // per_page + 1, (absolute - 1) % per_page + 1))
             continue
-        m = re.fullmatch(r"([A-Za-z]+[1-9]\d*)\s*:\s*([A-Za-z]+[1-9]\d*)", t)
-        if m:
-            a = cell_ref_to_rc(m.group(1))
-            b = cell_ref_to_rc(m.group(2))
-            if a is None or b is None:
+        if term.kind == "rectangle":
+            start = endpoint(term.start)
+            end = endpoint(term.end, start[0] if start else 1)
+            if start is None or end is None or start[0] != end[0]:
                 continue
-            c1a, r1a = a
-            c1b, r1b = b
-            cells = []
-            for r1 in range(min(r1a, r1b), max(r1a, r1b) + 1):
-                for c1 in range(min(c1a, c1b), max(c1a, c1b) + 1):
-                    ix = grid_rc_to_index_1based(
-                        c1, r1, cols, rows,
-                        sweep_rows_first=sweep_rows_first,
-                        invert_cols=invert_cols,
-                        invert_rows=invert_rows,
+            start_rc = cell_ref_to_rc(term.start.cell)
+            end_rc = cell_ref_to_rc(term.end.cell)
+            if start_rc is None or end_rc is None:
+                continue
+            frames = []
+            for row in range(min(start_rc[1], end_rc[1]), max(start_rc[1], end_rc[1]) + 1):
+                for col in range(min(start_rc[0], end_rc[0]), max(start_rc[0], end_rc[0]) + 1):
+                    frame = grid_rc_to_index_1based(
+                        col, row, cols, rows,
+                        sweep_rows_first=bool(getattr(definition, "sweep_rows_first", True)),
+                        invert_cols=bool(getattr(definition, "invert_cols", False)),
+                        invert_rows=bool(getattr(definition, "invert_rows", False)),
                     )
-                    if ix is not None:
-                        cells.append(ix)
-            out.extend(sorted(cells))
+                    if frame is not None:
+                        frames.append(frame)
+            result.extend((start[0], int(frame)) for frame in sorted(frames))
             continue
-        rc = cell_ref_to_rc(t)
-        if rc is not None:
-            ix = idx_of(t)
-            if ix is not None:
-                out.append(ix)
-            continue
-        if re.fullmatch(r"\d+", t):
-            out.append(int(t))
-    return list(out)
-
-_ALIAS_TOKEN_RE = re.compile(
-    r"^@(?P<name>[A-Za-z][\w\-\.]*)((?:\[[^\]]+\])+)"
-    r"(?:(?:~(?P<ops_tilde>.*))|(?P<ops_compact>[\^!\|].*))?$"
-)
+        single = endpoint(term.start)
+        if single is not None:
+            result.append(single)
+    return result
 
 
-def expand_index_expr(expr: str):
-    s = (expr or "").strip()
-    if not s:
-        return []
-    if "," in s:
-        raise ValueError("No se permiten comas en índices")
-    toks = s.split()
-    out = []
-    for t in toks:
-        if t == "*":
-            out.append("*")
-            continue
-        if t == "-":
-            out.append(None)
-            continue
-        m = re.match(r"^(\d+)-$", t)
-        if m:
-            out.extend([None] * int(m.group(1)))
-            continue
-        m = re.match(r"^(\d+)\*(\d+)$", t)
-        if m:
-            k = int(m.group(1))
-            v = int(m.group(2))
-            out.extend([v] * k)
-            continue
-        m = re.match(r"^(\d+)-(\d+)$", t)
-        if m:
-            a = int(m.group(1))
-            b = int(m.group(2))
-            step = 1 if b >= a else -1
-            out.extend(list(range(a, b + step, step)))
-            continue
-        if re.match(r"^\d+$", t):
-            out.append(int(t))
-            continue
-        raise ValueError(f"Índice no reconocido: '{t}'")
-    return out
+def spritesheet_selector_tokens(alias: str, selector: str | DSL.SpriteSelector, definition) -> list[str]:
+    pages = max(1, int(getattr(definition, "page_count", 1) or 1))
+    return [
+        f"@{alias}[{page}!{_spritesheet_frame_cell(frame, definition)}]"
+        if pages > 1 else f"@{alias}[{_spritesheet_frame_cell(frame, definition)}]"
+        for page, frame in spritesheet_selector_frames(selector, definition)
+    ]
 
 
-def parse_sprite_alias_token(raw_token: str):
-    m = _ALIAS_TOKEN_RE.match((raw_token or "").strip())
-    if not m:
-        return None
-    name = m.group("name")
-    idxs_raw = m.group(2) or ""
-    ops = (m.group("ops_tilde") or m.group("ops_compact") or "").strip()
-    if "][" in idxs_raw:
-        _l.w(f"[spritesheets] token '{raw_token}': multi-bracket selectors are no longer supported; use @alias[B3]")
-        return None
-    inner = idxs_raw[1:-1]
-    chunks = inner.split("][") if inner else []
-    dims = []
-    for ch in chunks:
-        try:
-            if re.search(r"[A-Za-z]+[1-9]\d*", ch or ""):
-                dims.append([t for t in re.split(r"[\s,]+", ch.strip()) if t])
-            else:
-                dims.append(expand_index_expr(ch))
-        except Exception as ex:
-            _l.w(f"[spritesheets] token '{raw_token}': invalid index expression '[{ch}]' ({ex})")
-            return None
-    return name, dims, ops
+def spritesheet_wildcard_tokens(alias: str, definition) -> list[str]:
+    return spritesheet_selector_tokens(alias, "*", definition)
 
 
 def split_multivalue(value: str):
@@ -668,9 +637,8 @@ def resolve_virtual_source_urls(sm, src_val: str, selector: Optional[str], *, wa
 
 
 __all__ = [
-    "expand_index_expr",
-    "parse_sprite_alias_token",
-    "split_page_cell_selector",
+    "spritesheet_selector_frames",
+    "spritesheet_selector_tokens",
     "split_multivalue",
     "parse_object_token",
     "split_paths_suffix",

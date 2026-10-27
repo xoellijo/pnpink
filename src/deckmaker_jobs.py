@@ -110,6 +110,10 @@ def export_project(template: str, svg_path: str, options: ExportOptions, events:
             label = str(options.pdf_raster_mode or "png").replace("png_alpha", "png alpha")
             events.progress(f"Creating {label} rasters for complex filters", int(done or 0), int(total or 0))
 
+        def pdf_phase(message: str):
+            events.activity(message)
+            events.log(message)
+
         ok, info = EXPORTPDF.export_pdf_via_inkscape(
             svg_path,
             pdf_path,
@@ -122,6 +126,7 @@ def export_project(template: str, svg_path: str, options: ExportOptions, events:
             on_page_pdf_created=page_created,
             on_raster_progress=raster_progress,
             on_ghostscript_output=_final_pdf_output(events, page_count),
+            on_phase=pdf_phase,
         )
         if ok:
             info = info or {}
@@ -129,6 +134,16 @@ def export_project(template: str, svg_path: str, options: ExportOptions, events:
                 f"PDF export done in {float(info.get('elapsed_s') or 0):.2f}s across "
                 f"{int(info.get('page_count') or 0)} page(s) using {int(info.get('chunk_count') or 1)} SVG part(s)"
             )
+            timings = dict(info.get("phase_timings") or {})
+            if timings:
+                events.log(
+                    "PDF timings: "
+                    f"SVG {float(timings.get('prepare_svg_s') or 0):.2f}s; "
+                    f"spritesheets {float(timings.get('spritesheet_crops_s') or 0):.2f}s; "
+                    f"filters {float(timings.get('raster_filters_s') or 0):.2f}s; "
+                    f"Inkscape {float(timings.get('inkscape_pdf_s') or 0):.2f}s; "
+                    f"Ghostscript {float(timings.get('ghostscript_s') or 0):.2f}s"
+                )
             for item in list(info.get("gs_outputs") or []):
                 output_pdf = str(item.get("output_pdf") or "")
                 if output_pdf:
@@ -141,12 +156,26 @@ def export_project(template: str, svg_path: str, options: ExportOptions, events:
 
     for export_type in [item for item in formats if item != "pdf"]:
         out_path = DMPATHS.output_other(template, export_type)
-        events.activity(f"Preparing {export_type.upper()} export...")
+        export_label = export_type.upper()
+        events.activity(f"Exporting {export_label}...")
+        page_progress = {"current": 0, "total": 0}
+        if options.other_unit == "pages":
+            available_pages = EXPORT.svg_page_count(svg_path) if os.path.isfile(svg_path) else 0
+            page_progress["total"] = len(
+                EXPORT.parse_page_spec(options.other_pages, max_page=available_pages)
+            ) if available_pages else 0
+            events.progress(f"Exporting {export_label} pages", 0, page_progress["total"])
 
-        def page_created(path: str, label=export_type.upper()):
+        def page_created(path: str, label=export_label):
+            page_progress["current"] += 1
+            events.progress(
+                f"Exporting {label} pages",
+                page_progress["current"],
+                page_progress["total"],
+            )
             events.log(f"Created page {label}: {os.path.basename(path)}")
 
-        def item_created(path: str, node_id: str, label=export_type.upper()):
+        def item_created(path: str, node_id: str, label=export_label):
             events.log(f"Created ID {label}: {node_id} -> {os.path.basename(path)}")
 
         if options.other_unit == "items":

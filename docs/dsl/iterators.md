@@ -119,6 +119,17 @@ Current parser supports iterator payloads such as:
 - filesystem glob through `*@{...}`,
 - spritesheet wildcard alias: `*@alias[*]`.
 
+For a PDF spritesheet, this expands every frame on every PDF page, in page and
+layout order. For example, `*@SP3[*]` generates one dataset instance for each
+card across the complete PDF.
+
+Any spritesheet selector can be iterated. Selectors may combine rectangles, individual
+cells, and linear ranges across pages while preserving their written order:
+
+```txt
+*@SP3[2!B2:C4 3!C4 5!A2..6!D4]
+```
+
 If an iterator resolves to zero values, that row yields zero generated instances.
 
 ## Row Sequencing from Column A

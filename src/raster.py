@@ -240,7 +240,9 @@ def _build_area_export_pass_svg(doc, export_node_ids: list[str], hidden_template
         export_node = _find_node_by_id(root_copy, export_node_id)
         if export_node is None:
             continue
-        instance_root = _find_instance_root(export_node, root_copy) or root_copy
+        instance_root = _find_instance_root(export_node, root_copy)
+        if instance_root is None:
+            instance_root = root_copy
         _hide_nodes_above_export_target(export_node, instance_root)
         found = True
     if not found:
@@ -262,10 +264,6 @@ def _filtered_export_nodes(root, hidden_template_image_ids: set[str] | None = No
             if _is_effectively_hidden(node):
                 continue
             if _has_svg_filter_reference(node):
-                # For PDF export we only pre-rasterize filters applied to bitmap content.
-                # Basic opacity/vector content is left to the normal PDF exporter.
-                if not _has_rasterizable_content(node):
-                    continue
                 if _node_matches_hidden_template_image(node, hidden_template_image_ids):
                     continue
                 candidates.append(node)
@@ -305,17 +303,6 @@ def _promote_filter_raster_target(node, root):
             break
         cur = parent
     return best
-
-
-def _has_rasterizable_content(node) -> bool:
-    try:
-        for child in node.iter():
-            local = str(getattr(child, "tag", "")).rsplit("}", 1)[-1]
-            if local in {"image", "use"} and not _is_inside_non_rendered_svg_area(child) and not _is_effectively_hidden(child):
-                return True
-    except Exception:
-        pass
-    return False
 
 
 def _ensure_node_ids(nodes: list) -> list[str]:
@@ -382,6 +369,7 @@ def _replace_node_with_raster_image(node, raster_path: str, bbox: dict, *, dpi: 
     old_id = str(node.get("id") or "").strip()
     x = y = 0.0
     w = h = 0.0
+    image_transform = ""
     fx_rect = str(node.get("data-fx-rect") or "").strip()
     if fx_rect:
         try:
@@ -401,20 +389,11 @@ def _replace_node_with_raster_image(node, raster_path: str, bbox: dict, *, dpi: 
         except Exception:
             parent_ctm = None
         try:
-            inv_parent = parent_ctm.inverse() if parent_ctm is not None else None
+            inv_parent = -parent_ctm if parent_ctm is not None else None
         except Exception:
             inv_parent = None
         if inv_parent is not None:
-            p1 = inv_parent.apply_to_point((x, y))
-            p2 = inv_parent.apply_to_point((x + w, y))
-            p3 = inv_parent.apply_to_point((x, y + h))
-            p4 = inv_parent.apply_to_point((x + w, y + h))
-            xs = [p1[0], p2[0], p3[0], p4[0]]
-            ys = [p1[1], p2[1], p3[1], p4[1]]
-            x = float(min(xs))
-            y = float(min(ys))
-            w = max(0.001, float(max(xs) - min(xs)))
-            h = max(0.001, float(max(ys) - min(ys)))
+            image_transform = str(inv_parent)
     w = max(0.001, float(w))
     h = max(0.001, float(h))
 
@@ -426,6 +405,8 @@ def _replace_node_with_raster_image(node, raster_path: str, bbox: dict, *, dpi: 
     image.set("width", f"{w:.6f}")
     image.set("height", f"{h:.6f}")
     image.set("preserveAspectRatio", "none")
+    if image_transform:
+        image.set("transform", image_transform)
     image.set("data-pnpink-rasterized-filter", "1")
     try:
         SVG.set_file_href(image, raster_path, touch_plain=True, touch_absref=True)
@@ -448,6 +429,22 @@ def _bbox_to_export_area(bbox: dict) -> tuple[float, float, float, float] | None
     if w <= 0.0 or h <= 0.0:
         return None
     return (x, y, x + w, y + h)
+
+
+def _query_bbox_to_document_units(root, bbox: dict) -> dict:
+    """Convert Inkscape --query-all CSS-pixel coordinates to SVG user units."""
+    try:
+        scale = float(root.unittouu("1px"))
+    except Exception:
+        scale = 1.0
+    if abs(scale - 1.0) < 1e-12:
+        return dict(bbox)
+    return {
+        "x": float(bbox.get("x") or 0.0) * scale,
+        "y": float(bbox.get("y") or 0.0) * scale,
+        "width": float(bbox.get("width") or 0.0) * scale,
+        "height": float(bbox.get("height") or 0.0) * scale,
+    }
 
 
 def _convert_png_to_jpeg(src_png: str, dst_jpg: str, *, matte_color: str = "#ffffff", quality: int = 95) -> bool:
@@ -479,7 +476,7 @@ def _flatten_png_to_opaque(src_png: str, dst_png: str, *, matte_color: str = "#f
         with Image.open(src_png) as im:
             rgba = im.convert("RGBA")
             bg = Image.new("RGBA", rgba.size, color)
-            composited = Image.alpha_composite(bg, rgba)
+            composited = Image.alpha_composite(bg, rgba).convert("RGB")
             out_path = dst_png
             tmp_path = ""
             if os.path.normcase(os.path.normpath(src_png)) == os.path.normcase(os.path.normpath(dst_png)):
@@ -501,7 +498,9 @@ def _flatten_png_to_opaque(src_png: str, dst_png: str, *, matte_color: str = "#f
 def _build_area_export_passes(root, export_nodes: list, export_node_ids: list[str]) -> list[list[str]]:
     by_instance: dict[int, list[tuple[tuple[int, ...], str]]] = {}
     for node, node_id in zip(export_nodes, export_node_ids):
-        instance_root = _find_instance_root(node, root) or root
+        instance_root = _find_instance_root(node, root)
+        if instance_root is None:
+            instance_root = root
         by_instance.setdefault(id(instance_root), []).append((_z_path_from(instance_root, node), node_id))
 
     sorted_by_instance = []
@@ -570,8 +569,16 @@ def _rasterize_filtered_nodes_png_alpha(
         doc.write(svg_path)
 
     all_bboxes = SVG.query_all(doc, set(export_node_ids) | image_ids, inkscape_bin=inkscape_exe)
-    bbox_by_id = {node_id: all_bboxes[node_id] for node_id in export_node_ids if node_id in all_bboxes}
-    image_bboxes = {image_id: all_bboxes[image_id] for image_id in image_ids if image_id in all_bboxes}
+    bbox_by_id = {
+        node_id: _query_bbox_to_document_units(root, all_bboxes[node_id])
+        for node_id in export_node_ids
+        if node_id in all_bboxes
+    }
+    image_bboxes = {
+        image_id: _query_bbox_to_document_units(root, all_bboxes[image_id])
+        for image_id in image_ids
+        if image_id in all_bboxes
+    }
     raster_dir = TEMPPATHS.make_work_dir("filter_raster", stem=Path(svg_path).stem)
     exe_dir = os.path.dirname(inkscape_exe) or None
     png_antialias = int(prefs.get_export_png_antialias(2))
@@ -735,7 +742,16 @@ def _rasterize_filtered_nodes_area(
         doc.write(svg_path)
 
     all_bboxes = SVG.query_all(doc, set(export_node_ids), inkscape_bin=inkscape_exe)
-    bbox_by_id = {node_id: all_bboxes[node_id] for node_id in export_node_ids if node_id in all_bboxes}
+    export_bbox_by_id = {
+        node_id: all_bboxes[node_id]
+        for node_id in export_node_ids
+        if node_id in all_bboxes
+    }
+    bbox_by_id = {
+        node_id: _query_bbox_to_document_units(root, all_bboxes[node_id])
+        for node_id in export_node_ids
+        if node_id in all_bboxes
+    }
     raster_dir = TEMPPATHS.make_work_dir("filter_raster_area", stem=Path(svg_path).stem)
     exe_dir = os.path.dirname(inkscape_exe) or None
     background_color = str(prefs.get_export_png_background("#ffffff"))
@@ -744,7 +760,7 @@ def _rasterize_filtered_nodes_area(
         doc,
         export_nodes,
         export_node_ids,
-        bbox_by_id,
+        export_bbox_by_id,
         raster_dir,
         output_format,
         hidden_template_image_ids,

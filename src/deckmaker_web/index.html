@@ -18,8 +18,8 @@
 <body>
   <main class="dataset-dock-bottom">
     <aside id="gui" class="deckmaker-gui-host"></aside>
-    <aside id="spritesheet-gui" class="deckmaker-gui-host spritesheet-gui-host" hidden></aside>
     <section id="preview-panel" class="preview-panel">
+      <aside id="spritesheet-gui" class="deckmaker-gui-host spritesheet-gui-host" hidden></aside>
       <div id="preview-viewport" class="preview-viewport" tabindex="0" aria-label="SVG preview">
         <div id="preview-stage" class="preview-stage">
           <img id="preview-image" alt="Generated SVG preview" hidden draggable="false">
@@ -45,7 +45,7 @@
     </section>
     <nav id="pdf-page-controls" class="pdf-page-controls" aria-label="PDF pages" hidden>
       <button id="pdf-page-previous" type="button" title="Previous PDF page" aria-label="Previous PDF page">&#x2039;</button>
-      <span id="pdf-page-label">Page 1</span>
+      <select id="pdf-page-select" title="Select PDF page" aria-label="Select PDF page"></select>
       <button id="pdf-page-next" type="button" title="Next PDF page" aria-label="Next PDF page">&#x203a;</button>
     </nav>
   </main>
@@ -57,6 +57,16 @@
       <a id="google-auth-link" href="#" target="_blank" rel="noopener" hidden>Authorize Google Sheets</a>
     </div>
     <progress id="job-progress" max="100" value="0"></progress>
+  </section>
+  <section id="resource-viewer" class="resource-viewer" role="dialog" aria-modal="true" aria-labelledby="resource-viewer-title" hidden>
+    <div class="resource-viewer-window">
+      <header class="resource-viewer-header">
+        <strong id="resource-viewer-title">PnPInk Help</strong>
+        <a id="resource-viewer-external" href="#" target="_blank" rel="noopener noreferrer" title="Open in browser" aria-label="Open in browser"></a>
+        <button id="resource-viewer-close" type="button" title="Close" aria-label="Close">&times;</button>
+      </header>
+      <iframe id="resource-viewer-frame" title="PnPInk Help" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+    </div>
   </section>
   <div id="toast" role="status"></div>
   <script type="module" src="app.js"></script>
