@@ -13,6 +13,8 @@ from xml.etree import ElementTree as ET
 
 import inkscape_cli as INKSCAPE
 import semantic_metadata as SEMANTIC
+import svg_chunks as SVGCHUNKS
+import temp_paths as TEMPPATHS
 
 
 _CSS_PX_PER_UNIT = {
@@ -24,6 +26,10 @@ _CSS_PX_PER_UNIT = {
     "pt": 96.0 / 72.0,
     "pc": 16.0,
 }
+
+_ASSET_CHUNK_MAX_PAGES = 4
+_ASSET_CHUNK_MAX_RECORDS = 32
+_ASSET_CHUNK_MAX_BYTES = 64 * 1024 * 1024
 
 
 def parse_item_selector(spec: str, item_count: int) -> tuple[str, list[int]]:
@@ -213,6 +219,65 @@ def _preview_key(item: dict) -> str:
     return f'{item["dataset"]}:{item["row"]}:{item["variant"]}'
 
 
+def _item_source_key(item: dict) -> tuple:
+    return (
+        int(item.get("itemIndex") or 0),
+        int(item.get("dataset") or 0),
+        int(item.get("row") or 0),
+        int(item.get("variant") or 0),
+        int(item.get("copy") or 0),
+        str(item.get("template") or ""),
+        str(item.get("contentKey") or ""),
+    )
+
+
+def _chunk_item_index(
+    svg_path: str,
+    inkscape_exe: str,
+) -> tuple[dict[tuple[str, str | tuple], tuple[str, dict]], int]:
+    work_dir = TEMPPATHS.make_work_dir("asset_export", stem=Path(svg_path).stem)
+    plan = SVGCHUNKS.write_svg_chunks(
+        svg_path,
+        str(Path(work_dir) / f"{Path(svg_path).stem}.pdf"),
+        inkscape_exe=inkscape_exe,
+        artifact_dir=work_dir,
+        target_chunk_bytes=_ASSET_CHUNK_MAX_BYTES,
+        target_pages=_ASSET_CHUNK_MAX_PAGES,
+        target_records=_ASSET_CHUNK_MAX_RECORDS,
+    )
+    chunk_paths = [chunk.svg_path for chunk in plan.get("chunks") or ()]
+
+    if len(chunk_paths) <= 1 and chunk_paths and os.path.samefile(chunk_paths[0], svg_path):
+        return {}, 1
+
+    index: dict[tuple[str, str | tuple], tuple[str, dict]] = {}
+    for chunk_path in chunk_paths:
+        chunk_fronts, chunk_backs = discover_items(chunk_path)
+        for item in chunk_fronts:
+            index[("id", item["id"])] = (chunk_path, item)
+            index[("front", _item_source_key(item))] = (chunk_path, item)
+        for back_items in chunk_backs.values():
+            for item in back_items:
+                index[("id", item["id"])] = (chunk_path, item)
+                index[("back", _item_source_key(item))] = (chunk_path, item)
+    return index, max(1, len(chunk_paths))
+
+
+def _chunk_item(
+    item: dict,
+    *,
+    face: str,
+    index: dict[tuple[str, str | tuple], tuple[str, dict]],
+    default_svg: str,
+) -> tuple[str, dict]:
+    if not index:
+        return default_svg, item
+    match = index.get(("id", item["id"])) or index.get((face, _item_source_key(item)))
+    if match is None:
+        raise ValueError(f"Generated item {item['id']!r} was not found in any SVG partition")
+    return match
+
+
 def _resize_cached_png(source: str, target: Path, source_dpi: int, target_dpi: int) -> bool:
     try:
         from PIL import Image
@@ -231,6 +296,19 @@ def _resize_cached_png(source: str, target: Path, source_dpi: int, target_dpi: i
         return False
 
 
+def _rendered_png_error(path: Path) -> str | None:
+    try:
+        from PIL import Image
+
+        with Image.open(path) as image:
+            image.load()
+            if "A" in image.getbands() and image.getchannel("A").getextrema() == (0, 0):
+                return "image is fully transparent"
+    except (ImportError, OSError, ValueError) as ex:
+        return f"image cannot be decoded: {ex}"
+    return None
+
+
 def export_items_via_inkscape(
     svg_path: str,
     out_path: str,
@@ -240,6 +318,7 @@ def export_items_via_inkscape(
     export_dpi: int = 300,
     output_dir: str | None = None,
     on_item_created=None,
+    on_progress=None,
     cached_pngs: dict[str, str] | None = None,
     cached_png_dpi: int = 600,
 ) -> tuple[bool, dict]:
@@ -260,7 +339,8 @@ def export_items_via_inkscape(
         output_directory = Path(output_dir) if output_dir else Path(os.path.splitext(out_path)[0] + "_items")
         output_directory.mkdir(parents=True, exist_ok=True)
         records = []
-        png_jobs: list[tuple[dict, Path, bool]] = []
+        png_jobs: list[tuple[dict, Path, bool, str]] = []
+        asset_chunk_count = 1
         cached_pngs = cached_pngs or {}
         back_assets: dict[str, str] = {}
         def matching_back(front: dict) -> dict | None:
@@ -297,7 +377,7 @@ def export_items_via_inkscape(
             front_name = f"{prefix}{output_index}.{extension}"
             front_path = output_directory / front_name
             if export_name == "png":
-                png_jobs.append((representative, front_path, True))
+                png_jobs.append((representative, front_path, True, "front"))
             else:
                 exe = INKSCAPE.find_executable()
                 if not exe:
@@ -318,7 +398,7 @@ def export_items_via_inkscape(
                     back_path = output_directory / back_name
                     if export_name == "png":
                         semantic_back = _semantic_id(back).lower().endswith("@back")
-                        png_jobs.append((back, back_path, semantic_back))
+                        png_jobs.append((back, back_path, semantic_back, "back"))
                     else:
                         exe = INKSCAPE.find_executable()
                         if not exe:
@@ -342,33 +422,70 @@ def export_items_via_inkscape(
             record.update(SEMANTIC.manifest_fields(representative.get("metadata") or {}))
             records.append(record)
         if png_jobs:
+            completed_jobs = 0
+            total_jobs = len(png_jobs)
+            if on_progress:
+                on_progress("Rendering Play assets", completed_jobs, total_jobs)
             remaining_jobs = []
-            for item, target, allow_cache in png_jobs:
+            for item, target, allow_cache, face in png_jobs:
                 try:
                     target.unlink(missing_ok=True)
                 except Exception:
                     pass
                 cached = cached_pngs.get(_preview_key(item)) if allow_cache else None
                 if not cached or not _resize_cached_png(cached, target, cached_png_dpi, export_dpi):
-                    remaining_jobs.append((item, target))
+                    remaining_jobs.append((item, target, face))
+                else:
+                    completed_jobs += 1
+                    if on_progress:
+                        on_progress("Rendering Play assets", completed_jobs, total_jobs)
             if remaining_jobs:
                 exe = INKSCAPE.find_executable()
                 if not exe:
                     return False, {"error": "Inkscape executable not found"}
-                commands = INKSCAPE.build_shell_export_area_png_commands([
-                    (svg_path, item["exportArea"], str(target), max(1, int(export_dpi)))
-                    for item, target in remaining_jobs
-                ])
-                rc, message = INKSCAPE.run_shell_commands(
-                    exe,
-                    commands,
-                    exe_dir=os.path.dirname(exe) or None,
-                    env=INKSCAPE.clean_launch_env(),
-                )
-                failed = next((item for item, target in remaining_jobs if not target.is_file() or target.stat().st_size <= 0), None)
-                if rc != 0 or failed is not None:
-                    failed_id = failed["id"] if failed is not None else remaining_jobs[0][0]["id"]
-                    return False, {"error": f"Item export failed for {failed_id}: {message}"}
+                chunk_index, asset_chunk_count = _chunk_item_index(svg_path, exe)
+                jobs_by_svg: OrderedDict[str, list[tuple[dict, Path]]] = OrderedDict()
+                for item, target, face in remaining_jobs:
+                    source_svg, source_item = _chunk_item(
+                        item,
+                        face=face,
+                        index=chunk_index,
+                        default_svg=svg_path,
+                    )
+                    jobs_by_svg.setdefault(source_svg, []).append((source_item, target))
+
+                for source_svg, source_jobs in jobs_by_svg.items():
+                    commands = INKSCAPE.build_shell_export_area_png_commands([
+                        (source_svg, item["exportArea"], str(target), max(1, int(export_dpi)))
+                        for item, target in source_jobs
+                    ])
+                    rc, message = INKSCAPE.run_shell_commands(
+                        exe,
+                        commands,
+                        exe_dir=os.path.dirname(exe) or None,
+                        env=INKSCAPE.clean_launch_env(),
+                    )
+                    failed = next(
+                        (item for item, target in source_jobs if not target.is_file() or target.stat().st_size <= 0),
+                        None,
+                    )
+                    invalid = next(
+                        (
+                            (item, error)
+                            for item, target in source_jobs
+                            if target.is_file() and (error := _rendered_png_error(target))
+                        ),
+                        None,
+                    )
+                    if rc != 0 or failed is not None:
+                        failed_id = failed["id"] if failed is not None else source_jobs[0][0]["id"]
+                        return False, {"error": f"Item export failed for {failed_id}: {message}"}
+                    if invalid is not None:
+                        invalid_item, invalid_error = invalid
+                        return False, {"error": f"Item export failed for {invalid_item['id']}: {invalid_error}"}
+                    completed_jobs += len(source_jobs)
+                    if on_progress:
+                        on_progress("Rendering Play assets", completed_jobs, total_jobs)
         if on_item_created:
             for record in records:
                 on_item_created(str(output_directory / record["front"]), record["name"])
@@ -378,6 +495,7 @@ def export_items_via_inkscape(
             "elapsed_s": time.perf_counter() - started,
             "item_count": len(records),
             "physical_count": len(selected),
+            "chunk_count": asset_chunk_count,
             "output_path": str(output_directory),
             "manifest": str(manifest_path),
             "results": records,

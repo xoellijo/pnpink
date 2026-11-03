@@ -437,6 +437,24 @@ def _move_node_to_page_layout(node, page_no: int, page: dict, layout: OutputPage
     dx = float(new_x) - float(page["x"])
     dy = float(new_y) - float(page["y"])
     _translate_in_place(node, dx, dy)
+    _translate_cut_bboxes(node, dx, dy)
+
+
+def _translate_cut_bboxes(node, dx: float, dy: float) -> None:
+    if abs(dx) <= 1e-9 and abs(dy) <= 1e-9:
+        return
+    for descendant in node.iter():
+        raw = str(descendant.get("data-pnpink-cut-bbox") or "").replace(",", " ").split()
+        if len(raw) != 4:
+            continue
+        try:
+            x, y, width, height = (float(value) for value in raw)
+        except (TypeError, ValueError):
+            continue
+        descendant.set(
+            "data-pnpink-cut-bbox",
+            f"{x + dx:.6f} {y + dy:.6f} {width:.6f} {height:.6f}",
+        )
 
 
 def _find_pnpink_layer(root):

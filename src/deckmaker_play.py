@@ -21,6 +21,15 @@ import play_asset_store as ASSETSTORE
 PLAY_DPI = 150
 
 
+def _default_hand_layout() -> dict:
+    return {
+        "owner": {"left": 22, "top": 9, "width": 56, "height": 88},
+        "opponent": {"left": 31, "top": 3, "width": 38, "height": 94},
+        "rows": 1,
+        "columns": 8,
+    }
+
+
 def _runtime_candidates() -> list[Path]:
     source_dir = Path(__file__).resolve().parent
     project_dir = source_dir.parent
@@ -57,6 +66,53 @@ def _game_id(template: str) -> str:
 def game_project(template: str) -> tuple[Path, str]:
     template_path = Path(template).resolve()
     return template_path.with_suffix(".play"), _game_id(str(template_path))
+
+
+def _generated_game_manifest(template_path: Path, runtime: Path) -> dict:
+    return {
+        "minPlayers": 4,
+        "maxPlayers": 4,
+        "defaultPlayers": 4,
+        "ui": {"root": str(runtime), "outDir": "build/ui"},
+        "game": {"root": str(runtime), "out": "build/game/game-interface.js"},
+        "name": _game_id(str(template_path)),
+        "pnpinkAssetPack": _asset_pack_id(str(template_path)),
+        "friendlyName": f"{template_path.stem} — PnPPlay",
+    }
+
+
+def _load_game_manifest(game_dir: Path, runtime: Path) -> dict:
+    manifest_path = game_dir / "game.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict) or not manifest.get("name"):
+            raise ValueError("missing game name")
+        return manifest
+    except (OSError, UnicodeError, ValueError, TypeError) as error:
+        template_path = game_dir.with_suffix(".svg")
+        if not template_path.is_file():
+            raise RuntimeError(
+                f"Invalid PnPPlay game manifest: {manifest_path}. "
+                "Run Build assets again to recreate it."
+            ) from error
+        manifest = _generated_game_manifest(template_path.resolve(), runtime)
+        _write_json(manifest_path, manifest)
+        return manifest
+
+
+def _ensure_runtime_game_link(runtime: Path, game_dir: Path, game_id: str) -> None:
+    deployed_game = runtime / "games" / game_id
+    if deployed_game.resolve() == game_dir.resolve():
+        return
+    manifest_path = deployed_game / "game.json"
+    expected = {"projectRoot": str(game_dir)}
+    try:
+        current = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError, TypeError):
+        current = None
+    if current != expected:
+        deployed_game.mkdir(parents=True, exist_ok=True)
+        _write_json(manifest_path, expected)
 
 
 def _asset_pack_id(template: str) -> str:
@@ -119,8 +175,15 @@ def _write_yaml(path: Path, value: dict) -> None:
     os.replace(temporary, path)
 
 
-def _content_address_play_assets(assets_dir: Path, result: dict) -> None:
+def _content_address_play_assets(assets_dir: Path, result: dict, on_progress=None) -> None:
     renamed: dict[str, str] = {}
+    sources = {
+        item.get(field)
+        for item in result.get("results", [])
+        for field in ("front", "back")
+        if item.get(field)
+    }
+    total = len(sources)
     for item in result.get("results", []):
         for field in ("front", "back"):
             source_name = item.get(field)
@@ -140,6 +203,8 @@ def _content_address_play_assets(assets_dir: Path, result: dict) -> None:
                     os.replace(source, target)
             renamed[source_name] = target_name
             item[field] = target_name
+            if on_progress:
+                on_progress("Indexing Play assets", len(renamed), total)
     manifest_path = assets_dir / "items.json"
     temporary_manifest = manifest_path.with_suffix(".json.tmp")
     temporary_manifest.write_text(
@@ -149,7 +214,7 @@ def _content_address_play_assets(assets_dir: Path, result: dict) -> None:
     os.replace(temporary_manifest, manifest_path)
 
 
-def _convert_play_assets_to_webp(assets_dir: Path, result: dict) -> bool:
+def _convert_play_assets_to_webp(assets_dir: Path, result: dict, on_progress=None) -> bool:
     try:
         from PIL import Image, features
     except ImportError:
@@ -157,6 +222,13 @@ def _convert_play_assets_to_webp(assets_dir: Path, result: dict) -> bool:
     if not features.check("webp"):
         return False
     converted: dict[str, str] = {}
+    sources = {
+        item.get(field)
+        for item in result.get("results", [])
+        for field in ("front", "back")
+        if item.get(field)
+    }
+    total = len(sources)
     for item in result.get("results", []):
         for field in ("front", "back"):
             source_name = item.get(field)
@@ -177,6 +249,8 @@ def _convert_play_assets_to_webp(assets_dir: Path, result: dict) -> bool:
                 return False
             converted[source_name] = target.name
             item[field] = target.name
+            if on_progress:
+                on_progress("Converting Play assets to WebP", len(converted), total)
     return bool(converted)
 
 
@@ -237,12 +311,16 @@ def prepare_game(
     runtime: Path,
     *,
     cached_pngs: dict[str, str] | None = None,
+    on_progress=None,
+    on_activity=None,
 ) -> tuple[Path, str]:
     template_path = Path(template).resolve()
     game_id = _game_id(str(template_path))
     game_dir = template_path.with_suffix(".play")
     assets_dir = game_dir / "assets"
     game_dir.mkdir(parents=True, exist_ok=True)
+    if on_activity:
+        on_activity("Discovering playable assets...")
     prefix = ''.join(character if character.isalnum() or character in "_-" else '_' for character in template_path.stem) or "card"
     ok, result = EXPORTITEMS.export_items_via_inkscape(
         svg_path,
@@ -251,12 +329,17 @@ def prepare_game(
         item_spec=f"{prefix}*",
         export_dpi=PLAY_DPI,
         output_dir=str(assets_dir),
+        on_progress=on_progress,
         cached_pngs=cached_pngs,
     )
     if not ok:
         raise RuntimeError(str(result.get("error") or "Unable to export Play assets"))
-    _convert_play_assets_to_webp(assets_dir, result)
-    _content_address_play_assets(assets_dir, result)
+    if on_activity:
+        on_activity("Optimizing playable assets...")
+    _convert_play_assets_to_webp(assets_dir, result, on_progress=on_progress)
+    _content_address_play_assets(assets_dir, result, on_progress=on_progress)
+    if on_activity:
+        on_activity("Publishing assets to the local store...")
     pack_id = _asset_pack_id(str(template_path))
     ASSETSTORE.publish_local_pack(
         assets_dir,
@@ -264,6 +347,8 @@ def prepare_game(
         name=template_path.stem,
         source={"template": template_path.name},
     )
+    if on_activity:
+        on_activity("Updating PnPPlay game configuration...")
 
     if not result.get("results"):
         raise RuntimeError("The generated SVG contains no playable items")
@@ -280,7 +365,7 @@ def prepare_game(
             {"id": "deck", "extends": "deck-area", "label": "Deck", "layout": {"shared": {"left": 7, "top": 36, "width": 11, "height": 28}}},
             {"id": "table", "layout": {"shared": {"left": 22, "top": 23, "width": 56, "height": 52}, "rows": 3, "columns": 6}},
             {"id": "discard", "extends": "discard-area", "label": "Discard", "layout": {"shared": {"left": 82, "top": 36, "width": 11, "height": 28}}},
-            {"id": "hand", "layout": {"owner": {"left": 22, "top": 78, "width": 56, "height": 19}, "opponent": {"left": 31, "top": 2, "width": 38, "height": 16}, "rows": 1, "columns": 8}},
+            {"id": "hand", "layout": _default_hand_layout()},
             {"id": "tricks", "extends": "trick-area", "label": "Tricks", "layout": {"owner": {"left": 90, "top": 76, "width": 8, "height": 20}, "opponent": {"left": 72, "top": 3, "width": 8, "height": 15}}},
         ],
         "pieces": {
@@ -292,16 +377,7 @@ def prepare_game(
             {"deal": {"from": "deck", "to": "hand", "count": 13}},
         ],
     }
-    game_manifest = {
-        "minPlayers": 4,
-        "maxPlayers": 4,
-        "defaultPlayers": 4,
-        "ui": {"root": str(runtime), "outDir": "build/ui"},
-        "game": {"root": str(runtime), "out": "build/game/game-interface.js"},
-        "name": game_id,
-        "pnpinkAssetPack": pack_id,
-        "friendlyName": f"{template_path.stem} — PnPPlay",
-    }
+    game_manifest = _generated_game_manifest(template_path, runtime)
     authoring_manifest = game_dir / "play.yaml"
     existing_text = authoring_manifest.read_text(encoding="utf-8", errors="replace") if authoring_manifest.is_file() else ""
     legacy_generated_manifest = bool(existing_text and ("\nzones:" in existing_text or "\ncomponents:" in existing_text))
@@ -409,7 +485,7 @@ class PlayServer:
 
     def ensure(self, game_dir: Path, runtime: Path) -> None:
         manifest_path = game_dir / "game.json"
-        game_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        game_manifest = _load_game_manifest(game_dir, runtime)
         if str(game_manifest.get("pnpinkAssetPack") or "").startswith("pnpink/"):
             expected = {
                 "ui": {"root": str(runtime), "outDir": "build/ui"},
@@ -419,6 +495,7 @@ class PlayServer:
                 game_manifest.update(expected)
                 _write_json(manifest_path, game_manifest)
         game_id = str(game_manifest["name"])
+        _ensure_runtime_game_link(runtime, game_dir, game_id)
         self.port = 8080
         if self.running:
             for _attempt in range(20):

@@ -22,7 +22,7 @@ import sources as SOURCES
 import temp_paths as TEMPPATHS
 
 
-PREVIEW_CACHE_VERSION = 18
+PREVIEW_CACHE_VERSION = 19
 SYMBOL_CACHE_VERSION = 4
 
 _PREVIEW_SPRITESHEETS = "__dm_preview_spritesheets__"
@@ -793,6 +793,7 @@ def render(
         effect._dm_output_disabled = True
         effect._dm_preview_cache_only = True
         effect._dm_preview_center_single = True
+        effect._dm_preview_front_only = True
         ENGINE.run(effect, version, text_query_service=text_query_service)
         _isolate_generated_output(effect)
         ENGINE._write_svg_atomic(effect.document, target)

@@ -169,7 +169,8 @@ let sheetConfigured = false;
 let createActionButton;
 let templateFolderButton;
 let openOutputButton;
-let playServerController;
+let playFolder;
+let playServerButton;
 let openSheetController;
 let googleSheetToCsvController;
 let sheetEditorActive = false;
@@ -201,15 +202,20 @@ function leaveSpritesheet() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-DeckMaker-Token': token,
-      'X-DeckMaker-Session': browserSession,
-      ...(options.headers || {}),
-    },
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-DeckMaker-Token': token,
+        'X-DeckMaker-Session': browserSession,
+        ...(options.headers || {}),
+      },
+    });
+  } catch (_error) {
+    throw new Error('Local DeckMaker connection interrupted. Reconnecting…');
+  }
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
   return data;
@@ -1196,16 +1202,63 @@ function mainActionRow(folder) {
     className: 'deckmaker-auto-open',
     live: true,
   });
-  const actions = { playCreateAction: () => command('play-create') };
-  const buildAssets = autoOpen.append(actions, 'playCreateAction');
-  decorate(buildAssets, {
-    label: 'Build assets',
-    icon: 'deployed-code-update',
-    tooltip: 'Create or update the PnPPlay asset pack in every enabled asset store.',
-    className: 'deckmaker-action-button',
-  });
-  actionControllers.push({ controller: buildAssets, command: 'play-create' });
   finishRow(autoOpen, 'deckmaker-main-actions');
+}
+
+function buildPlayGui(state) {
+  if (!state.play?.installed) return;
+  playFolder = gui.addFolder('Play');
+  playFolder.icon(menuIcon('sports-esports'));
+  playFolder.domElement.classList.add('deckmaker-play-folder');
+  const titleBar = playFolder.$multi || playFolder.$title;
+  playServerButton = titleButton(
+    titleBar,
+    'deckmaker-play-server',
+    '',
+    'Start the local PnPPlay server',
+    () => command('play-server'),
+  );
+  playServerButton.replaceChildren(gui._createIcon(menuIcon('power-settings-new')));
+  playServerButton.setAttribute('aria-label', 'Start or stop the local PnPPlay server');
+
+  actionRow(playFolder, [
+    {
+      key: 'playCreateAction',
+      command: 'play-create',
+      label: 'Build Assets',
+      icon: 'deployed-code-update',
+      tooltip: 'Create or update the PnPPlay asset pack in every enabled asset store.',
+    },
+    {
+      key: 'playDesignerAction',
+      command: 'play-designer',
+      label: 'Designer',
+      icon: 'palette',
+      tooltip: 'Open the local PnPPlay Game Designer.',
+    },
+  ], 'deckmaker-play-actions');
+
+  const configuration = playFolder.addFolder('Configuration');
+  configuration.icon(menuIcon('settings'));
+  const stores = configuration.addFolder('Stores');
+  stores.icon(menuIcon('database'));
+  const storeModel = { local: true, s3: false, r2: false };
+  const localStore = decorate(stores.add(storeModel, 'local'), {
+    label: 'Local', icon: 'hard-drive', tooltip: 'Publish assets to the local content-addressed store',
+  });
+  localStore.disable();
+  const s3Store = decorate(localStore.append(storeModel, 's3'), {
+    label: 'S3', icon: 'cloud', tooltip: 'S3 stores are not configured yet',
+  });
+  s3Store.disable();
+  const r2Store = decorate(localStore.append(storeModel, 'r2'), {
+    label: 'R2', icon: 'cloud-sync', tooltip: 'Cloudflare R2 stores are not configured yet',
+  });
+  r2Store.disable();
+  finishRow(localStore, 'deckmaker-store-row');
+  stores.close();
+  configuration.close();
+  playFolder.close();
 }
 
 function configureCreateTitle(folder) {
@@ -1559,8 +1612,6 @@ function build(state) {
 
   const configuration = toolsFolder.addFolder('Configuration');
   configuration.icon(menuIcon('settings'));
-  const play = configuration.addFolder('PnPPlay');
-  play.icon(menuIcon('sports-esports'));
 
   exportFolder = gui.addFolder('Export');
   exportFolder.icon(menuIcon('file-export'));
@@ -1638,28 +1689,27 @@ function build(state) {
   settingRow(configuration, [
     { key: 'imagePreflight', label: 'DPI report', icon: 'image-search', tooltip: 'Create an image DPI preflight report', live: true },
   ]);
-  actionRow(configuration, [
-    { key: 'preferencesAction', command: 'open-preferences', label: 'Preferences', icon: 'tune', tooltip: 'Open PnPInk preferences' },
-  ]);
-
-  actionRow(play, [
-    { key: 'playServerAction', command: 'play-server', label: 'Server', icon: 'power-settings-new', tooltip: 'Start or stop the local PnPPlay server' },
-    { key: 'playDesignerAction', command: 'play-designer', label: 'Designer', icon: 'palette', tooltip: 'Open the local PnPPlay Game Designer' },
-  ], 'deckmaker-play-actions');
-  playServerController = actionControllers.find(entry => entry.command === 'play-server')?.controller;
-  const stores = play.addFolder('Stores');
-  const storeModel = { local: true, s3: false, r2: false };
-  const localStore = decorate(stores.add(storeModel, 'local'), { label: 'Local', icon: 'hard-drive', tooltip: 'Publish assets to the local content-addressed store' });
-  localStore.disable();
-  const s3Store = decorate(localStore.append(storeModel, 's3'), { label: 'S3', icon: 'cloud', tooltip: 'S3 stores are not configured yet' });
-  s3Store.disable();
-  const r2Store = decorate(localStore.append(storeModel, 'r2'), { label: 'R2', icon: 'cloud-sync', tooltip: 'Cloudflare R2 stores are not configured yet' });
-  r2Store.disable();
-  finishRow(localStore, 'deckmaker-store-row');
-  stores.close();
+  buildPlayGui(state);
 
   buildDatasetGui(state, options);
   updateMenuIdentity(state);
+
+  const preferences = gui.addFolder('Preferences');
+  preferences.icon(menuIcon('settings'));
+  settingRow(preferences, [{
+    key: 'webBrowser',
+    args: [options.webBrowsers || { 'System default': 'system' }],
+    label: 'Web engine',
+    icon: 'browser',
+    tooltip: 'Browser used to open DeckMaker Web. The change applies on the next launch.',
+  }]);
+  actionRow(preferences, [{
+    key: 'preferencesAction',
+    command: 'open-preferences',
+    label: 'Open preferences.ini',
+    icon: 'file-02',
+    tooltip: 'Open the complete PnPInk preferences file',
+  }]);
 
   const help = gui.addFolder('Help');
   help.icon(menuIcon('help'));
@@ -1667,7 +1717,7 @@ function build(state) {
   buildExamplesPanel(help, options);
   buildDocumentationPanel(help);
   buildLogRow(help, options);
-  [exportFolder, toolsFolder, configuration, play, help].filter(Boolean).forEach(folder => folder.close());
+  [exportFolder, toolsFolder, configuration, playFolder, preferences, help].filter(Boolean).forEach(folder => folder.close());
   gui.close();
 }
 
@@ -1723,9 +1773,9 @@ function applyState(state) {
     'open-output': Boolean(state.canOpenOutput),
     'open-template-folder': Boolean(state.template),
     export: Boolean(state.canExport),
-    'play-create': Boolean(state.canGenerate),
-    'play-server': Boolean(state.template),
-    'play-designer': Boolean(state.template),
+    'play-create': Boolean(state.play?.installed && state.canGenerate),
+    'play-server': Boolean(state.play?.installed && state.template),
+    'play-designer': Boolean(state.play?.installed && state.template),
     'open-google-sheet': Boolean(state.sheetId),
     'gsheet-to-csv': Boolean(state.sheetId) && state.sourceMode !== 'local_csv',
     'create-starter-csv': Boolean(state.canCreateDataset),
@@ -1735,19 +1785,26 @@ function applyState(state) {
     if (state.busy || !available) controller.disable();
     else controller.enable();
   });
-  if (playServerController) {
+  if (playServerButton) {
     const running = Boolean(state.play?.serverRunning);
-    playServerController.name(running ? 'Stop' : 'Server');
-    playServerController.domElement.title = running
+    playServerButton.title = running
       ? `Stop local PnPPlay server (port ${state.play?.serverPort || ''})`
       : 'Start local PnPPlay server';
-    playServerController.domElement.classList.toggle('pnpplay-server-running', running);
+    playServerButton.classList.toggle('pnpplay-server-running', running);
+    playServerButton.disabled = Boolean(state.busy || !state.template);
   }
   const progress = state.progress || {};
   const current = Number(progress.current || 0);
   const total = Number(progress.total || 0);
   elements.jobTitle.textContent = state.status || 'Ready';
-  elements.jobActivity.textContent = state.activity || progress.label || '';
+  const progressDetails = [];
+  if (total > 0) progressDetails.push(`${current}/${total}`);
+  const elapsed = Number(progress.elapsed || 0);
+  if (elapsed > 0) progressDetails.push(`${elapsed.toFixed(1)} s`);
+  const rate = Number(progress.rate || 0);
+  if (rate > 0) progressDetails.push(`${rate.toFixed(rate < 10 ? 2 : 1)} ${progress.rateUnit || 'items/s'}`);
+  const progressLabel = String(state.activity || progress.label || '').trim();
+  elements.jobActivity.textContent = [progressLabel, progressDetails.join(' · ')].filter(Boolean).join(' · ');
   const authorizationUrl = String(state.googleAuthorizationUrl || '').trim();
   elements.googleAuthLink.hidden = !authorizationUrl;
   if (authorizationUrl) elements.googleAuthLink.href = authorizationUrl;
@@ -1805,16 +1862,20 @@ function handleHostEvents(events) {
 }
 
 async function poll() {
+  let failures = 0;
   while (true) {
     try {
       const data = await api(`/api/events?after=${sequence}&timeout=5`);
+      if (failures > 1) toast('Local DeckMaker connection restored.', { tone: 'info', duration: 1600 });
+      failures = 0;
       sequence = Math.max(sequence, Number(data.seq || 0));
       appendEventLogs(data.events);
       handleHostEvents(data.events);
       if (data.state) applyState(data.state);
     } catch (error) {
-      toast(error.message);
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      failures += 1;
+      if (failures > 1) toast(error.message);
+      await new Promise(resolve => setTimeout(resolve, Math.min(5000, 750 * failures)));
     }
   }
 }

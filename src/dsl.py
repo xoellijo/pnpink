@@ -462,6 +462,26 @@ def is_source_expr(s: str) -> bool:
         return True
     return bool(re.match(r"^(?:Source|S)\s*\{[^}]*\}", s, re.I))
 
+
+def _source_kind_from_ref(source: str) -> str:
+    value = (source or "").strip()
+    low = value.lower()
+    path = low.split("?", 1)[0].split("#", 1)[0]
+    if low.startswith(("icon://", "iconify://")):
+        return "iconify"
+    if re.match(r"^https?://", value, re.I):
+        return "url"
+    if path.endswith(".pdf"):
+        return "pdf"
+    if path.endswith((".svg", ".svgz")):
+        return "svg"
+    if re.search(r"\.(png|jpg|jpeg|gif|bmp|webp)$", path):
+        return "img"
+    if (":" in value) and ("/" not in value):
+        return "iconify"
+    return "file"
+
+
 def _source_from_body(body: str) -> SourceRef:
     b = body.strip()
     if (len(b) >= 2) and ((b[0] == '"' and b[-1] == '"') or (b[0] == "'" and b[-1] == "'")):
@@ -482,6 +502,14 @@ def _source_from_body(body: str) -> SourceRef:
             raise DSLError("Source requires src")
         return SourceRef(kind, src, args)
 
+    # A query string belongs to the source URI. Do not interpret its '=' as
+    # Source{key=value} syntax. Legacy provider arguments separated by spaces
+    # (for example map `view=...`) still follow the branch below.
+    if re.match(r"^(?:https?://|wkmc://|pxby://|oclp://|pnp://|osm://|ofm://|icon://|iconify://|gdrive://|file:|data:)", b, re.I):
+        has_external_args = bool(re.search(r"\s+[A-Za-z_][A-Za-z0-9_-]*\s*=", b))
+        if "?" in b and not has_external_args:
+            return SourceRef(_source_kind_from_ref(b), b, {})
+
     has_kv = "=" in b
     if has_kv:
         args = _parse_brace_dict("{"+b+"}")
@@ -496,35 +524,11 @@ def _source_from_body(body: str) -> SourceRef:
         if not src:
             raise DSLError("Source requires src")
         s = src
-        sl = s.lower()
-        if re.match(r"^https?://", s, re.I):
-            kind = "url"
-        elif sl.endswith(".pdf"):
-            kind = "pdf"
-        elif sl.endswith(".svg") or sl.endswith(".svgz"):
-            kind = "svg"
-        elif re.search(r"\.(png|jpg|jpeg|gif|bmp|webp)$", sl):
-            kind = "img"
-        elif (":" in s) and ("/" not in s):
-            kind = "iconify"
-        else:
-            kind = "file"
+        kind = _source_kind_from_ref(s)
         return SourceRef(kind, src, args)
     else:
         s = b
-        sl = s.lower()
-        if re.match(r"^https?://", s, re.I):
-            kind = "url"
-        elif sl.endswith(".pdf"):
-            kind = "pdf"
-        elif sl.endswith(".svg") or sl.endswith(".svgz"):
-            kind = "svg"
-        elif re.search(r"\.(png|jpg|jpeg|gif|bmp|webp)$", sl):
-            kind = "img"
-        elif (":" in s) and ("/" not in s):
-            kind = "iconify"
-        else:
-            kind = "file"
+        kind = _source_kind_from_ref(s)
         return SourceRef(kind, s, {})
 
 def normalize_ops_suffix(ops: str) -> str:

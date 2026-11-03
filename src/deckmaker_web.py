@@ -75,9 +75,9 @@ class LocalThreadingHTTPServer(ThreadingHTTPServer):
 
 
 class DeckMakerWebHost:
-    SESSION_TIMEOUT = 60.0
+    SESSION_TIMEOUT = 300.0
     SUSPEND_GAP = 30.0
-    CLOSE_GRACE = 2.0
+    CLOSE_GRACE = 5.0
     STARTUP_TIMEOUT = 30.0
 
     def __init__(self, initial: AppRequest | None = None):
@@ -192,6 +192,11 @@ class DeckMakerWebHost:
             ]
             for key in expired:
                 self._sessions.pop(key, None)
+            if expired:
+                LOG.i(
+                    "[deckmaker.web] expired %d inactive browser session(s)",
+                    len(expired),
+                )
             if self._had_session and not self._sessions and self._empty_since is None:
                 self._empty_since = now
             return any(bool(session.get("visible")) for session in self._sessions.values())
@@ -376,6 +381,13 @@ class DeckMakerWebHost:
                     self._json({"error": "Unauthorized"}, HTTPStatus.UNAUTHORIZED)
                     return
                 try:
+                    if parsed.path == "/api/spritesheet/pdf-project":
+                        body = self._body()
+                        result = host.service.load_project_pdf_spritesheet(
+                            str(body.get("filename") or "spritesheet.pdf")
+                        )
+                        self._json({"found": False} if result is None else {"found": True, **result})
+                        return
                     if parsed.path == "/api/spritesheet/pdf":
                         size = int(self.headers.get("Content-Length") or 0)
                         if size <= 0:
@@ -473,6 +485,10 @@ class DeckMakerWebHost:
             )
             never_opened = not had_session and now >= browser_expected_until
             if should_stop or never_opened:
+                LOG.i(
+                    "[deckmaker.web] stopping local server: %s",
+                    "browser closed" if should_stop else "browser did not open",
+                )
                 self.stop_event.set()
                 self.httpd.shutdown()
                 return

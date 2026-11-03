@@ -432,6 +432,7 @@ main.dataset-dock-right .gsheet-editor { grid-column: 3; grid-row: 1; }
   flex: 1 1 auto;
 }
 #gui .deckmaker-create-folder > .title > .deckmaker-title-button,
+#gui .deckmaker-play-folder > .title > .deckmaker-title-button,
 #gui .deckmaker-menu .deckmaker-help-log,
 #gui .deckmaker-menu .deckmaker-help-tutorials,
 #gui .deckmaker-menu .deckmaker-help-docs { flex: 0 0 22px; }
@@ -439,6 +440,14 @@ main.dataset-dock-right .gsheet-editor { grid-column: 3; grid-row: 1; }
   width: 0;
   min-width: 58px;
   flex: 1 1 auto;
+}
+#gui .deckmaker-play-folder > .title > .remove-bar {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+#gui .deckmaker-play-folder > .title > .deckmaker-play-server.pnpplay-server-running {
+  border-color: #8bd39a;
+  color: #8bd39a;
 }
 #gui .deckmaker-export-summary {
   min-width: 0;

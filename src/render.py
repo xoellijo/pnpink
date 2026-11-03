@@ -126,6 +126,7 @@ def render_phase(ctx):
     back_templates = getattr(ctx, 'back_templates', None)
     page_templates = getattr(ctx, 'page_templates', None)
     page_back_templates = getattr(ctx, 'page_back_templates', None)
+    front_only = bool(getattr(ctx, 'front_only', False))
     declared_bbox_node = getattr(ctx, 'declared_bbox_node', None)
     measured_template_bbox = getattr(ctx, 'measured_template_bbox', None)
 
@@ -1898,6 +1899,12 @@ def render_phase(ctx):
                         token = token.strip().lstrip('/')
                         if not token:
                             continue
+                        # The optional query configures a local color variant. Preload
+                        # only the shared base icon; SourceManager creates the
+                        # colored symbol without another download.
+                        token = re.split(r"[?#]", token, maxsplit=1)[0].strip()
+                        if not token:
+                            continue
                         if ':' in token:
                             # PnPInk rule: ':' separator not supported
                             continue
@@ -3102,7 +3109,10 @@ def render_phase(ctx):
     # Back pass (@back) + page-anchored backs (@page @back)
     # ---------------------
     placed_back = 0
-    if (back_templates and len(back_templates) > 0) or (pending_page_back_req and len(pending_page_back_req) > 0):
+    if not front_only and (
+        (back_templates and len(back_templates) > 0)
+        or (pending_page_back_req and len(pending_page_back_req) > 0)
+    ):
         front_pages = sorted(list(page_states.keys()))
         if front_pages:
             # Interleave pages: 1,1',2,2',... (front/back). This preserves page order for duplex.
@@ -3408,7 +3418,8 @@ def render_phase(ctx):
         _l.w(f"[@page] ignored {sum(len(v) for v in pending_page_req.values())} pending requests: slot ref out of range")
         pending_page_req.clear()
     if pending_page_back_req:
-        _l.w(f"[@page @back] ignored {sum(len(v) for v in pending_page_back_req.values())} pending requests: slot ref out of range")
+        if not front_only:
+            _l.w(f"[@page @back] ignored {sum(len(v) for v in pending_page_back_req.values())} pending requests: slot ref out of range")
         pending_page_back_req.clear()
 
     try:

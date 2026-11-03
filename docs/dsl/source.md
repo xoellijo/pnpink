@@ -132,6 +132,24 @@ Notes:
 - If `iconify.py` is not available, a placeholder is created.
 - To force a re-download, remove the symbol from `Object > Symbols` (Shift+Ctrl+Y).
 
+### Icon color
+
+Add an optional `color` source parameter to a monochrome Iconify source:
+
+```txt
+@{icon://material-symbols-light/star?color=ffbf00}
+@{icon://material-symbols-light/star?color=#ffbf00}
+@{icon://material-symbols-light/star?color=darkred}
+```
+
+The color may be a 3, 4, 6 or 8-digit hexadecimal value, with or without its
+leading `#`, or a CSS color name. PnPInk reuses the cached base icon and creates
+the colored variant locally; it does not download the same icon again.
+
+Multicolor sets such as `noto` contain explicit fills for their individual
+shapes and preserve those original colors. They cannot generally be recolored
+as one monochrome icon with this method.
+
 ## Web Sources (HTTP/HTTPS)
 Use web sources when assets are remote and can be cached at generation time.
 

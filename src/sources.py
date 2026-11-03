@@ -277,9 +277,10 @@ def _build_key_for_data(head: str) -> SourceKey:
     return SourceKey(scheme="data", path=head, mtime=0.0)
 
 
-def _build_key_for_iconify(prefix: str, name: str) -> SourceKey:
+def _build_key_for_iconify(prefix: str, name: str, color: str = "") -> SourceKey:
     # Canonical key (no mtime backing)
-    return SourceKey(scheme="icon", path=f"{(prefix or '').lower()}:{name}", mtime=0.0)
+    suffix = f"?color={color}" if color else ""
+    return SourceKey(scheme="icon", path=f"{(prefix or '').lower()}:{name}{suffix}", mtime=0.0)
 
 def _build_key_for_url(url: str) -> SourceKey:
     return SourceKey(scheme="url", path=(url or "").strip(), mtime=0.0)
@@ -331,6 +332,15 @@ def _split_source_fragment(raw: str, fragment_hint: Optional[str] = None) -> Tup
         return "", (fragment_hint or "").strip()
     if (fragment_hint or "").strip():
         return s, (fragment_hint or "").strip()
+    # A literal hexadecimal color in a query is not a URI fragment. Encode its
+    # leading hash before urlparse(), then parse_qs() will restore it later.
+    # Both `?color=aa0000` and `?color=#aa0000` therefore mean the same thing.
+    s = re.sub(
+        r"([?&]color=)#([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})(?=&|$)",
+        r"\1%23\2",
+        s,
+        flags=re.IGNORECASE,
+    )
     if s.lower().startswith("osm://") or s.lower().startswith("ofm://"):
         return s, ""
     if s.lower().startswith("data:"):
@@ -1783,6 +1793,15 @@ class SourceManager:
 
             prefix = (prefix or "").strip()
             name = (name or "").strip()
+            query = parse_qs(parsed0.query or "", keep_blank_values=True)
+            color_raw = str((query.get("color") or [""])[0] or "").strip()
+            color = ICON.normalize_icon_color(color_raw)
+            if color_raw and not color:
+                sid, wh = _make_placeholder_symbol(self.defs, raw, f"invalid Iconify color: {color_raw}")
+                return SourceRef(symbol_id=sid, content_type="svg", intrinsic_box=wh, canonical_key=None)
+            if fragment:
+                sid, wh = _make_placeholder_symbol(self.defs, raw, "Iconify selectors are not supported; use ?color=value")
+                return SourceRef(symbol_id=sid, content_type="svg", intrinsic_box=wh, canonical_key=None)
 
             # Supports icon://name (no set) -> uses DEFAULT_ICONIFY_SET
             if prefix and not name:
@@ -1798,7 +1817,7 @@ class SourceManager:
                 sid, wh = _make_placeholder_symbol(self.defs, raw, "icon:// requires set/name")
                 return SourceRef(symbol_id=sid, content_type="svg", intrinsic_box=wh, canonical_key=None)
 
-            key = _build_key_for_iconify(prefix, name)
+            key = _build_key_for_iconify(prefix, name, color)
             if key in self._cache:
                 self._cache_hits += 1
                 return self._cache[key]
@@ -1811,6 +1830,7 @@ class SourceManager:
                     name,
                     fast=self.iconify_mode == "fast",
                     offline=self.iconify_mode == "offline",
+                    color=color,
                 )
                 # intrinsic from viewBox (ya normalizado a cuadrado)
                 vb = (sym.get("viewBox") or "").strip()
@@ -2987,20 +3007,15 @@ class SourceManager:
         if ss.shared_clip_id:
             return ss.shared_clip_id
 
-        clip_id = f"clip_{ss.alias}"
-        try:
-            existing = self.defs.xpath(f".//*[@id='{clip_id}']")
-        except Exception:
-            existing = []
-        if not existing:
-            cp = SVG.etree.SubElement(self.defs, inkex.addNS('clipPath','svg'))
-            cp.set('id', clip_id)
-            cp.set('clipPathUnits', 'userSpaceOnUse')
-            rect = SVG.etree.SubElement(cp, inkex.addNS('rect','svg'))
-            rect.set('x', "0"); rect.set('y', "0")
-            rect.set('width',  str(float(ss.tile_w_px)))
-            rect.set('height', str(float(ss.tile_h_px)))
-            _l.d(f"[spritesheet] shared clipPath created id={clip_id} for @{ss.alias} tile_u={ss.tile_w_px:.2f}x{ss.tile_h_px:.2f}")
+        clip_id = _unique_symbol_id(self.defs, f"clip_{ss.alias}_")
+        cp = SVG.etree.SubElement(self.defs, inkex.addNS('clipPath','svg'))
+        cp.set('id', clip_id)
+        cp.set('clipPathUnits', 'userSpaceOnUse')
+        rect = SVG.etree.SubElement(cp, inkex.addNS('rect','svg'))
+        rect.set('x', "0"); rect.set('y', "0")
+        rect.set('width',  str(float(ss.tile_w_px)))
+        rect.set('height', str(float(ss.tile_h_px)))
+        _l.d(f"[spritesheet] shared clipPath created id={clip_id} for @{ss.alias} tile_u={ss.tile_w_px:.2f}x{ss.tile_h_px:.2f}")
         ss.shared_clip_id = clip_id
         return clip_id
     def _linear_to_rc(self, n1: int, ss: SpriteSheetDef) -> tuple:

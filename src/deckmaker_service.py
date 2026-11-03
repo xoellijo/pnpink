@@ -37,6 +37,7 @@ import prefs
 import temp_paths as TEMPPATHS
 import template_headers as TEMPLATE_HEADERS
 import text_measure as TM
+import web_app as WEBAPP
 
 
 SOURCE_MODES = ("auto", "local_csv", "oauth", "public")
@@ -57,7 +58,10 @@ class DeckMakerService:
         self._job = ""
         self._status = "Ready"
         self._activity = ""
-        self._progress = {"label": "", "current": 0, "total": 0}
+        self._progress = {"label": "", "current": 0, "total": 0, "elapsed": 0.0, "rate": 0.0, "rateUnit": ""}
+        self._job_started_at = 0.0
+        self._progress_started_at = 0.0
+        self._progress_label = ""
         self._request = AppRequest(template="")
         self._generated_output_ready = False
         self._dataset_source_invalid = False
@@ -101,6 +105,10 @@ class DeckMakerService:
         self._text_query_service = None
         self._text_query_generation = 0
         self._play_server = PLAY.PlayServer()
+        try:
+            self._play_runtime = PLAY.find_runtime()
+        except RuntimeError:
+            self._play_runtime = None
         self._pdf_spritesheet = PdfSpritesheet()
         self._inkscape_previewer = InkscapePreviewer()
         if prefs.get_deckmaker_preview_backend() == "inkscape":
@@ -229,9 +237,25 @@ class DeckMakerService:
                 self._activity = "Authorize Google Sheets in your browser to continue"
         self._emit("state")
 
-    def progress(self, label: str, current: int, total: int) -> None:
-        value = {"label": str(label or "").strip(), "current": int(current or 0), "total": int(total or 0)}
+    def progress(self, label: str, current: int, total: int, *, rate_unit: str = "") -> None:
+        text = str(label or "").strip()
+        now = time.perf_counter()
         with self._lock:
+            if text != self._progress_label:
+                self._progress_label = text
+                self._progress_started_at = now
+            elapsed = max(0.0, now - self._job_started_at) if self._job_started_at else 0.0
+            phase_elapsed = max(0.0, now - self._progress_started_at) if self._progress_started_at else 0.0
+            current_value = int(current or 0)
+            rate = (current_value / phase_elapsed) if current_value > 0 and phase_elapsed > 0.25 else 0.0
+            value = {
+                "label": text,
+                "current": current_value,
+                "total": int(total or 0),
+                "elapsed": round(elapsed, 2),
+                "rate": round(rate, 2),
+                "rateUnit": str(rate_unit or "").strip(),
+            }
             self._progress = value
             self._activity = value["label"]
         self._emit("progress", **value)
@@ -851,6 +875,7 @@ class DeckMakerService:
             "consoleLog": prefs.get_console_level(),
             "fileLog": prefs.get_file_level(),
             "showLogOnBuild": prefs.get_deckmaker_show_log_on_build(),
+            "webBrowser": prefs.get_deckmaker_web_browser(),
             "imagePreflight": prefs.get_image_preflight(),
             "previewBackend": prefs.get_deckmaker_preview_backend(),
             "previewSelectionSync": prefs.get_deckmaker_preview_selection_sync(),
@@ -894,6 +919,10 @@ class DeckMakerService:
             "cutFormats": ["svg", "dxf", "png"],
             "templateEngines": ["legacy", "composed", "composed-instance"],
             "previewBackends": ["browser", "inkscape"],
+            "webBrowsers": {
+                browser["label"]: browser["id"]
+                for browser in WEBAPP.detected_browsers()
+            },
             "logLevels": ["trace", "debug", "info", "warn", "error", "none", "global"],
             "examples": DeckMakerService._example_templates(),
             "cardPresets": {
@@ -1035,6 +1064,7 @@ class DeckMakerService:
                 ),
                 "nextSpritesheetAlias": self._next_spritesheet_alias(request),
                 "play": {
+                    "installed": self._play_runtime is not None,
                     "serverRunning": self._play_server.running,
                     "serverPort": self._play_server.port if self._play_server.running else 0,
                     "stores": [
@@ -1061,6 +1091,11 @@ class DeckMakerService:
         with self._lock:
             template = self._request.template
         return self._pdf_spritesheet.load(template, filename, content)
+
+    def load_project_pdf_spritesheet(self, filename: str) -> dict | None:
+        with self._lock:
+            template = self._request.template
+        return self._pdf_spritesheet.load_project(template, filename)
 
     def pdf_spritesheet_page(self, page: int) -> dict:
         return self._pdf_spritesheet.page(page)
@@ -1178,6 +1213,7 @@ class DeckMakerService:
             "consoleLog": prefs.set_console_level,
             "fileLog": prefs.set_file_level,
             "showLogOnBuild": prefs.set_deckmaker_show_log_on_build,
+            "webBrowser": prefs.set_deckmaker_web_browser,
             "imagePreflight": prefs.set_image_preflight,
             "previewBackend": prefs.set_deckmaker_preview_backend,
             "previewSelectionSync": prefs.set_deckmaker_preview_selection_sync,
@@ -1276,7 +1312,10 @@ class DeckMakerService:
             self._busy = True
             self._job = job
             self._status = status
-            self._progress = {"label": "", "current": 0, "total": 0}
+            self._job_started_at = time.perf_counter()
+            self._progress_started_at = self._job_started_at
+            self._progress_label = ""
+            self._progress = {"label": "", "current": 0, "total": 0, "elapsed": 0.0, "rate": 0.0, "rateUnit": ""}
         self._emit("state")
         threading.Thread(target=self._run_job, args=(target,), name=f"pnpink-{job}", daemon=True).start()
         return True
@@ -1328,8 +1367,23 @@ class DeckMakerService:
             TEMPPATHS.cleanup_old_runs()
 
             def on_progress(kind: str, payload: dict):
-                label = str(payload.get("label") or kind or "Working").strip()
-                self.progress(label, int(payload.get("current") or 0), int(payload.get("total") or 0))
+                if kind in {"render_rows_total", "render_row"}:
+                    dataset_count = int(payload.get("dataset_count") or 0)
+                    dataset_index = int(payload.get("dataset_index") or 0)
+                    label = (
+                        f"Creating assets dataset {dataset_index}/{dataset_count}"
+                        if dataset_count > 1 and dataset_index > 0
+                        else "Creating assets"
+                    )
+                    current = 0 if kind == "render_rows_total" else int(payload.get("current") or 0)
+                    self.progress(label, current, int(payload.get("total") or 0), rate_unit="assets/s")
+                    return
+                label = str(payload.get("label") or payload.get("message") or kind or "Working").strip()
+                self.progress(
+                    label,
+                    int(payload.get("current") or 0),
+                    int(payload.get("total") or 0),
+                )
 
             PROGRESS.set_listener(on_progress)
             self.activity("Loading template and dataset...")
@@ -2050,10 +2104,19 @@ class DeckMakerService:
     def _publish_play_assets(self, effect=None):
         template = self._request.template
         svg_path = DMPATHS.output_svg(template)
-        runtime = PLAY.find_runtime()
+        runtime = self._play_runtime
+        if runtime is None:
+            raise RuntimeError("PnPPlay is not installed")
         cached_pngs = self._cached_play_previews(effect) if effect is not None else {}
         game_dir, game_id = PLAY.prepare_game(
-            template, svg_path, runtime, cached_pngs=cached_pngs,
+            template,
+            svg_path,
+            runtime,
+            cached_pngs=cached_pngs,
+            on_progress=lambda label, current, total: self.progress(
+                label, current, total, rate_unit="assets/s",
+            ),
+            on_activity=self.activity,
         )
         self._set_status("PnPPlay assets updated")
         return game_dir, game_id, runtime
@@ -2085,7 +2148,9 @@ class DeckMakerService:
         def worker():
             template = self._request.template
             game_dir, _game_id = PLAY.game_project(template)
-            runtime = PLAY.find_runtime()
+            runtime = self._play_runtime
+            if runtime is None:
+                raise RuntimeError("PnPPlay is not installed")
             if not (game_dir / "game.json").is_file():
                 raise RuntimeError("Create PnPPlay assets first")
             self._play_server.ensure(game_dir, runtime)
@@ -2097,7 +2162,9 @@ class DeckMakerService:
         def worker():
             template = self._request.template
             game_dir, game_id = PLAY.game_project(template)
-            runtime = PLAY.find_runtime()
+            runtime = self._play_runtime
+            if runtime is None:
+                raise RuntimeError("PnPPlay is not installed")
             if not (game_dir / "game.json").is_file():
                 raise RuntimeError("Synchronize this project with PnPPlay first")
             if target == "lobby":

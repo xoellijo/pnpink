@@ -72,14 +72,24 @@ export class SpritesheetEditor {
     this.objectUrl = '';
     this.previewViewer.showMessage('Rendering PDF page 1 with Inkscape...');
     try {
-      const data = await this.request('/api/spritesheet/pdf', {
+      const filename = file.name || 'spritesheet.pdf';
+      let data = await this.request('/api/spritesheet/pdf-project', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/pdf',
-          'X-DeckMaker-Filename': encodeURIComponent(file.name || 'spritesheet.pdf'),
-        },
-        body: file,
+        body: JSON.stringify({ filename }),
       });
+      if (!data.found) {
+        if (Number(file.size || 0) > 100 * 1024 * 1024) {
+          throw new Error('The PDF exceeds the 100 MB upload limit. Place it beside the SVG template or under assets/.');
+        }
+        data = await this.request('/api/spritesheet/pdf', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/pdf',
+            'X-DeckMaker-Filename': encodeURIComponent(filename),
+          },
+          body: file,
+        });
+      }
       this.sourceName = data.sourcePath || file.name || 'spritesheet.pdf';
       this.metadata = null;
       this.active = true;

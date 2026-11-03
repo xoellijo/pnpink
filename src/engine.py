@@ -1836,6 +1836,7 @@ def run(self, __version__, *, text_query_service=None):
             back_templates=back_templates,
             page_templates=page_templates,
             page_back_templates=page_back_templates,
+            front_only=bool(getattr(self, "_dm_preview_front_only", False)),
             declared_template_root=declared_template_root,
             declared_bbox_node=declared_bbox_node,
             measured_template_bbox=(template_anchor_x, template_anchor_y, aw, ah),

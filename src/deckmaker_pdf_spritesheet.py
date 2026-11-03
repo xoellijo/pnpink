@@ -294,6 +294,40 @@ class PdfSpritesheet:
             raise ValueError("The dropped file is not a valid PDF")
         safe_name = Path(str(filename or "spritesheet.pdf")).name or "spritesheet.pdf"
         source, source_path, copied = PROJECT_ASSETS.import_asset(template, safe_name, content)
+        return self._activate(
+            template, safe_name, source, source_path, copied,
+            self._page_count_hint(content),
+        )
+
+    def load_project(self, template: str, filename: str) -> dict | None:
+        """Load a dropped PDF already available beside the template or under its asset folders."""
+        safe_name = Path(str(filename or "spritesheet.pdf")).name or "spritesheet.pdf"
+        source = PROJECT_ASSETS.find_named_asset(template, safe_name)
+        if source is None:
+            return None
+        try:
+            with source.open("rb") as stream:
+                header = stream.read(1024)
+        except OSError as error:
+            raise RuntimeError(f"Could not read project PDF: {source}") from error
+        if not header.lstrip().startswith(b"%PDF-"):
+            raise ValueError("The dropped file is not a valid PDF")
+        template_dir = Path(str(template or "")).expanduser().resolve().parent
+        source_path = os.path.relpath(source, template_dir).replace(os.sep, "/")
+        return self._activate(
+            template, safe_name, source, source_path, False,
+            pdf_page_count(source),
+        )
+
+    def _activate(
+        self,
+        template: str,
+        safe_name: str,
+        source: str | Path,
+        source_path: str,
+        copied: bool,
+        page_count: int | None,
+    ) -> dict:
         directory = TEMPPATHS.make_work_dir("deckmaker_pdf_spritesheet", stem=Path(safe_name).stem)
         LOG.i(
             "[deckmaker.pdf-spritesheet] %s source='%s'",
@@ -310,7 +344,7 @@ class PdfSpritesheet:
             self._page_source_path = ""
             self._copied = copied
             self._page = 0
-            self._page_count = self._page_count_hint(content)
+            self._page_count = page_count
             self._dpi = MIN_PDF_DPI
             self._preview = ""
         if previous:

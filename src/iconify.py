@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 from typing import Optional, Tuple, Dict, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from copy import deepcopy
 
 import requests
 import inkex
@@ -207,16 +208,69 @@ def _normalize_to_square(symbol, *, add_rect: bool = True):
         g.append(c)
     symbol.append(g)
 
+
+def normalize_icon_color(value: Optional[str]) -> str:
+    """Return a safe CSS color used by the optional icon://...?color= value."""
+    color = (value or "").strip()
+    if not color:
+        return ""
+    hex_color = color[1:] if color.startswith("#") else color
+    if re.fullmatch(r"[0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8}", hex_color):
+        return f"#{hex_color.lower()}"
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9-]*", color):
+        return color.lower()
+    return ""
+
+
+def _colored_symbol_id(base_id: str, color: str) -> str:
+    suffix = color.lstrip("#")
+    suffix = re.sub(r"[^A-Za-z0-9_-]+", "-", suffix).strip("-") or "color"
+    return f"{base_id}--color-{suffix}"
+
+
+def _replace_current_color(node, color: str) -> None:
+    for element in node.iter():
+        for key, value in list(element.attrib.items()):
+            text = str(value or "")
+            if "currentcolor" in text.lower():
+                element.set(key, re.sub(r"currentColor", color, text, flags=re.IGNORECASE))
+
 def ensure_icon_symbol(svgdoc, prefix: str, name: str, *,
                        add_rect: bool = True,
                        session: Optional[requests.Session] = None,
                        skip_if_exists: bool = True,
                        fast: bool = False,
-                       offline: bool = False):
+                       offline: bool = False,
+                       color: Optional[str] = None):
     prefix = (prefix or "").strip().lower()
     name = (name or "").strip()
     defs = SVG.ensure_defs(svgdoc)
     sym_id = f"{prefix}--{name}"
+
+    normalized_color = normalize_icon_color(color)
+    if color and not normalized_color:
+        raise ValueError(f"invalid Iconify color: {color}")
+    if normalized_color:
+        colored_id = _colored_symbol_id(sym_id, normalized_color)
+        if skip_if_exists:
+            hit = defs.xpath(f".//svg:symbol[@id='{colored_id}']", namespaces=SVG.NSS)
+            if hit:
+                return hit[0], colored_id
+        base_symbol, _ = ensure_icon_symbol(
+            svgdoc,
+            prefix,
+            name,
+            add_rect=add_rect,
+            session=session,
+            skip_if_exists=skip_if_exists,
+            fast=fast,
+            offline=offline,
+        )
+        symbol = deepcopy(base_symbol)
+        symbol.set("id", colored_id)
+        _replace_current_color(symbol, normalized_color)
+        defs.append(symbol)
+        return symbol, colored_id
 
     if skip_if_exists:
         hit = defs.xpath(f".//svg:symbol[@id='{sym_id}']", namespaces=SVG.NSS)

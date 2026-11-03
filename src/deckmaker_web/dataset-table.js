@@ -1,4 +1,10 @@
 import { DatasetContextMenu } from './dataset-context-menu.js';
+import {
+  formatClipboardRange,
+  mapClipboardRange,
+  parseClipboardHtml,
+  parseClipboardRange,
+} from './clipboard-range.js';
 
 const TABULATOR_MODULE_URL = 'https://unpkg.com/tabulator-tables@6.5.3/dist/js/tabulator_esm.min.js';
 const ROW_KINDS = [
@@ -106,6 +112,7 @@ export class DatasetTable {
     this.resizingSelection = false;
     this.suppressChanges = false;
     this.saving = false;
+    this.editing = false;
     this.pollingRevision = false;
     this.suppressSelection = false;
     this.selectedCell = null;
@@ -118,6 +125,10 @@ export class DatasetTable {
     this.stickyHeaderHolder = null;
     this.stickyHeaderScroll = null;
     this.stickyHeaderScrolling = false;
+    this.clipboardHtmlRange = null;
+    this.container.addEventListener('paste', event => {
+      this.clipboardHtmlRange = parseClipboardHtml(event.clipboardData?.getData('text/html') || '');
+    }, true);
     this.stickyHeaderRevealTimer = 0;
     this.columnResizeObserver = new ResizeObserver(() => this.scheduleSpillLayout());
     this.rowHeight = 22;
@@ -307,8 +318,9 @@ export class DatasetTable {
   }
 
   notifyCellSelected(cell) {
+    if (this.suppressSelection) return;
     const selection = this.rememberCell(cell);
-    if (!selection || this.suppressSelection) return;
+    if (!selection) return;
     this.onCellSelected(selection);
   }
 
@@ -366,10 +378,11 @@ export class DatasetTable {
     const element = cell.getElement();
     const value = content || element.querySelector('.dataset-cell-value');
     if (position < 0 || !value) return;
-    let availableWidth = element.getBoundingClientRect().width;
+    let availableWidth = Number(cell.getColumn().getWidth() || 0);
+    if (availableWidth <= 0) return;
     for (let index = position + 1; index < cells.length; index += 1) {
       if (String(cells[index].getValue() ?? '')) break;
-      availableWidth += cells[index].getElement().getBoundingClientRect().width;
+      availableWidth += Number(cells[index].getColumn().getWidth() || 0);
     }
     value.style.width = `${Math.max(0, availableWidth - 14)}px`;
   }
@@ -378,7 +391,7 @@ export class DatasetTable {
     cancelAnimationFrame(this.spillLayoutFrame);
     this.spillLayoutFrame = requestAnimationFrame(() => {
       this.spillLayoutFrame = 0;
-      this.table?.getRows().forEach(row => {
+      this.table?.getRows('visible').forEach(row => {
         row.getCells().forEach(cell => this.layoutCellSpill(cell));
       });
     });
@@ -409,6 +422,26 @@ export class DatasetTable {
         if (match) this.savedValues.set(`${rowNumber}:${match[1]}`, String(rawValue ?? ''));
       }
     }
+  }
+
+  changedRows(currentRows, nextRows, columns) {
+    if (currentRows.length !== nextRows.length) return null;
+    const fields = [
+      ...(columns || []).map(column => column.field),
+      '__kind__',
+      '__commented_columns__',
+    ];
+    const changed = [];
+    for (let index = 0; index < nextRows.length; index += 1) {
+      const current = currentRows[index];
+      const next = nextRows[index];
+      if (Number(current?.__csv_row__ || 0) !== Number(next?.__csv_row__ || 0)) return null;
+      const differs = fields.some(field => (
+        JSON.stringify(current?.[field] ?? null) !== JSON.stringify(next?.[field] ?? null)
+      ));
+      if (differs) changed.push(next);
+    }
+    return changed;
   }
 
   trackChanges(rows) {
@@ -513,6 +546,7 @@ export class DatasetTable {
   }
 
   prepareEditor(cell) {
+    this.editing = true;
     const selection = this.rememberCell(cell);
     if (selection) this.onCellEditing(selection);
     document.querySelectorAll('.tabulator-tooltip').forEach(tooltip => tooltip.remove());
@@ -521,6 +555,7 @@ export class DatasetTable {
   }
 
   preserveEditedCell(cell) {
+    this.editing = false;
     document.body.classList.remove('dataset-cell-editing');
     if (!this.table || !cell) return;
     const holder = this.container.querySelector('.tabulator-tableholder');
@@ -578,7 +613,8 @@ export class DatasetTable {
 
   async refreshExternalChanges() {
     if (this.pollingRevision || this.container.hidden || !this.editor?.url
-        || this.loadingKey || this.saving || this.saveTimer || this.pendingEdits.size) return;
+        || this.loadingKey || this.saving || this.editing
+        || this.saveTimer || this.pendingEdits.size) return;
     this.pollingRevision = true;
     try {
       const result = await this.requestData('/api/dataset/revision');
@@ -654,6 +690,7 @@ export class DatasetTable {
     this.editor = editor;
     const key = `${editor.url || ''}:${editor.revision || ''}`;
     this.container.hidden = false;
+    if (this.table && previousUrl === editor.url && this.editing) return;
     if (this.table && previousUrl && previousUrl === editor.url
         && (this.saving || this.saveTimer || this.pendingEdits.size)) {
       if (editor.revision) this.revision = String(editor.revision);
@@ -712,7 +749,22 @@ export class DatasetTable {
             rowHeaders: false,
             columnHeaders: false,
           },
-          clipboardPasteParser: 'range',
+          clipboardCopyFormatter: (type, output) => {
+            if (type !== 'plain') return output;
+            const ranges = this.table?.getRangesData?.() || [];
+            if (ranges.length !== 1) return output;
+            const rows = ranges[0].map(row => Object.entries(row)
+              .filter(([field]) => field !== '__csv_row__')
+              .map(([, value]) => value ?? ''));
+            return rows.some(row => row.some(value => /[\r\n]/.test(String(value))))
+              ? formatClipboardRange(rows)
+              : output;
+          },
+          clipboardPasteParser: clipboard => {
+            const htmlRange = this.clipboardHtmlRange;
+            this.clipboardHtmlRange = null;
+            return mapClipboardRange(this.table, htmlRange || parseClipboardRange(clipboard));
+          },
           clipboardPasteAction: 'range',
           resizableColumnGuide: true,
           rowFormatter: row => this.formatRow(row),
@@ -742,7 +794,10 @@ export class DatasetTable {
         });
         this.table.on('cellEditing', cell => this.prepareEditor(cell));
         this.table.on('cellEdited', cell => this.preserveEditedCell(cell));
-        this.table.on('cellEditCancelled', () => document.body.classList.remove('dataset-cell-editing'));
+        this.table.on('cellEditCancelled', () => {
+          this.editing = false;
+          document.body.classList.remove('dataset-cell-editing');
+        });
         this.table.on('cellClick', (_event, cell) => this.notifyCellSelected(cell));
         this.table.on('cellTap', (_event, cell) => this.notifyCellSelected(cell));
         this.table.on('dataChanged', rows => this.trackChanges(rows));
@@ -750,34 +805,76 @@ export class DatasetTable {
           this.resizeSelectedColumns(column);
           this.refreshStickyHeader();
         });
-        this.table.on('scrollVertical', top => this.scheduleStickyHeaders(top));
+        this.table.on('scrollVertical', top => {
+          this.scheduleStickyHeaders(top);
+          this.scheduleSpillLayout();
+        });
         this.installContextMenuEvents();
         requestAnimationFrame(() => {
           this.observeColumnWidths();
           this.installStickyHeaderOverlay();
         });
       } else {
+        const holder = this.container.querySelector('.tabulator-tableholder');
+        const viewState = {
+          selectedCell: this.selectedCell ? {...this.selectedCell} : null,
+          scrollTop: holder?.scrollTop ?? 0,
+          scrollLeft: holder?.scrollLeft ?? 0,
+        };
         this.indexStickyHeaders([]);
         const signature = (dataset.columns || []).map(column => column.field).join('|');
-        if (signature !== this.columnSignature) {
+        const columnsChanged = signature !== this.columnSignature;
+        if (columnsChanged) {
           this.columnSignature = signature;
           this.table.setColumns(this.columns(dataset));
           requestAnimationFrame(() => this.observeColumnWidths());
         }
+        const rowChanges = columnsChanged ? null : this.changedRows(
+          this.table.getData(),
+          dataset.rows || [],
+          dataset.columns || [],
+        );
         this.suppressChanges = true;
+        this.suppressSelection = true;
         try {
-          await this.table.replaceData(dataset.rows || []);
+          if (rowChanges === null) {
+            await this.table.replaceData(dataset.rows || []);
+          } else if (rowChanges.length) {
+            await this.table.updateData(rowChanges);
+          }
           this.indexStickyHeaders(dataset.rows || []);
           this.captureSavedValues(dataset.rows || []);
         } finally {
           this.suppressChanges = false;
+          this.suppressSelection = false;
         }
         this.table.clearHistory();
+        if (rowChanges === null) this.redraw();
+        if (rowChanges === null) requestAnimationFrame(() => {
+          const selected = viewState.selectedCell;
+          const row = selected ? this.table.getRow(selected.row) : null;
+          const cell = row ? row.getCell(`column_${selected.column}`) : null;
+          this.suppressSelection = true;
+          try {
+            if (cell) {
+              this.table.getRanges().forEach(range => range.remove());
+              this.table.addRange(cell, cell);
+              this.selectedCell = selected;
+            }
+            if (holder) {
+              holder.scrollTop = viewState.scrollTop;
+              holder.scrollLeft = viewState.scrollLeft;
+              this.scheduleStickyHeaders(viewState.scrollTop);
+            }
+          } finally {
+            this.suppressSelection = false;
+          }
+        });
       }
       this.revision = String(dataset.revision || editor.revision || '');
       this.key = key;
       this.message.hidden = true;
-      requestAnimationFrame(() => this.redraw());
+      if (!this.table || !previousUrl) requestAnimationFrame(() => this.redraw());
     } catch (error) {
       if (this.loadingKey !== key) return;
       this.reportError(`Could not open the local CSV dataset: ${error.message}`);

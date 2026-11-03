@@ -84,6 +84,7 @@ _PROFILE_XML = """<?xml version="1.0" encoding="UTF-8" standalone="no"?>
     <group id="objects" expand_to_layer="1"/>
   </group>
   <group id="options">
+    <group id="filterquality" value="2"/>
     <group id="savewindowgeometry" value="2"/>
     <group id="maxrecentdocuments" value="0"/>
     <group id="defaultwindowsize" value="-1"/>
@@ -109,6 +110,7 @@ def _configure_profile(root: ET.Element) -> None:
 
     options = _child_group(root, "options")
     for option_id, attributes in {
+        "filterquality": {"value": "2"},
         "savewindowgeometry": {"value": "2"},
         "maxrecentdocuments": {"value": "0"},
         "defaultwindowsize": {"value": "-1"},
@@ -647,7 +649,7 @@ class InkscapePreviewer:
             self.close()
             raise RuntimeError("Inkscape preview window did not become ready")
         window_ready = time.perf_counter()
-        time.sleep(0.1)
+        time.sleep(0.25)
 
         shell_kwargs = {
             "args": [
@@ -666,18 +668,39 @@ class InkscapePreviewer:
         }
         if os.name == "nt":
             shell_kwargs["creationflags"] = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        self._shell_process = subprocess.Popen(**shell_kwargs)
-        threading.Thread(
-            target=self._read_output,
-            args=(self._shell_process,),
-            name="inkscape-previewer-output",
-            daemon=True,
-        ).start()
-        try:
-            self._read_prompt(timeout=30.0)
-        except Exception:
-            self.close()
-            raise
+        shell_deadline = time.monotonic() + 20.0
+        while True:
+            self._output = queue.Queue()
+            self._shell_process = subprocess.Popen(**shell_kwargs)
+            output_queue = self._output
+            threading.Thread(
+                target=self._read_output,
+                args=(self._shell_process, output_queue),
+                name="inkscape-previewer-output",
+                daemon=True,
+            ).start()
+            try:
+                self._read_prompt_from(self._shell_process, timeout=8.0, output_queue=output_queue)
+                break
+            except Exception as error:
+                shell_process = self._shell_process
+                self._shell_process = None
+                if shell_process is not None and shell_process.poll() is None:
+                    shell_process.terminate()
+                    try:
+                        shell_process.wait(timeout=1.0)
+                    except subprocess.TimeoutExpired:
+                        shell_process.kill()
+                retryable = "No active desktop to run" in str(error)
+                gui_ready = (
+                    self._wait_for_gui(timeout=0.0)
+                    if os.name == "nt"
+                    else self._gui_process is not None and self._gui_process.poll() is None
+                )
+                if not retryable or time.monotonic() >= shell_deadline or not gui_ready:
+                    self.close()
+                    raise
+                time.sleep(0.25)
         shell_ready = time.perf_counter()
         LOG.i(
             "[inkscape_previewer] started gui_pid=%s shell_pid=%s svg='%s'",
@@ -723,7 +746,7 @@ class InkscapePreviewer:
         self._shell_process = process
         threading.Thread(
             target=self._read_output,
-            args=(process,),
+            args=(process, self._output),
             name="inkscape-previewer-output",
             daemon=True,
         ).start()
@@ -747,34 +770,43 @@ class InkscapePreviewer:
             (shell_ready - startup_started) * 1000.0,
         )
 
-    def _read_output(self, process: subprocess.Popen) -> None:
+    def _read_output(self, process: subprocess.Popen, output_queue: queue.Queue | None = None) -> None:
         stream = process.stdout
         if stream is None:
             return
+        destination = output_queue or self._output
         while True:
             value = stream.read(1)
             if not value:
                 return
-            self._output.put(value)
+            destination.put(value)
 
     def _read_prompt(self, timeout: float) -> str:
         return self._read_prompt_from(self._shell_process, timeout)
 
-    def _read_prompt_from(self, process: subprocess.Popen | None, timeout: float) -> str:
+    def _read_prompt_from(
+        self,
+        process: subprocess.Popen | None,
+        timeout: float,
+        output_queue: queue.Queue | None = None,
+    ) -> str:
         if process is None:
             raise RuntimeError("Inkscape previewer is not running")
+        source = output_queue or self._output
         deadline = time.monotonic() + max(0.1, timeout)
         chunks: list[str] = []
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 break
             try:
-                chunks.append(self._output.get(timeout=0.02))
+                chunks.append(source.get(timeout=0.02))
             except queue.Empty:
                 continue
             text = "".join(chunks)
             if text.endswith(_PROMPT):
                 return text
+            if "No active desktop to run" in text:
+                raise RuntimeError("Inkscape previewer did not become ready: No active desktop to run")
         message = "".join(chunks).strip()
         raise RuntimeError(f"Inkscape previewer did not become ready: {message}")
 
