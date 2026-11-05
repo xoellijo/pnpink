@@ -66,7 +66,7 @@ def inspect_selection(
 ) -> tuple[SpriteSelection | None, str]:
     ids = tuple(value for value in selected_ids if value)
     if len(ids) != 1:
-        return None, "Select exactly one image, group or object in Inkscape, then reopen DeckMaker Web."
+        return None, "Select exactly one image, group or object in Inkscape, then reopen Deckmaker."
     node_id = ids[0]
     candidates = [path for path in (snapshot, template) if path and os.path.isfile(path)]
     measured = None

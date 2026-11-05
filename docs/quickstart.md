@@ -103,4 +103,4 @@ Once this simple cycle works, extend it gradually. Add another text column, repl
 
 ## Where to Go Next
 
-Continue with [Dataset Format and Sources](dataset-overview.md) to learn how local CSV and Google Sheets projects are selected. Use [DeckMaker GUI](deckmaker-gui.md) when you need an explanation of generation and export controls, and open [Fit and Anchor](dsl/fit-anchor.md) when artwork or icons must be positioned relative to placeholders.
+Continue with [Dataset Format and Sources](dataset-overview.md) to learn how local CSV and Google Sheets projects are selected. Use [Deckmaker](deckmaker-gui.md) when you need an explanation of generation and export controls, and open [Fit and Anchor](dsl/fit-anchor.md) when artwork or icons must be positioned relative to placeholders.

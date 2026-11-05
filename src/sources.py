@@ -2188,7 +2188,7 @@ class SourceManager:
             sid, wh = _make_placeholder_symbol(self.defs, str(abspath), f"svg parse failed: {ex}")
             return SourceRef(symbol_id=sid, content_type="svg", intrinsic_box=wh, canonical_key=None)
 
-        # Mode A: no fragment => keep it as linked image (non-editable), as requested.
+        # Mode A: no fragment keeps the SVG as a linked, non-editable image.
         if not fragment:
             return self._create_symbol_from_svg_image_path(abspath)
 
@@ -2814,7 +2814,7 @@ class SourceManager:
         gy = gy_mm * px_per_mm_f
 
         # --- Determine tile sizing ---
-        # Layout gaps and borders are millimetres, matching DeckMaker Web.
+        # Layout gaps and borders are millimetres, matching Deckmaker.
         if shape is None:
             if abspath is None:
                 _l.w(f"[spritesheets] alias '{alias_key}': missing shape and cannot resolve src to autodetect tile")

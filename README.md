@@ -33,6 +33,8 @@ PnPInk connects **one Inkscape template** to **Google Sheets or CSV data**. Each
 
 Design visually, connect text and graphics to your data, and generate a complete, print-ready batch in seconds. Change a name, replace a photo, rebalance a card, or redesign the template, then regenerate everything without rebuilding each item by hand.
 
+Deckmaker adds an integrated dataset editor and synchronized instant previews, so you can refine data and design from the same workspace.
+
 <table>
   <tr>
     <td width="50%" align="center" valign="top">
@@ -46,20 +48,6 @@ Design visually, connect text and graphics to your data, and generate a complete
         <img src="docs/assets/images/dataset-csv.jpg" alt="PnPInk CSV dataset open in LibreOffice Calc" title="Describe every card variation in an ordinary CSV spreadsheet" width="100%" />
       </a><br />
       <sub><strong>Drive variations from CSV or Google Sheets</strong></sub>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center" valign="top">
-      <a href="docs/assets/images/deckmaker-gen.jpg" title="Generate the complete deck from the template and dataset with DeckMaker">
-        <img src="docs/assets/images/deckmaker-gen.jpg" alt="DeckMaker generation screen" title="Generate the complete deck from the template and dataset with DeckMaker" width="100%" />
-      </a><br />
-      <sub><strong>Generate the complete project</strong></sub>
-    </td>
-    <td width="50%" align="center" valign="top">
-      <a href="docs/assets/images/deckmaker-export.jpg" title="Choose PDF, PDF/X, image and cutting-plotter export options">
-        <img src="docs/assets/images/deckmaker-export.jpg" alt="DeckMaker export options" title="Choose PDF, PDF/X, image and cutting-plotter export options" width="100%" />
-      </a><br />
-      <sub><strong>Export for screen, print or cutting</strong></sub>
     </td>
   </tr>
   <tr>
@@ -78,7 +66,7 @@ Design visually, connect text and graphics to your data, and generate a complete
   </tr>
 </table>
 
-<p align="center"><em>One SVG template, one dataset, and every variation generated automatically. Hover for details; click any panel to open it at full size.</em></p>
+<p align="center"><em>One SVG template, one dataset, and every variation generated automatically.</em></p>
 
 Your output stays **real, editable SVG**. Nothing is locked into a proprietary format, and nothing is flattened until you choose to export.
 
@@ -88,23 +76,21 @@ Your output stays **real, editable SVG**. Nothing is locked into a proprietary f
 
 ## What Can You Create?
 
-- Card games, decks, and card backs
-- Boards, modular maps, and large split boards
-- Counters, tokens, tiles, and punchboards
-- Hex grids, labels, standees, and reference sheets
-- Prototypes for Cricut and Silhouette workflows
-- Event badges, ID cards, credentials, and personalized passes
-- Certificates, diplomas, tickets, invitations, and name tags
-- Product labels, price cards, catalog sheets, and mail pieces
-- High-volume variable-data publishing (VDP) and dynamic PDF batches
+- **Games:** cards and card backs, boards, modular maps, counters, tokens, tiles, punchboards, hex grids, labels, and reference sheets.
+- **Printable and cuttable prototypes:** PDFs with cutting marks for hand cutting or cutting plotters such as Silhouette Cameo and Cricut.
+- **High-volume variable-data publishing (VDP):** dynamic PDF batches for badges, ID cards, credentials, certificates, diplomas, tickets, invitations, name tags, product labels, price cards, catalogs, and mail pieces.
 
-Whether you are testing ten prototype cards, preparing badges for an event, or producing thousands of personalized documents, the workflow stays the same.
+The same workflow scales from a few prototypes to thousands of personalized documents.
+
+It is difficult to show everything PnPInk can do in a feature list, so we are creating short practical demonstrations in the [PnPInk video tutorials playlist](https://www.youtube.com/playlist?list=PLM5-7ajCwZAQ).
 
 ## From Google Sheets to Dynamic PDFs
 
 Keep names, text, numbers, image links, and other changing content in a shared spreadsheet. PnPInk combines each row with your Inkscape design and can produce editable SVG, print-ready PDF, images, and cutting files.
 
 Use local artwork, reusable SVG symbols, Iconify icons, Wikimedia Commons images, public Google Drive files, spritesheets, or generated maps. The template controls the design; the spreadsheet controls what changes.
+
+Deckmaker can edit local CSV datasets directly or display a linked Google Sheet, while keeping the selected row synchronized with the current preview.
 
 ## Why PnPInk?
 
@@ -136,7 +122,7 @@ PnPInk is free, open source, cross-platform, and built around open formats. Your
 
 1. **Design a template** in Inkscape using IDs such as `name`, `photo`, `title`, `art`, or `back_art`.
 2. **Add your content** in CSV or Google Sheets using matching column names.
-3. **Run DeckMaker** to generate, inspect, and export the complete project.
+3. **Run Deckmaker** to edit the dataset, inspect instant previews, generate, and export the complete project.
 
 Then iterate: change the data or design and generate again.
 
@@ -160,42 +146,32 @@ Optimized templates can generate tens of thousands of records per minute on suit
 
 ## Install PnPInk
 
-### Requirements
+### Requirements:
+[Inkscape](https://inkscape.org/release/) 1.2 or newer, installed on Windows, macOS, or Linux. Sandboxed builds such as Flatpak are not supported.
 
-- [Inkscape](https://inkscape.org/release/) 1.2 or newer
-- Windows, macOS, or Linux
-- A standard Inkscape installation; sandboxed builds such as Flatpak are not currently supported
+### Installation:
 
-### Installation
+Download just one launcher script (`pnpink_install.bat` for Windows or pnpink_install.sh for Linux/macOS) from the [latest release](https://github.com/xoellijo/pnpink/releases/latest):
 
-Download just one launcher from the [latest release](https://github.com/xoellijo/pnpink/releases/latest):
-
-- Windows: run `pnpink_install.bat`. It installs a private portable Ghostscript only when none is available; use `--no-ghostscript` to skip this check.
+- Windows: run `pnpink_install.bat` from CMD. (Note it installs a private portable Ghostscript only when none is available; use `--no-ghostscript` to skip this check).
 - macOS/Linux: run `chmod +x pnpink_install.sh && ./pnpink_install.sh`.
 
-The installer also prepares a shared dependency runtime for PnPInk and
-PnPPlay. On Windows it lives in `%LOCALAPPDATA%\PnPInk\python`, beside
-`iccprofiles`; it does not modify Inkscape's bundled Python. The downloaded
-`pip.pyz`, package cache, project requirement manifests, and interpreter-specific
-`site-packages` environments all remain in that single directory. The equivalent
-root is `~/Library/Application Support/PnPInk/python` on macOS and
-`${XDG_DATA_HOME:-~/.local/share}/PnPInk/python` on Linux.
-
-The launchers remain stable and download the latest PnPInk release by default. To install a specific release using the new packaging scheme (`0.55` or newer), pass its version, for example `pnpink_install.bat 0.59`, `pnpink_install.bat --version 0.59`, or `./pnpink_install.sh 0.59`.
-
-Beta releases are published separately and never replace the stable `latest` package. Install this beta explicitly with `pnpink_install.bat --version 0.82-beta.3` or `./pnpink_install.sh --version 0.82-beta.3`.
-The matching beta documentation is published at `https://xoellijo.github.io/pnpink/beta/`.
-
 Restart Inkscape, then open `Extensions > PnPInk`.
+
+Here a descpription of how to make a manual installation:
+- Download and extract the `pnpink_payload_<version>.zip` file from the desired release.
+- Copy its complete `src` folder into your Inkscape extensions directory and rename that folder to `pnpink`:
+   - Windows: `%APPDATA%\inkscape\extensions\pnpink`
+   - Linux and macOS: `~/.config/inkscape/extensions/pnpink`
 
 ## Your First Project
 
 The fastest way to understand PnPInk is to generate something:
 
-1. Open `Extensions > PnPInk > DeckMaker > About > Open examples folder`.
-2. Choose one of the prepared `.pnp` projects or an SVG example with its CSV dataset.
-3. Run DeckMaker and open the generated SVG.
-4. Change a value or visual element and generate it again.
+1. Open an SVG template in Inkscape and run `Extensions > PnPInk > DeckMaker`.
+2. Open a prepared project from `Help > Examples`, or connect a local CSV or Google Sheet.
+3. Edit a dataset cell and inspect the synchronized preview.
+4. Create the editable SVG or export the required production format.
 
 `.pnp` packages contain the template, dataset, manifest, and project assets, making them ideal for learning and sharing complete projects.
 
@@ -203,16 +179,16 @@ The fastest way to understand PnPInk is to generate something:
 
 - [Introduction](https://xoellijo.github.io/pnpink/intro/) — understand the core workflow
 - [Quick Start](https://xoellijo.github.io/pnpink/quickstart/) — build your first data-driven template
-- [DeckMaker GUI](https://xoellijo.github.io/pnpink/deckmaker-gui/) — generation and project controls
+- [Deckmaker](https://xoellijo.github.io/pnpink/deckmaker-gui/) — generation and project controls
 - [Export](https://xoellijo.github.io/pnpink/export/) — PDF, images, cutting files, and production options
 - [Fit and Anchor](https://xoellijo.github.io/pnpink/dsl/fit-anchor/) — precise visual placement
 - [Full PDF guide](https://xoellijo.github.io/pnpink/pnpink.pdf) — offline documentation
 
 ## Project Status
 
-PnPInk is currently in beta and has been tested with Inkscape 1.2 through 1.5 on Windows and Linux. The project is evolving quickly, so advanced DSL syntax may occasionally change before the stable release.
+PnPInk is under active development and has been tested with Inkscape 1.2 through 1.5 on Windows, macOS, and Linux.
 
-For production projects, keep a copy of the PnPInk version used to generate them.
+The next major step is integrating PnPPlay: a platform for playing and testing generated games locally or online through a complete design-to-play workflow.
 
 ## Community
 
@@ -223,5 +199,4 @@ If PnPInk helps your project, consider giving the repository a ⭐. It makes the
 ## Open Source
 
 PnPInk is released under the [MIT License](LICENSE).
-
-The project was inspired by [CounterSheets](https://github.com/lifelike/countersheetsextension) and continues that spirit of open, data-driven tabletop creation.
+It was inspired by [CounterSheets](https://github.com/lifelike/countersheetsextension).

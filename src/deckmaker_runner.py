@@ -15,7 +15,13 @@ class EngineEffect:
 
         self._template = DMPATHS.normalize(template)
         self._snapshot_path = DMPATHS.normalize(snapshot_path) if str(snapshot_path or "").strip() else ""
-        load_path = self._snapshot_path if self._snapshot_path and os.path.isfile(self._snapshot_path) else self._template
+        load_path = self._template
+        if self._snapshot_path and os.path.isfile(self._snapshot_path):
+            try:
+                if not os.path.isfile(self._template) or os.stat(self._snapshot_path).st_mtime_ns >= os.stat(self._template).st_mtime_ns:
+                    load_path = self._snapshot_path
+            except OSError:
+                pass
         with open(load_path, "rb") as fh:
             raw = fh.read()
         self.document = inkex.load_svg(raw)

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Optional tag to push (format vX.Y.Z) after building the PDF"
+        description: "Optional tag to push (format vX.Y) after building the PDF"
         required: false
         default: ""
   push:

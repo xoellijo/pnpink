@@ -4,10 +4,10 @@ This page summarizes the user-facing extensions present in the current project v
 
 ## Main generation tools
 
-### DeckMaker
+### Deckmaker
 Visible in Inkscape as:
 
-`Extensions > PnPInk > DeckMaker`
+`Extensions > PnPInk > Deckmaker v0.83`
 
 Purpose:
 
@@ -19,14 +19,7 @@ Purpose:
 - open the generated SVG in Inkscape,
 - export PDF, PDF/X, and other output formats.
 
-The GUI title shows the current DeckMaker version and the template file name. See [DeckMaker GUI](deckmaker-gui.md) and [Export](export.md).
-
-### Spritesheet
-Visible in Inkscape as:
-
-`Extensions > PnPInk > Spritesheet`
-
-Spritesheet opens an interactive tool for defining grid cuts and extracting frames from atlas-like image sources. Use it when one source image contains many regularly arranged icons, tiles, or card faces.
+The GUI title shows the current Deckmaker version and the template file name. The former desktop interface remains temporarily available as `Deckmaker v0.83 [OLD gui]`. Spritesheet editing is integrated into Deckmaker and no longer has a separate Inkscape menu entry. See [Deckmaker](deckmaker-gui.md) and [Export](export.md).
 
 ## Project/package tools
 

@@ -86,10 +86,10 @@ class DeckMakerWebHost:
         self._sessions: dict[str, dict[str, object]] = {}
         self._started_at = time.monotonic()
         self._last_session_check = self._started_at
-        self._browser_expected_until = self._started_at + self.STARTUP_TIMEOUT
         self._empty_since: float | None = None
         self._had_session = False
         self.service = DeckMakerService(initial)
+        self._browser_expected_until = time.monotonic() + self.STARTUP_TIMEOUT
         self.requests: queue.Queue[AppRequest] = queue.Queue()
         self.stop_event = threading.Event()
         self.httpd = LocalThreadingHTTPServer((HTTP_HOST, HTTP_PORT), self._handler_type())
@@ -109,6 +109,7 @@ class DeckMakerWebHost:
             self._browser_expected_until = now
             self._empty_since = None
             self._had_session = True
+        LOG.i("[deckmaker.web] browser session opened")
 
     @staticmethod
     def save_browser_geometry(geometry) -> bool:
@@ -228,7 +229,8 @@ class DeckMakerWebHost:
 
     def current_url(self) -> str:
         sequence = int(self.service.state().get("seq") or 0)
-        return f"{self.url}&request={sequence}"
+        session_id = secrets.token_urlsafe(18)
+        return f"{self.url}&request={sequence}&session={urllib.parse.quote(session_id)}"
 
     def _handler_type(self):
         host = self
@@ -363,6 +365,7 @@ class DeckMakerWebHost:
                         self.send_header("Cache-Control", "no-store")
                         self.end_headers()
                         return
+                    host.browser_opened(host._session_id(self))
                     self._asset("index.html")
                     return
                 if parsed.path.startswith("/shared-assets/"):

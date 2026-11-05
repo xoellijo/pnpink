@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import time
@@ -420,11 +421,50 @@ def _request_json(url: str, body: dict | None = None, *, token: str = "", timeou
 
 
 class PlayServer:
-    def __init__(self) -> None:
+    def __init__(self, runtime: Path | None = None) -> None:
         self.process: subprocess.Popen | None = None
         self.game_dir: Path | None = None
-        self.port = 0
+        self.runtime = runtime.resolve() if runtime is not None else None
+        self.port = 8080
         self.log_path: Path | None = None
+
+    @property
+    def _process_state_path(self) -> Path | None:
+        if self.runtime is None:
+            return None
+        return self.runtime / "data" / "deckmaker-server.pid"
+
+    def _remember_process(self) -> None:
+        state_path = self._process_state_path
+        if state_path is None or self.process is None:
+            return
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = state_path.with_suffix(".tmp")
+        temporary.write_text(str(self.process.pid), encoding="ascii")
+        os.replace(temporary, state_path)
+
+    def _remembered_pid(self) -> int:
+        state_path = self._process_state_path
+        if state_path is None:
+            return 0
+        try:
+            return max(0, int(state_path.read_text(encoding="ascii").strip()))
+        except (OSError, ValueError):
+            return 0
+
+    def _forget_process(self) -> None:
+        state_path = self._process_state_path
+        if state_path is not None:
+            state_path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _terminate_pid(pid: int) -> None:
+        if pid <= 0 or pid == os.getpid():
+            return
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (OSError, ProcessLookupError):
+            return
 
     @staticmethod
     def _server_has_game(port: int, game_id: str) -> bool:
@@ -445,7 +485,7 @@ class PlayServer:
                 pass
         return RuntimeError(f"{message}\n{detail}".rstrip())
 
-    def close(self) -> None:
+    def close(self, *, require_stopped: bool = False) -> None:
         process = self.process
         self.process = None
         self.game_dir = None
@@ -455,11 +495,26 @@ class PlayServer:
                 process.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 process.kill()
-        self.port = 0
+                process.wait(timeout=3)
+        elif self.running:
+            self._terminate_pid(self._remembered_pid())
+        for _attempt in range(30):
+            if not self.running:
+                break
+            time.sleep(0.1)
+        stopped = not self.running
+        if stopped:
+            self._forget_process()
+        if require_stopped and not stopped:
+            raise RuntimeError("PnPPlay is still running on port 8080")
 
     @property
     def managed(self) -> bool:
-        return self.process is not None and self.process.poll() is None
+        return (
+            self.process is not None and self.process.poll() is None
+        ) or (
+            self.running and self._remembered_pid() > 0
+        )
 
     @property
     def running(self) -> bool:
@@ -484,6 +539,7 @@ class PlayServer:
         return f"http://127.0.0.1:{self.port}/s/{session['playerAccessToken']}"
 
     def ensure(self, game_dir: Path, runtime: Path) -> None:
+        self.runtime = runtime.resolve()
         manifest_path = game_dir / "game.json"
         game_manifest = _load_game_manifest(game_dir, runtime)
         if str(game_manifest.get("pnpinkAssetPack") or "").startswith("pnpink/"):
@@ -536,6 +592,7 @@ class PlayServer:
                     stderr=subprocess.STDOUT,
                     creationflags=creationflags,
                 )
+            self._remember_process()
             self.game_dir = game_dir
             endpoint = f"http://127.0.0.1:{self.port}/games"
             for _attempt in range(40):

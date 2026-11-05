@@ -1,3 +1,11 @@
+[0.83]
+- Introduce DeckMaker Web as an integrated workspace for editing CSV and Google Sheets datasets, navigating templates, previewing assets, creating outputs, and exporting projects.
+- Add synchronized browser and Inkscape previews with persistent sessions, faster cached rendering, dataset navigation, and optional SVG element selection.
+- Add an interactive spritesheet editor for images and multipage PDFs, including reusable page assets, ranges, iterators, high-resolution extraction, and copyable definitions.
+- Improve Fit-Anchor, Transform, inline icons, snippets, text helpers, SVG references, moved templates, arrays, composed objects, and complex text frames.
+- Expand PDF, PDF/X, image, cutting, and PnPPlay asset workflows with clearer controls, progress reporting, chunked processing, and more reliable filters, overlays, and card backs.
+- Improve cross-platform installation and runtime compatibility, including Inkscape 1.2 support, browser preferences, session recovery, shared Python dependencies, and portable Ghostscript installation on Windows without relying on `tar.exe` LZMA support.
+
 [0.82-beta.3]
 - Refine DeckMaker Web menus, previews, export controls, help, and progress feedback.
 - Expand PDF spritesheets with multipage ranges, reusable high-resolution pages, and complete iterator support.

@@ -499,20 +499,3 @@ def list_sheet_properties(spreadsheet_id: str, client_id: Optional[str] = None, 
         _SHEET_PROPERTIES_CACHE[cache_key] = [dict(item) for item in properties]
         _SHEET_TITLES_CACHE[cache_key] = [item["title"] for item in properties]
     return properties
-
-# ------------------------------------------------------------------
-# Test manual opcional
-# ------------------------------------------------------------------
-if __name__ == "__main__":
-    print("CLIENT_ID:", CLIENT_ID)
-    print("Tokens file:", TOKENS_FILE)
-    # To manually test healthcheck:
-    # 1) Start the flow: temporarily uncomment the line below:
-    # _authorize_with_pkce(CLIENT_ID)
-    # 2) Mientras espera, en otra consola:
-    #    - PowerShell:  Test-NetConnection 127.0.0.1 -Port 53682  (or the port you use)
-    #    - Navegador:   http://127.0.0.1:53682/__ping  → debe devolver 'ok'
-    # Then comment that line again.
-    # Y/o prueba:
-    # print(list_sheet_titles("SPREADSHEET_ID_HERE"))
-    # print(fetch_sheet("SPREADSHEET_ID_HERE", "Sheet1!A1:C5"))

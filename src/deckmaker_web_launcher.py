@@ -22,7 +22,7 @@ class DeckMakerWebLauncher(inkex.EffectExtension):
             request.template, request.snapshot_path, request.sheet_id, request.sheet_range,
             "global", request.dataset_source_mode, selected_ids=request.selected_ids,
         ):
-            raise inkex.AbortExtension("Could not launch DeckMaker Web.")
+            raise inkex.AbortExtension("Could not launch Deckmaker.")
         return False
 
 

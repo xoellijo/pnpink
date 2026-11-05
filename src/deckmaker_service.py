@@ -104,11 +104,11 @@ class DeckMakerService:
         self._google_authorization_url = ""
         self._text_query_service = None
         self._text_query_generation = 0
-        self._play_server = PLAY.PlayServer()
         try:
             self._play_runtime = PLAY.find_runtime()
         except RuntimeError:
             self._play_runtime = None
+        self._play_server = PLAY.PlayServer(self._play_runtime)
         self._pdf_spritesheet = PdfSpritesheet()
         self._inkscape_previewer = InkscapePreviewer()
         if prefs.get_deckmaker_preview_backend() == "inkscape":
@@ -419,7 +419,7 @@ class DeckMakerService:
             }
         target = known.get(os.path.normcase(DMPATHS.normalize(template)))
         if not target or not os.path.isfile(target):
-            raise ValueError("Unknown SVG template; launch DeckMaker Web from that document in Inkscape first")
+            raise ValueError("Unknown SVG template; launch Deckmaker from that document in Inkscape first")
         if os.path.normcase(DMPATHS.normalize(target)) == os.path.normcase(DMPATHS.normalize(current.template)):
             self.refresh_previews()
             return self.state()
@@ -1445,16 +1445,9 @@ class DeckMakerService:
     @staticmethod
     def _preview_effect(request: AppRequest, symbol_base_path: str = ""):
         sheet_id = "" if request.dataset_source_mode == "local_csv" else request.sheet_id
-        snapshot_path = str(request.snapshot_path or "").strip()
-        if snapshot_path and os.path.isfile(snapshot_path) and os.path.isfile(request.template):
-            try:
-                if os.stat(request.template).st_mtime_ns > os.stat(snapshot_path).st_mtime_ns:
-                    snapshot_path = ""
-            except OSError:
-                pass
         effect = RUNNER.EngineEffect(
             request.template, sheet_id, request.sheet_range, request.log_level,
-            request.dataset_source_mode, snapshot_path=snapshot_path,
+            request.dataset_source_mode, snapshot_path=request.snapshot_path,
         )
         if symbol_base_path:
             PREVIEW.merge_symbol_base(effect, symbol_base_path)
@@ -2138,7 +2131,7 @@ class DeckMakerService:
     def toggle_play_server(self) -> bool:
         if self._play_server.running:
             if self._play_server.managed:
-                self._play_server.close()
+                self._play_server.close(require_stopped=True)
                 self._set_status("PnPPlay server stopped")
             else:
                 self._set_status("PnPPlay server is already running on port 8080")

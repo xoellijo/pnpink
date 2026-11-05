@@ -240,7 +240,7 @@ def render_slot_marks(
     # d: distance to card for *external* marks.
     # Internal distance is derived from internal length for a tight cross.
     #
-    # Rule (as requested): d_internal = -l_internal/2
+    # Internal marks use d_internal = -l_internal/2.
     d_ext_mm, _d_int_mm_unused = _d_tokens_to_ext_int_mm(d_tokens, default_ext="2mm")
     d_ext_px = d_ext_mm * px_per_mm
 

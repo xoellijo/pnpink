@@ -47,7 +47,7 @@ const query = new URLSearchParams(location.search);
 const token = query.get('token') || sessionStorage.getItem('deckmaker-token') || '';
 if (token) sessionStorage.setItem('deckmaker-token', token);
 const managedAppWindow = query.get('shell') === 'app';
-const browserSession = globalThis.crypto?.randomUUID?.()
+const browserSession = query.get('session') || globalThis.crypto?.randomUUID?.()
   || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 const elements = {
@@ -220,6 +220,11 @@ async function api(path, options = {}) {
   if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
   return data;
 }
+
+const browserSessionPromise = openBrowserSession().then(
+  state => ({ state }),
+  error => ({ error }),
+);
 
 function toast(message, { tone = 'error', duration = 3200 } = {}) {
   clearTimeout(toastTimer);
@@ -807,7 +812,7 @@ function updateTemplateTitle(state) {
     picker.append(gui._createIcon(menuIcon('swap-horiz')));
     templateSelect = document.createElement('select');
     templateSelect.className = 'deckmaker-template-select';
-    templateSelect.title = 'Known SVG templates. Launch DeckMaker Web from Inkscape to register another template.';
+    templateSelect.title = 'Known SVG templates. Launch Deckmaker from Inkscape to register another template.';
     templateSelect.addEventListener('click', event => event.stopPropagation());
     templateSelect.addEventListener('pointerdown', event => event.stopPropagation());
     templateSelect.addEventListener('change', event => {
@@ -1701,7 +1706,7 @@ function build(state) {
     args: [options.webBrowsers || { 'System default': 'system' }],
     label: 'Web engine',
     icon: 'browser',
-    tooltip: 'Browser used to open DeckMaker Web. The change applies on the next launch.',
+    tooltip: 'Browser used to open Deckmaker. The change applies on the next launch.',
   }]);
   actionRow(preferences, [{
     key: 'preferencesAction',
@@ -1956,7 +1961,9 @@ window.addEventListener('drop', async event => {
 });
 
 try {
-  const browserSessionState = await openBrowserSession();
+  const browserSessionResult = await browserSessionPromise;
+  if (browserSessionResult.error) throw browserSessionResult.error;
+  const browserSessionState = browserSessionResult.state;
   restoreWindowGeometry(browserSessionState.geometry);
   const initialState = await api('/api/state');
   applyState(initialState);

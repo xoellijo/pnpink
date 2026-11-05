@@ -13,7 +13,7 @@
 # :TL(text) = <tspan baseline-shift='sub' font-size='65%'>${text}</tspan>
 
 ## High text (superscript):
-# :TH(text) = <tspan baseline-shift='super' font-size='65%'>${text}</tspan>
+# :TH(text percent=super) = <tspan baseline-shift='${percent}' font-size='65%'>${text}</tspan>
 
 ## Underlined text:
 # :TU(text) = <tspan text-decoration='underline'>${text}</tspan>
@@ -25,7 +25,7 @@
 # :TF(text font size) = <tspan font-family='${font}' ${size? font-size='${size}'}>${text}</tspan>
 
 ## Text size:
-# :TS(text size) = <tspan ${size? font-size='${size}'}>${text}</tspan>
+# :TS(text size baseline) = <tspan ${size? font-size='${size}'} ${baseline? baseline-shift='${baseline}'}>${text}</tspan>
 
 ## Text color and outline:
 # :TC(text fill stroke width) = <tspan fill='${fill}' ${stroke? stroke='${stroke}' : stroke='${fill}'} ${width? stroke-width='${width}'} paint-order='stroke'>${text}</tspan>
@@ -43,4 +43,3 @@
 
 # snippet for Tabletop Simulator cache image path (only windows supported)
 # :TTS(img) = %USERPROFILE%\Documents\My Games\Tabletop Simulator\Mods\Images\${img}
-

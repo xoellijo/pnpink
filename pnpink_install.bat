@@ -44,10 +44,6 @@ where curl.exe >nul 2>nul || (
   echo ERROR: curl.exe is required. Windows 10 and 11 include it by default.
   exit /b 1
 )
-where tar.exe >nul 2>nul || (
-  echo ERROR: tar.exe is required. Windows 10 and 11 include it by default.
-  exit /b 1
-)
 
 mkdir "!TEMP_DIR!" >nul 2>nul || goto fail
 set "INSTALLER=!TEMP_DIR!\install.py"
@@ -142,14 +138,16 @@ for /d %%D in (
 
 echo Installing portable Ghostscript !GHOSTSCRIPT_VERSION! into !GS_DIR!
 set "SEVEN_SETUP=!TEMP_DIR!\7zip-installer.exe"
+set "SEVEN_BOOTSTRAP=!TEMP_DIR!\7zr.exe"
 set "SEVEN_DIR=!TEMP_DIR!\7zip"
 set "GS_INSTALLER=!TEMP_DIR!\ghostscript-installer.7z"
 set "GS_EXTRACT=!TEMP_DIR!\ghostscript-extracted"
 
+call :download "https://github.com/ip7z/7zip/releases/download/!SEVENZIP_VERSION!/7zr.exe" "!SEVEN_BOOTSTRAP!" || exit /b 1
 call :download "https://github.com/ip7z/7zip/releases/download/!SEVENZIP_VERSION!/7z!SEVENZIP_FILE_VERSION!-x64.exe" "!SEVEN_SETUP!" || exit /b 1
 
 mkdir "!SEVEN_DIR!" >nul 2>nul || exit /b 1
-tar.exe -xf "!SEVEN_SETUP!" -C "!SEVEN_DIR!" || exit /b 1
+"!SEVEN_BOOTSTRAP!" x "!SEVEN_SETUP!" -o"!SEVEN_DIR!" -y >nul 2>nul || exit /b 1
 set "SEVENZIP=!SEVEN_DIR!\7z.exe"
 if not exist "!SEVENZIP!" (
   echo ERROR: 7-Zip command-line executable was not found after extraction.

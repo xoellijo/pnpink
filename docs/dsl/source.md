@@ -349,7 +349,7 @@ This internal model is important for performance and file size on large projects
 Sources are instantiated as clones of symbols (`<use>`), not inline geometry copies.
 This keeps the SVG compact and avoids repeating heavy geometry.
 
-## Spritesheets (@)
+## Spritesheets (@) {#spritesheets}
 Spritesheets allow one asset to provide many addressable frames.
 This is useful for token sheets, icon atlases, and catalog-like image packs.
 

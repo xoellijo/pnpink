@@ -71,7 +71,7 @@ jobs:
           if expected_app_version not in (src / "deckmaker_types.py").read_text(encoding="utf-8"):
               raise SystemExit(f"src/deckmaker_types.py is not versioned as {version}.")
 
-          expected_inx_name = f"<_name>DeckMaker v{version}</_name>"
+          expected_inx_name = f"<_name>Deckmaker v{version}</_name>"
           if not any(expected_inx_name in path.read_text(encoding="utf-8") for path in inx_files):
               raise SystemExit(f"No INX menu entry is versioned as {version}.")
 

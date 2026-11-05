@@ -64,11 +64,11 @@ This section only explains how to use the text helpers. See [Snippets](snippets.
 | `:TB(text)` | Convert `text` to **bold**. |
 | `:TI(text)` | Convert `text` to *italic*. |
 | `:TL(text)` | Lower `text` as subscript. |
-| `:TH(text)` | Raise `text` as superscript. |
+| `:TH(text percent=super)` | Raise `text` as superscript, optionally controlling its baseline height with a percentage. |
 | `:TU(text)` | Underline `text`. |
 | `:TX(text)` | Cross out `text`. |
 | `:TF(text font size=)` | Change the font family and, optionally, its size. |
-| `:TS(text size=)` | Change the text size. |
+| `:TS(text size= baseline=)` | Change the text size and, optionally, its baseline position. |
 | `:TC(text fill stroke= width=)` | Set the fill and an optional outline color and width. |
 | `:TM(text styleID border= front=)` | Decorate the text with a reusable SVG style object. |
 
@@ -93,6 +93,20 @@ Snippets can be nested. PnPInk expands the innermost call first, so several simp
 </div>
 
 This produces **bold italic cream text**, gives it a dark outline, and places the result over the SVG decoration named `yellowBrush`. The dataset stays short even though the generated SVG contains several nested `<tspan>` styles.
+
+`:TH(text)` keeps the standard SVG superscript position. Pass an optional percentage to control the vertical displacement explicitly, for example `:TH(2 35%)`. Positive values raise the text and negative values lower it.
+
+Use `:TS` when you want full control over both values. Its optional `baseline` accepts SVG values such as `super`, `sub`, a positive percentage to raise the text, or a negative percentage to lower it:
+
+```text
+:TS(2 65% super)
+:TS(2 65% 35%)
+:TS(2 65% sub)
+:TS(2 65% -20%)
+:TS(2 baseline=35%)
+```
+
+`:TH(text)` and `:TL(text)` remain convenient, backwards-compatible shortcuts for superscript and subscript text.
 
 !!! pnpink "Advanced PnPInk tip"
     These basic text snippets are loaded automatically for every project. Their definitions live in `pnpink_ini.csv`, but normal projects only need to call them. Project-specific definitions and `${variable}` expressions belong in the [Snippets reference](snippets.md).
