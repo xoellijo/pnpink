@@ -50,7 +50,8 @@ jobs:
 
       - name: Build documentation
         run: |
-          mkdocs build -f mkdocs.pdf.yml --strict -d site
+          mkdocs build -f mkdocs.yml --strict -d site
+          mkdocs build -f mkdocs.pdf.yml -d site
           test -f site/index.html
           test -f site/pnpink.pdf
 

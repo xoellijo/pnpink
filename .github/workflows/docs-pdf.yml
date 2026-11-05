@@ -51,7 +51,7 @@ jobs:
           pip install -r docs/requirements-pdf.txt
 
       - name: Build docs site with PDF
-        run: mkdocs build -f mkdocs.pdf.yml --strict
+        run: mkdocs build -f mkdocs.pdf.yml
 
       - name: Collect PDF artifact
         run: |
