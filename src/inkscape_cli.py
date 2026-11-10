@@ -119,6 +119,7 @@ def shell_executable(exe: str | None) -> str | None:
     return path or None
 
 
+@lru_cache(maxsize=32)
 def _inspect_cli(exe: str, argument: str) -> str:
     kwargs = {}
     if os.name == "nt":
@@ -128,19 +129,28 @@ def _inspect_cli(exe: str, argument: str) -> str:
             [shell_executable(exe) or exe, argument],
             env=clean_launch_env(isolated_profile=False),
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, encoding="utf-8", errors="replace", timeout=5.0, **kwargs,
+            text=True, encoding="utf-8", errors="replace", timeout=20.0, **kwargs,
         )
     except (OSError, subprocess.SubprocessError) as error:
         _l.w("[inkscape.capability] exe=%r query=%s failed: %s", exe, argument, error)
-        return ""
+        # Unknown is not unsupported. Exceptions are not cached by lru_cache,
+        # so a transient startup failure cannot select the wrong viewer mode
+        # for the rest of the Deckmaker session.
+        raise RuntimeError(f"Could not inspect Inkscape capabilities ({argument}): {error}") from error
     if result.returncode != 0:
         _l.w("[inkscape.capability] exe=%r query=%s rc=%s stderr=%r", exe, argument, result.returncode, str(result.stderr or "")[-1000:])
-    return result.stdout if result.returncode == 0 else ""
+        raise RuntimeError(f"Inkscape capability query {argument} failed (exit {result.returncode})")
+    if not result.stdout.strip():
+        raise RuntimeError(f"Inkscape capability query {argument} returned no output")
+    return result.stdout
 
 
-@lru_cache(maxsize=8)
 def get_version(exe: str) -> str:
-    return _inspect_cli(exe, "--version").strip()[:250] or "unknown"
+    try:
+        return _inspect_cli(exe, "--version").strip()[:250]
+    except RuntimeError:
+        # The diagnostic version string must not prevent the viewer opening.
+        return "unknown"
 
 
 @lru_cache(maxsize=32)

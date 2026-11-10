@@ -1,4 +1,13 @@
 [0.85]
+- Remove separate version/help/action-list probes from viewer startup; use the
+  real shell/reload result for compatibility fallbacks. Drain child output
+  independently of logging through a bounded, non-blocking diagnostic queue.
+- Fix Windows Inkscape preview startup stalling on verbose ICC warnings: read
+  unbuffered pipes in blocks and log complete, bounded lines instead of characters,
+  while forwarding interactive shell prompts immediately.
+- Allow slower Inkscape capability queries and cache successful results only;
+  never interpret a timeout or failed query as an unsupported viewer feature.
+
 - Simplify the README with a visual introduction, prominent video tutorials,
   one-line installation commands, and collapsible alternative installation options.
 - Keep pnpink.log limited to the latest Deckmaker session: reset it only when

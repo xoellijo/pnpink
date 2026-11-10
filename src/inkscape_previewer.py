@@ -8,7 +8,6 @@ from ctypes import wintypes
 from collections import deque
 import fnmatch
 import os
-import platform
 import queue
 import re
 import shutil
@@ -317,6 +316,7 @@ class InkscapePreviewer:
         self._expected_exits: set[int] = set()
         self._last_action = ""
         self._runtime_logged = False
+        self._combined_mode = sys.platform == "darwin"
 
     @property
     def running(self) -> bool:
@@ -652,11 +652,15 @@ class InkscapePreviewer:
         )
         env["INKSCAPE_PROFILE_DIR"] = str(self._profile_dir)
         if not self._runtime_logged:
+            # platform.platform()/machine() can launch `cmd /c ver` on Windows.
+            # Runtime diagnostics must not start extra processes either.
+            system = sys.getwindowsversion() if os.name == "nt" else os.uname()
+            machine = os.environ.get("PROCESSOR_ARCHITECTURE", "unknown") if os.name == "nt" else system.machine
             LOG.i(
                 "[inkscape_previewer.runtime] platform=%s os=%r machine=%s python=%r python_version=%s "
-                "inkscape_exe=%r inkscape_version=%r shell_exe=%r",
-                sys.platform, platform.platform(), platform.machine(), sys.executable, sys.version.split()[0],
-                executable, INKSCAPE.get_version(shell), shell,
+                "inkscape_exe=%r shell_exe=%r (CLI banner captured with child output)",
+                sys.platform, system, machine, sys.executable, sys.version.split()[0],
+                executable, shell,
             )
             LOG.i(
                 "[inkscape_previewer.environment] profile=%r live_svg=%r env=%r",
@@ -668,14 +672,16 @@ class InkscapePreviewer:
             )
             self._runtime_logged = True
         self._output = queue.Queue()
-        use_active_window = sys.platform != "darwin" and INKSCAPE.supports_cli_option(shell, "--active-window")
-        has_rebase = INKSCAPE.supports_action(shell, "file-rebase")
-        self._restart_on_reload = not has_rebase or self._rebase_failed
+        # Start the actual viewer, not three extra CLI processes for diagnostics.
+        # Unsupported operations fall back on their real result, never on an
+        # unrelated capability query timing out.
+        self._restart_on_reload = self._rebase_failed
         LOG.i(
-            "[inkscape_previewer.capabilities] platform=%s active_window=%s file_rebase=%s reload=%s",
-            sys.platform, use_active_window, has_rebase, "restart" if self._restart_on_reload else "rebase",
+            "[inkscape_previewer.mode] platform=%s mode=%s reload=%s",
+            sys.platform, "combined" if self._combined_mode else "active-window",
+            "restart" if self._restart_on_reload else "try-rebase",
         )
-        if not use_active_window:
+        if self._combined_mode:
             LOG.i("[inkscape_previewer] using combined GUI+shell compatibility mode")
             self._start_combined(shell, env, startup_started, profile_ready)
             return
@@ -766,7 +772,10 @@ class InkscapePreviewer:
                 )
                 if not retryable or time.monotonic() >= shell_deadline or not gui_ready:
                     self.close()
-                    raise
+                    LOG.w("[inkscape_previewer] active-window shell failed; trying combined GUI/shell: %s", error)
+                    self._combined_mode = True
+                    self._start_combined(shell, env, startup_started, profile_ready)
+                    return
                 time.sleep(0.25)
         shell_ready = time.perf_counter()
         LOG.i(
@@ -876,25 +885,71 @@ class InkscapePreviewer:
         if stream is None:
             return
         destination = (output_queue or self._output) if forward else None
+        pending = ""
+        diagnostics: queue.Queue[tuple[bool, int, str]] = queue.Queue(maxsize=64)
+        drained = threading.Event()
+        dropped = 0
+
+        def write_diagnostics() -> None:
+            # File/console/UI logging may be arbitrarily slow. It must never
+            # block draining Inkscape's pipe or delivering a shell prompt.
+            while not drained.is_set() or not diagnostics.empty():
+                try:
+                    warning, length, detail = diagnostics.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                try:
+                    emit = LOG.w if warning else LOG.d
+                    emit("[inkscape_previewer.output] role=%s pid=%s chars=%d text=%r", role, process.pid, length, detail)
+                except Exception:
+                    pass
+            if dropped:
+                LOG.w("[inkscape_previewer.output] role=%s pid=%s skipped=%d diagnostic lines (slow log sink); tail=%r",
+                      role, process.pid, dropped, self._output_summary())
+
+        threading.Thread(
+            target=write_diagnostics, name="inkscape-previewer-diagnostics", daemon=True,
+        ).start()
+
+        def record(value: str) -> None:
+            nonlocal dropped
+            detail = re.sub(
+                r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]",
+                lambda match: f"\\x{ord(match[0]):02x}", value,
+            ).strip()
+            if not detail.strip("> \r\n\t"):
+                return
+            with self._diagnostic_lock:
+                self._output_tail.append(f"{role} pid={process.pid}: {detail[-512:]}")
+            warning = bool(re.search(
+                r"error|warning|critical|assertion|could not|unknown|failed|segmentation|abort", detail, re.IGNORECASE,
+            ))
+            try:
+                diagnostics.put_nowait((warning, len(value), detail[-2000:]))
+            except queue.Full:
+                # Keep the crash tail even when verbose diagnostics are dropped.
+                dropped += 1
+
         try:
             for value in PROCESS_IO.iter_text_chunks(stream):
+                # Prompts must reach the controller immediately, even without
+                # a newline; only diagnostic logging is assembled into lines.
                 if destination is not None:
                     destination.put(value)
-                detail = re.sub(
-                    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]",
-                    lambda match: f"\\x{ord(match[0]):02x}", value,
-                ).strip()
-                if not detail.strip("> \r\n\t"):
-                    continue
-                with self._diagnostic_lock:
-                    self._output_tail.append(f"{role} pid={process.pid}: {detail[-512:]}")
-                emit = LOG.w if re.search(
-                    r"error|warning|critical|assertion|could not|unknown|failed|segmentation|abort", detail, re.IGNORECASE,
-                ) else LOG.d
-                emit("[inkscape_previewer.output] role=%s pid=%s chars=%d text=%r", role, process.pid, len(value), detail[-2000:])
+                pending += value
+                while pending:
+                    newline = pending.find("\n", 0, 4096)
+                    if newline < 0 and len(pending) < 4096:
+                        break
+                    end = newline + 1 if newline >= 0 else 4096
+                    record(pending[:end])
+                    pending = pending[end:]
         except (OSError, ValueError) as error:
             LOG.d("[inkscape_previewer.output] role=%s pid=%s reader closed: %s", role, process.pid, error)
         finally:
+            if pending:
+                record(pending)
+            drained.set()
             return_code = process.wait()
             with self._diagnostic_lock:
                 expected = process.pid in self._expected_exits

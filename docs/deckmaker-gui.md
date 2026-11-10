@@ -39,19 +39,23 @@ The **Preview** panel selects an asset, moves to the previous or next generated 
 
 **Browser** keeps the embedded 96/600 DPI PNG workflow. **Inkscape** instead opens the generated SVG in one isolated, persistent Inkscape window and reloads that document in place when the selected asset changes. This preserves the viewer window, zoom, pan, size, and position while avoiding both PNG exports. The viewer starts eagerly, uses an A5 landscape page with rulers and a rectangular millimetre grid, and labels the page with the current preview. The isolated profile hides editing toolbars, palette, status bar, and scrollbars, and disables autosave and recent documents. The native **Layers and Objects** panel remains available through `Ctrl+Shift+L`; automatic keyboard/window manipulation is deliberately avoided because it is not portable or reliable.
 
-The Inkscape viewer checks `--active-window` and `file-rebase` independently. Without
-active-window support (including macOS), it uses one GUI/shell process and can still
-reload in place when file-rebase is available. Missing or failing reload support
-falls back to restarting the isolated viewer for the rest of the session.
+The Inkscape viewer starts without separate version/help/action-list queries.
+It tries the active-window shell on Windows/Linux and uses one GUI/shell process
+on macOS, also falling back to that combined mode if the active-window shell fails.
+It tries in-place reload directly; missing or failing reload support falls back
+to restarting the isolated viewer for the rest of the session.
 
 `pnpink.log` is reset when a new Deckmaker session starts. Reopening the extension
 while its resident app is running appends to that same session without clearing it.
 All processes retain append-mode handles, so resetting for a new session does not
 create NUL-filled gaps in concurrent writes.
 
-The log records timestamps, process/thread identifiers, Inkscape/Python versions,
+The log records timestamps, process/thread identifiers, native OS/Python details,
 viewer capabilities, launch arguments, profile paths, action timings, child-process
-warnings and exit codes. The `inkscape_previewer.*` entries distinguish normal
+warnings and exit codes. Child output is drained independently of log writes;
+a bounded queue drops excess diagnostic lines if logging cannot keep up, retaining
+the latest error context and reporting the number skipped. Shell prompts are not
+dropped. The `inkscape_previewer.*` entries distinguish normal
 shutdowns from unexpected exits and retain a bounded tail of child output.
 Environment diagnostics include only GUI/locale settings, not credentials or proxy variables.
 
