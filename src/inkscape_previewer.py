@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import wintypes
+from collections import deque
 import fnmatch
 import os
+import platform
 import queue
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -20,6 +23,7 @@ from pathlib import Path
 from app_paths import data_path
 import inkscape_cli as INKSCAPE
 import log as LOG
+import process_io as PROCESS_IO
 import temp_paths as TEMPPATHS
 
 
@@ -305,6 +309,14 @@ class InkscapePreviewer:
         self._has_preview_content = False
         self._field_to_ids: dict[str, list[str]] = {}
         self._id_to_fields: dict[str, list[str]] = {}
+        self._restart_on_reload = False
+        self._rebase_failed = False
+        self._combined_stop = threading.Event()
+        self._diagnostic_lock = threading.Lock()
+        self._output_tail: deque[str] = deque(maxlen=12)
+        self._expected_exits: set[int] = set()
+        self._last_action = ""
+        self._runtime_logged = False
 
     @property
     def running(self) -> bool:
@@ -328,7 +340,11 @@ class InkscapePreviewer:
         with self._lock:
             started = time.perf_counter()
             starting = not self.running
-            fit_view = not self._has_preview_content or sys.platform == "darwin"
+            LOG.i(
+                "[inkscape_previewer.request] source=%r bytes=%d starting=%s selected_fields=%r label=%r",
+                str(source), source.stat().st_size, starting, selected_fields, page_label,
+            )
+            fit_view = not self._has_preview_content or self._restart_on_reload
             self._replace_live_svg(
                 source,
                 center_viewport=False,
@@ -344,10 +360,8 @@ class InkscapePreviewer:
                 if actions:
                     self._action(";".join(actions), timeout=8.0)
                 action_description = ";".join(actions)
-            elif sys.platform == "darwin":
-                # Inkscape 1.4.x on macOS crashes in SPDocument::rebase while
-                # replacing pages/namedviews. A fresh isolated viewer is slower,
-                # but is the only reliable reload path exposed by its CLI.
+            elif self._restart_on_reload:
+                # Restart only if file-rebase is absent or failed in this viewer.
                 self.close()
                 self._start()
                 actions = list(_INITIAL_VIEW_ACTIONS)
@@ -364,7 +378,12 @@ class InkscapePreviewer:
                         actions.append(selection_action)
                     self._action(";".join(actions), timeout=12.0)
                     action_description = ";".join(actions)
-                except Exception:
+                except Exception as error:
+                    # Some builds advertise rebase but crash on pages/namedviews.
+                    # Do not repeat that failing operation on every preview update.
+                    self._rebase_failed = True
+                    self._restart_on_reload = True
+                    LOG.w("[inkscape_previewer] file-rebase failed; using restart for this session: %s", error)
                     self.close()
                     self._start()
                     actions = list(_INITIAL_VIEW_ACTIONS)
@@ -477,10 +496,20 @@ class InkscapePreviewer:
 
     def close(self) -> None:
         with self._lock:
+            self._combined_stop.set()
             self._prewarm_generation += 1
             self._prewarm_pending = False
             shell_process = self._shell_process
             gui_process = self._gui_process
+            with self._diagnostic_lock:
+                for process in (shell_process, gui_process):
+                    if process is not None and process.poll() is None:
+                        self._expected_exits.add(process.pid)
+            if shell_process is not None or gui_process is not None:
+                LOG.i(
+                    "[inkscape_previewer.close] gui_pid=%s shell_pid=%s last_action=%r",
+                    getattr(gui_process, "pid", None), getattr(shell_process, "pid", None), self._last_action,
+                )
             self._shell_process = None
             self._gui_process = None
         try:
@@ -622,9 +651,33 @@ class InkscapePreviewer:
             profile_stem="deckmaker-viewer",
         )
         env["INKSCAPE_PROFILE_DIR"] = str(self._profile_dir)
+        if not self._runtime_logged:
+            LOG.i(
+                "[inkscape_previewer.runtime] platform=%s os=%r machine=%s python=%r python_version=%s "
+                "inkscape_exe=%r inkscape_version=%r shell_exe=%r",
+                sys.platform, platform.platform(), platform.machine(), sys.executable, sys.version.split()[0],
+                executable, INKSCAPE.get_version(shell), shell,
+            )
+            LOG.i(
+                "[inkscape_previewer.environment] profile=%r live_svg=%r env=%r",
+                str(self._profile_dir), str(self._live_path),
+                {key: env[key] for key in (
+                    "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "LANG", "LC_ALL", "LC_NUMERIC",
+                    "GTK_PATH", "GTK_THEME", "INKSCAPE_PROFILE_DIR", "INKSCAPE_APP_ID_TAG",
+                ) if key in env},
+            )
+            self._runtime_logged = True
         self._output = queue.Queue()
-        if sys.platform == "darwin":
-            self._start_macos(executable, env, startup_started, profile_ready)
+        use_active_window = sys.platform != "darwin" and INKSCAPE.supports_cli_option(shell, "--active-window")
+        has_rebase = INKSCAPE.supports_action(shell, "file-rebase")
+        self._restart_on_reload = not has_rebase or self._rebase_failed
+        LOG.i(
+            "[inkscape_previewer.capabilities] platform=%s active_window=%s file_rebase=%s reload=%s",
+            sys.platform, use_active_window, has_rebase, "restart" if self._restart_on_reload else "rebase",
+        )
+        if not use_active_window:
+            LOG.i("[inkscape_previewer] using combined GUI+shell compatibility mode")
+            self._start_combined(shell, env, startup_started, profile_ready)
             return
         gui_kwargs = {
             "args": [
@@ -636,15 +689,26 @@ class InkscapePreviewer:
             "cwd": INKSCAPE.executable_dir(executable),
             "env": env,
             "stdin": subprocess.DEVNULL,
-            "stdout": subprocess.DEVNULL,
-            "stderr": subprocess.DEVNULL,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.STDOUT,
+            "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
+            "bufsize": 0,
             "close_fds": True,
         }
         if os.name == "nt":
             gui_kwargs["creationflags"] = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
         else:
             gui_kwargs["start_new_session"] = True
+        LOG.i("[inkscape_previewer.spawn] role=gui argv=%r cwd=%r", gui_kwargs["args"], gui_kwargs["cwd"])
         self._gui_process = subprocess.Popen(**gui_kwargs)
+        threading.Thread(
+            target=self._read_output,
+            args=(self._gui_process, None, "gui", False),
+            name="inkscape-previewer-gui-output",
+            daemon=True,
+        ).start()
         if not self._wait_for_gui(timeout=30.0):
             self.close()
             raise RuntimeError("Inkscape preview window did not become ready")
@@ -664,6 +728,8 @@ class InkscapePreviewer:
             "stdout": subprocess.PIPE,
             "stderr": subprocess.STDOUT,
             "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
             "bufsize": 0,
         }
         if os.name == "nt":
@@ -671,6 +737,7 @@ class InkscapePreviewer:
         shell_deadline = time.monotonic() + 20.0
         while True:
             self._output = queue.Queue()
+            LOG.i("[inkscape_previewer.spawn] role=shell argv=%r cwd=%r", shell_kwargs["args"], shell_kwargs["cwd"])
             self._shell_process = subprocess.Popen(**shell_kwargs)
             output_queue = self._output
             threading.Thread(
@@ -716,50 +783,62 @@ class InkscapePreviewer:
             (shell_ready - startup_started) * 1000.0,
         )
 
-    def _start_macos(
+    def _start_combined(
         self,
         executable: str,
         env: dict[str, str],
         startup_started: float,
         profile_ready: float,
     ) -> None:
-        """Run GUI and shell in one process; macOS has no active-window CLI mode."""
+        """Control the GUI directly when active-window is unavailable."""
+        kwargs = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
+            kwargs["start_new_session"] = True
+        argv = [executable, f"--app-id-tag={self._app_tag}", "--with-gui", "--shell", str(self._live_path)]
+        LOG.i("[inkscape_previewer.spawn] role=combined argv=%r cwd=%r", argv, INKSCAPE.executable_dir(executable))
         process = subprocess.Popen(
-            [
-                executable,
-                f"--app-id-tag={self._app_tag}",
-                "--with-gui",
-                "--shell",
-                str(self._live_path),
-            ],
+            argv,
             cwd=INKSCAPE.executable_dir(executable),
             env=env,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=0,
             close_fds=True,
-            start_new_session=True,
+            **kwargs,
         )
         self._gui_process = process
         self._shell_process = process
         threading.Thread(
             target=self._read_output,
-            args=(process, self._output),
+            args=(process, self._output, "combined"),
             name="inkscape-previewer-output",
             daemon=True,
         ).start()
         try:
             self._read_prompt(timeout=30.0)
+            # Older interactive shells process GUI events only between commands.
+            self._action("", timeout=5.0)
             if not self._wait_for_gui(timeout=5.0):
                 raise RuntimeError("Inkscape preview window did not become ready")
         except Exception:
             self.close()
             raise
         shell_ready = time.perf_counter()
+        self._combined_stop = stop = threading.Event()
+        threading.Thread(
+            target=self._pump_combined_gui,
+            args=(process, stop),
+            name="inkscape-previewer-gui-events",
+            daemon=True,
+        ).start()
         LOG.i(
-            "[inkscape_previewer] started combined macOS gui+shell pid=%s svg='%s'",
+            "[inkscape_previewer] started combined gui+shell pid=%s svg='%s'",
             process.pid,
             self._live_path,
         )
@@ -770,16 +849,67 @@ class InkscapePreviewer:
             (shell_ready - startup_started) * 1000.0,
         )
 
-    def _read_output(self, process: subprocess.Popen, output_queue: queue.Queue | None = None) -> None:
+    def _pump_combined_gui(self, process: subprocess.Popen, stop: threading.Event) -> None:
+        """Keep legacy GUI shells responsive without interleaving real commands."""
+        while not stop.wait(0.1):
+            if not self._lock.acquire(blocking=False):
+                continue
+            try:
+                if stop.is_set() or self._shell_process is not process or process.poll() is not None:
+                    return
+                self._action("", timeout=2.0)
+            except Exception as error:
+                LOG.w("[inkscape_previewer] GUI event loop stopped: %s", error)
+                return
+            finally:
+                self._lock.release()
+
+    def _output_summary(self) -> str:
+        with self._diagnostic_lock:
+            return " | ".join(list(self._output_tail)[-4:])
+
+    def _read_output(
+        self, process: subprocess.Popen, output_queue: queue.Queue | None = None,
+        role: str = "shell", forward: bool = True,
+    ) -> None:
         stream = process.stdout
         if stream is None:
             return
-        destination = output_queue or self._output
-        while True:
-            value = stream.read(1)
-            if not value:
-                return
-            destination.put(value)
+        destination = (output_queue or self._output) if forward else None
+        try:
+            for value in PROCESS_IO.iter_text_chunks(stream):
+                if destination is not None:
+                    destination.put(value)
+                detail = re.sub(
+                    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]",
+                    lambda match: f"\\x{ord(match[0]):02x}", value,
+                ).strip()
+                if not detail.strip("> \r\n\t"):
+                    continue
+                with self._diagnostic_lock:
+                    self._output_tail.append(f"{role} pid={process.pid}: {detail[-512:]}")
+                emit = LOG.w if re.search(
+                    r"error|warning|critical|assertion|could not|unknown|failed|segmentation|abort", detail, re.IGNORECASE,
+                ) else LOG.d
+                emit("[inkscape_previewer.output] role=%s pid=%s chars=%d text=%r", role, process.pid, len(value), detail[-2000:])
+        except (OSError, ValueError) as error:
+            LOG.d("[inkscape_previewer.output] role=%s pid=%s reader closed: %s", role, process.pid, error)
+        finally:
+            return_code = process.wait()
+            with self._diagnostic_lock:
+                expected = process.pid in self._expected_exits
+                self._expected_exits.discard(process.pid)
+            exit_signal = ""
+            if return_code < 0:
+                try:
+                    exit_signal = signal.Signals(-return_code).name
+                except ValueError:
+                    pass
+            emit = LOG.i if expected or return_code == 0 else LOG.w
+            emit(
+                "[inkscape_previewer.exit] role=%s pid=%s rc=%s expected=%s signal=%s last_action=%r tail=%r",
+                role, process.pid, return_code, expected, exit_signal, self._last_action, self._output_summary(),
+            )
 
     def _read_prompt(self, timeout: float) -> str:
         return self._read_prompt_from(self._shell_process, timeout)
@@ -797,6 +927,11 @@ class InkscapePreviewer:
         chunks: list[str] = []
         while time.monotonic() < deadline:
             if process.poll() is not None:
+                while True:
+                    try:
+                        chunks.append(source.get_nowait())
+                    except queue.Empty:
+                        break
                 break
             try:
                 chunks.append(source.get(timeout=0.02))
@@ -807,16 +942,37 @@ class InkscapePreviewer:
                 return text
             if "No active desktop to run" in text:
                 raise RuntimeError("Inkscape previewer did not become ready: No active desktop to run")
-        message = "".join(chunks).strip()
-        raise RuntimeError(f"Inkscape previewer did not become ready: {message}")
+        message = "".join(chunks).strip()[-1500:]
+        LOG.w(
+            "[inkscape_previewer.prompt] pid=%s rc=%s timeout=%.1fs last_action=%r output=%r tail=%r",
+            process.pid, process.poll(), timeout, self._last_action, message, self._output_summary(),
+        )
+        raise RuntimeError(
+            f"Inkscape previewer did not become ready (pid={process.pid}, rc={process.poll()}): {message}"
+        )
 
     def _action(self, action: str, *, timeout: float) -> str:
         process = self._shell_process
         if process is None or process.poll() is not None or process.stdin is None:
             raise RuntimeError("Inkscape previewer is not running")
+        started = time.perf_counter()
+        verbose = bool(action and action != "select-list")
+        if verbose:
+            self._last_action = action
+            LOG.i("[inkscape_previewer.action] pid=%s command=%r timeout=%.1fs", process.pid, action, timeout)
         process.stdin.write(f"{action}\n")
         process.stdin.flush()
-        return self._read_prompt(timeout)
+        output = self._read_prompt(timeout)
+        if "Error on rebase_doc:" in output or re.search(
+            r"(?:could not find action for:|Unknown action name:)\s*(?:app\.)?file-rebase\b", output,
+        ):
+            raise RuntimeError(f"Inkscape preview action failed: {output.strip()[-1000:]}")
+        if verbose:
+            LOG.i(
+                "[inkscape_previewer.action.done] pid=%s ms=%.1f rc=%s output=%r",
+                process.pid, (time.perf_counter() - started) * 1000.0, process.poll(), output.strip()[-1000:],
+            )
+        return output
 
     def _window_handle(self, timeout: float = 0.0) -> int:
         if os.name != "nt":

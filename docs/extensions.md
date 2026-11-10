@@ -7,7 +7,7 @@ This page summarizes the user-facing extensions present in the current project v
 ### Deckmaker
 Visible in Inkscape as:
 
-`Extensions > PnPInk > Deckmaker v0.83`
+`Extensions > PnPInk > Deckmaker v0.85`
 
 Purpose:
 
@@ -19,7 +19,7 @@ Purpose:
 - open the generated SVG in Inkscape,
 - export PDF, PDF/X, and other output formats.
 
-The GUI title shows the current Deckmaker version and the template file name. The former desktop interface remains temporarily available as `Deckmaker v0.83 [OLD gui]`. Spritesheet editing is integrated into Deckmaker and no longer has a separate Inkscape menu entry. See [Deckmaker](deckmaker-gui.md) and [Export](export.md).
+The GUI title shows the current Deckmaker version and the template file name. The former desktop interface remains temporarily available as `Deckmaker v0.85 [OLD gui]`. Spritesheet editing is integrated into Deckmaker and no longer has a separate Inkscape menu entry. See [Deckmaker](deckmaker-gui.md) and [Export](export.md).
 
 ## Project/package tools
 

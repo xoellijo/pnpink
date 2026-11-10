@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
+from typing import Callable
 import urllib.parse
 import webbrowser
 
@@ -149,21 +151,29 @@ def _launch(executable: str, args: list[str]) -> bool:
         }
         if os.name != "nt":
             kwargs["start_new_session"] = True
-        subprocess.Popen(**kwargs)
-        return True
+        process = subprocess.Popen(**kwargs)
+        try:
+            return process.wait(timeout=0.5) == 0
+        except subprocess.TimeoutExpired:
+            return True
     except OSError:
         return False
 
 
-def open_web_app(url: str, preferred_browser: str = "system") -> bool:
-    """Open a local web tool using the configured installed browser."""
-    browser = normalize_browser(preferred_browser)
-    if browser == "system":
-        try:
-            return bool(webbrowser.open(url, new=2, autoraise=True))
-        except Exception:
-            return False
+def _open_system_browser(url: str) -> bool:
+    try:
+        controller = webbrowser.get()
+        # Python's BackgroundBrowser can report success before a broken desktop
+        # opener exits. Observe these helpers long enough to catch that failure.
+        name = os.path.basename(controller.name)
+        if name in {"gio", "xdg-open"}:
+            return _launch(controller.name, ["open", url] if name == "gio" else [url])
+        return bool(webbrowser.open(url, new=2, autoraise=True))
+    except Exception:
+        return False
 
+
+def _open_named_browser(url: str, browser: str) -> bool:
     paths = _candidate_paths(browser)
     if paths:
         chromium = browser in {"edge", "chrome", "chromium"}
@@ -179,9 +189,30 @@ def open_web_app(url: str, preferred_browser: str = "system") -> bool:
             args.append(f"--app={target}")
         else:
             args.append(target)
-        if _launch(paths[0], args):
+        return _launch(paths[0], args)
+    return False
+
+
+def open_web_app(
+    url: str,
+    preferred_browser: str = "system",
+    *,
+    is_open: Callable[[], bool] | None = None,
+) -> bool:
+    """Try the preference, then platform fallbacks; optionally verify UI arrival."""
+    fallbacks = ("edge", "chrome") if os.name == "nt" else (
+        ("safari", "chrome") if sys.platform == "darwin" else ("chromium", "firefox")
+    )
+    browsers = dict.fromkeys((normalize_browser(preferred_browser), "system", *fallbacks))
+    for browser in browsers:
+        launched = _open_system_browser(url) if browser == "system" else _open_named_browser(url, browser)
+        if not launched:
+            continue
+        if is_open is None:
             return True
-    try:
-        return bool(webbrowser.open(url, new=2, autoraise=True))
-    except Exception:
-        return False
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if is_open():
+                return True
+            time.sleep(0.1)
+    return bool(is_open and is_open())

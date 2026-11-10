@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 import os
 import queue
 import shutil
@@ -118,6 +119,46 @@ def shell_executable(exe: str | None) -> str | None:
     return path or None
 
 
+def _inspect_cli(exe: str, argument: str) -> str:
+    kwargs = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    try:
+        result = subprocess.run(
+            [shell_executable(exe) or exe, argument],
+            env=clean_launch_env(isolated_profile=False),
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding="utf-8", errors="replace", timeout=5.0, **kwargs,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        _l.w("[inkscape.capability] exe=%r query=%s failed: %s", exe, argument, error)
+        return ""
+    if result.returncode != 0:
+        _l.w("[inkscape.capability] exe=%r query=%s rc=%s stderr=%r", exe, argument, result.returncode, str(result.stderr or "")[-1000:])
+    return result.stdout if result.returncode == 0 else ""
+
+
+@lru_cache(maxsize=8)
+def get_version(exe: str) -> str:
+    return _inspect_cli(exe, "--version").strip()[:250] or "unknown"
+
+
+@lru_cache(maxsize=32)
+def supports_cli_option(exe: str, option: str) -> bool:
+    """Inspect installed capabilities once, including distribution backports."""
+    return bool(re.search(
+        r"(?<![\w-])" + re.escape(option) + r"(?=[\s=,]|$)", _inspect_cli(exe, "--help"),
+    ))
+
+
+@lru_cache(maxsize=32)
+def supports_action(exe: str, action: str) -> bool:
+    """Actions are independent of CLI switches and are not platform inferred."""
+    return bool(re.search(
+        r"^\s*" + re.escape(action) + r"\s*:", _inspect_cli(exe, "--action-list"), re.MULTILINE,
+    ))
+
+
 def clean_launch_env(*, isolated_profile: bool = True, profile_stem: str = "automation") -> dict[str, str]:
     env = dict(os.environ)
     exact_keys = {
@@ -140,6 +181,11 @@ def clean_launch_env(*, isolated_profile: bool = True, profile_stem: str = "auto
             continue
         if sk in exact_keys or any(sk.startswith(prefix) for prefix in prefix_keys):
             env.pop(sk, None)
+    # Inkscape 1.2 parses export-area using the numeric locale, while our CLI
+    # coordinates always use decimal points. LC_ALL would override LC_NUMERIC.
+    if env.get("LC_ALL"):
+        env["LANG"] = env.pop("LC_ALL")
+    env["LC_NUMERIC"] = "C"
     if isolated_profile:
         stem = str(profile_stem or "automation").strip() or "automation"
         try:
@@ -465,6 +511,7 @@ class ShellQuerySession:
         self.readers: list[threading.Thread] = []
         self.current_svg: str | None = None
         self.ready = False
+        self._png_compression_supported: bool | None = None
 
     def __enter__(self):
         kwargs = {
@@ -603,10 +650,12 @@ class ShellQuerySession:
         commands = []
         if reload_svg:
             commands.append(f"file-open:{svg_path}")
+        compression_action = self._png_compression_action(compression, timeout_s=timeout_s)
+        if compression_action:
+            commands.append(compression_action)
         commands.extend([
             "export-type:png",
             f"export-dpi:{int(dpi)}",
-            f"export-png-compression:{max(0, min(9, int(compression)))}",
             f"export-area:{x0:.6f}:{y0:.6f}:{x1:.6f}:{y1:.6f}",
             f"export-background:{background_color}",
             f"export-background-opacity:{background_opacity}",
@@ -650,10 +699,12 @@ class ShellQuerySession:
         commands = []
         if reload_svg:
             commands.append(f"file-open:{svg_path}")
+        compression_action = self._png_compression_action(compression, timeout_s=timeout_s)
+        if compression_action:
+            commands.append(compression_action)
         commands.extend([
             "export-type:png",
             f"export-dpi:{int(dpi)}",
-            f"export-png-compression:{max(0, min(9, int(compression)))}",
             f"export-id:{node_id}",
             "export-id-only:true",
             f"export-background:{background_color}",
@@ -677,6 +728,16 @@ class ShellQuerySession:
                 timeout_s=timeout_s,
             )
 
+    def _png_compression_action(self, compression: int, *, timeout_s: float) -> str:
+        # Query once per persistent shell rather than guessing from the version:
+        # Inkscape 1.2/1.3 do not expose this optional performance setting.
+        if self._png_compression_supported is None:
+            actions = self._action("action-list", timeout_s=timeout_s)
+            self._png_compression_supported = "export-png-compression" in actions
+        if self._png_compression_supported:
+            return f"export-png-compression:{max(0, min(9, int(compression)))}"
+        return ""
+
     def _export_png_once(
         self,
         svg_path: str,
@@ -695,11 +756,13 @@ class ShellQuerySession:
             svg_path,
             "--export-type=png",
             f"--export-dpi={int(dpi)}",
-            f"--export-png-compression={max(0, min(9, int(compression)))}",
             f"--export-background={background_color}",
             f"--export-background-opacity={background_opacity}",
             f"--export-filename={png_path}",
         ]
+        compression_action = self._png_compression_action(compression, timeout_s=timeout_s)
+        if compression_action:
+            argv.append("--" + compression_action.replace(":", "=", 1))
         if area is not None:
             x0, y0, x1, y1 = area
             argv.append(f"--export-area={x0:.6f}:{y0:.6f}:{x1:.6f}:{y1:.6f}")

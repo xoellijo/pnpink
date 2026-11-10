@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
 
-  <_name>Deckmaker v0.83 [OLD gui]</_name>
+  <_name>Deckmaker v0.85 [OLD gui]</_name>
   <id>pnpink.deckmaker_app</id>
 
   <effect needs-live-preview="false" implements-custom-gui="true">

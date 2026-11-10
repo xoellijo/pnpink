@@ -2463,6 +2463,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             log_level=ns.log_level,
             autorun=bool(ns.autorun),
         )
+    LOG.start_session("Deckmaker classic")
     app = DeckMakerApp(initial)
     app.run()
     return 0

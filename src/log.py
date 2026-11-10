@@ -14,7 +14,7 @@ import threading
 import inkex
 import prefs
 
-__all__ = ['get_logger', 'init', 'Logger', 'd', 'i', 'w', 'e', 't', 'a', 'close', 's', 'silence', 'context', 'set_context', 'clear_context', 'add_listener', 'remove_listener']
+__all__ = ['get_logger', 'init', 'start_session', 'Logger', 'd', 'i', 'w', 'e', 't', 'a', 'close', 's', 'silence', 'context', 'set_context', 'clear_context', 'add_listener', 'remove_listener']
 
 # ---------------------------- Levels ----------------------------------------
 _VALID = {"none","error","warn","info","debug","trace",
@@ -62,10 +62,11 @@ class Logger:
         self._console_flags = _sink_flags(self.console_level)
         self._file_flags    = _sink_flags(self.file_level)
 
-        # Open file handle once
+        # Every writer must append, even across an explicit session reset. Opening
+        # in "w" leaves other non-append writers at offsets that create NUL holes.
         self._fh = None
         try:
-            self._fh = open(self.file_path, "w", encoding="utf-8")
+            self._fh = open(self.file_path, "a", encoding="utf-8", buffering=1)
         except Exception as ex:
             inkex.utils.errormsg(f"[{self.tag}] ERROR opening log file: {ex}")
 
@@ -126,7 +127,13 @@ class Logger:
             if location:
                 base = f"[{', '.join(location)}] {base}"
 
-        line = f"[{level.upper()}: {mod}{dt_part}] {base}"
+        if "\x00" in base:
+            base = base.replace("\x00", r"\0")
+        wall_time = time.time()
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(wall_time))
+        timestamp += f".{int(wall_time % 1 * 1000):03d}"
+        identity = f"{timestamp} pid={os.getpid()} thread={threading.current_thread().name}"
+        line = f"[{level.upper()}: {mod}{dt_part}] [{identity}] {base}"
         return line, self._console_flags, self._file_flags
 
     def _is_enabled(self, flags, level):
@@ -192,6 +199,20 @@ class Logger:
                 self._fh = None
             except Exception:
                 pass
+
+    def reset_file(self) -> bool:
+        """Start a new session without replacing append-mode handles in launchers."""
+        with self._lock:
+            try:
+                if self._fh is None or self._fh.closed:
+                    return False
+                self._fh.flush()
+                os.ftruncate(self._fh.fileno(), 0)
+                self._fh.seek(0, os.SEEK_END)
+                self._t_prev = self._last_flush = time.perf_counter()
+                return True
+            except OSError:
+                return False
 
 # --------------------------- singleton API -----------------------------------
 _LOGGER = None
@@ -289,6 +310,16 @@ def init(tag="PnP", console_level="warn", file_level="trace"):
     file_path = os.path.join(ext_dir, "pnpink.log")
     _LOGGER = Logger(tag, console_level, file_level, file_path)
     return _LOGGER
+
+def start_session(name="Deckmaker") -> bool:
+    """Called by a new resident app, never by a launcher reconnecting to it."""
+    logger = get_logger()
+    if not logger.reset_file():
+        logger.warn("[session.start] could not reset log for %s", name)
+        return False
+    logger.info("[session.start] %s", name)
+    return True
+
 
 def close():
     global _LOGGER

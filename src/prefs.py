@@ -82,8 +82,8 @@ _DEFAULTS = {
     "template_engine": "composed",
     "web_user_agent": "github.com/xoellijo/pnpink",
     "deckmaker_web_browser": "system",
-    "deckmaker_preview_backend": "browser",
-    "deckmaker_preview_selection_sync": "off",
+    "deckmaker_preview_backend": "inkscape",
+    "deckmaker_preview_selection_sync": "dataset",
     "deckmaker_show_log_on_build": "1",
     "deckmaker_dataset_dock": "bottom",
     "deckmaker_dataset_split_bottom": "0.58",
@@ -281,18 +281,18 @@ def set_deckmaker_web_browser(value: str) -> None:
     set("deckmaker_web_browser", browser if browser in valid else "system", save=True)
 
 
-def get_deckmaker_preview_backend(default: str = "browser") -> str:
+def get_deckmaker_preview_backend(default: str = "inkscape") -> str:
     valid = {"browser", "inkscape"}
     value = str(get("deckmaker_preview_backend", default) or default).strip().lower()
-    return value if value in valid else "browser"
+    return value if value in valid else "inkscape"
 
 
 def set_deckmaker_preview_backend(value: str) -> None:
-    backend = str(value or "browser").strip().lower()
-    set("deckmaker_preview_backend", backend if backend in {"browser", "inkscape"} else "browser", save=True)
+    backend = str(value or "inkscape").strip().lower()
+    set("deckmaker_preview_backend", backend if backend in {"browser", "inkscape"} else "inkscape", save=True)
 
 
-def get_deckmaker_preview_selection_sync(default: str = "off") -> str:
+def get_deckmaker_preview_selection_sync(default: str = "dataset") -> str:
     aliases = {
         "off": "off",
         "dataset": "dataset",
@@ -302,7 +302,7 @@ def get_deckmaker_preview_selection_sync(default: str = "off") -> str:
         "two_way": "two_way",
     }
     value = str(get("deckmaker_preview_selection_sync", default) or default).strip().lower()
-    return aliases.get(value, "off")
+    return aliases.get(value, "dataset")
 
 
 def set_deckmaker_preview_selection_sync(value: str) -> None:
@@ -314,7 +314,7 @@ def set_deckmaker_preview_selection_sync(value: str) -> None:
         "two-way": "two_way",
         "two_way": "two_way",
     }
-    normalized = aliases.get(str(value or "off").strip().lower(), "off")
+    normalized = aliases.get(str(value or "dataset").strip().lower(), "dataset")
     set("deckmaker_preview_selection_sync", normalized, save=True)
 
 

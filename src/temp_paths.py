@@ -11,6 +11,9 @@ from pathlib import Path
 
 
 _ROOT = os.path.join(tempfile.gettempdir(), "pnpink")
+# These named directories are reused by resident Inkscape processes. Removing
+# them while a shell/viewer is alive breaks its profile and recent-file writes.
+_RUNTIME_KINDS = {"inkscape_profile", "xdg_config", "xdg_cache", "xdg_data", "inkscape_previewer"}
 
 
 def root_dir() -> str:
@@ -59,7 +62,7 @@ def cleanup_old_runs(*, max_age_hours: int = 36, keep_paths: list[str] | tuple[s
     for kind_dir in kinds:
         if not os.path.isdir(kind_dir):
             continue
-        if os.path.basename(kind_dir) == "inkscape_profile":
+        if os.path.basename(kind_dir) in _RUNTIME_KINDS:
             continue
         try:
             entries = [os.path.join(kind_dir, name) for name in os.listdir(kind_dir)]
@@ -99,7 +102,7 @@ def cleanup_runs_now(*, keep_paths: list[str] | tuple[str, ...] | None = None) -
     for kind_dir in kinds:
         if not os.path.isdir(kind_dir):
             continue
-        if os.path.basename(kind_dir) == "inkscape_profile":
+        if os.path.basename(kind_dir) in _RUNTIME_KINDS:
             continue
         try:
             entries = [os.path.join(kind_dir, name) for name in os.listdir(kind_dir)]

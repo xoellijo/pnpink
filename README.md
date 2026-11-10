@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/xoellijo/pnpink/releases/latest"><strong>Install PnPInk</strong></a>
+  <a href="#install-pnpink"><strong>Install PnPInk</strong></a>
   ·
   <a href="https://xoellijo.github.io/pnpink/intro/"><strong>Read the documentation</strong></a>
   ·
@@ -29,11 +29,15 @@
 
 ## One Design, Hundreds of Variations
 
-PnPInk connects **one Inkscape template** to **Google Sheets or CSV data**. Each row can become a card, badge, label, certificate, ticket, game component, or any other personalized graphic.
+**Design in Inkscape. Add a spreadsheet. Generate your whole deck.**
 
-Design visually, connect text and graphics to your data, and generate a complete, print-ready batch in seconds. Change a name, replace a photo, rebalance a card, or redesign the template, then regenerate everything without rebuilding each item by hand.
+Turn **one SVG template + Google Sheets or CSV** into cards, tokens, boards, badges, labels, or personalized PDFs. Change the design or data and regenerate every variation—without editing each item by hand. Your generated artwork stays **fully editable SVG**.
 
-Deckmaker adds an integrated dataset editor and synchronized instant previews, so you can refine data and design from the same workspace.
+It is difficult to show everything PnPInk can do in a feature list. See it in action:
+
+<p align="center">
+  <a href="https://www.youtube.com/playlist?list=PLM5-7ajCwZAQ"><strong>▶ Watch the PnPInk video tutorials</strong></a>
+</p>
 
 <table>
   <tr>
@@ -68,112 +72,69 @@ Deckmaker adds an integrated dataset editor and synchronized instant previews, s
 
 <p align="center"><em>One SVG template, one dataset, and every variation generated automatically.</em></p>
 
-Your output stays **real, editable SVG**. Nothing is locked into a proprietary format, and nothing is flattened until you choose to export.
-
-| Design visually | Connect your content | Generate and publish |
-| --- | --- | --- |
-| Use the full creative power of Inkscape. | Drive every component from CSV or Google Sheets. | Create editable SVG, print-ready PDF, images, and cutting files. |
-
-## What Can You Create?
-
-- **Games:** cards and card backs, boards, modular maps, counters, tokens, tiles, punchboards, hex grids, labels, and reference sheets.
-- **Printable and cuttable prototypes:** PDFs with cutting marks for hand cutting or cutting plotters such as Silhouette Cameo and Cricut.
-- **High-volume variable-data publishing (VDP):** dynamic PDF batches for badges, ID cards, credentials, certificates, diplomas, tickets, invitations, name tags, product labels, price cards, catalogs, and mail pieces.
-
-The same workflow scales from a few prototypes to thousands of personalized documents.
-
-It is difficult to show everything PnPInk can do in a feature list, so we are creating short practical demonstrations in the [PnPInk video tutorials playlist](https://www.youtube.com/playlist?list=PLM5-7ajCwZAQ).
-
-## From Google Sheets to Dynamic PDFs
-
-Keep names, text, numbers, image links, and other changing content in a shared spreadsheet. PnPInk combines each row with your Inkscape design and can produce editable SVG, print-ready PDF, images, and cutting files.
-
-Use local artwork, reusable SVG symbols, Iconify icons, Wikimedia Commons images, public Google Drive files, spritesheets, or generated maps. The template controls the design; the spreadsheet controls what changes.
-
-Deckmaker can edit local CSV datasets directly or display a linked Google Sheet, while keeping the selected row synchronized with the current preview.
-
-## Why PnPInk?
-
-### Create, Don't Code
-
-Build your design in Inkscape and use familiar IDs to connect artwork with data. No programming is required. PnPInk's compact DSL is there when you want advanced automation—not as a barrier to getting started.
-
-### Change Everything in One Place
-
-Update the spreadsheet to change names, values, or artwork. Update the SVG to redesign the layout. Regenerate the project and every item follows automatically.
-
-### Keep Full Creative Control
-
-Use paths, typography, layers, gradients, filters, symbols, masks, and every other tool available in Inkscape. Generated results remain editable and inspectable.
-
-### Go from Prototype to Production
-
-Start with a quick prototype or a short event list, then move to bleed, duplex printing, registration marks, professional PDF export, ICC profiles, or plotter-ready cutting templates when needed.
-
-### Use Content from Anywhere
-
-Place local files, reusable SVG symbols, Iconify icons, Wikimedia Commons images, public Google Drive folders, spritesheets, and generated SVG maps directly from your dataset.
-
-### Stay Free and Independent
-
-PnPInk is free, open source, cross-platform, and built around open formats. Your project remains yours.
-
-## How It Works
-
-1. **Design a template** in Inkscape using IDs such as `name`, `photo`, `title`, `art`, or `back_art`.
-2. **Add your content** in CSV or Google Sheets using matching column names.
-3. **Run Deckmaker** to edit the dataset, inspect instant previews, generate, and export the complete project.
-
-Then iterate: change the data or design and generate again.
-
-## Made for Real Production Work
-
-PnPInk grows with your project:
-
-- Precise Fit + Anchor placement for predictable sizing and alignment
-- Multiple icons and rich text inside the same field
-- Automatic page layouts, grids, bleed, margins, and cutting marks
-- Duplex front/back generation with mirrored print layouts
-- Reusable page, card, layout, and export presets
-- Portable `.pnp` and `.zvg` project packages
-- SVG maps from OpenStreetMap and OpenFreeMap sources
-- Large-output splitting and shared-resource optimization
-- PDF presets, PDF/X CMYK, ICC profiles, and smart filter rasterization
-- PNG, JPEG, TIFF, WebP, SVG, PS, EPS, EMF, WMF, and cutting exports
-- High-throughput paths for demanding variable-data projects
-
-Optimized templates can generate tens of thousands of records per minute on suitable hardware, while smaller projects benefit from the same repeatable workflow.
-
 ## Install PnPInk
 
-### Requirements:
-[Inkscape](https://inkscape.org/release/) 1.2 or newer, installed on Windows, macOS, or Linux. Sandboxed builds such as Flatpak are not supported.
+Requires [Inkscape](https://inkscape.org/release/) **1.2 or newer** on Windows, macOS, or Linux. Sandboxed builds such as Flatpak are not supported.
 
-### Installation:
+Install the latest stable release with the command for your system:
 
-Download just one launcher script (`pnpink_install.bat` for Windows or pnpink_install.sh for Linux/macOS) from the [latest release](https://github.com/xoellijo/pnpink/releases/latest):
+**Windows:** press **Win+R**, paste this line, and press **Enter**. The command window stays open so you can read the result.
 
-- Windows: run `pnpink_install.bat` from CMD. (Note it installs a private portable Ghostscript only when none is available; use `--no-ghostscript` to skip this check).
-- macOS/Linux: run `chmod +x pnpink_install.sh && ./pnpink_install.sh`.
+```bat
+cmd /k "curl.exe -fL https://github.com/xoellijo/pnpink/releases/latest/download/pnpink_install.bat -o "%TEMP%\pnpink_install.bat" && call "%TEMP%\pnpink_install.bat""
+```
+
+**Linux / macOS:** paste this line into a terminal:
+
+```sh
+curl -fsSL https://github.com/xoellijo/pnpink/releases/latest/download/pnpink_install.sh | sh
+```
 
 Restart Inkscape, then open `Extensions > PnPInk`.
 
-Here a descpription of how to make a manual installation:
+<details>
+<summary>Alternative installation: download the installer or install manually</summary>
+
+### Download the installer
+
+Download `pnpink_install.bat` (Windows) or `pnpink_install.sh` (Linux/macOS) from the [latest release](https://github.com/xoellijo/pnpink/releases/latest):
+
+- Windows: run `pnpink_install.bat` from CMD. It installs a private portable Ghostscript only when none is available; use `pnpink_install.bat --no-ghostscript` to skip this check.
+- Linux/macOS: run `chmod +x pnpink_install.sh && ./pnpink_install.sh`.
+
+### Manual installation
+
 - Download and extract the `pnpink_payload_<version>.zip` file from the desired release.
 - Copy its complete `src` folder into your Inkscape extensions directory and rename that folder to `pnpink`:
    - Windows: `%APPDATA%\inkscape\extensions\pnpink`
    - Linux and macOS: `~/.config/inkscape/extensions/pnpink`
 
-## Your First Project
+</details>
 
-The fastest way to understand PnPInk is to generate something:
+## Visual Design, Powerful Automation
 
-1. Open an SVG template in Inkscape and run `Extensions > PnPInk > DeckMaker`.
-2. Open a prepared project from `Help > Examples`, or connect a local CSV or Google Sheet.
-3. Edit a dataset cell and inspect the synchronized preview.
-4. Create the editable SVG or export the required production format.
+**The power of a data-driven generator, the ease of a visual workflow, and the full creative freedom of Inkscape.** Start without programming; add advanced automation only when you need it.
 
-`.pnp` packages contain the template, dataset, manifest, and project assets, making them ideal for learning and sharing complete projects.
+You design with real paths, typography, layers, gradients, filters, symbols, and masks—not a limited template editor. Nothing is locked into a proprietary format or flattened until you choose to export.
+
+### From Your First Card to a Complete Project
+
+1. **Design a template** in Inkscape. Give changing elements IDs such as `title`, `art`, or `back_art`, and use matching column names in CSV or Google Sheets.
+2. **Open `Extensions > PnPInk > DeckMaker`.** Connect your dataset, or start with a prepared project from `Help > Examples`. Edit local CSV data and inspect synchronized previews as you iterate.
+3. **Generate and export.** Produce editable SVG, a print-ready PDF, individual images, or cutting files. Update the data to rebalance cards; update the template to redesign the whole set.
+
+The same workflow handles game components, modular maps, punchboards, and reference sheets—or variable-data publishing such as certificates, tickets, catalogs, and personalized badges. Portable `.pnp` packages keep the template, dataset, manifest, and assets together for sharing.
+
+### Features That Grow with Your Project
+
+- **Data-driven artwork:** local files, SVG symbols, Iconify icons, Wikimedia Commons images, public Google Drive files, and spritesheets, selected from your dataset.
+- **Precise composition:** Fit + Anchor sizing and alignment, rich text with inline icons, and an optional compact DSL for advanced automation.
+- **Reusable layouts:** page, card, layout, and export presets; automatic grids, margins, bleed, and cutting marks.
+- **Fronts and backs:** duplex generation with mirrored print layouts, plus cutting templates for hand cutting or plotters such as Silhouette Cameo and Cricut.
+- **Generated maps:** SVG maps from OpenStreetMap and OpenFreeMap sources.
+- **Production exports:** PDF presets, PDF/X CMYK, ICC profiles, and smart filter rasterization; PNG, JPEG, TIFF, WebP, SVG, PS, EPS, EMF, and WMF output.
+- **Larger projects:** output splitting, shared-resource optimization, and portable `.pnp` / `.zvg` packages.
+- **No lock-in:** free, open source, cross-platform, and built around editable SVG and ordinary spreadsheets.
 
 ## Learn More
 

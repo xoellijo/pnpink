@@ -45,6 +45,7 @@ def _open_browser(url: str) -> bool:
     return open_web_app(
         f"{url}{separator}launch={time.time_ns()}",
         preferred_browser=prefs.get_deckmaker_web_browser(),
+        is_open=lambda: bool(_browser_window_status().get("present")),
     )
 
 
@@ -88,11 +89,14 @@ class DeckMakerWebHost:
         self._last_session_check = self._started_at
         self._empty_since: float | None = None
         self._had_session = False
-        self.service = DeckMakerService(initial)
         self._browser_expected_until = time.monotonic() + self.STARTUP_TIMEOUT
         self.requests: queue.Queue[AppRequest] = queue.Queue()
         self.stop_event = threading.Event()
         self.httpd = LocalThreadingHTTPServer((HTTP_HOST, HTTP_PORT), self._handler_type())
+        # Only the process that acquired the resident server's port owns a new
+        # log session. Reconnecting launchers must not erase the current log.
+        LOG.start_session("Deckmaker Web")
+        self.service = DeckMakerService(initial)
         self.ipc_thread = IPC.start_server(self.requests, self.stop_event, port=IPC.WEB_PORT)
 
     def browser_opened(self, session_id: str, *, visible: bool = True) -> None:
@@ -573,7 +577,7 @@ def main(argv: list[str] | None = None) -> int:
     if _wait_until_listening(timeout=0.1):
         if initial:
             IPC.send_request(initial, port=IPC.WEB_PORT)
-        if not _browser_window_active() and not os.environ.get("PNPINK_DECKMAKER_WEB_NO_BROWSER"):
+        if not _browser_window_status().get("active") and not os.environ.get("PNPINK_DECKMAKER_WEB_NO_BROWSER"):
             _open_browser(f"http://{HTTP_HOST}:{HTTP_PORT}/")
         return 0
     host = DeckMakerWebHost(initial)

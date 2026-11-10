@@ -1,3 +1,27 @@
+[0.85]
+- Simplify the README with a visual introduction, prominent video tutorials,
+  one-line installation commands, and collapsible alternative installation options.
+- Keep pnpink.log limited to the latest Deckmaker session: reset it only when
+  a new resident app starts; reconnecting launchers continue appending safely.
+- Add timestamped process/thread logs and cross-platform viewer diagnostics:
+  runtime versions, capabilities, launch commands, actions, bounded child output,
+  process exits and explicit reload/restart reasons, including macOS.
+- Detect file-rebase independently from --active-window, allowing persistent
+  reloads in combined GUI/shell mode, including macOS; fall back to restarts
+  for the rest of the session if rebase fails.
+- Fix the Inkscape viewer on releases without --active-window (-q), using a
+  responsive combined GUI/shell and restarting the viewer for unsupported reloads.
+- Fix NUL-filled logs caused by concurrent launchers truncating the resident
+  application's log; append complete text lines instead.
+- Fix previews on Inkscape 1.2/1.3 by detecting PNG compression support, using
+  locale-independent decimal coordinates, and preserving live Inkscape temp profiles.
+- Default Deckmaker Viewer to Inkscape and Selection Sync to Dataset -> Preview
+  for new installations, preserving existing user preferences.
+- Add tools/wsl-proxy.sh to inspect, set, clear, and restore WSL proxy environment
+  variables in the current terminal without changing Windows or system settings.
+- Fall back to Edge/Chrome on Windows, Chromium/Firefox on Linux, and Safari/Chrome
+  on macOS when the selected browser fails, verifying that Deckmaker actually opens.
+
 [0.83]
 - Introduce DeckMaker Web as an integrated workspace for editing CSV and Google Sheets datasets, navigating templates, previewing assets, creating outputs, and exporting projects.
 - Add synchronized browser and Inkscape previews with persistent sessions, faster cached rendering, dataset navigation, and optional SVG element selection.

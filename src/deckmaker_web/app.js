@@ -88,7 +88,7 @@ const elements = {
 const model = {
   helpExample: '',
   helpChapter: '',
-  previewSelectionSync: 'off',
+  previewSelectionSync: 'dataset',
   spriteSource: 'No selection',
   spriteMode: 'Grid',
   spriteOrder: 'Rows first',
@@ -1561,7 +1561,7 @@ function buildPreviewGui(state, options) {
       key: 'previewSelectionSync', args: [PREVIEW_SYNC_MODES], label: 'Selection sync', icon: 'sync-alt',
       tooltip: 'Keep the selected dataset cell and preview asset synchronized. Two-way also follows selections made in the Inkscape viewer.',
       onChange: value => {
-        model.previewSelectionSync = Object.values(PREVIEW_SYNC_MODES).includes(value) ? value : 'off';
+        model.previewSelectionSync = Object.values(PREVIEW_SYNC_MODES).includes(value) ? value : 'dataset';
         save('previewSelectionSync', model.previewSelectionSync);
         lastPreviewSelection = '';
       },
