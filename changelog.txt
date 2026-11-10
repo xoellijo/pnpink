@@ -1,4 +1,7 @@
 [0.85]
+- Skip pip bootstrap/downloads when no shared Python dependencies are required,
+  allowing clean PnPInk installations without unnecessary certificate failures;
+  preserve dependency installation when other shared projects require it.
 - Remove separate version/help/action-list probes from viewer startup; use the
   real shell/reload result for compatibility fallbacks. Drain child output
   independently of logging through a bounded, non-blocking diagnostic queue.

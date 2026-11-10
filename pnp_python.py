@@ -268,7 +268,6 @@ def ensure_project_environment(
     root = (root or shared_python_root()).expanduser().resolve()
     candidate = _manifest(project, requirements, imports)
     with _installation_lock(root):
-        pip_path = ensure_pip(root)
         manifests = _load_manifests(root)
         manifests[str(candidate["project"])] = candidate
         combined_requirements, combined_imports = _combined(manifests)
@@ -283,7 +282,9 @@ def ensure_project_environment(
             try:
                 temporary_site = temporary / "site-packages"
                 temporary_site.mkdir()
-                _run_pip(pip_path, temporary_site, combined_requirements, root)
+                if combined_requirements:
+                    pip_path = ensure_pip(root)
+                    _run_pip(pip_path, temporary_site, combined_requirements, root)
                 _verify_imports(temporary_site, combined_imports)
                 _atomic_json(
                     temporary / "environment.json",
