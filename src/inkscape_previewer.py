@@ -28,7 +28,6 @@ import temp_paths as TEMPPATHS
 
 _PROMPT = "> "
 _RELOAD_ACTION = "file-rebase:true"
-_INITIAL_VIEW_ACTIONS = ("zoom-page",)
 _INKSCAPE_NS = "http://www.inkscape.org/namespaces/inkscape"
 _SODIPODI_NS = "http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
 _SVG_NS = "http://www.w3.org/2000/svg"
@@ -128,71 +127,16 @@ def _configure_profile(root: ET.Element) -> None:
     })
 
 
-def _length_to_css_px(value: str) -> float | None:
-    match = re.fullmatch(
-        r"\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*(px|mm|cm|in|pt|pc)?\s*",
-        str(value or ""),
-    )
-    if not match:
-        return None
-    number = float(match.group(1))
-    unit = match.group(2) or "px"
-    factors = {
-        "px": 1.0,
-        "mm": 96.0 / 25.4,
-        "cm": 96.0 / 2.54,
-        "in": 96.0,
-        "pt": 96.0 / 72.0,
-        "pc": 16.0,
-    }
-    return number * factors[unit]
-
-
-def _center_initial_namedview(
-    svg_path: Path, viewport_size: tuple[int, int] = (1100, 720),
-) -> bool:
-    """Fit the rendered asset in the initial viewport without changing its geometry."""
+def _center_initial_namedview(svg_path: Path) -> bool:
+    """Let Inkscape fit the page to its actual canvas when the window opens."""
     try:
         tree = ET.parse(svg_path)
-        root = tree.getroot()
-        viewbox = [float(value) for value in str(root.get("viewBox") or "").replace(",", " ").split()]
-        if len(viewbox) != 4 or viewbox[2] <= 0 or viewbox[3] <= 0:
-            return False
-        page_width = _length_to_css_px(root.get("width") or "") or viewbox[2]
-        page_height = _length_to_css_px(root.get("height") or "") or viewbox[3]
-        scale_x = page_width / viewbox[2]
-        scale_y = page_height / viewbox[3]
-        boxes = []
-        for node in root.iter():
-            values = str(node.get("data-pnpink-cut-bbox") or "").replace(",", " ").split()
-            if len(values) != 4:
-                continue
-            box = tuple(float(value) for value in values)
-            if box[2] > 0 and box[3] > 0:
-                boxes.append(box)
-        if boxes:
-            left = min(box[0] for box in boxes)
-            top = min(box[1] for box in boxes)
-            right = max(box[0] + box[2] for box in boxes)
-            bottom = max(box[1] + box[3] for box in boxes)
-        else:
-            left, top = viewbox[0], viewbox[1]
-            right, bottom = left + viewbox[2], top + viewbox[3]
-        center_x = ((left + right) * 0.5) * scale_x
-        center_y = ((top + bottom) * 0.5) * scale_y
-        content_width = max((right - left) * scale_x, 1e-9)
-        content_height = max((bottom - top) * scale_y, 1e-9)
-        viewport_width = max(320, int(viewport_size[0]))
-        viewport_height = max(240, int(viewport_size[1]))
-        zoom = min(viewport_width / content_width, viewport_height / content_height) * 0.62
-        zoom = min(max(zoom, 0.05), 8.0)
-        namedview = root.find(f"{{{_SODIPODI_NS}}}namedview")
-        if namedview is None:
-            namedview = ET.Element(f"{{{_SODIPODI_NS}}}namedview", {"id": "pnpink-preview-view"})
-            root.insert(0, namedview)
-        namedview.set(f"{{{_INKSCAPE_NS}}}cx", f"{center_x:.8g}")
-        namedview.set(f"{{{_INKSCAPE_NS}}}cy", f"{center_y:.8g}")
-        namedview.set(f"{{{_INKSCAPE_NS}}}zoom", f"{zoom:.8g}")
+        namedview = tree.getroot().find(f"{{{_SODIPODI_NS}}}namedview")
+        if namedview is not None:
+            # A saved zoom overrides Inkscape's native zoom-to-page on opening.
+            # Remove only camera state from this disposable preview document.
+            for name in ("zoom", "cx", "cy", "rotation"):
+                namedview.attrib.pop(f"{{{_INKSCAPE_NS}}}{name}", None)
         tree.write(svg_path, encoding="utf-8", xml_declaration=True)
         return True
     except (ET.ParseError, OSError, TypeError, ValueError):
@@ -294,6 +238,7 @@ class InkscapePreviewer:
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
+        self._suspended = threading.Event()
         self._gui_process: subprocess.Popen | None = None
         self._shell_process: subprocess.Popen | None = None
         self._output: queue.Queue[str] = queue.Queue()
@@ -339,22 +284,23 @@ class InkscapePreviewer:
             raise FileNotFoundError(str(source))
         with self._lock:
             started = time.perf_counter()
+            if self._suspended.is_set():
+                return
             starting = not self.running
             LOG.i(
                 "[inkscape_previewer.request] source=%r bytes=%d starting=%s selected_fields=%r label=%r",
                 str(source), source.stat().st_size, starting, selected_fields, page_label,
             )
-            fit_view = not self._has_preview_content or self._restart_on_reload
             self._replace_live_svg(
                 source,
-                center_viewport=False,
+                center_viewport=starting or self._restart_on_reload,
                 page_label=page_label or source.stem,
             )
             replaced = time.perf_counter()
             selection_action = self._selection_action(selected_fields)
             if starting:
                 self._start()
-                actions = (list(_INITIAL_VIEW_ACTIONS) if fit_view else [])
+                actions = []
                 if selection_action:
                     actions.append(selection_action)
                 if actions:
@@ -364,16 +310,15 @@ class InkscapePreviewer:
                 # Restart only if file-rebase is absent or failed in this viewer.
                 self.close()
                 self._start()
-                actions = list(_INITIAL_VIEW_ACTIONS)
+                actions = []
                 if selection_action:
                     actions.append(selection_action)
-                self._action(";".join(actions), timeout=8.0)
+                if actions:
+                    self._action(";".join(actions), timeout=8.0)
                 action_description = "restart"
             else:
                 try:
                     actions = [_RELOAD_ACTION]
-                    if fit_view:
-                        actions.extend(_INITIAL_VIEW_ACTIONS)
                     if selection_action:
                         actions.append(selection_action)
                     self._action(";".join(actions), timeout=12.0)
@@ -385,11 +330,13 @@ class InkscapePreviewer:
                     self._restart_on_reload = True
                     LOG.w("[inkscape_previewer] file-rebase failed; using restart for this session: %s", error)
                     self.close()
+                    _center_initial_namedview(self._live_path)
                     self._start()
-                    actions = list(_INITIAL_VIEW_ACTIONS)
+                    actions = []
                     if selection_action:
                         actions.append(selection_action)
-                    self._action(";".join(actions), timeout=8.0)
+                    if actions:
+                        self._action(";".join(actions), timeout=8.0)
                     action_description = "restart"
             self._has_preview_content = True
             finished = time.perf_counter()
@@ -407,7 +354,7 @@ class InkscapePreviewer:
     def show_empty(self, page_label: str = "PnPInk preview") -> None:
         """Start the preview window immediately with an empty A5 document."""
         with self._lock:
-            if self.running:
+            if self._suspended.is_set() or self.running:
                 return
             self._runtime_dir.mkdir(parents=True, exist_ok=True)
             empty = self._runtime_dir / "pnpink-preview-empty.svg"
@@ -429,7 +376,7 @@ class InkscapePreviewer:
         if not self._lock.acquire(blocking=False):
             return
         try:
-            if self.running or self._prewarm_pending:
+            if self._suspended.is_set() or self.running or self._prewarm_pending:
                 return
             self._prewarm_pending = True
             self._prewarm_generation += 1
@@ -446,7 +393,7 @@ class InkscapePreviewer:
     def _prewarm_worker(self, page_label: str, generation: int) -> None:
         try:
             with self._lock:
-                if generation != self._prewarm_generation:
+                if self._suspended.is_set() or generation != self._prewarm_generation:
                     return
                 self.show_empty(page_label)
         except Exception as error:
@@ -493,6 +440,15 @@ class InkscapePreviewer:
                     if field not in fields:
                         fields.append(field)
             return fields
+
+    def suspend(self) -> None:
+        # Set before waiting for the viewer lock: queued shows must not restart
+        # the GUI after a close, even if rendering finishes late.
+        self._suspended.set()
+        self.close()
+
+    def resume(self) -> None:
+        self._suspended.clear()
 
     def close(self) -> None:
         with self._lock:
@@ -587,22 +543,10 @@ class InkscapePreviewer:
         if not _configure_preview_document(temporary, page_label):
             LOG.w("[inkscape_previewer] could not configure preview document '%s'", source)
         if center_viewport:
-            viewport_size = self._saved_viewport_size()
-            if not _center_initial_namedview(temporary, viewport_size):
+            if not _center_initial_namedview(temporary):
                 LOG.w("[inkscape_previewer] could not center initial viewport for '%s'", source)
         os.replace(temporary, self._live_path)
 
-    def _saved_viewport_size(self) -> tuple[int, int]:
-        try:
-            root = ET.parse(self._profile_dir / "preferences.xml").getroot()
-            geometry = root.find("./group[@id='geometry']")
-            width = int(float(geometry.get("width", "1100")))
-            height = int(float(geometry.get("height", "720")))
-            if width >= 320 and height >= 240:
-                return width, height
-        except (AttributeError, ET.ParseError, OSError, TypeError, ValueError):
-            pass
-        return 1100, 720
 
     def _index_fields(self, source: Path) -> None:
         field_to_ids: dict[str, list[str]] = {}

@@ -1,4 +1,6 @@
 [0.85]
+- Fit the first Inkscape preview to its window automatically, preserving manual zoom and pan on later updates.
+- Fix Deckmaker shutdown and reload so late requests and pending previews cannot reopen a closed viewer; bundle the CSV editor for reliable startup without Internet access.
 - Update the CSV editor to Tabulator 6.6.1 with drag-to-fill, reliable undo/redo for cells and ranges, and a wider cell-aligned editor that supports typing to replace content.
 - Fix missing local inline icons and complex Iconify icons, including treasure-chest.
 - Open Deckmaker from unsaved Inkscape documents with instructions to save and continue.
@@ -8,7 +10,6 @@
 - Simplify the README with video tutorials, one-line installation and collapsible alternatives.
 - Default new installations to the Inkscape viewer and Dataset -> Preview selection sync.
 - Automatically try another installed browser if Deckmaker cannot open with the selected one.
-- Add a WSL proxy configuration script.
 - Add PnPPlay Build all, Build changes and Build asset options, and fix stopping its local server from Deckmaker.
 
 [0.83]

@@ -47,8 +47,10 @@ const query = new URLSearchParams(location.search);
 const token = query.get('token') || sessionStorage.getItem('deckmaker-token') || '';
 if (token) sessionStorage.setItem('deckmaker-token', token);
 const managedAppWindow = query.get('shell') === 'app';
-const browserSession = query.get('session') || globalThis.crypto?.randomUUID?.()
+let browserSession = globalThis.crypto?.randomUUID?.()
   || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+let browserSessionClosed = false;
+let browserRequests = new AbortController();
 
 const elements = {
   log: document.querySelector('#log'),
@@ -202,10 +204,14 @@ function leaveSpritesheet() {
 }
 
 async function api(path, options = {}) {
+  const savingCells = path === '/api/dataset/cells';
+  if (browserSessionClosed && !savingCells) throw new Error('Deckmaker window is closing');
   let response;
   try {
     response = await fetch(path, {
       ...options,
+      signal: options.signal || (savingCells ? undefined : browserRequests.signal),
+      keepalive: savingCells && new TextEncoder().encode(options.body || '').length < 60000,
       headers: {
         'Content-Type': 'application/json',
         'X-DeckMaker-Token': token,
@@ -362,11 +368,12 @@ if (managedAppWindow) {
   window.addEventListener('focus', () => reportWindowGeometry());
 }
 
-let browserSessionClosed = false;
-
 function closeBrowserSession() {
   if (browserSessionClosed) return;
+  document.activeElement?.blur();
+  datasetTable.flushEdits();
   browserSessionClosed = true;
+  browserRequests.abort();
   const params = new URLSearchParams({ token, session: browserSession });
   const body = JSON.stringify({ geometry: currentWindowGeometry() });
   navigator.sendBeacon?.(`/api/session/close?${params}`, new Blob([body], { type: 'application/json' }));
@@ -386,6 +393,7 @@ window.addEventListener('pagehide', closeBrowserSession);
 window.addEventListener('beforeunload', closeBrowserSession);
 
 function reportBrowserVisibility() {
+  if (browserSessionClosed) return Promise.resolve();
   return api('/api/session/activity', {
     method: 'POST',
     body: JSON.stringify({ visible: document.visibilityState === 'visible' }),
@@ -400,10 +408,17 @@ function openBrowserSession() {
 }
 
 document.addEventListener('visibilitychange', () => reportBrowserVisibility().catch(() => {}));
-window.addEventListener('pageshow', () => {
+window.addEventListener('pageshow', event => {
+  if (!event.persisted) return;
+  browserSession = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
   browserSessionClosed = false;
+  browserRequests = new AbortController();
   openBrowserSession()
-    .then(result => restoreWindowGeometry(result.geometry))
+    .then(async result => {
+      restoreWindowGeometry(result.geometry);
+      applyState(await api('/api/state'));
+      poll();
+    })
     .catch(() => {
       windowGeometryReady = true;
     });
@@ -1893,7 +1908,7 @@ function handleHostEvents(events) {
 
 async function poll() {
   let failures = 0;
-  while (true) {
+  while (!browserSessionClosed) {
     try {
       const data = await api(`/api/events?after=${sequence}&timeout=5`);
       if (failures > 1) toast('Local DeckMaker connection restored.', { tone: 'info', duration: 1600 });
@@ -1903,6 +1918,7 @@ async function poll() {
       handleHostEvents(data.events);
       if (data.state) applyState(data.state);
     } catch (error) {
+      if (browserSessionClosed) return;
       failures += 1;
       if (failures > 1) toast(error.message);
       await new Promise(resolve => setTimeout(resolve, Math.min(5000, 750 * failures)));
@@ -2002,5 +2018,7 @@ try {
   if (canAutoPreview) await command('preview-initial');
   poll();
 } catch (error) {
+  elements.previewMessage.textContent = `Deckmaker could not finish starting: ${error.message}. Reload this window to retry.`;
+  elements.previewMessage.hidden = false;
   toast(error.message);
 }

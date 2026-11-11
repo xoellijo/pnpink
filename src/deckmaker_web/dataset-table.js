@@ -6,7 +6,7 @@ import {
   parseClipboardRange,
 } from './clipboard-range.js';
 
-const TABULATOR_MODULE_URL = 'https://unpkg.com/tabulator-tables@6.6.1/dist/js/tabulator_esm.min.js';
+const TABULATOR_MODULE_URL = './vendor/tabulator_esm.js';
 const ROW_KINDS = [
   'dataset-header', 'directive', 'comment', 'comment-marker',
   'comment-block', 'data', 'orphan', 'blank',
@@ -820,7 +820,8 @@ export class DatasetTable {
     if (!editor.url || this.loadingKey === key) return;
 
     this.loadingKey = key;
-    this.message.hidden = true;
+    this.message.textContent = 'Loading local CSV dataset\u2026';
+    this.message.hidden = Boolean(this.table);
     this.reportStatus('Loading local CSV dataset\u2026');
     try {
       const [Tabulator, dataset] = await Promise.all([
@@ -1005,6 +1006,8 @@ export class DatasetTable {
       this.message.hidden = true;
     } catch (error) {
       if (this.loadingKey !== key) return;
+      this.message.textContent = `Could not open the local CSV dataset: ${error.message}. Reload Deckmaker to retry.`;
+      this.message.hidden = false;
       this.reportError(`Could not open the local CSV dataset: ${error.message}`);
     } finally {
       if (this.loadingKey === key) this.loadingKey = '';

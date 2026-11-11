@@ -85,6 +85,7 @@ class DeckMakerWebHost:
         self.token = os.environ.get("PNPINK_DECKMAKER_WEB_TOKEN") or secrets.token_urlsafe(24)
         self._session_lock = threading.Lock()
         self._sessions: dict[str, dict[str, object]] = {}
+        self._closed_sessions: dict[str, float] = {}
         self._started_at = time.monotonic()
         self._last_session_check = self._started_at
         self._empty_since: float | None = None
@@ -105,6 +106,8 @@ class DeckMakerWebHost:
             return
         with self._session_lock:
             now = time.monotonic()
+            if session_id in self._closed_sessions:
+                return
             self._sessions[session_id] = {
                 "seen_at": now,
                 "visible": bool(visible),
@@ -113,6 +116,7 @@ class DeckMakerWebHost:
             self._browser_expected_until = now
             self._empty_since = None
             self._had_session = True
+            self.service.resume_preview()
         LOG.i("[deckmaker.web] browser session opened")
 
     @staticmethod
@@ -126,15 +130,7 @@ class DeckMakerWebHost:
         with self._session_lock:
             session = self._sessions.get(session_id)
             now = time.monotonic()
-            if session is None:
-                self._sessions[session_id] = {
-                    "seen_at": now,
-                    "visible": True,
-                    "hidden_since": None,
-                }
-                self._had_session = True
-                self._empty_since = None
-            else:
+            if session is not None:
                 session["seen_at"] = now
 
     def browser_visibility(self, session_id: str, visible: bool) -> None:
@@ -145,14 +141,7 @@ class DeckMakerWebHost:
             session = self._sessions.get(session_id)
             now = time.monotonic()
             if session is None:
-                session = {
-                    "seen_at": now,
-                    "visible": bool(visible),
-                    "hidden_since": None if visible else now,
-                }
-                self._sessions[session_id] = session
-                self._had_session = True
-                self._empty_since = None
+                return
             session["seen_at"] = now
             session["visible"] = bool(visible)
             session["hidden_since"] = None if visible else (session.get("hidden_since") or now)
@@ -163,14 +152,15 @@ class DeckMakerWebHost:
         session_id = str(session_id or "").strip()
         if not session_id:
             return
-        close_preview = False
         with self._session_lock:
             self._sessions.pop(session_id, None)
+            self._closed_sessions[session_id] = time.monotonic()
             if self._had_session and not self._sessions and self._empty_since is None:
                 self._empty_since = time.monotonic()
-                close_preview = True
-        if close_preview:
-            self.service.close_preview()
+                # Serialize with explicit opens so a delayed close cannot shut
+                # the preview belonging to a newly opened browser document.
+                self.service.close_preview()
+        LOG.i("[deckmaker.web] browser session closed")
 
     def expect_browser(self) -> None:
         with self._session_lock:
@@ -180,6 +170,10 @@ class DeckMakerWebHost:
     def browser_active(self) -> bool:
         now = time.monotonic()
         with self._session_lock:
+            self._closed_sessions = {
+                key: closed for key, closed in self._closed_sessions.items()
+                if now - closed < self.SESSION_TIMEOUT
+            }
             check_gap = now - self._last_session_check
             self._last_session_check = now
             if check_gap >= self.SUSPEND_GAP and self._sessions:
@@ -256,8 +250,13 @@ class DeckMakerWebHost:
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(raw)))
                 self.send_header("Cache-Control", "no-store")
-                self.end_headers()
-                self.wfile.write(raw)
+                try:
+                    self.end_headers()
+                    self.wfile.write(raw)
+                except ConnectionError:
+                    # Closing/reloading a page aborts its pending long poll.
+                    # This is a normal disconnect, not a service failure.
+                    return
 
             def _body(self) -> dict:
                 size = int(self.headers.get("Content-Length") or 0)
@@ -369,7 +368,6 @@ class DeckMakerWebHost:
                         self.send_header("Cache-Control", "no-store")
                         self.end_headers()
                         return
-                    host.browser_opened(host._session_id(self))
                     self._asset("index.html")
                     return
                 if parsed.path.startswith("/shared-assets/"):

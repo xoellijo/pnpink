@@ -55,6 +55,8 @@ class DeckMakerService:
         self._sequence = 0
         self._busy = False
         self._closed = False
+        self._preview_suspended = False
+        self._preview_display_generation = 0
         self._job = ""
         self._status = "Ready"
         self._activity = ""
@@ -111,9 +113,6 @@ class DeckMakerService:
         self._play_server = PLAY.PlayServer(self._play_runtime)
         self._pdf_spritesheet = PdfSpritesheet()
         self._inkscape_previewer = InkscapePreviewer()
-        if initial and initial.template and prefs.get_deckmaker_preview_backend() == "inkscape":
-            template_name = os.path.basename(initial.template) if initial and initial.template else "No template"
-            self._inkscape_previewer.prewarm(f"PnPInk preview â€” {template_name}")
         self._static_options = self._build_static_options()
         LOG.add_listener(self._on_log_line)
         try:
@@ -393,10 +392,6 @@ class DeckMakerService:
             self.log("Using current unsaved Inkscape document snapshot")
         self._emit("activate")
         self._emit("state")
-        if template and prefs.get_deckmaker_preview_backend() == "inkscape":
-            self._inkscape_previewer.prewarm(
-                f"PnPInk preview — {os.path.basename(template) or 'No template'}"
-            )
         if request.autorun:
             self.generate()
         else:
@@ -1292,9 +1287,6 @@ class DeckMakerService:
                 has_cached_dataset = bool(self._preview_datasets)
                 current_asset = self._preview_asset_key
             if prefs.get_deckmaker_preview_backend() == "inkscape":
-                self._inkscape_previewer.prewarm(
-                    f"PnPInk preview — {os.path.basename(self._request.template) or 'No template'}"
-                )
                 if self._can_generate():
                     self.preview(
                         force=False,
@@ -1697,6 +1689,10 @@ class DeckMakerService:
                     LOG.w("[deckmaker.preview.poll] %s", message)
 
     def preview(self, *, force: bool = True, refresh: bool = True, movement: int = 0, asset_key: str = "") -> bool:
+        with self._lock:
+            if self._closed or self._preview_suspended:
+                return False
+            display_generation = self._preview_display_generation
         if not self._can_generate():
             self._set_status("Choose CSV or Google Sheet source")
             return False
@@ -1865,6 +1861,9 @@ class DeckMakerService:
                     if cell_selection.get("asset") == current_key
                     else None
                 )
+                with self._lock:
+                    if self._closed or self._preview_suspended or display_generation != self._preview_display_generation:
+                        return
                 self._inkscape_previewer.show(
                     paths["svg"],
                     selected_fields=selected_fields,
@@ -2439,7 +2438,23 @@ class DeckMakerService:
 
     def close_preview(self) -> None:
         """Close the external preview without stopping the DeckMaker service."""
-        self._inkscape_previewer.close()
+        with self._lock:
+            self._preview_suspended = True
+            self._preview_display_generation += 1
+            self._preview_prefetch_generation += 1
+            self._pending_preview_refresh = None
+        self._inkscape_previewer.suspend()
+
+    def resume_preview(self) -> None:
+        with self._lock:
+            if not self._closed:
+                was_suspended = self._preview_suspended
+                self._preview_suspended = False
+                self._inkscape_previewer.resume()
+                if was_suspended and self._busy and self._job == "preview":
+                    # A refresh may reopen while the cancelled render still
+                    # finishes. Queue its replacement instead of losing it.
+                    self._pending_preview_refresh = {"asset": self._preview_asset_key}
 
     def close(self) -> None:
         LOG.remove_listener(self._on_log_line)
@@ -2448,6 +2463,8 @@ class DeckMakerService:
         self._preview_monitor_wake.set()
         with self._lock:
             self._closed = True
+            self._preview_suspended = True
+            self._preview_display_generation += 1
             self._preview_prefetch_generation += 1
             preview_prefetch_service = self._preview_prefetch_service
             self._preview_prefetch_service = None
@@ -2458,7 +2475,7 @@ class DeckMakerService:
             self._text_query_service = None
         if text_query_service is not None:
             text_query_service.close()
-        self._inkscape_previewer.close()
+        self._inkscape_previewer.suspend()
         self._pdf_spritesheet.close()
         self._play_server.close()
         try:
