@@ -30,8 +30,15 @@ def current_document_snapshot(extension: inkex.EffectExtension, document_path: s
     return os.path.normpath(snapshot)
 
 
-def current_request(extension: inkex.EffectExtension) -> AppRequest:
-    document_path = require_document_path(extension)
+def current_request(extension: inkex.EffectExtension, *, allow_unsaved: bool = False) -> AppRequest:
+    try:
+        document_path = require_document_path(extension)
+    except inkex.AbortExtension:
+        if not allow_unsaved:
+            raise
+        # No temporary template: relative assets and adjacent CSVs need the
+        # real saved document directory. The web UI guides the user instead.
+        return AppRequest(template="")
     snapshot = current_document_snapshot(extension, document_path)
     sheet_id = ""
     sheet_range = ""

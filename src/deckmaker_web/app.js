@@ -557,6 +557,15 @@ function updateSheetViewMode(mode) {
 
 function showMissingDatasetGuide() {
   const title = document.createElement('strong');
+  if (!latestState.template) {
+    title.textContent = 'Your Inkscape document needs to be saved first';
+    const steps = document.createElement('span');
+    steps.textContent = '1. Return to Inkscape and choose File > Save As (Ctrl+Shift+S). 2. Save as SVG in your project folder. 3. Launch Deckmaker again from Extensions > PnPInk. This window will update automatically.';
+    const reason = document.createElement('span');
+    reason.textContent = 'Deckmaker uses the SVG folder to locate images, store the CSV dataset and write generated files. Nothing has been saved or generated for this document yet. You can also explore Help > Examples in the menu.';
+    elements.sheetEditorMessage.replaceChildren(title, steps, reason);
+    return;
+  }
   title.textContent = 'This template has no dataset yet';
   const explanation = document.createElement('span');
   explanation.textContent = 'Create a starter CSV from the SVG fields, or drag a Google Sheets URL from your browser onto this area.';
@@ -1230,9 +1239,23 @@ function buildPlayGui(state) {
     {
       key: 'playCreateAction',
       command: 'play-create',
-      label: 'Build Assets',
+      label: 'Build all',
       icon: 'deployed-code-update',
-      tooltip: 'Create or update the PnPPlay asset pack in every enabled asset store.',
+      tooltip: 'Rebuild and publish the complete PnPPlay asset pack.',
+    },
+    {
+      key: 'playCreateChangesAction',
+      command: 'play-create-changes',
+      label: 'Build changes',
+      icon: 'difference',
+      tooltip: 'Render and publish only assets changed since the last successful build.',
+    },
+    {
+      key: 'playCreateAssetAction',
+      command: 'play-create-asset',
+      label: 'Build asset',
+      icon: 'select-check-box',
+      tooltip: 'Render and publish only the asset currently selected in Preview.',
     },
     {
       key: 'playDesignerAction',
@@ -1779,6 +1802,8 @@ function applyState(state) {
     'open-template-folder': Boolean(state.template),
     export: Boolean(state.canExport),
     'play-create': Boolean(state.play?.installed && state.canGenerate),
+    'play-create-changes': Boolean(state.play?.installed && state.canGenerate),
+    'play-create-asset': Boolean(state.play?.installed && state.canGenerate),
     'play-server': Boolean(state.play?.installed && state.template),
     'play-designer': Boolean(state.play?.installed && state.template),
     'open-google-sheet': Boolean(state.sheetId),

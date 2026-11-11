@@ -10,6 +10,7 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -20,6 +21,7 @@ import play_asset_store as ASSETSTORE
 
 
 PLAY_DPI = 150
+BUILD_STATE_SCHEMA = 1
 
 
 def _default_hand_layout() -> dict:
@@ -124,6 +126,24 @@ def _write_json(path: Path, value: dict) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False), encoding="utf-8")
     os.replace(temporary, path)
+
+
+def build_state(template: str) -> dict:
+    path = Path(template).resolve().with_suffix(".play") / "assets" / ".pnpink-build.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if value.get("schema") == BUILD_STATE_SCHEMA else {}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+
+
+def write_build_state(template: str, signatures: dict[str, str]) -> None:
+    path = Path(template).resolve().with_suffix(".play") / "assets" / ".pnpink-build.json"
+    _write_json(path, {
+        "schema": BUILD_STATE_SCHEMA,
+        "signatures": dict(sorted(signatures.items())),
+        "builtAt": time.time(),
+    })
 
 
 def _yaml_scalar(value) -> str:
@@ -395,6 +415,104 @@ def prepare_game(
     return game_dir, game_id
 
 
+def update_game_assets(
+    template: str,
+    runtime: Path,
+    rendered_assets: list[dict],
+    *,
+    removed_keys: set[str] | None = None,
+    on_progress=None,
+    on_activity=None,
+) -> tuple[Path, str]:
+    """Replace only rendered dataset rows in an existing Play asset pack."""
+    template_path = Path(template).resolve()
+    game_dir = template_path.with_suffix(".play")
+    assets_dir = game_dir / "assets"
+    manifest_path = assets_dir / "items.json"
+    if not manifest_path.is_file():
+        raise RuntimeError("Build all once before using an incremental Play build")
+    document = json.loads(manifest_path.read_text(encoding="utf-8"))
+    existing = list(document.get("items") or [])
+
+    def source_key(item: dict) -> str:
+        source = item.get("source") or {}
+        return f'{source.get("dataset")}:{source.get("row")}:{source.get("variant")}'
+
+    replaced_keys = {str(asset["key"]) for asset in rendered_assets}
+    removed = set(removed_keys or ()) | replaced_keys
+    retained = [item for item in existing if source_key(item) not in removed]
+    old_by_id = {str(item.get("id")): item for item in existing if item.get("id")}
+    old_by_source = {source_key(item): item for item in existing}
+    shared_backs = {item.get("back") for item in existing if item.get("back")}
+    shared_back = next(iter(shared_backs)) if len(shared_backs) == 1 else None
+    updated: list[dict] = []
+
+    if on_activity:
+        on_activity(f"Updating {len(rendered_assets)} changed Play asset(s)...")
+    for index, asset in enumerate(rendered_assets, 1):
+        with tempfile.TemporaryDirectory(prefix="pnpink-play-asset-") as temporary:
+            temporary_dir = Path(temporary)
+            ok, result = EXPORTITEMS.export_items_via_inkscape(
+                str(asset["svg"]),
+                str(temporary_dir / "item.png"),
+                export_type="png",
+                item_spec="item*",
+                export_dpi=PLAY_DPI,
+                output_dir=str(temporary_dir),
+                cached_pngs=(
+                    {str(asset["key"]): str(asset["png"])}
+                    if int(asset.get("count") or 0) == 1 else {}
+                ),
+            )
+            if not ok:
+                raise RuntimeError(str(result.get("error") or f'Unable to export {asset["key"]}'))
+            _convert_play_assets_to_webp(temporary_dir, result)
+            _content_address_play_assets(temporary_dir, result)
+            for item in result.get("results") or []:
+                previous = old_by_id.get(str(item.get("id"))) or old_by_source.get(source_key(item))
+                item["copies"] = int((previous or {}).get("copies") or asset.get("copies") or 1)
+                if not item.get("back"):
+                    item["back"] = (previous or {}).get("back") or shared_back
+                if not item.get("back") and previous is None and shared_backs:
+                    raise RuntimeError(
+                        f'Asset {asset["key"]} has no unambiguous card back; use Build all'
+                    )
+                for field in ("front", "back"):
+                    filename = item.get(field)
+                    if not filename:
+                        continue
+                    source = temporary_dir / str(filename)
+                    target = assets_dir / str(filename)
+                    if source.is_file() and not target.is_file():
+                        target.write_bytes(source.read_bytes())
+                updated.append(item)
+        if on_progress:
+            on_progress("Updating Play assets", index, len(rendered_assets))
+
+    items = retained + updated
+    items.sort(key=lambda item: (
+        int((item.get("source") or {}).get("dataset") or 0),
+        int((item.get("source") or {}).get("row") or 0),
+        int((item.get("source") or {}).get("variant") or 0),
+        str(item.get("id") or ""),
+    ))
+    if not items:
+        raise RuntimeError("The incremental build would leave the Play asset pack empty")
+    _write_json(manifest_path, {"schema": 2, "items": items})
+    pack_id = _asset_pack_id(str(template_path))
+    ASSETSTORE.publish_local_pack(
+        assets_dir,
+        pack_id,
+        name=template_path.stem,
+        source={"template": template_path.name},
+    )
+    configured_game = _sync_configured_runtime_game(runtime, template_path, assets_dir)
+    if configured_game is not None:
+        return configured_game
+    game_id = _game_id(str(template_path))
+    return game_dir, game_id
+
+
 def _central_database(runtime: Path) -> Path:
     configured = str(os.environ.get("PNPPLAY_DATABASE") or "").strip()
     if configured:
@@ -467,6 +585,48 @@ class PlayServer:
             return
 
     @staticmethod
+    def _listener_pids(port: int) -> set[int]:
+        """Return the processes that actually own a TCP listening port."""
+        if os.name == "nt":
+            try:
+                result = subprocess.run(
+                    ["netstat", "-ano", "-p", "tcp"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    check=False,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            except OSError:
+                return set()
+            listeners = set()
+            for line in result.stdout.splitlines():
+                fields = line.split()
+                if len(fields) < 5 or fields[0].upper() != "TCP" or fields[-2].upper() != "LISTENING":
+                    continue
+                try:
+                    local_port = int(fields[1].rsplit(":", 1)[-1])
+                    pid = int(fields[-1])
+                except ValueError:
+                    continue
+                if local_port == port and pid > 0:
+                    listeners.add(pid)
+            return listeners
+        try:
+            result = subprocess.run(
+                ["lsof", "-nP", f"-iTCP:{int(port)}", "-sTCP:LISTEN", "-t"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return set()
+        return {int(value) for value in result.stdout.split() if value.isdigit() and int(value) > 0}
+
+    @staticmethod
     def _server_has_game(port: int, game_id: str) -> bool:
         try:
             response = _request_json(f"http://127.0.0.1:{port}/games", timeout=0.25)
@@ -496,8 +656,12 @@ class PlayServer:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=3)
-        elif self.running:
-            self._terminate_pid(self._remembered_pid())
+        if self.running:
+            # The launcher PID can become stale after a runtime update or an
+            # inherited process. Trust the process that owns the listening
+            # socket instead of killing an unrelated recycled PID.
+            for pid in self._listener_pids(self.port):
+                self._terminate_pid(pid)
         for _attempt in range(30):
             if not self.running:
                 break
@@ -513,7 +677,7 @@ class PlayServer:
         return (
             self.process is not None and self.process.poll() is None
         ) or (
-            self.running and self._remembered_pid() > 0
+            self.running and bool(self._listener_pids(self.port))
         )
 
     @property

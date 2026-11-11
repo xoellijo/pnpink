@@ -111,7 +111,7 @@ class DeckMakerService:
         self._play_server = PLAY.PlayServer(self._play_runtime)
         self._pdf_spritesheet = PdfSpritesheet()
         self._inkscape_previewer = InkscapePreviewer()
-        if prefs.get_deckmaker_preview_backend() == "inkscape":
+        if initial and initial.template and prefs.get_deckmaker_preview_backend() == "inkscape":
             template_name = os.path.basename(initial.template) if initial and initial.template else "No template"
             self._inkscape_previewer.prewarm(f"PnPInk preview â€” {template_name}")
         self._static_options = self._build_static_options()
@@ -295,7 +295,7 @@ class DeckMakerService:
         return visible
 
     def open_request(self, request: AppRequest, *, remember_template: bool = True) -> None:
-        template = DMPATHS.normalize(request.template)
+        template = DMPATHS.normalize(request.template) if request.template else ""
         if template and remember_template:
             try:
                 if prefs.get("deckmaker_web_last_template", "") != template:
@@ -312,7 +312,7 @@ class DeckMakerService:
         except Exception:
             DSTATE = None
         if DSTATE is not None:
-            if remember_template:
+            if template and remember_template:
                 try:
                     DSTATE.remember_svg(template)
                 except Exception as error:
@@ -322,7 +322,7 @@ class DeckMakerService:
             except Exception:
                 pass
             try:
-                record = DSTATE.get_dataset_source_for_svg(template) or {}
+                record = (DSTATE.get_dataset_source_for_svg(template) or {}) if template else {}
             except Exception:
                 pass
         if not sheet_id:
@@ -384,13 +384,16 @@ class DeckMakerService:
             self._dataset_source_invalid = False
             has_dataset = self._has_dataset_source(template, sheet_id, source_mode)
             self._generated_output_ready = has_dataset and os.path.isfile(DMPATHS.output_svg(template))
-            self._status = "Template received" if has_dataset else "Choose CSV or Google Sheet source"
+            self._status = (
+                "Save your SVG in Inkscape, then launch Deckmaker again"
+                if not template else ("Template received" if has_dataset else "Choose CSV or Google Sheet source")
+            )
         self.log(f"Template: {os.path.basename(template)}")
         if snapshot and os.path.isfile(snapshot):
             self.log("Using current unsaved Inkscape document snapshot")
         self._emit("activate")
         self._emit("state")
-        if prefs.get_deckmaker_preview_backend() == "inkscape":
+        if template and prefs.get_deckmaker_preview_backend() == "inkscape":
             self._inkscape_previewer.prewarm(
                 f"PnPInk preview — {os.path.basename(template) or 'No template'}"
             )
@@ -511,6 +514,8 @@ class DeckMakerService:
         return str(selected.get("sheetId")) if selected is not None else ""
 
     def _detect_source_mode(self, template: str, sheet_id: str, explicit: str = "") -> str:
+        if not template:
+            return ""
         mode = str(explicit or "").strip().lower()
         if mode == "local_csv":
             return mode
@@ -557,6 +562,8 @@ class DeckMakerService:
 
     @staticmethod
     def _has_dataset_source(template: str, sheet_id: str, source_mode: str = "") -> bool:
+        if not template:
+            return False
         local_csv = os.path.isfile(os.path.splitext(template)[0] + ".csv")
         if str(source_mode or "").strip().lower() == "local_csv":
             return local_csv
@@ -966,7 +973,7 @@ class DeckMakerService:
             if self._busy and self._job == "preview":
                 preview_message = "Rendering preview..."
             elif not request.template:
-                preview_message = "Missing template..."
+                preview_message = "Save your SVG in Inkscape (Ctrl+Shift+S), then launch Extensions > PnPInk > Deckmaker again."
             elif not has_dataset:
                 preview_message = "Missing dataset..."
             elif self._status.startswith("Error:"):
@@ -1012,6 +1019,7 @@ class DeckMakerService:
                 "datasetPath": dataset_path,
                 "datasetEditor": {
                     "kind": "csv" if local_dataset else ("gsheet" if google_dataset else ""),
+                    "id": dataset_path if local_dataset else "",
                     "revision": dataset_revision,
                     "url": f"/api/dataset/table?rev={dataset_revision}" if local_dataset else "",
                 },
@@ -1144,6 +1152,8 @@ class DeckMakerService:
             if not values:
                 return selected
         dataset_source_changed = any(key in values for key in ("sheetId", "sheetRange", "sourceMode"))
+        if dataset_source_changed and not self._request.template:
+            raise ValueError("Save your SVG in Inkscape, then launch Deckmaker again before linking a dataset.")
         preview_backend_changed = "previewBackend" in values
         source_preview_asset = ""
         with self._lock:
@@ -2111,8 +2121,114 @@ class DeckMakerService:
             ),
             on_activity=self.activity,
         )
+        try:
+            _datasets, _entries, signatures, _base_path, _base_signature = self._play_build_context(
+                list(getattr(effect, "_dm_loaded_datasets", None) or []) or None,
+            )
+            PLAY.write_build_state(template, signatures)
+        except Exception:
+            LOG.w("[deckmaker.play] could not record build signatures\n%s", traceback.format_exc())
         self._set_status("PnPPlay assets updated")
         return game_dir, game_id, runtime
+
+    def _play_build_context(self, datasets=None):
+        request = self._request
+        source_effect = self._preview_effect(request)
+        initial = PREVIEW.prepare(source_effect, datasets=datasets)
+        datasets = initial["source_datasets"]
+        base_path, base_signature = self._ensure_preview_base(source_effect, datasets)
+        entries = list(initial["entries"])
+        signatures = {}
+        for entry in entries:
+            effect = self._preview_effect(request, base_path)
+            prepared = PREVIEW.prepare(
+                effect,
+                datasets=datasets,
+                asset_key=entry["key"],
+                base_signature=base_signature,
+            )
+            signatures[entry["key"]] = prepared["signature"]
+        return datasets, entries, signatures, base_path, base_signature
+
+    def _build_play_incremental(self, mode: str) -> bool:
+        if not self._can_generate():
+            self._set_status("Choose CSV or Google Sheet source")
+            return False
+
+        def worker():
+            runtime = self._play_runtime
+            if runtime is None:
+                raise RuntimeError("PnPPlay is not installed")
+            template = self._request.template
+            datasets, entries, signatures, base_path, base_signature = self._play_build_context()
+            previous = PLAY.build_state(template)
+            previous_signatures = dict(previous.get("signatures") or {})
+            if not previous_signatures:
+                raise RuntimeError("Build all once before using Build changes or Build asset")
+            current_keys = set(signatures)
+            removed = set(previous_signatures) - current_keys if mode == "changes" else set()
+            if mode == "asset":
+                with self._lock:
+                    selected_key = self._preview_asset_key
+                if selected_key not in current_keys:
+                    raise RuntimeError("Select an asset in Preview before using Build asset")
+                selected = [selected_key]
+            else:
+                selected = [
+                    entry["key"] for entry in entries
+                    if previous_signatures.get(entry["key"]) != signatures[entry["key"]]
+                ]
+            if not selected and not removed:
+                self._set_status("PnPPlay assets are already up to date")
+                return
+
+            service = self._ensure_text_query_service()
+            rendered = []
+            for index, key in enumerate(selected, 1):
+                self.activity(f"Rendering changed asset {index}/{len(selected)}...")
+                effect = self._preview_effect(self._request, base_path)
+                prepared = PREVIEW.prepare(
+                    effect, datasets=datasets, asset_key=key, base_signature=base_signature,
+                )
+                paths = PREVIEW.cache_paths(effect, prepared["signature"])
+                result = PREVIEW.render(
+                    effect, APP_VERSION, text_query_service=service, prepared=prepared,
+                )
+                if not os.path.isfile(paths["high"]):
+                    self._export_preview_png(service, result, paths["high"], 600)
+                entry = prepared["entry"]
+                row = datasets[int(entry["dataset"]) - 1]["rows"][int(entry["row"]) - 1]
+                rendered.append({
+                    "key": key,
+                    "svg": result["path"],
+                    "png": paths["high"],
+                    "count": result["count"],
+                    "copies": int(row.get("__dm_copies__") or 1),
+                })
+                self.progress("Rendering changed Play assets", index, len(selected), rate_unit="assets/s")
+
+            PLAY.update_game_assets(
+                template,
+                runtime,
+                rendered,
+                removed_keys=removed,
+                on_progress=lambda label, current, total: self.progress(
+                    label, current, total, rate_unit="assets/s",
+                ),
+                on_activity=self.activity,
+            )
+            if mode == "changes":
+                next_signatures = signatures
+            else:
+                next_signatures = previous_signatures
+                for key in selected:
+                    next_signatures[key] = signatures[key]
+            PLAY.write_build_state(template, next_signatures)
+            changed_count = len(selected) + len(removed)
+            self._set_status(f"PnPPlay updated: {changed_count} asset(s)")
+
+        label = "Building current asset..." if mode == "asset" else "Building changed assets..."
+        return self._begin(f"play-{mode}", label, worker)
 
     def _prepare_play(self, open_target: str = "designer") -> None:
         game_dir, game_id, runtime = self._publish_play_assets()
@@ -2128,13 +2244,16 @@ class DeckMakerService:
     def create_play_assets(self) -> bool:
         return self.generate(play_after=True)
 
+    def create_changed_play_assets(self) -> bool:
+        return self._build_play_incremental("changes")
+
+    def create_current_play_asset(self) -> bool:
+        return self._build_play_incremental("asset")
+
     def toggle_play_server(self) -> bool:
         if self._play_server.running:
-            if self._play_server.managed:
-                self._play_server.close(require_stopped=True)
-                self._set_status("PnPPlay server stopped")
-            else:
-                self._set_status("PnPPlay server is already running on port 8080")
+            self._play_server.close(require_stopped=True)
+            self._set_status("PnPPlay server stopped")
             self._emit("state")
             return True
 
@@ -2298,6 +2417,8 @@ class DeckMakerService:
             "open-template-folder": self.open_template_folder,
             "export": self.export,
             "play-create": self.create_play_assets,
+            "play-create-changes": self.create_changed_play_assets,
+            "play-create-asset": self.create_current_play_asset,
             "play-server": self.toggle_play_server,
             "play-designer": lambda: self.open_play("designer"),
             "play-lobby": lambda: self.open_play("lobby"),

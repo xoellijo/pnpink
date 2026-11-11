@@ -1,38 +1,15 @@
 [0.85]
-- Skip pip bootstrap/downloads when no shared Python dependencies are required,
-  allowing clean PnPInk installations without unnecessary certificate failures;
-  preserve dependency installation when other shared projects require it.
-- Remove separate version/help/action-list probes from viewer startup; use the
-  real shell/reload result for compatibility fallbacks. Drain child output
-  independently of logging through a bounded, non-blocking diagnostic queue.
-- Fix Windows Inkscape preview startup stalling on verbose ICC warnings: read
-  unbuffered pipes in blocks and log complete, bounded lines instead of characters,
-  while forwarding interactive shell prompts immediately.
-- Allow slower Inkscape capability queries and cache successful results only;
-  never interpret a timeout or failed query as an unsupported viewer feature.
-
-- Simplify the README with a visual introduction, prominent video tutorials,
-  one-line installation commands, and collapsible alternative installation options.
-- Keep pnpink.log limited to the latest Deckmaker session: reset it only when
-  a new resident app starts; reconnecting launchers continue appending safely.
-- Add timestamped process/thread logs and cross-platform viewer diagnostics:
-  runtime versions, capabilities, launch commands, actions, bounded child output,
-  process exits and explicit reload/restart reasons, including macOS.
-- Detect file-rebase independently from --active-window, allowing persistent
-  reloads in combined GUI/shell mode, including macOS; fall back to restarts
-  for the rest of the session if rebase fails.
-- Fix the Inkscape viewer on releases without --active-window (-q), using a
-  responsive combined GUI/shell and restarting the viewer for unsupported reloads.
-- Fix NUL-filled logs caused by concurrent launchers truncating the resident
-  application's log; append complete text lines instead.
-- Fix previews on Inkscape 1.2/1.3 by detecting PNG compression support, using
-  locale-independent decimal coordinates, and preserving live Inkscape temp profiles.
-- Default Deckmaker Viewer to Inkscape and Selection Sync to Dataset -> Preview
-  for new installations, preserving existing user preferences.
-- Add tools/wsl-proxy.sh to inspect, set, clear, and restore WSL proxy environment
-  variables in the current terminal without changing Windows or system settings.
-- Fall back to Edge/Chrome on Windows, Chromium/Firefox on Linux, and Safari/Chrome
-  on macOS when the selected browser fails, verifying that Deckmaker actually opens.
+- Update the CSV editor to Tabulator 6.6.1 with drag-to-fill, reliable undo/redo for cells and ranges, and a wider cell-aligned editor that supports typing to replace content.
+- Fix missing local inline icons and complex Iconify icons, including treasure-chest.
+- Open Deckmaker from unsaved Inkscape documents with instructions to save and continue.
+- Improve Inkscape preview startup and reloading on Windows, macOS and Linux, including older Inkscape versions.
+- Fix corrupted logs, keep only the latest Deckmaker session, and improve troubleshooting information, especially on macOS.
+- Avoid unnecessary downloads and certificate errors during installation.
+- Simplify the README with video tutorials, one-line installation and collapsible alternatives.
+- Default new installations to the Inkscape viewer and Dataset -> Preview selection sync.
+- Automatically try another installed browser if Deckmaker cannot open with the selected one.
+- Add a WSL proxy configuration script.
+- Add PnPPlay Build all, Build changes and Build asset options, and fix stopping its local server from Deckmaker.
 
 [0.83]
 - Introduce DeckMaker Web as an integrated workspace for editing CSV and Google Sheets datasets, navigating templates, previewing assets, creating outputs, and exporting projects.

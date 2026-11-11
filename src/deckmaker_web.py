@@ -549,7 +549,7 @@ def notify_or_launch(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--template", default="")
+    parser.add_argument("--template", default=None)
     parser.add_argument("--snapshot-path", default="")
     parser.add_argument("--sheet-id", default="")
     parser.add_argument("--sheet-range", default="")
@@ -563,7 +563,10 @@ def main(argv: list[str] | None = None) -> int:
         selected_ids = tuple(str(value).strip() for value in json.loads(options.selected_ids_json) if str(value).strip())
     except Exception:
         selected_ids = ()
-    template = DMPATHS.normalize(options.template or prefs.get("deckmaker_web_last_template", ""))
+    # An explicit empty path comes from an unsaved Inkscape document. Only a
+    # standalone launch without --template may restore the last template.
+    template_path = options.template if options.template is not None else prefs.get("deckmaker_web_last_template", "")
+    template = DMPATHS.normalize(template_path) if str(template_path or "").strip() else ""
     initial = AppRequest(
         template=template,
         snapshot_path=DMPATHS.normalize(options.snapshot_path) if options.snapshot_path else "",
@@ -573,7 +576,7 @@ def main(argv: list[str] | None = None) -> int:
         log_level=options.log_level,
         autorun=bool(options.autorun),
         selected_ids=selected_ids,
-    ) if template and os.path.isfile(template) else None
+    ) if not template or os.path.isfile(template) else None
     if _wait_until_listening(timeout=0.1):
         if initial:
             IPC.send_request(initial, port=IPC.WEB_PORT)

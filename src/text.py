@@ -1519,6 +1519,10 @@ def process_text_geometry(root_scope: SVG.etree._Element, show_debug_rects: bool
             try:
                 placement_sequence.apply(
                     doc_root, symbol_id, "", icon_fit,
+                    # Template resources may be hidden after placement when
+                    # extracting a preview/export. A use would inherit that
+                    # hidden source; local icons need an independent copy.
+                    place_mode="copy" if is_doc_id else "clone",
                     rect_elem=rect, parent_elem=g,
                     transform_spec=icon_transform,
                     ignore_source_ancestors=bool(is_doc_id),

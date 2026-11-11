@@ -87,7 +87,7 @@ def notify_or_launch(
     port: int = PORT,
 ) -> bool:
     req = AppRequest(
-        template=DMPATHS.normalize(template),
+        template=DMPATHS.normalize(template) if str(template or "").strip() else "",
         snapshot_path=DMPATHS.normalize(snapshot_path) if str(snapshot_path or "").strip() else "",
         sheet_id=str(sheet_id or "").strip(),
         sheet_range=str(sheet_range or "").strip(),
@@ -202,7 +202,7 @@ def start_server(request_queue, stop_event, *, port: int = PORT) -> threading.Th
                             conn.sendall(b"ERR\n")
                             continue
                         request_queue.put(AppRequest(
-                            template=DMPATHS.normalize(msg.get("template") or ""),
+                            template=DMPATHS.normalize(msg["template"]) if str(msg.get("template") or "").strip() else "",
                             snapshot_path=DMPATHS.normalize(msg.get("snapshot_path") or "") if str(msg.get("snapshot_path") or "").strip() else "",
                             sheet_id=str(msg.get("sheet_id") or "").strip(),
                             sheet_range=str(msg.get("sheet_range") or "").strip(),

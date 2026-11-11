@@ -10,7 +10,7 @@
 # - Does NOT use /collection?info=true.
 # - Persists downloaded SVG icons across previews, generations and sessions.
 # - Downloads SVGs in parallel (A').
-# - Robust SVG parser: etree.fromstring() of full document, then copies children.
+# - Imports complete symbols through Inkex so internal references are indexed.
 # - SVG namespace is always correct.
 # - If SSLError due to broken CA store (Windows/Inkscape), fallback to verify=False
 #   and suppress urllib3 warnings to keep stdout clean.
@@ -153,6 +153,31 @@ def _copy_svg_children(svg_root, symbol):
     for child in list(svg_root):
         symbol.append(child)
 
+def _import_symbol(defs, symbol):
+    """Prepare only the new subtree; normal uses/copies need no extra parsing."""
+    symbol_id = symbol.get("id")
+    root = defs.getroottree().getroot()
+    # Initialize the destination index before Inkex registers the new subtree.
+    # Never rebuild the whole index for every icon/use.
+    occupied = root.get_ids() if hasattr(root, "get_ids") else set()
+    renamed = {}
+    for index, node in enumerate(symbol.iterdescendants(), 1):
+        old_id = node.get("id")
+        if not old_id:
+            continue
+        new_id = f"{symbol_id}--ref-{index}"
+        while new_id in occupied:
+            new_id += "-1"
+        renamed[old_id] = new_id
+        node.set("id", new_id)
+    SVG.rewrite_local_id_references(symbol, renamed)
+    # Plain etree nodes bypass Inkex's ID-registration callbacks. Explicitly
+    # parse the finished fragment, including defs, clipPaths and nested uses.
+    imported = inkex.load_svg(etree.tostring(symbol)).getroot()
+    defs.append(imported)
+    return imported
+
+
 def _viewbox_values(node) -> Tuple[float,float,float,float]:
     vb = (node.get("viewBox") or "").strip()
     if not vb:
@@ -269,7 +294,7 @@ def ensure_icon_symbol(svgdoc, prefix: str, name: str, *,
         symbol = deepcopy(base_symbol)
         symbol.set("id", colored_id)
         _replace_current_color(symbol, normalized_color)
-        defs.append(symbol)
+        symbol = _import_symbol(defs, symbol)
         return symbol, colored_id
 
     if skip_if_exists:
@@ -294,14 +319,14 @@ def ensure_icon_symbol(svgdoc, prefix: str, name: str, *,
 
         _normalize_to_square(symbol, add_rect=bool(add_rect))
 
-        defs.append(symbol)
+        symbol = _import_symbol(defs, symbol)
         return symbol, sym_id
     except Exception as e:
         if fast or offline:
             raise
         symbol = _ensure_svg_symbol(sym_id, title=f"{prefix}:{name}")
         symbol.set("viewBox", "0 0 1 1")
-        defs.append(symbol)
+        symbol = _import_symbol(defs, symbol)
         _l.w("[iconify] placeholder %s/%s (%s)", prefix, name, str(e))
         return symbol, sym_id
 
@@ -384,7 +409,7 @@ def ensure_icon_symbols_parallel(svgdoc,
                 placeholder += 1
                 _l.w("[iconify] placeholder fetch %s/%s (%s)", p, n, str(err) if err else "none")
 
-            defs.append(symbol)
+            _import_symbol(defs, symbol)
 
     _l.i(
         "[sources.progress] source_summary provider=iconify downloaded=%d cached=%d failed=%d uses=%d workers=%d",

@@ -22,7 +22,7 @@ import sources as SOURCES
 import temp_paths as TEMPPATHS
 
 
-PREVIEW_CACHE_VERSION = 19
+PREVIEW_CACHE_VERSION = 20
 SYMBOL_CACHE_VERSION = 4
 
 _PREVIEW_SPRITESHEETS = "__dm_preview_spritesheets__"

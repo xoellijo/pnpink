@@ -1005,30 +1005,33 @@ main.dataset-dock-right .gsheet-editor { grid-column: 3; grid-row: 1; }
 }
 .dataset-table .tabulator-range-cell-active { border-color: #d88920 !important; }
 .dataset-table .tabulator-range.tabulator-range-active::after { background: #d88920 !important; }
+.dataset-table .tabulator-range-fill-handle { width: 9px; height: 9px; background: #d88920; border: 1px solid #fff; cursor: crosshair; }
+.dataset-table .tabulator-range-fill-preview { border-color: #d88920 !important; border-style: dashed !important; pointer-events: none; }
 .dataset-table .tabulator-row:has(.tabulator-cell.tabulator-editing) { z-index: 50; }
 .dataset-table .tabulator-row .tabulator-cell.tabulator-editing {
   z-index: 60;
   overflow: visible;
+  border-color: #d88920;
 }
 .dataset-table .tabulator-row .tabulator-cell.tabulator-editing textarea {
   position: absolute !important;
   z-index: 30;
-  top: calc(100% + 2px);
-  left: -2px;
+  top: -1px;
+  left: -1px;
   transform: none;
-  width: min(420px, calc(100vw - 40px)) !important;
+  width: min(460px, calc(100vw - 40px)) !important;
   min-width: 0;
   height: 104px !important;
   min-height: 104px !important;
   padding: 8px 10px;
   resize: both;
   pointer-events: auto !important;
-  border: 2px solid #8a6b16;
-  border-radius: 4px;
+  border: 1px solid #d88920;
+  border-radius: 0;
   outline: 0;
   color: #171717;
-  background: #fff;
-  box-shadow: 0 8px 24px #0005;
+  background: #ffead0;
+  box-shadow: none;
   font: 400 16px/1.35 "Segoe UI", Arial, sans-serif;
 }
 .tabulator-tooltip {

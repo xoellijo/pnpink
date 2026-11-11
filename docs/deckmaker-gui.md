@@ -11,6 +11,15 @@ Both entries are available from **Extensions > PnPInk** in Inkscape and receive 
 
 ## Runtime and portability
 
+If the current Inkscape document has never been saved, the browser Deckmaker
+still opens, with instructions to use **File > Save As** and then launch
+**Extensions > PnPInk > Deckmaker** again. The existing window receives the
+saved template automatically. Until then there is no active template, generation
+is disabled, and no temporary project or CSV is created. This does not silently
+restore the previous template; that fallback is only for standalone launches
+without `--template`. You can also choose a known template or explore
+**Help > Examples**.
+
 Deckmaker starts its resident process with the same `sys.executable` that Inkscape used to run the extension. Official Windows builds therefore reuse Inkscape's bundled Python, and macOS app bundles use their own selected extension interpreter. Linux packages do not universally bundle a private Python; on Linux this may be the system Python selected by the Inkscape package. PnPInk does not switch the resident process to a project virtual environment.
 
 The local HTTP application and its IPC channel use the Python standard library. The preview workers are persistent `inkscape --shell` child processes owned by that resident service. Windows uses `inkscape.com` when available; Linux uses the executable found on `PATH`; macOS additionally detects `Inkscape.app` in `/Applications` and `~/Applications`. Closing the web application ends the resident service and its Inkscape workers after the browser-session grace period. Select an installed browser under **Preferences > Web engine**; the change applies on the next launch. The value is stored as `deckmaker_web_browser` in `preferences.ini`, and the former Tkinter browser selector has been removed.
@@ -21,7 +30,29 @@ The standalone launch uses the saved SVG. Launch from Inkscape only when Deckmak
 
 Drop a Google Sheets URL onto the dataset pane to extract its spreadsheet ID and `gid` and link it to the current template automatically. Launch Deckmaker once from each SVG in Inkscape to register it. Afterwards, use the template selector in the menu title to switch between known SVG templates together with their associated datasets. The selected source mode (`auto`, local CSV, public Google Sheet, or OAuth Google Sheet) is remembered separately for every template.
 
-When the active template uses its adjacent local CSV, the dataset pane displays an editable spreadsheet with Tabulator 6.5.3 loaded from UNPKG. Rows and columns use spreadsheet coordinates, and the visible row number is always the physical CSV row. PnPInk syntax receives semantic text colors for directives, comments, `####` blocks, dataset headers, and `##`/`###` disabled dataset columns. The active dataset header becomes a temporary floating row only after its real row scrolls above the viewport; it changes when a later dataset is reached without renumbering or moving CSV rows. Edits are batched into atomic CSV writes. Native range, row, and column selection support copying, pasting, clearing, keyboard navigation, cell-edit undo/redo, and coordinated resizing of selected columns. Text extends through adjacent empty cells, while double-clicking opens a larger high-contrast editor without changing row height. The editor keeps its source cell visible, `Enter` commits, and `Alt+Enter` inserts a line break. The lil-xgui context menu changes row height and inserts or deletes rows and columns. Click the top-left corner to select the complete sheet. Google Sheet sources continue to use the embedded Google editor.
+When the active template uses its adjacent local CSV, the dataset pane displays an editable spreadsheet with Tabulator 6.6.1 loaded from UNPKG. Rows and columns use spreadsheet coordinates, and the visible row number is always the physical CSV row. PnPInk syntax receives semantic text colors for directives, comments, `####` blocks, dataset headers, and `##`/`###` disabled dataset columns. The active dataset header becomes a temporary floating row only after its real row scrolls above the viewport; it changes when a later dataset is reached without renumbering or moving CSV rows. Edits are batched into atomic CSV writes. Native range, row, and column selection support copying, pasting, clearing, keyboard navigation, undo/redo, and coordinated resizing of selected columns. Text extends through adjacent empty cells, while double-clicking opens a larger high-contrast editor without changing row height. The editor keeps its source cell visible, `Enter` commits, and `Alt+Enter` inserts a line break. The lil-xgui context menu changes row height and inserts or deletes rows and columns. Click the top-left corner to select the complete sheet. Google Sheet sources continue to use the embedded Google editor.
+
+Typing a character on the focused cell opens the expanded editor and replaces
+the previous text. Double-click or Enter instead opens the existing value.
+The editor starts at the cell's top-left corner, with the same pale-orange fill
+and border as the selection, and expands to 460 px where the pane allows it.
+Escape cancels; Enter commits; Alt+Enter inserts a line break.
+
+Drag the orange handle at the bottom-right of a selected range to repeat its
+values/pattern into neighboring rows or columns. This repeats data; it does not
+evaluate spreadsheet formulas or infer arithmetic series. A fill, paste or
+Delete/Backspace clear is one native undo/redo transaction for the affected block.
+`Ctrl+Z` and `Ctrl+Y` also save the restored values back to the CSV. Text editors
+retain their own native text undo while a cell is being edited. Ordinary saves,
+identical refreshes and sticky-header formatting preserve history; switching CSV,
+external content changes and inserting/deleting rows or columns reset it safely.
+
+The range-history adapter is pinned to Tabulator 6.6.1: it snapshots physical CSV
+coordinates in native range actions so subsequent selection movement cannot
+redirect Undo/Redo. The browser regression check covers this compatibility bridge
+and should be rerun before changing Tabulator versions. Bulk persistence listens
+to the completed range operation rather than rescanning the whole table for each
+row updated by a fill.
 
 The editor deliberately combines Tabulator's public table, range, edit, clipboard, history, menu, component, and Virtual DOM APIs instead of its rigid multi-sheet `spreadsheet` data model. That model requires matrix data to be loaded exclusively through `spreadsheetData`/`setSheetData`; PnPInk instead needs stable physical CSV row numbers, incremental atomic writes, and semantic metadata for directives, comments, dataset headers, disabled columns, and invalid rows. The custom code is limited to those PnPInk-specific concerns: semantic formatting, Excel-like text spill, the enlarged editor, revision polling, and CSV persistence.
 

@@ -6,13 +6,19 @@ import {
   parseClipboardRange,
 } from './clipboard-range.js';
 
-const TABULATOR_MODULE_URL = 'https://unpkg.com/tabulator-tables@6.5.3/dist/js/tabulator_esm.min.js';
+const TABULATOR_MODULE_URL = 'https://unpkg.com/tabulator-tables@6.6.1/dist/js/tabulator_esm.min.js';
 const ROW_KINDS = [
   'dataset-header', 'directive', 'comment', 'comment-marker',
   'comment-block', 'data', 'orphan', 'blank',
 ];
 
 let tabulatorConstructor;
+
+function datasetIdentity(editor) {
+  // The fetch URL contains ?rev= and changes after every save. It is not the
+  // identity of the CSV whose cell references the undo history belongs to.
+  return String(editor?.id || editor?.url || '');
+}
 
 export function stickyHeaderIndex(headers, scrollTop, rowHeight) {
   let active = -1;
@@ -128,6 +134,33 @@ export class DatasetTable {
     this.clipboardHtmlRange = null;
     this.container.addEventListener('paste', event => {
       this.clipboardHtmlRange = parseClipboardHtml(event.clipboardData?.getData('text/html') || '');
+    }, true);
+    this.container.addEventListener('keydown', event => {
+      if (event.isComposing || this.editing
+          || event.target.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+      const altGraph = event.getModifierState('AltGraph');
+      const textKey = Array.from(event.key).length === 1 || event.key === 'Dead';
+      if (textKey && ((!event.ctrlKey && !event.metaKey && !event.altKey) || altGraph)) {
+        // Use the actual range focus, which also follows arrow-key navigation.
+        // 6.6 supports initialValue without committing a separate history edit.
+        const cell = this.table?.modules.selectRange?.getActiveCell()?.getComponent();
+        if (!String(cell?.getField()).startsWith('column_')) return;
+        cell.edit(false, {initialValue: event.key === 'Dead' ? '' : event.key});
+        if (this.editing && event.key !== 'Dead') {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          const input = cell.getElement().querySelector('textarea');
+          input?.setSelectionRange(input.value.length, input.value.length);
+        }
+        return;
+      }
+      if (!['Delete', 'Backspace'].includes(event.key)) return;
+      const range = this.activeRange();
+      if (!range) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      // Use one native range transaction, not one cellEdit per cleared cell.
+      range.fill('');
     }, true);
     this.stickyHeaderRevealTimer = 0;
     this.columnResizeObserver = new ResizeObserver(() => this.scheduleSpillLayout());
@@ -457,6 +490,9 @@ export class DatasetTable {
         const key = `${rowNumber}:${column}`;
         if (this.savedValues.get(key) !== value) {
           this.pendingEdits.set(key, {row: rowNumber, column, value});
+        } else {
+          // An edit can be undone before the 40 ms save timer fires.
+          this.pendingEdits.delete(key);
         }
       }
     }
@@ -477,7 +513,21 @@ export class DatasetTable {
         row.update({
           __kind__: rowKinds?.[rowNumber] ?? row.getData().__kind__,
           __commented_columns__: commentedColumns?.[rowNumber] ?? row.getData().__commented_columns__,
-        }).then(() => row.getCells().forEach(cell => cell.reformat()));
+        }).then(() => {
+          // CellComponent has no reformat() in Tabulator 6.x. Row.reformat()
+          // recreates its cells and discards their history, so refresh only
+          // our formatter DOM while preserving the live cell components.
+          this.formatRow(row);
+          row.getCells().forEach(cell => {
+            if (!String(cell.getField()).startsWith('column_')
+                || cell.getElement().classList.contains('tabulator-editing')) return;
+            const rendered = [];
+            const content = this.formatCell(cell, callback => rendered.push(callback));
+            cell.getElement().replaceChildren(content);
+            rendered.forEach(callback => callback());
+          });
+          this.refreshStickyHeader();
+        });
       }
     });
   }
@@ -489,7 +539,7 @@ export class DatasetTable {
       const holder = this.container.querySelector('.tabulator-tableholder');
       const viewport = holder?.getBoundingClientRect();
       if (viewport?.width > 0 && viewport?.height > 0) {
-        const width = Math.max(60, Math.min(420, viewport.width - 24));
+        const width = Math.max(60, Math.min(Math.max(460, cell.getElement().offsetWidth), viewport.width - 24));
         const height = Math.max(48, Math.min(104, viewport.height - 24));
         editor.style.setProperty('width', `${width}px`, 'important');
         editor.style.setProperty('min-width', `${width}px`, 'important');
@@ -568,8 +618,10 @@ export class DatasetTable {
     };
     this.suppressSelection = true;
     try {
-      this.table.getRanges().forEach(range => range.remove());
-      this.table.addRange(cell, cell);
+      const [active, ...others] = this.table.getRanges();
+      if (active) active.setBounds(cell, cell);
+      else this.table.addRange(cell, cell);
+      others.forEach(range => range.remove());
     } finally {
       this.suppressSelection = false;
     }
@@ -578,6 +630,65 @@ export class DatasetTable {
       holder.scrollTop = scrollTop;
       holder.scrollLeft = scrollLeft;
     });
+  }
+
+  activeRange() {
+    return this.table?.modules.selectRange?.activeRange?.getComponent() || null;
+  }
+
+  pasteRange(data) {
+    const range = this.activeRange();
+    if (!range || !Array.isArray(data) || !data.length) return [];
+    const selected = range.getCells().flat();
+    const start = selected[0];
+    const end = selected.at(-1);
+    const fields = Object.keys(data[0]).filter(field => /^column_\d+$/.test(field));
+    if (!start || !end || !fields.length) return [];
+    const rows = this.table.getRows('active');
+    const first = rows.indexOf(start.getRow());
+    const count = start === end ? data.length : range.getRows().length;
+    const targets = rows.slice(first, first + count);
+    if (first < 0 || !targets.length) return [];
+    range.setBounds(targets[0].getCell(fields[0]), targets.at(-1).getCell(fields.at(-1)));
+    range.setData(targets.map((_row, index) => fields.map(field => data[index % data.length][field] ?? '')));
+    return targets;
+  }
+
+  rangeChanged(range) {
+    // Tabulator 6.6.1's rangeEdit records point to the live selection. Keyboard
+    // navigation or a later edit can move that rectangle before Undo. Freeze
+    // CSV coordinates in the native action, not the mutable selection bounds.
+    // This small compatibility bridge is deliberately pinned to 6.6.1; all
+    // recording, grouping and undo/redo execution still belongs to Tabulator.
+    const history = this.table.modules.history;
+    const entry = history.history[history.index];
+    if (entry?.type === 'rangeEdit' && entry.component.getComponent() === range) {
+      const coordinates = entry.component.getCells().map(cell => ({
+        row: cell.row.data.__csv_row__, field: cell.column.field,
+      }));
+      entry.data.csvCells = coordinates;
+      entry.component = {
+        getComponent: () => range,
+        getCells: () => coordinates.map(({row, field}) => this.table.getRow(row).getCell(field)._getSelf()),
+      };
+    }
+    this.trackChanges([...new Set(range.getModifiedCells().map(cell => cell.getRow().getData()))]);
+    this.scheduleSpillLayout();
+    this.refreshStickyHeader();
+  }
+
+  historyChanged(action, component, data) {
+    if (!component || this.suppressChanges) return;
+    // Native undo/redo uses setValueProcessData: it intentionally does not
+    // emit cellEdited/dataChanged. Persist the affected row explicitly without
+    // setValue(), which would create a new history entry and erase redo.
+    if (action === 'cellEdit') this.trackChanges([component.getRow().getData()]);
+    else if (action === 'rangeEdit') {
+      const rows = new Set((data.csvCells || []).map(({row}) => row));
+      this.trackChanges([...rows].map(row => this.table.getRow(row).getData()));
+    } else return;
+    this.scheduleSpillLayout();
+    this.refreshStickyHeader();
   }
 
   flushEdits() {
@@ -597,7 +708,7 @@ export class DatasetTable {
           revision: this.revision,
         });
         this.revision = String(result.revision || this.revision);
-        if (this.editor?.url) this.key = `${this.editor.url}:${this.revision}`;
+        if (this.editor?.url) this.key = `${datasetIdentity(this.editor)}:${this.revision}`;
         this.applyRowSemantics(result.rowKinds, result.commentedColumns);
         this.table?.clearCellEdited();
       } finally {
@@ -676,6 +787,9 @@ export class DatasetTable {
         index,
         revision: this.revision,
       });
+      // CSV rows/columns are numbered by position. Inserting an empty row can
+      // leave the padded table data identical while changing what redo means.
+      this.table?.clearHistory();
       this.revision = String(result.revision || this.revision);
       this.key = '';
       if (this.editor) await this.show({...this.editor, revision: this.revision});
@@ -685,16 +799,17 @@ export class DatasetTable {
   }
 
   async show(editor) {
-    const previousUrl = this.editor?.url || '';
-    if (previousUrl && previousUrl !== editor.url) await this.flushEdits();
+    const previousIdentity = datasetIdentity(this.editor);
+    const identity = datasetIdentity(editor);
+    if (previousIdentity && previousIdentity !== identity) await this.flushEdits();
     this.editor = editor;
-    const key = `${editor.url || ''}:${editor.revision || ''}`;
+    const key = `${identity}:${editor.revision || ''}`;
     this.container.hidden = false;
-    if (this.table && previousUrl === editor.url && this.editing) return;
-    if (this.table && previousUrl && previousUrl === editor.url
+    if (this.table && previousIdentity === identity && this.editing) return;
+    if (this.table && previousIdentity && previousIdentity === identity
         && (this.saving || this.saveTimer || this.pendingEdits.size)) {
-      if (editor.revision) this.revision = String(editor.revision);
-      this.key = `${editor.url}:${this.revision}`;
+      // Only the save response can advance the revision of local edits.
+      this.key = `${identity}:${this.revision}`;
       this.message.hidden = true;
       return;
     }
@@ -730,7 +845,8 @@ export class DatasetTable {
           selectableRange: true,
           selectableRangeColumns: true,
           selectableRangeRows: true,
-          selectableRangeClearCells: true,
+          selectableRangeFill: true,
+          selectableRangeClearCells: false,
           selectableRangeClearCellsValue: '',
           selectableRangeBlurEditOnNavigate: false,
           editTriggerEvent: 'dblclick',
@@ -765,7 +881,7 @@ export class DatasetTable {
             this.clipboardHtmlRange = null;
             return mapClipboardRange(this.table, htmlRange || parseClipboardRange(clipboard));
           },
-          clipboardPasteAction: 'range',
+          clipboardPasteAction: data => this.pasteRange(data),
           resizableColumnGuide: true,
           rowFormatter: row => this.formatRow(row),
           columnDefaults: {
@@ -793,14 +909,21 @@ export class DatasetTable {
           },
         });
         this.table.on('cellEditing', cell => this.prepareEditor(cell));
-        this.table.on('cellEdited', cell => this.preserveEditedCell(cell));
+        this.table.on('cellEdited', cell => {
+          this.preserveEditedCell(cell);
+          this.trackChanges([cell.getRow().getData()]);
+        });
         this.table.on('cellEditCancelled', () => {
           this.editing = false;
           document.body.classList.remove('dataset-cell-editing');
         });
         this.table.on('cellClick', (_event, cell) => this.notifyCellSelected(cell));
         this.table.on('cellTap', (_event, cell) => this.notifyCellSelected(cell));
-        this.table.on('dataChanged', rows => this.trackChanges(rows));
+        // row.updateData emits dataChanged once per row during a fill. Listen
+        // to the completed range instead of rescanning the table for each row.
+        this.table.on('rangeEdited', range => this.rangeChanged(range));
+        this.table.on('historyUndo', (action, component, data) => this.historyChanged(action, component, data));
+        this.table.on('historyRedo', (action, component, data) => this.historyChanged(action, component, data));
         this.table.on('columnResized', column => {
           this.resizeSelectedColumns(column);
           this.refreshStickyHeader();
@@ -810,9 +933,10 @@ export class DatasetTable {
           this.scheduleSpillLayout();
         });
         this.installContextMenuEvents();
-        requestAnimationFrame(() => {
+        this.table.on('tableBuilt', () => {
           this.observeColumnWidths();
           this.installStickyHeaderOverlay();
+          this.redraw();
         });
       } else {
         const holder = this.container.querySelector('.tabulator-tableholder');
@@ -848,7 +972,12 @@ export class DatasetTable {
           this.suppressChanges = false;
           this.suppressSelection = false;
         }
-        this.table.clearHistory();
+        // Row replacement invalidates component references; external updates
+        // can invalidate old values even when the same components survive.
+        // An identical reload (e.g. our own save acknowledgement) does neither.
+        if (previousIdentity !== identity || rowChanges === null || rowChanges.length) {
+          this.table.clearHistory();
+        }
         if (rowChanges === null) this.redraw();
         if (rowChanges === null) requestAnimationFrame(() => {
           const selected = viewState.selectedCell;
@@ -872,9 +1001,8 @@ export class DatasetTable {
         });
       }
       this.revision = String(dataset.revision || editor.revision || '');
-      this.key = key;
+      this.key = `${identity}:${this.revision}`;
       this.message.hidden = true;
-      if (!this.table || !previousUrl) requestAnimationFrame(() => this.redraw());
     } catch (error) {
       if (this.loadingKey !== key) return;
       this.reportError(`Could not open the local CSV dataset: ${error.message}`);

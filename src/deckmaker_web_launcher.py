@@ -17,7 +17,7 @@ import deckmaker_web as WEB
 
 class DeckMakerWebLauncher(inkex.EffectExtension):
     def effect(self):
-        request = LAUNCH.current_request(self)
+        request = LAUNCH.current_request(self, allow_unsaved=True)
         if not WEB.notify_or_launch(
             request.template, request.snapshot_path, request.sheet_id, request.sheet_range,
             "global", request.dataset_source_mode, selected_ids=request.selected_ids,
